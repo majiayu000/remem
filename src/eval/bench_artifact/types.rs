@@ -101,6 +101,7 @@ pub struct RunEnvironment {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MemoryRunArtifact {
     pub schema_version: u32,
+    pub benchmark_id: String,
     pub benchmark_version: String,
     pub layer: BenchmarkLayer,
     pub suite: String,

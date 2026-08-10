@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "benchmark_id": "remem-code-memory-smoke",
   "benchmark_version": "v1",
   "layer": "memory_system_capability",
   "suite": "remem-code-memory-smoke",

@@ -3,10 +3,11 @@
   "$id": "https://majiayu000.github.io/remem/schemas/memory-run.schema.json",
   "title": "remem public memory run artifact",
   "type": "object",
-  "required": ["schema_version", "benchmark_version", "layer", "suite", "condition", "task_id", "run_index", "reference_time_epoch", "reader_model", "environment", "answer", "retrieval", "evidence", "metrics", "diagnosis", "artifacts"],
+  "required": ["schema_version", "benchmark_id", "benchmark_version", "layer", "suite", "condition", "task_id", "run_index", "reference_time_epoch", "reader_model", "environment", "answer", "retrieval", "evidence", "metrics", "diagnosis", "artifacts"],
   "properties": {
     "schema_version": { "const": 1 },
     "layer": { "const": "memory_system_capability" },
+    "benchmark_id": { "type": "string", "minLength": 1 },
     "benchmark_version": { "type": "string", "minLength": 1 },
     "suite": { "type": "string", "minLength": 1 },
     "condition": { "type": "string", "minLength": 1 },

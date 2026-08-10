@@ -55,14 +55,12 @@ fn memory_bench_conditions_are_supported() {
 }
 
 #[test]
-fn memory_bench_fixture_binds_suite_to_benchmark_id() -> Result<()> {
+fn memory_bench_fixture_allows_suite_to_differ_from_benchmark_id() -> Result<()> {
     let mut fixture = load_suite(DEFAULT_SUITE)?;
-    fixture.benchmark_id = "misrouted-suite".to_string();
+    fixture.suite = "independent-suite-name".to_string();
 
-    assert!(validate_suite(&fixture)
-        .unwrap_err()
-        .to_string()
-        .contains("must match benchmark_id"));
+    validate_suite(&fixture)?;
+    assert_ne!(fixture.suite, fixture.benchmark_id);
     Ok(())
 }
 

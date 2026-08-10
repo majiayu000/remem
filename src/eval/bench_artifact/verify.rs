@@ -290,6 +290,16 @@ fn validate_memory_run_artifact(
             "memory run layer must be memory_system_capability",
         );
     }
+    require_non_blank(&run.benchmark_id, &label, "benchmark_id", state);
+    if run.benchmark_id != report.benchmark_id {
+        state.fail(
+            label.clone(),
+            format!(
+                "memory run benchmark_id {:?} must match report benchmark_id {:?}",
+                run.benchmark_id, report.benchmark_id
+            ),
+        );
+    }
     require_non_blank(&run.benchmark_version, &label, "benchmark_version", state);
     if run.benchmark_version != report.benchmark_version {
         state.fail(
@@ -301,15 +311,6 @@ fn validate_memory_run_artifact(
         );
     }
     require_non_blank(&run.suite, &label, "suite", state);
-    if run.suite != report.benchmark_id {
-        state.fail(
-            label.clone(),
-            format!(
-                "memory run suite {:?} must match report benchmark_id {:?}",
-                run.suite, report.benchmark_id
-            ),
-        );
-    }
     require_non_blank(&run.condition, &label, "condition", state);
     if !report.conditions.contains(&run.condition) {
         state.fail(

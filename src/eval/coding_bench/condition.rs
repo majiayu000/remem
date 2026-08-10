@@ -507,9 +507,6 @@ mod tests {
 
     #[test]
     fn remem_condition_ignores_and_restores_ambient_cipher_keys() -> Result<()> {
-        let _env_lock = crate::runtime_config::ENV_LOCK
-            .lock()
-            .map_err(|error| anyhow::anyhow!("acquire test environment lock: {error}"))?;
         let fixture = super::super::fixture::load_fixture("eval/coding-bench/fixtures/tasks.json")?;
         let task = fixture.tasks.first().context("missing coding-bench task")?;
 

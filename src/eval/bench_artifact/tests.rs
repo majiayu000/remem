@@ -225,11 +225,11 @@ fn verifier_rejects_memory_run_version_that_differs_from_report() -> Result<()> 
 }
 
 #[test]
-fn verifier_rejects_memory_run_suite_that_differs_from_report() -> Result<()> {
-    let root = copy_public_fixture("memory-run-report-suite-mismatch")?;
+fn verifier_rejects_memory_run_benchmark_id_that_differs_from_report() -> Result<()> {
+    let root = copy_public_fixture("memory-run-report-benchmark-id-mismatch")?;
     mutate_json(
         &root.join("memory/artifacts/smoke-memory-001/run.json"),
-        |json| json["suite"] = Value::String("misrouted-suite".to_string()),
+        |json| json["benchmark_id"] = Value::String("misrouted-benchmark".to_string()),
     )?;
 
     let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
@@ -239,7 +239,7 @@ fn verifier_rejects_memory_run_suite_that_differs_from_report() -> Result<()> {
         report.failures,
         vec![super::types::BenchVerifyFailure {
             path: "memory/artifacts/smoke-memory-001/run.json".to_string(),
-            message: "memory run suite \"misrouted-suite\" must match report benchmark_id \"remem-code-memory-smoke\""
+            message: "memory run benchmark_id \"misrouted-benchmark\" must match report benchmark_id \"remem-code-memory-smoke\""
                 .to_string(),
         }]
     );

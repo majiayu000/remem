@@ -509,6 +509,7 @@ fn write_run_artifacts(
     ]);
     let run = MemoryRunArtifact {
         schema_version: 1,
+        benchmark_id: fixture.benchmark_id.clone(),
         benchmark_version: fixture.version.clone(),
         layer: BenchmarkLayer::MemorySystemCapability,
         suite: fixture.suite.clone(),

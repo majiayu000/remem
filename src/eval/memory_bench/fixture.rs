@@ -34,13 +34,6 @@ pub fn validate_suite(fixture: &MemoryBenchSuiteFixture) -> Result<()> {
     require_non_blank(&fixture.version, "version")?;
     require_non_blank(&fixture.fixture_revision, "fixture_revision")?;
     require_non_blank(&fixture.benchmark_id, "benchmark_id")?;
-    if fixture.suite != fixture.benchmark_id {
-        bail!(
-            "memory benchmark suite {:?} must match benchmark_id {:?}",
-            fixture.suite,
-            fixture.benchmark_id
-        );
-    }
     if fixture.tasks.is_empty() {
         bail!("memory benchmark suite must include tasks");
     }
