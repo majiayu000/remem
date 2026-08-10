@@ -144,12 +144,13 @@ pub(super) fn memory_is_eligible(
         filters.include_inactive,
     ));
     idx = crate::retrieval::memory_search::push_project_filter(
+        conn,
         "m.project",
         filters.project,
         idx,
         &mut conditions,
         &mut values,
-    );
+    )?;
     if let Some(branch) = filters.branch {
         conditions.push(format!("(m.branch = ?{idx} OR m.branch IS NULL)"));
         values.push(Box::new(branch.to_string()));

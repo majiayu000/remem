@@ -1,4 +1,5 @@
 use super::SchemaInvariant;
+mod v067;
 mod v068;
 mod v070;
 mod v071;
@@ -12,7 +13,9 @@ mod v078;
 mod v079;
 mod v080;
 mod v081;
+mod v082;
 pub(in crate::migrate) use self::{v079::V079_SCHEMA_INVARIANTS, v080::V080_SCHEMA_INVARIANTS};
+pub(in crate::migrate) use v067::V067_SCHEMA_INVARIANTS;
 pub(in crate::migrate) use v068::V068_SCHEMA_INVARIANTS;
 pub(in crate::migrate) use v070::V070_SCHEMA_INVARIANTS;
 pub(in crate::migrate) use v071::V071_SCHEMA_INVARIANTS;
@@ -24,6 +27,7 @@ pub(in crate::migrate) use v076::{v076_critical_shape_findings, V076_SCHEMA_INVA
 pub(in crate::migrate) use v077::V077_SCHEMA_INVARIANTS;
 pub(in crate::migrate) use v078::V078_SCHEMA_INVARIANTS;
 pub(in crate::migrate) use v081::V081_SCHEMA_INVARIANTS;
+pub(in crate::migrate) use v082::V082_SCHEMA_INVARIANTS;
 pub(in crate::migrate) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
     SchemaInvariant::table(20, "memory_fts_all_status", "memories_fts"),
     SchemaInvariant::trigger(20, "memory_fts_all_status", "memories_ai"),
@@ -762,33 +766,6 @@ pub(in crate::migrate) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
         "session_rollup_evidence_checkpoint",
         "session_summaries",
         "raw_archive_completed_at_epoch",
-    ),
-    SchemaInvariant::table(67, "capture_git_evidence", "captured_event_commits"),
-    SchemaInvariant::column(
-        67,
-        "capture_git_evidence",
-        "git_commit_sessions",
-        "session_row_id",
-    ),
-    SchemaInvariant::index(
-        67,
-        "capture_git_evidence",
-        "idx_captured_event_commits_event",
-    ),
-    SchemaInvariant::index(
-        67,
-        "capture_git_evidence",
-        "idx_git_commit_sessions_commit_session_row",
-    ),
-    SchemaInvariant::index(
-        67,
-        "capture_git_evidence",
-        "idx_git_commit_sessions_commit_legacy_session",
-    ),
-    SchemaInvariant::index(
-        67,
-        "capture_git_evidence",
-        "idx_git_commit_sessions_session_row",
     ),
     SchemaInvariant::index(69, "job_queue_atomicity", "idx_jobs_active_ordinary_unique"),
     SchemaInvariant::index(69, "job_queue_atomicity", "idx_jobs_active_dream_unique"),

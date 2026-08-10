@@ -85,7 +85,13 @@ fn count_context_candidate_pool(
     let mut conditions = Vec::new();
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let mut idx = 1;
-    super::filters::push_owner_included_filter(project, &mut idx, &mut conditions, &mut params);
+    super::filters::push_owner_included_filter(
+        conn,
+        project,
+        &mut idx,
+        &mut conditions,
+        &mut params,
+    )?;
     super::filters::push_excluded_type_filter(
         excluded_types,
         &mut idx,
@@ -115,7 +121,13 @@ fn query_context_lifecycle_exclusions(
     let mut conditions = Vec::new();
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let mut idx = 1;
-    super::filters::push_owner_included_filter(project, &mut idx, &mut conditions, &mut params);
+    super::filters::push_owner_included_filter(
+        conn,
+        project,
+        &mut idx,
+        &mut conditions,
+        &mut params,
+    )?;
     super::filters::push_excluded_type_filter(
         excluded_types,
         &mut idx,

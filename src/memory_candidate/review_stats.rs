@@ -5,7 +5,14 @@ use std::collections::HashMap;
 const RESOLVED_STATUSES_SQL: &str = "('approved', 'edited', 'discarded', 'noop')";
 const REVIEW_QUEUE_STATUSES_SQL: &str =
     "('pending_review', 'approved', 'edited', 'discarded', 'noop')";
-const EFFECTIVE_PROJECT_SQL: &str = "COALESCE(c.target_project, p.project_path, c.source_project, CASE WHEN c.owner_scope = 'repo' THEN c.owner_key END)";
+const EFFECTIVE_PROJECT_SQL: &str = "COALESCE(
+    (SELECT canonical_project.project_path
+       FROM project_identity_aliases project_alias
+       JOIN projects canonical_project
+         ON canonical_project.id = project_alias.canonical_project_id
+      WHERE project_alias.status = 'active'
+        AND project_alias.alias_path = COALESCE(c.target_project, p.project_path, c.source_project, CASE WHEN c.owner_scope = 'repo' THEN c.owner_key END)),
+    COALESCE(c.target_project, p.project_path, c.source_project, CASE WHEN c.owner_scope = 'repo' THEN c.owner_key END))";
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ReviewQueueStats {

@@ -6,7 +6,12 @@ use super::{
     ParsedMemoryCandidate,
 };
 mod approval;
+mod batch_filter;
 mod dream_provenance;
+
+use batch_filter::{
+    anonymous_placeholders, like_pattern, older_than_cutoff, validate_batch_filter,
+};
 
 pub(crate) use approval::{
     approve_candidate_in_transaction, edit_candidate_in_transaction, normalize_candidate_edit,
@@ -112,8 +117,6 @@ pub(crate) struct BatchFilter {
     pub limit: i64,
 }
 
-const SECS_PER_DAY: i64 = 86_400;
-
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct BatchPreview {
     pub ids: Vec<i64>,
@@ -186,7 +189,9 @@ pub(crate) fn list_pending(
 ) -> Result<Vec<ReviewCandidate>> {
     let limit = limit.clamp(1, 200);
     let rows = if let Some(project) = project {
-        let mut stmt = conn.prepare(
+        let project_values = crate::project_alias::project_filter_values(conn, project)?;
+        let placeholders = anonymous_placeholders(project_values.len());
+        let sql = format!(
             "SELECT c.id, p.project_path, c.scope, c.memory_type, c.topic_key,
                     c.text, c.evidence_event_ids, c.confidence, c.risk_class,
                     c.review_status, c.created_at_epoch, c.source_project,
@@ -197,12 +202,29 @@ pub(crate) fn list_pending(
              FROM memory_candidates c
              LEFT JOIN projects p ON p.id = c.project_id
              WHERE c.review_status IN ('pending_review', 'quarantined')
-               AND p.project_path = ?1
+               AND (p.project_path IN ({placeholders})
+                    OR c.source_project IN ({placeholders})
+                    OR c.target_project IN ({placeholders})
+                    OR (c.owner_scope = 'repo' AND c.owner_key IN ({placeholders})))
              ORDER BY c.created_at_epoch ASC, c.id ASC
-             LIMIT ?2",
-        )?;
+             LIMIT ?"
+        );
+        let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        for _ in 0..4 {
+            args.extend(
+                project_values
+                    .iter()
+                    .cloned()
+                    .map(|value| Box::new(value) as Box<dyn rusqlite::types::ToSql>),
+            );
+        }
+        args.push(Box::new(limit));
+        let mut stmt = conn.prepare(&sql)?;
         let rows = stmt
-            .query_map(params![project, limit], CandidateRow::from_row)?
+            .query_map(
+                rusqlite::params_from_iter(args.iter().map(|arg| arg.as_ref())),
+                CandidateRow::from_row,
+            )?
             .collect::<Result<Vec<_>, _>>()?;
         rows
     } else {
@@ -391,14 +413,22 @@ fn resolve_batch_rows(conn: &Connection, filter: &BatchFilter) -> Result<Vec<Bat
     );
     let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     if let Some(project) = &filter.project {
-        sql.push_str(
-            " AND (p.project_path = ? OR c.source_project = ? OR c.target_project = ?
-                   OR (c.owner_scope = 'repo' AND c.owner_key = ?))",
-        );
-        args.push(Box::new(project.clone()));
-        args.push(Box::new(project.clone()));
-        args.push(Box::new(project.clone()));
-        args.push(Box::new(project.clone()));
+        let project_values = crate::project_alias::project_filter_values(conn, project)?;
+        let placeholders = anonymous_placeholders(project_values.len());
+        sql.push_str(&format!(
+            " AND (p.project_path IN ({placeholders})
+                    OR c.source_project IN ({placeholders})
+                    OR c.target_project IN ({placeholders})
+                    OR (c.owner_scope = 'repo' AND c.owner_key IN ({placeholders})))"
+        ));
+        for _ in 0..4 {
+            args.extend(
+                project_values
+                    .iter()
+                    .cloned()
+                    .map(|value| Box::new(value) as Box<dyn rusqlite::types::ToSql>),
+            );
+        }
     }
     if let Some(memory_type) = &filter.memory_type {
         sql.push_str(" AND c.memory_type = ?");
@@ -446,51 +476,6 @@ fn resolve_batch_rows(conn: &Connection, filter: &BatchFilter) -> Result<Vec<Bat
         )?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
-}
-
-fn validate_batch_filter(filter: &BatchFilter) -> Result<()> {
-    if filter.limit <= 0 {
-        bail!("limit must be positive");
-    }
-    if let Some(contains) = &filter.contains {
-        if contains.trim().is_empty() {
-            bail!("contains filter must not be empty");
-        }
-    }
-    if let Some(min_confidence) = filter.min_confidence {
-        if !(0.0..=1.0).contains(&min_confidence) {
-            bail!("min_confidence must be between 0 and 1");
-        }
-    }
-    if let Some(older_than_days) = filter.older_than_days {
-        if older_than_days < 0 {
-            bail!("older_than_days must be non-negative");
-        }
-        older_than_cutoff(chrono::Utc::now().timestamp(), older_than_days)?;
-    }
-    Ok(())
-}
-
-fn older_than_cutoff(now_epoch: i64, older_than_days: i64) -> Result<i64> {
-    let age_secs = older_than_days
-        .checked_mul(SECS_PER_DAY)
-        .context("older_than_days is too large")?;
-    now_epoch
-        .checked_sub(age_secs)
-        .context("older_than_days is too large")
-}
-
-fn like_pattern(query: &str) -> String {
-    let mut pattern = String::with_capacity(query.len() + 2);
-    pattern.push('%');
-    for ch in query.chars() {
-        if matches!(ch, '%' | '_' | '\\') {
-            pattern.push('\\');
-        }
-        pattern.push(ch);
-    }
-    pattern.push('%');
-    pattern
 }
 
 pub(crate) fn new_batch_id() -> String {

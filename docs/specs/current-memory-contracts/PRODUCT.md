@@ -81,6 +81,36 @@ together:
 Any new table that touches current memory semantics must state which existing
 contract it extends and why the existing table cannot hold the data.
 
+### Canonical Project Identity And Historical Aliases
+
+A filesystem path is an observed project alias, not sufficient durable project
+identity by itself. Renames, moves, symlinks, nested working directories, and
+the historical `/tool/` versus `/tools/` split must not divide one repository's
+current memory into unrelated projects.
+
+Project convergence extends the existing `workspaces` and `projects` identity
+contract. It must not rewrite immutable capture evidence merely to make old
+paths look current:
+
+- the canonical repository identity is backed by a current worktree root plus
+  normalized Git remote or Git object membership evidence;
+- every historical alias keeps its original captured path and points to the
+  canonical project identity through an audited alias relation;
+- a missing path may converge only when exactly one live repository is proven
+  by stored Git remote or shared commit membership;
+- multiple live worktrees, conflicting remotes, missing evidence, or multiple
+  candidate targets must abstain;
+- retrieval, review, current-state resolution, status, and context injection
+  resolve the same canonical identity and alias set;
+- raw messages, captured events, operation logs, and other historical evidence
+  retain their recorded paths.
+
+Alias inventory and reconciliation are dry-run-first. A plan reports exact
+source/target paths, proof type, source snapshot digest, affected mutable/read
+surfaces, immutable history excluded from rewriting, collisions, and blocked
+aliases. Applying a plan must revalidate all proof and target identity inside
+the write transaction.
+
 ### Temporal Truth
 
 remem must keep event validity separate from transaction-time knowledge:

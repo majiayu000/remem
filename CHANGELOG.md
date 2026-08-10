@@ -12,6 +12,12 @@
   retrieval-dependent diagnostic condition now uses the stable CLI/report id
   `remem_seeded_sessionstart`; historical full-body `remem_preloaded` results
   remain explicitly separate and incomparable.
+- Staged source version `0.6.66` for memory governance G1: schema v082 adds an
+  append-only project-identity alias event ledger plus a current alias registry,
+  allowing historical project paths to resolve to one canonical project without
+  rewriting capture evidence. A read-only inventory classifies path values with
+  filesystem, normalized Git remote, and commit-membership proof; it emits
+  digest-bound alias proposals while blocking unproven paths.
 - Staged source version `0.6.65` for GH-932: Bundle-backed SessionStart
   emissions now atomically persist a payload-free canonical `ContextAudit`
   beside the existing item-level injection rows. The append-only v081 record
