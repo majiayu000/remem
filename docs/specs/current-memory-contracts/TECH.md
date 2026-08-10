@@ -39,6 +39,7 @@ introduce a replacement storage model or a second retrieval stack.
 | Usage feedback | `memory_usage_events` | Links cited memory IDs to injected item rows. |
 | Source-anchor staleness | `MemoryStalenessLabel` | Exposed through API/search/context metadata. |
 | Commit-file staleness lookup | `git_commits`, `git_commit_files` | `git_commits.changed_files` remains the captured payload; the normalized relation and commit-epoch expression index are migration-managed lookup data. |
+| Project identity | `workspaces`, `projects`, project alias registry | Canonical repository/worktree identity with audited historical path aliases; captured paths remain immutable evidence. |
 | A/B outcome evidence | `issue385-coding-agent-ab` | Separate end-to-end benchmark contract. |
 
 ## Storage Contracts
@@ -143,6 +144,40 @@ Required invariants:
   branchless commits.
 - No hard row or time limit may change a source-anchor result. Database errors
   remain `error`, never `untracked`.
+
+### Project Identity Aliases
+
+The existing `workspaces` and `projects` rows remain the canonical capture
+identity. A migration-managed alias registry may map historical path strings to
+one canonical project row; it is a routing extension, not another memory or
+capture store.
+
+Required invariants:
+
+- alias identity is `(alias_path, canonical_project_id)` with a unique active
+  target per alias;
+- proof is closed-set and auditable: filesystem canonicalization, normalized
+  Git remote equality, or commit membership verified in the target repository;
+- normalized remote equality alone abstains when it identifies multiple live
+  worktree roots;
+- alias chains and cycles are forbidden; every active alias points directly to
+  a canonical project;
+- source inventory digest, proof digest, actor, reason, and timestamps are
+  stored with every applied alias;
+- an apply rechecks that the source snapshot and target proof have not drifted;
+- append-only or historical rows retain their original project/path values;
+- mutable current-state writes use the canonical project identity, while reads
+  expand one canonical identity to its active alias set;
+- project filters in candidate review, current-state resolution, retrieval,
+  status, context injection, and governance use the same resolver;
+- a resolver failure is visible and fail-closed for current truth. It must not
+  silently fall back to exact-path partial results.
+
+The read-only inventory implementation lives in
+`examples/project_alias_inventory.rs`. It allowlists path-bearing columns,
+skips virtual/content tables, records only aggregate row counts, and emits a
+digest-bound reconciliation preview. Context-only surfaces such as `cwd` are
+evidence for diagnosis but are not mutation targets.
 
 ## Retrieval And Ranking Contract
 

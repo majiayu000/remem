@@ -186,7 +186,9 @@ pub(crate) fn list_pending(
 ) -> Result<Vec<ReviewCandidate>> {
     let limit = limit.clamp(1, 200);
     let rows = if let Some(project) = project {
-        let mut stmt = conn.prepare(
+        let project_values = crate::project_alias::project_filter_values(conn, project)?;
+        let placeholders = anonymous_placeholders(project_values.len());
+        let sql = format!(
             "SELECT c.id, p.project_path, c.scope, c.memory_type, c.topic_key,
                     c.text, c.evidence_event_ids, c.confidence, c.risk_class,
                     c.review_status, c.created_at_epoch, c.source_project,
@@ -197,12 +199,29 @@ pub(crate) fn list_pending(
              FROM memory_candidates c
              LEFT JOIN projects p ON p.id = c.project_id
              WHERE c.review_status IN ('pending_review', 'quarantined')
-               AND p.project_path = ?1
+               AND (p.project_path IN ({placeholders})
+                    OR c.source_project IN ({placeholders})
+                    OR c.target_project IN ({placeholders})
+                    OR (c.owner_scope = 'repo' AND c.owner_key IN ({placeholders})))
              ORDER BY c.created_at_epoch ASC, c.id ASC
-             LIMIT ?2",
-        )?;
+             LIMIT ?"
+        );
+        let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        for _ in 0..4 {
+            args.extend(
+                project_values
+                    .iter()
+                    .cloned()
+                    .map(|value| Box::new(value) as Box<dyn rusqlite::types::ToSql>),
+            );
+        }
+        args.push(Box::new(limit));
+        let mut stmt = conn.prepare(&sql)?;
         let rows = stmt
-            .query_map(params![project, limit], CandidateRow::from_row)?
+            .query_map(
+                rusqlite::params_from_iter(args.iter().map(|arg| arg.as_ref())),
+                CandidateRow::from_row,
+            )?
             .collect::<Result<Vec<_>, _>>()?;
         rows
     } else {
@@ -391,14 +410,22 @@ fn resolve_batch_rows(conn: &Connection, filter: &BatchFilter) -> Result<Vec<Bat
     );
     let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     if let Some(project) = &filter.project {
-        sql.push_str(
-            " AND (p.project_path = ? OR c.source_project = ? OR c.target_project = ?
-                   OR (c.owner_scope = 'repo' AND c.owner_key = ?))",
-        );
-        args.push(Box::new(project.clone()));
-        args.push(Box::new(project.clone()));
-        args.push(Box::new(project.clone()));
-        args.push(Box::new(project.clone()));
+        let project_values = crate::project_alias::project_filter_values(conn, project)?;
+        let placeholders = anonymous_placeholders(project_values.len());
+        sql.push_str(&format!(
+            " AND (p.project_path IN ({placeholders})
+                    OR c.source_project IN ({placeholders})
+                    OR c.target_project IN ({placeholders})
+                    OR (c.owner_scope = 'repo' AND c.owner_key IN ({placeholders})))"
+        ));
+        for _ in 0..4 {
+            args.extend(
+                project_values
+                    .iter()
+                    .cloned()
+                    .map(|value| Box::new(value) as Box<dyn rusqlite::types::ToSql>),
+            );
+        }
     }
     if let Some(memory_type) = &filter.memory_type {
         sql.push_str(" AND c.memory_type = ?");
@@ -446,6 +473,12 @@ fn resolve_batch_rows(conn: &Connection, filter: &BatchFilter) -> Result<Vec<Bat
         )?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
+}
+
+fn anonymous_placeholders(count: usize) -> String {
+    std::iter::repeat_n("?", count)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn validate_batch_filter(filter: &BatchFilter) -> Result<()> {

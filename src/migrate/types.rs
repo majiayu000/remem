@@ -405,6 +405,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "candidate_outcome",
         sql: include_str!("../migrations/v080_candidate_outcome.sql"),
     },
+    Migration {
+        version: 81,
+        name: "project_identity_aliases",
+        sql: include_str!("../migrations/v081_project_identity_aliases.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

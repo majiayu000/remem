@@ -232,6 +232,7 @@ fn query_owner_included_memories_by_ids(
         .collect::<Vec<_>>();
     let mut idx = ids.len() + 1;
     push_context_memory_filters(
+        conn,
         project,
         current_branch,
         excluded_types,
@@ -239,7 +240,7 @@ fn query_owner_included_memories_by_ids(
         &mut idx,
         &mut conditions,
         &mut params,
-    );
+    )?;
 
     let sql = format!(
         "SELECT {} FROM memories WHERE {}",
@@ -279,6 +280,7 @@ fn query_local_fts_channel(
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(safe_query)];
     let mut idx = 2;
     push_context_memory_filters(
+        conn,
         project,
         current_branch,
         excluded_types,
@@ -286,7 +288,7 @@ fn query_local_fts_channel(
         &mut idx,
         &mut conditions,
         &mut params,
-    );
+    )?;
     params.push(Box::new(limit));
 
     let sql = format!(
@@ -411,6 +413,7 @@ fn query_local_entity_ids(
     params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
 ) -> Result<Vec<WeightedRankedHit>> {
     push_context_memory_filters(
+        conn,
         project,
         current_branch,
         excluded_types,
@@ -418,7 +421,7 @@ fn query_local_entity_ids(
         idx,
         conditions,
         params,
-    );
+    )?;
     params.push(Box::new(limit));
     let sql = format!(
         "SELECT me.memory_id, COUNT(DISTINCT me.entity_id) AS shared_count
@@ -469,6 +472,7 @@ fn query_local_temporal_channel(
     ];
     let mut idx = 3;
     push_context_memory_filters(
+        conn,
         project,
         current_branch,
         excluded_types,
@@ -476,7 +480,7 @@ fn query_local_temporal_channel(
         &mut idx,
         &mut conditions,
         &mut params,
-    );
+    )?;
     params.push(Box::new(limit));
 
     let sql = format!(
@@ -551,6 +555,7 @@ fn query_local_vector_channel(
     ];
     let mut idx = 3;
     push_context_memory_filters(
+        conn,
         project,
         current_branch,
         excluded_types,
@@ -558,7 +563,7 @@ fn query_local_vector_channel(
         &mut idx,
         &mut conditions,
         &mut params,
-    );
+    )?;
     params.push(Box::new(
         crate::retrieval::vector::VECTOR_SEARCH_CANDIDATE_LIMIT as i64,
     ));
@@ -615,6 +620,7 @@ fn query_local_like_channel(
         idx += 1;
     }
     push_context_memory_filters(
+        conn,
         project,
         current_branch,
         excluded_types,
@@ -622,7 +628,7 @@ fn query_local_like_channel(
         &mut idx,
         &mut conditions,
         &mut params,
-    );
+    )?;
     params.push(Box::new(limit));
 
     let sql = format!(
@@ -640,6 +646,7 @@ fn query_local_like_channel(
 }
 
 fn push_context_memory_filters(
+    conn: &Connection,
     project: &str,
     current_branch: Option<&str>,
     excluded_types: &[&str],
@@ -647,7 +654,7 @@ fn push_context_memory_filters(
     idx: &mut usize,
     conditions: &mut Vec<String>,
     params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
-) {
+) -> Result<()> {
     let status_col = qualify(alias, "status");
     let expires_col = qualify(alias, "expires_at_epoch");
     conditions.push(crate::memory::memory_current_filter_sql(
@@ -659,7 +666,7 @@ fn push_context_memory_filters(
     conditions.push(crate::memory::suppression::memory_policy_filter_sql(
         table_ref(alias),
     ));
-    push_owner_included_filter(project, idx, conditions, params);
+    push_owner_included_filter(conn, project, idx, conditions, params)?;
     if let Some(branch) = current_branch.filter(|branch| !branch.trim().is_empty()) {
         conditions.push(format!(
             "({}.branch = ?{idx} OR {}.branch IS NULL)",
@@ -670,6 +677,7 @@ fn push_context_memory_filters(
         *idx += 1;
     }
     push_excluded_type_filter(excluded_types, idx, conditions, params);
+    Ok(())
 }
 
 fn qualify(alias: &str, column: &str) -> String {

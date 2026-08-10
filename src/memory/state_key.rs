@@ -101,23 +101,34 @@ pub fn current_memory_id(
     state_key: &str,
     now_epoch: i64,
 ) -> Result<Option<i64>> {
-    conn.query_row(
+    let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(owner_scope.to_string())];
+    let (owner_clause, mut idx) = owner_key_filter(conn, owner_scope, owner_key, 2, &mut values)?;
+    values.push(Box::new(memory_type.to_string()));
+    let memory_type_idx = idx;
+    idx += 1;
+    values.push(Box::new(state_key.to_string()));
+    let state_key_idx = idx;
+    idx += 1;
+    values.push(Box::new(now_epoch));
+    let now_idx = idx;
+    let sql = format!(
         "SELECT m.id
          FROM memory_state_keys sk
          JOIN memories m ON m.id = sk.current_memory_id
          WHERE sk.owner_scope = ?1
-           AND sk.owner_key = ?2
-           AND sk.memory_type = ?3
-           AND sk.state_key = ?4
+           AND {owner_clause}
+           AND sk.memory_type = ?{memory_type_idx}
+           AND sk.state_key = ?{state_key_idx}
            AND sk.state_status = 'active'
            AND m.status = 'active'
-           AND (m.expires_at_epoch IS NULL OR m.expires_at_epoch > ?5)
-         LIMIT 1",
-        params![owner_scope, owner_key, memory_type, state_key, now_epoch],
-        |row| row.get(0),
-    )
-    .optional()
-    .map_err(Into::into)
+           AND (m.expires_at_epoch IS NULL OR m.expires_at_epoch > ?{now_idx})
+         ORDER BY m.updated_at_epoch DESC, m.id DESC
+         LIMIT 1"
+    );
+    let refs = crate::db::to_sql_refs(&values);
+    conn.query_row(&sql, refs.as_slice(), |row| row.get(0))
+        .optional()
+        .map_err(Into::into)
 }
 
 pub fn active_memory_ids(
@@ -129,34 +140,39 @@ pub fn active_memory_ids(
     now_epoch: i64,
     require_unexpired: bool,
 ) -> Result<Vec<i64>> {
-    let mut stmt = conn.prepare(
+    let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(owner_scope.to_string())];
+    let (owner_clause, mut idx) = owner_key_filter(conn, owner_scope, owner_key, 2, &mut values)?;
+    values.push(Box::new(memory_type.to_string()));
+    let memory_type_idx = idx;
+    idx += 1;
+    values.push(Box::new(state_key.to_string()));
+    let state_key_idx = idx;
+    idx += 1;
+    values.push(Box::new(if require_unexpired { 1_i64 } else { 0_i64 }));
+    let require_idx = idx;
+    idx += 1;
+    values.push(Box::new(now_epoch));
+    let now_idx = idx;
+    let sql = format!(
         "SELECT m.id
          FROM memories m
          JOIN memory_state_keys sk ON sk.id = m.state_key_id
          WHERE sk.owner_scope = ?1
-           AND sk.owner_key = ?2
-           AND sk.memory_type = ?3
-           AND sk.state_key = ?4
+           AND {owner_clause}
+           AND sk.memory_type = ?{memory_type_idx}
+           AND sk.state_key = ?{state_key_idx}
            AND sk.state_status = 'active'
            AND m.status = 'active'
            AND (
-                ?5 = 0
+                ?{require_idx} = 0
                 OR m.expires_at_epoch IS NULL
-                OR m.expires_at_epoch > ?6
+                OR m.expires_at_epoch > ?{now_idx}
            )
-         ORDER BY m.updated_at_epoch DESC, m.id DESC",
-    )?;
-    let rows = stmt.query_map(
-        params![
-            owner_scope,
-            owner_key,
-            memory_type,
-            state_key,
-            if require_unexpired { 1_i64 } else { 0_i64 },
-            now_epoch
-        ],
-        |row| row.get(0),
-    )?;
+         ORDER BY m.updated_at_epoch DESC, m.id DESC"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let refs = crate::db::to_sql_refs(&values);
+    let rows = stmt.query_map(refs.as_slice(), |row| row.get(0))?;
     crate::db::query::collect_rows(rows)
 }
 
@@ -213,6 +229,11 @@ fn upsert_state_key(
     current_memory_id: Option<i64>,
     now_epoch: i64,
 ) -> Result<i64> {
+    let canonical_owner_key = if owner_scope == "repo" {
+        crate::project_alias::canonical_project_path_for_write(conn, owner_key)?
+    } else {
+        owner_key.to_string()
+    };
     conn.execute(
         "INSERT INTO memory_state_keys
          (owner_scope, owner_key, memory_type, state_key, state_label, state_status,
@@ -232,7 +253,7 @@ fn upsert_state_key(
              updated_at_epoch = MAX(memory_state_keys.updated_at_epoch, excluded.updated_at_epoch)",
         params![
             owner_scope,
-            owner_key,
+            canonical_owner_key,
             memory_type,
             decision.state_key,
             decision.state_key.replace('-', " "),
@@ -246,10 +267,36 @@ fn upsert_state_key(
            AND owner_key = ?2
            AND memory_type = ?3
            AND state_key = ?4",
-        params![owner_scope, owner_key, memory_type, decision.state_key],
+        params![
+            owner_scope,
+            canonical_owner_key,
+            memory_type,
+            decision.state_key
+        ],
         |row| row.get(0),
     )
     .map_err(Into::into)
+}
+
+fn owner_key_filter(
+    conn: &Connection,
+    owner_scope: &str,
+    owner_key: &str,
+    idx: usize,
+    params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+) -> Result<(String, usize)> {
+    if owner_scope == "repo" {
+        crate::project_alias::push_project_value_filter(
+            conn,
+            "sk.owner_key",
+            owner_key,
+            idx,
+            params,
+        )
+    } else {
+        params.push(Box::new(owner_key.to_string()));
+        Ok((format!("sk.owner_key = ?{idx}"), idx + 1))
+    }
 }
 
 fn stable_state_topic_key(topic_key: Option<&str>) -> Option<String> {

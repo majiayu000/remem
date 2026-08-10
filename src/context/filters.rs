@@ -1,71 +1,82 @@
+use anyhow::Result;
+use rusqlite::Connection;
+
 pub(super) fn push_owner_included_filter(
+    conn: &Connection,
     project: &str,
     idx: &mut usize,
     conditions: &mut Vec<String>,
     params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
-) {
-    let owner_key_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
-    let target_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
-    let legacy_project_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
+) -> Result<()> {
+    let (owner_clause, next) =
+        crate::project_alias::push_project_value_filter(conn, "owner_key", project, *idx, params)?;
+    *idx = next;
+    let (target_clause, next) = crate::project_alias::push_project_value_filter(
+        conn,
+        "target_project",
+        project,
+        *idx,
+        params,
+    )?;
+    *idx = next;
+    let (legacy_clause, next) =
+        crate::project_alias::push_project_value_filter(conn, "project", project, *idx, params)?;
+    *idx = next;
     conditions.push(format!(
-        "((owner_scope = 'repo' AND owner_key = ?{owner_key_idx}) \
-          OR (owner_scope = 'repo' AND target_project = ?{target_idx}) \
-          OR (owner_scope IS NULL AND project = ?{legacy_project_idx} \
+        "((owner_scope = 'repo' AND {owner_clause}) \
+          OR (owner_scope = 'repo' AND {target_clause}) \
+          OR (owner_scope IS NULL AND {legacy_clause} \
               AND COALESCE(scope, 'project') != 'global'))"
     ));
+    Ok(())
 }
 
 pub(super) fn push_owner_excluded_filter(
+    conn: &Connection,
     project: &str,
     idx: &mut usize,
     conditions: &mut Vec<String>,
     params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
-) {
-    let owner_key_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
-    let target_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
-    let legacy_project_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
+) -> Result<()> {
+    let (owner_clause, next) =
+        crate::project_alias::push_project_value_filter(conn, "owner_key", project, *idx, params)?;
+    *idx = next;
+    let (target_clause, next) = crate::project_alias::push_project_value_filter(
+        conn,
+        "target_project",
+        project,
+        *idx,
+        params,
+    )?;
+    *idx = next;
+    let (legacy_clause, next) =
+        crate::project_alias::push_project_value_filter(conn, "project", project, *idx, params)?;
+    *idx = next;
     conditions.push(format!(
-        "NOT ((owner_scope = 'repo' AND owner_key = ?{owner_key_idx}) \
-              OR (owner_scope = 'repo' AND target_project = ?{target_idx}) \
-              OR (owner_scope IS NULL AND project = ?{legacy_project_idx} \
+        "NOT ((owner_scope = 'repo' AND {owner_clause}) \
+              OR (owner_scope = 'repo' AND {target_clause}) \
+              OR (owner_scope IS NULL AND {legacy_clause} \
                   AND COALESCE(scope, 'project') != 'global'))"
     ));
+    Ok(())
 }
 
 pub(super) fn push_context_related_filter(
+    conn: &Connection,
     project: &str,
     idx: &mut usize,
     conditions: &mut Vec<String>,
     params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
-) {
-    let project_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
-    let source_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
-    let target_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
-    let owner_idx = *idx;
-    params.push(Box::new(project.to_string()));
-    *idx += 1;
-    conditions.push(format!(
-        "(project = ?{project_idx} OR source_project = ?{source_idx} \
-          OR target_project = ?{target_idx} OR owner_key = ?{owner_idx})"
-    ));
+) -> Result<()> {
+    let mut clauses = Vec::new();
+    for column in ["project", "source_project", "target_project", "owner_key"] {
+        let (clause, next) =
+            crate::project_alias::push_project_value_filter(conn, column, project, *idx, params)?;
+        *idx = next;
+        clauses.push(clause);
+    }
+    conditions.push(format!("({})", clauses.join(" OR ")));
+    Ok(())
 }
 
 pub(super) fn push_excluded_type_filter(

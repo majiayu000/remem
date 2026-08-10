@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "run_id": "fixture-duplicate-001",
+  "source": {
+    "database_snapshot_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "selected_ids_sha256": "bdb94c722349d3200644baef90a49ec12fa44af2d6bf5f2acffdd09b68e62011",
+    "source_code_commit": "d458bfebcac3db98a7db220843016cee614b7309",
+    "runtime_version": "0.6.59 (schema v80)",
+    "database_schema_version": 80,
+    "content_redacted": true
+  },
+  "model": {
+    "provider": "opencode",
+    "model_id": "deepseek-v4-flash-fixture",
+    "prompt_protocol_version": "memory-governance-v1",
+    "input_schema_version": 1
+  },
+  "policy": {
+    "confidence_threshold": 0.85,
+    "max_batch_size": 50,
+    "mutation_authorized": false
+  },
+  "records": [
+    {
+      "memory_id": 7,
+      "row_snapshot_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "verdict": "keep",
+      "confidence": 0.9,
+      "reason_codes": [
+        "verified"
+      ],
+      "evidence_refs": [
+        "captured_event:101"
+      ]
+    },
+    {
+      "memory_id": 7,
+      "row_snapshot_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "verdict": "stale",
+      "confidence": 0.9,
+      "reason_codes": [
+        "superseded"
+      ],
+      "evidence_refs": [
+        "memory:9"
+      ]
+    }
+  ]
+}

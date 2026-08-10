@@ -12,7 +12,10 @@ mod v077;
 mod v078;
 mod v079;
 mod v080;
-pub(in crate::migrate) use self::{v079::V079_SCHEMA_INVARIANTS, v080::V080_SCHEMA_INVARIANTS};
+mod v081;
+pub(in crate::migrate) use self::{
+    v079::V079_SCHEMA_INVARIANTS, v080::V080_SCHEMA_INVARIANTS, v081::V081_SCHEMA_INVARIANTS,
+};
 pub(in crate::migrate) use v068::V068_SCHEMA_INVARIANTS;
 pub(in crate::migrate) use v070::V070_SCHEMA_INVARIANTS;
 pub(in crate::migrate) use v071::V071_SCHEMA_INVARIANTS;

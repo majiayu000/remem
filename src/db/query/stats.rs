@@ -571,7 +571,23 @@ pub fn query_candidate_promotion_stats(
 }
 
 pub fn query_top_projects(conn: &Connection, limit: i64) -> Result<Vec<ProjectCount>> {
-    let mut stmt = conn.prepare(
+    let sql = if crate::project_alias::alias_registry_available(conn)? {
+        "SELECT COALESCE(canonical_project.project_path, memories.project) AS project,
+                COUNT(*) as cnt
+         FROM memories
+         LEFT JOIN project_identity_aliases project_alias
+           ON project_alias.alias_path = memories.project
+          AND project_alias.status = 'active'
+         LEFT JOIN projects canonical_project
+           ON canonical_project.id = project_alias.canonical_project_id
+         WHERE memories.status = 'active'
+           AND (
+             memories.expires_at_epoch IS NULL
+             OR memories.expires_at_epoch > CAST(strftime('%s', 'now') AS INTEGER)
+           )
+         GROUP BY COALESCE(canonical_project.project_path, memories.project)
+         ORDER BY cnt DESC, project ASC LIMIT ?1"
+    } else {
         "SELECT project, COUNT(*) as cnt
          FROM memories
          WHERE status = 'active'
@@ -579,8 +595,9 @@ pub fn query_top_projects(conn: &Connection, limit: i64) -> Result<Vec<ProjectCo
              expires_at_epoch IS NULL
              OR expires_at_epoch > CAST(strftime('%s', 'now') AS INTEGER)
            )
-         GROUP BY project ORDER BY cnt DESC, project ASC LIMIT ?1",
-    )?;
+         GROUP BY project ORDER BY cnt DESC, project ASC LIMIT ?1"
+    };
+    let mut stmt = conn.prepare(sql)?;
     let rows = stmt.query_map(params![limit], |row| {
         Ok(ProjectCount {
             project: row.get(0)?,

@@ -63,12 +63,13 @@ pub fn search_memories_like_filtered(
     }
 
     idx = push_project_filter(
+        conn,
         "m.project",
         project,
         idx,
         &mut conditions,
         &mut param_values,
-    );
+    )?;
     idx = push_branch_filter("m.branch", branch, idx, &mut conditions, &mut param_values);
     if let Some(memory_type) = memory_type {
         conditions.push(format!("m.memory_type = ?{idx}"));
