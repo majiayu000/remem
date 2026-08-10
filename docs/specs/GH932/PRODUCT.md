@@ -68,7 +68,10 @@ context bundle.
   canonical `ContextAudit`. The canonical audit JSON is retained so benchmark
   verifiers can reconstruct and recompute the envelope hash; it contains only
   stable identities, attribution, scores, reason codes, and counts, never
-  memory title or body text.
+  memory title or body text. When the context gate emits a delta, the persisted
+  preview rewinds to the last complete item boundary and the persisted audit is
+  resealed to the identities and token estimate in that emitted delta;
+  gate-dropped entries carry the `delta_preview` reason.
 - SessionStart item rows and the bundle audit commit atomically. Retrying the
   same `injection_run_id` is idempotent only when the canonical audit hash is
   identical; a conflicting retry or later hash/summary mismatch is reported

@@ -49,8 +49,10 @@ external database.
 - Bundle-backed SessionStart emissions persist a payload-free, hash-verified
   audit linked to the existing per-item injection rows. The durable record
   contains plan/policy/schema versions, selection and token-budget aggregates,
-  degraded/truncation state, and canonical audit reason metadata; it never
-  stores memory titles, memory bodies, or rendered hook output.
+  degraded/truncation state, and canonical audit reason metadata. Delta-mode
+  previews rewind to the last complete item boundary, then records are resealed
+  to the identities and token estimate actually emitted; no record stores
+  memory titles, memory bodies, or rendered hook output.
 - Current-memory contracts expose staleness, temporal/as-of truth, citation
   usage, and injection audit state instead of treating recall as a black box.
 - User-context controls keep personal claims, profile summaries, suppression
@@ -333,8 +335,9 @@ Each emitted bundle is stored atomically with its `context_injection_items`
 rows under one emission-unique `injection_run_id`. A lower-level retry that
 explicitly reuses that run ID is idempotent only for the identical audit;
 conflicting hashes and later audit tampering fail verification. A persistence
-failure does not hide hook output, but is recorded at error level so missing
-production audit evidence is diagnosable rather than silent.
+failure does not hide hook output, but is recorded at error level with the
+attempted run ID so missing production audit evidence is diagnosable rather
+than silent.
 
 `remem doctor` reports this production consumer as `Context compiler` without
 loading or printing memory payloads. Bundle mode is healthy, the explicit

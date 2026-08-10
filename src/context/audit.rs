@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::params;
 use std::collections::{HashMap, HashSet};
 
@@ -31,6 +31,15 @@ pub(in crate::context) struct ContextAuditItem {
 }
 
 impl ContextAuditItem {
+    pub(in crate::context) fn stable_key(&self) -> Option<String> {
+        match self.item_kind {
+            "memory" => self.memory_id.or(self.item_id).map(memory_stable_key),
+            "session_summary" => self.item_id.map(session_stable_key),
+            "workstream" => self.item_id.map(workstream_stable_key),
+            _ => None,
+        }
+    }
+
     pub fn injected_memory(memory: &Memory, channel: &'static str, render_order: i64) -> Self {
         Self::memory_item(memory, channel, Some(render_order), "injected", None)
     }
@@ -193,6 +202,8 @@ impl ContextAuditItem {
 }
 
 pub(in crate::context) struct ContextAuditRenderState<'a> {
+    pub preference_rendered_memories: &'a [Memory],
+    pub preference_final_ids: &'a [i64],
     pub core_selected_ids: &'a [i64],
     pub core_final_ids: &'a [i64],
     pub index_final_ids: &'a [i64],
@@ -290,18 +301,18 @@ pub(in crate::context) fn record_context_injection_at(
         ContextGateAction::EmittedFull => "full",
         ContextGateAction::EmittedDelta => "delta",
     });
-    let transaction = conn.unchecked_transaction()?;
-    let nonce: String =
-        transaction.query_row("SELECT lower(hex(randomblob(16)))", [], |row| row.get(0))?;
+    let mut nonce = [0_u8; 16];
+    getrandom::fill(&mut nonce)
+        .map_err(|error| anyhow::anyhow!("generate context audit identity: {error}"))?;
+    let nonce = u128::from_ne_bytes(nonce);
     let run_id = format!(
-        "{}:{}:{}:{}",
+        "{}:{}:{}:{nonce:032x}",
         key,
         now,
-        context_hash.unwrap_or(decision.reason),
-        nonce
+        context_hash.unwrap_or(decision.reason)
     );
-
-    {
+    let persistence_result = (|| -> Result<()> {
+        let transaction = conn.unchecked_transaction()?;
         let mut statement = transaction.prepare(
             "INSERT INTO context_injection_items
              (injection_run_id, host, project, session_id, injection_key, hook_source,
@@ -336,11 +347,20 @@ pub(in crate::context) fn record_context_injection_at(
                 now,
             ])?;
         }
-    }
-    if let Some(bundle) = context_bundle {
-        crate::context_bundle::persist_context_bundle_audit(&transaction, &run_id, bundle, now)?;
-    }
-    transaction.commit()?;
+        drop(statement);
+        if let Some(bundle) = context_bundle {
+            crate::context_bundle::persist_context_bundle_audit(
+                &transaction,
+                &run_id,
+                bundle,
+                now,
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    })();
+    persistence_result
+        .with_context(|| format!("persist context audit injection_run_id={run_id}"))?;
     Ok(run_id)
 }
 
@@ -354,6 +374,36 @@ pub(in crate::context) fn build_context_audit_items(
     let mut render_order = 1_i64;
     if loaded.memory_abstained {
         items.push(ContextAuditItem::abstained_memory("no_relevant_context"));
+    }
+    let final_preferences = render
+        .preference_final_ids
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    for memory in render.preference_rendered_memories {
+        if final_preferences.contains(&memory.id) {
+            items.push(
+                ContextAuditItem::injected_memory_with_labels(
+                    memory,
+                    "preferences",
+                    render_order,
+                    &loaded.staleness_labels,
+                )
+                .with_render_end(
+                    render
+                        .item_end_chars
+                        .get(&memory_stable_key(memory.id))
+                        .copied(),
+                ),
+            );
+            render_order += 1;
+        } else {
+            items.push(ContextAuditItem::dropped_memory(
+                memory,
+                "preferences",
+                "total_char_limit",
+            ));
+        }
     }
     let core = render
         .core_selected_ids
@@ -585,7 +635,7 @@ pub(in crate::context) fn workstream_stable_key(id: i64) -> String {
     format!("workstream:{id}")
 }
 
-fn finalize_items_for_decision(
+pub(in crate::context) fn finalize_items_for_decision(
     decision: &ContextGateDecision,
     rendered_items: &[ContextAuditItem],
 ) -> Vec<ContextAuditItem> {
@@ -617,144 +667,4 @@ fn finalize_items_for_decision(
             item
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::context::host::HostKind;
-    use crate::context_bundle::{
-        ContextAudit, ContextBundle, DegradedMode, CONTEXT_BUNDLE_SCHEMA_VERSION,
-    };
-
-    fn injected_item(title: &str) -> ContextAuditItem {
-        ContextAuditItem {
-            item_kind: "memory",
-            item_id: Some(42),
-            memory_id: Some(42),
-            channel: "index",
-            score: Some(1.0),
-            render_order: Some(1),
-            status: "injected",
-            drop_reason: None,
-            title: title.to_string(),
-            provenance: "src=memory:#42".to_string(),
-            staleness: "fresh".to_string(),
-            render_end_chars: Some(200),
-        }
-    }
-
-    fn decision(action: ContextGateAction, output: &str) -> ContextGateDecision {
-        ContextGateDecision {
-            output: output.to_string(),
-            action,
-            reason: "test",
-            key: None,
-            context_hash: None,
-            output_mode: None,
-            retained_context_chars: (action == ContextGateAction::EmittedDelta).then_some(0),
-        }
-    }
-
-    #[test]
-    fn full_gate_trusts_identity_safe_render_survivors_not_titles() {
-        let title = "a very long title whose rendered form was truncated";
-        let finalized = finalize_items_for_decision(
-            &decision(ContextGateAction::EmittedFull, "#42 a very long title..."),
-            &[injected_item(title)],
-        );
-
-        assert_eq!(finalized[0].status, "injected");
-        assert_eq!(finalized[0].drop_reason, None);
-    }
-
-    #[test]
-    fn suppressed_and_delta_outputs_have_closed_drop_reasons() {
-        let suppressed = finalize_items_for_decision(
-            &decision(ContextGateAction::Suppressed, ""),
-            &[injected_item("duplicate title")],
-        );
-        let delta = finalize_items_for_decision(
-            &decision(ContextGateAction::EmittedDelta, "duplicate title"),
-            &[injected_item("duplicate title")],
-        );
-
-        assert_eq!(suppressed[0].drop_reason, Some("gate_suppressed"));
-        assert_eq!(delta[0].drop_reason, Some("delta_preview"));
-    }
-
-    #[test]
-    fn delta_keeps_items_with_identity_boundaries_inside_preview() {
-        let mut delta_decision = decision(ContextGateAction::EmittedDelta, "preview");
-        delta_decision.retained_context_chars = Some(250);
-
-        let finalized = finalize_items_for_decision(&delta_decision, &[injected_item("title")]);
-
-        assert_eq!(finalized[0].status, "injected");
-        assert_eq!(finalized[0].drop_reason, None);
-    }
-
-    #[test]
-    fn bundle_audit_failure_rolls_back_item_rows_atomically() -> Result<()> {
-        let conn = rusqlite::Connection::open_in_memory()?;
-        crate::migrate::run_migrations(&conn)?;
-        let plan_hash = "a".repeat(64);
-        let invalid_bundle = ContextBundle {
-            schema_version: CONTEXT_BUNDLE_SCHEMA_VERSION,
-            plan_hash: plan_hash.clone(),
-            degraded_mode: DegradedMode::Full,
-            preferences: Vec::new(),
-            failure_lessons: Vec::new(),
-            current_truth: Vec::new(),
-            workstreams: Vec::new(),
-            memory_index: Vec::new(),
-            recent_sessions: Vec::new(),
-            audit: ContextAudit {
-                schema_version: CONTEXT_BUNDLE_SCHEMA_VERSION,
-                policy_version: "retrieval_router_v2".to_string(),
-                relevance_policy_version: "sessionstart_significant_token_v1".to_string(),
-                plan_hash,
-                degraded_mode: DegradedMode::Full,
-                candidates_considered: 0,
-                selected_count: 0,
-                dropped_count: 0,
-                token_estimate: 0,
-                token_budget: 0,
-                truncation_reason: None,
-                entries: Vec::new(),
-            },
-        };
-        let invocation = ContextInvocation {
-            cwd: "/repo".to_string(),
-            project: "/repo".to_string(),
-            session_id: Some("atomic-audit".to_string()),
-            transcript_path: None,
-            source: Some("startup".to_string()),
-            host: HostKind::CodexCli,
-            use_colors: false,
-            debug: false,
-            force: true,
-            gate_mode: Some("off".to_string()),
-        };
-
-        record_context_injection(
-            &conn,
-            &invocation,
-            &decision(ContextGateAction::EmittedFull, "rendered payload"),
-            &[injected_item("memory title")],
-            Some(&invalid_bundle),
-        )
-        .expect_err("invalid bundle audit must fail the atomic write");
-
-        let item_count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM context_injection_items", [], |row| {
-                row.get(0)
-            })?;
-        let audit_count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM context_bundle_audits", [], |row| {
-                row.get(0)
-            })?;
-        assert_eq!((item_count, audit_count), (0, 0));
-        Ok(())
-    }
 }

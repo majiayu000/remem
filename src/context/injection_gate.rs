@@ -83,6 +83,16 @@ pub(super) fn apply_context_gate_with_data_version(
     output: String,
     data_version: Option<&str>,
 ) -> ContextGateDecision {
+    apply_context_gate_with_data_version_and_boundaries(conn, invocation, output, data_version, &[])
+}
+
+pub(super) fn apply_context_gate_with_data_version_and_boundaries(
+    conn: &rusqlite::Connection,
+    invocation: &ContextInvocation,
+    output: String,
+    data_version: Option<&str>,
+    item_end_chars: &[usize],
+) -> ContextGateDecision {
     if output.is_empty() {
         return decision(output, ContextGateAction::Bypassed, "empty_output");
     }
@@ -270,7 +280,7 @@ pub(super) fn apply_context_gate_with_data_version(
 
     let (output, action, output_mode, retained_context_chars) =
         if matches!(mode, ContextGateMode::Auto | ContextGateMode::Delta) {
-            let delta = delta::build_delta_output(&output);
+            let delta = delta::build_delta_output(&output, item_end_chars);
             (
                 delta.output,
                 ContextGateAction::EmittedDelta,

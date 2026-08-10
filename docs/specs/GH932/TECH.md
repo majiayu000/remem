@@ -137,13 +137,20 @@ is the explicit rollback.
   Array order remains the deterministic audit-entry order established by the
   executor/sealer.
 - SessionStart writes finalized `context_injection_items` and the bundle audit
-  in one SQLite transaction. Each emission gets a 128-bit SQLite-generated
+  in one SQLite transaction. Each emission gets a 128-bit OS-generated
   nonce in its `injection_run_id`, so distinct same-second PromptSubmit and
   SessionStart invocations cannot collapse onto one item set. A retry for an
   explicit existing run succeeds only when the stored and incoming hashes
   match and matching item rows still exist; otherwise it returns an integrity
   error. The table rejects in-place updates; retention cleanup may delete
   expired rows.
+- The production delta gate receives the complete renderer item-end map,
+  including preferences, and rewinds an over-limit preview to the last complete
+  item. Persistence then clones and reseals the bundle to those finalized
+  identities, marks later selected entries as `delta_preview`, recomputes
+  selection counts and emitted-output token estimate, and hashes that post-gate
+  audit so item rows and the verified bundle audit describe the same
+  SessionStart bytes.
 - Verified reads validate the stored `plan_schema_version` before parsing or
   decoding `audit_json`, canonicalize and re-hash the version-bound envelope,
   dispatch to that version's decoder, then compare every
@@ -160,7 +167,8 @@ is the explicit rollback.
 - Audit persistence is attempted only for emitted Bundle-backed SessionStart
   output. Legacy rollback and pre-render suppressed invocations do not invent
   a plan/audit. Any write failure is logged at error level while preserving the
-  existing hook fail-open output contract.
+  existing hook fail-open output contract; once an emission run ID has been
+  generated, the error chain and diagnostic include that attempted ID.
 
 ## Doctor Capability Check
 

@@ -1,6 +1,11 @@
 //! Production SessionStart audit persistence and diagnostics.
 
-use super::super::audit::{record_context_injection, ContextAuditItem};
+use std::borrow::Cow;
+use std::collections::HashSet;
+
+use super::super::audit::{
+    finalize_items_for_decision, record_context_injection, ContextAuditItem,
+};
 use super::super::injection_gate::{ContextGateAction, ContextGateDecision};
 use super::super::invocation::ContextInvocation;
 
@@ -12,21 +17,52 @@ pub(super) fn persist_emission_audit(
     context_bundle: Option<&crate::context_bundle::ContextBundle>,
 ) {
     cleanup_persisted_bundle_audits(conn);
-    let emitted_bundle = (!matches!(decision.action, ContextGateAction::Suppressed))
-        .then_some(context_bundle)
-        .flatten();
-    if let Err(error) =
-        record_context_injection(conn, invocation, decision, audit_items, emitted_bundle)
-    {
+    let emitted_bundle = emitted_context_bundle(decision, audit_items, context_bundle);
+    if let Err(error) = record_context_injection(
+        conn,
+        invocation,
+        decision,
+        audit_items,
+        emitted_bundle.as_deref(),
+    ) {
         crate::log::error(
             "context-audit",
             &format!(
-                "failed to persist SessionStart audit for host={} project={} session={}: {error}",
+                "failed to persist SessionStart audit for host={} project={} session={}: {error:#}",
                 invocation.host.as_env_value(),
                 invocation.project,
                 invocation.session_id.as_deref().unwrap_or("<none>")
             ),
         );
+    }
+}
+
+fn emitted_context_bundle<'a>(
+    decision: &ContextGateDecision,
+    audit_items: &[ContextAuditItem],
+    context_bundle: Option<&'a crate::context_bundle::ContextBundle>,
+) -> Option<Cow<'a, crate::context_bundle::ContextBundle>> {
+    let bundle = context_bundle?;
+    match decision.action {
+        ContextGateAction::Suppressed => None,
+        ContextGateAction::EmittedDelta => {
+            let selected_keys = finalize_items_for_decision(decision, audit_items)
+                .into_iter()
+                .filter(|item| item.status == "injected")
+                .filter_map(|item| item.stable_key())
+                .collect::<HashSet<_>>();
+            let mut emitted = bundle.clone();
+            crate::context_bundle::reseal_after_emission_gate(
+                &mut emitted,
+                &selected_keys,
+                decision.output.chars().count(),
+                "delta_preview",
+            );
+            Some(Cow::Owned(emitted))
+        }
+        ContextGateAction::Bypassed
+        | ContextGateAction::EmittedFull
+        | ContextGateAction::FailOpen => Some(Cow::Borrowed(bundle)),
     }
 }
 
@@ -47,6 +83,147 @@ mod tests {
 
     use super::*;
     use crate::context::host::HostKind;
+    use crate::context_bundle::{
+        AuditEntry, ChannelKind, ContextAudit, ContextBundle, ContextItem, DegradedMode,
+        ItemValidity, SourceKind, TrustClass, CONTEXT_BUNDLE_SCHEMA_VERSION,
+    };
+
+    fn selected_bundle_item(id: i64) -> ContextItem {
+        ContextItem {
+            stable_key: format!("memory:{id}"),
+            channel: ChannelKind::Preferences,
+            title: format!("memory {id}"),
+            text: format!("body {id}"),
+            source_kind: SourceKind::Canonical,
+            canonical_ref: Some(format!("memory:{id}")),
+            projection_ref: None,
+            evidence_refs: Vec::new(),
+            validity: ItemValidity::Current,
+            trust: TrustClass::Standard,
+            project: Some("/repo".to_string()),
+            branch: None,
+        }
+    }
+
+    fn selected_audit_entry(id: i64) -> AuditEntry {
+        AuditEntry {
+            stable_key: format!("memory:{id}"),
+            channel: ChannelKind::Preferences,
+            source_kind: SourceKind::Canonical,
+            validity: ItemValidity::Current,
+            selected: true,
+            reason: "selected_channel".to_string(),
+            relevance_score: Some(1.0),
+            token_estimate: 2,
+        }
+    }
+
+    fn rendered_audit_item(id: i64, render_end_chars: usize) -> ContextAuditItem {
+        ContextAuditItem {
+            item_kind: "memory",
+            item_id: Some(id),
+            memory_id: Some(id),
+            channel: "preferences",
+            score: Some(1.0),
+            render_order: Some(id),
+            status: "injected",
+            drop_reason: None,
+            title: format!("memory {id}"),
+            provenance: format!("src=memory:#{id}"),
+            staleness: "fresh".to_string(),
+            render_end_chars: Some(render_end_chars),
+        }
+    }
+
+    #[test]
+    fn delta_persistence_reseals_bundle_to_retained_items() -> Result<()> {
+        let conn = rusqlite::Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        let plan_hash = "a".repeat(64);
+        let bundle = ContextBundle {
+            schema_version: CONTEXT_BUNDLE_SCHEMA_VERSION,
+            plan_hash: plan_hash.clone(),
+            degraded_mode: DegradedMode::Full,
+            preferences: vec![selected_bundle_item(1), selected_bundle_item(2)],
+            failure_lessons: Vec::new(),
+            current_truth: Vec::new(),
+            workstreams: Vec::new(),
+            memory_index: Vec::new(),
+            recent_sessions: Vec::new(),
+            audit: ContextAudit {
+                schema_version: CONTEXT_BUNDLE_SCHEMA_VERSION,
+                policy_version: "retrieval_router_v2".to_string(),
+                relevance_policy_version: "sessionstart_significant_token_v1".to_string(),
+                plan_hash,
+                degraded_mode: DegradedMode::Full,
+                candidates_considered: 2,
+                selected_count: 2,
+                dropped_count: 0,
+                token_estimate: 4,
+                token_budget: 100,
+                truncation_reason: None,
+                entries: vec![selected_audit_entry(1), selected_audit_entry(2)],
+            },
+        };
+        let invocation = ContextInvocation {
+            cwd: "/repo".to_string(),
+            project: "/repo".to_string(),
+            session_id: Some("delta-reseal".to_string()),
+            transcript_path: None,
+            source: Some("SessionStart".to_string()),
+            host: HostKind::CodexCli,
+            use_colors: false,
+            debug: false,
+            force: false,
+            gate_mode: Some("delta".to_string()),
+        };
+        let decision = ContextGateDecision {
+            output: "delta output".to_string(),
+            action: ContextGateAction::EmittedDelta,
+            reason: "changed_hash",
+            key: Some("session:/repo:delta-reseal".to_string()),
+            context_hash: Some("b".repeat(64)),
+            output_mode: Some("delta"),
+            retained_context_chars: Some(100),
+        };
+
+        persist_emission_audit(
+            &conn,
+            &invocation,
+            &decision,
+            &[rendered_audit_item(1, 50), rendered_audit_item(2, 150)],
+            Some(&bundle),
+        );
+
+        let run_id: String = conn.query_row(
+            "SELECT injection_run_id FROM context_injection_items
+             WHERE session_id = 'delta-reseal' LIMIT 1",
+            [],
+            |row| row.get(0),
+        )?;
+        let statuses: (i64, i64) = conn.query_row(
+            "SELECT SUM(status = 'injected'),
+                    SUM(status = 'dropped' AND drop_reason = 'delta_preview')
+             FROM context_injection_items WHERE injection_run_id = ?1",
+            [&run_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(statuses, (1, 1));
+        let persisted =
+            crate::context_bundle::persistence::load_verified_context_bundle_audit(&conn, &run_id)?
+                .ok_or_else(|| anyhow::anyhow!("missing resealed delta audit"))?;
+        assert_eq!(persisted.audit.selected_count, 1);
+        assert_eq!(persisted.audit.dropped_count, 1);
+        assert_eq!(persisted.audit.token_estimate, 3);
+        assert_eq!(
+            persisted.audit.truncation_reason.as_deref(),
+            Some("delta_preview")
+        );
+        assert!(persisted.audit.entries[0].selected);
+        assert!(!persisted.audit.entries[1].selected);
+        assert_eq!(persisted.audit.entries[1].reason, "delta_preview");
+        Ok(())
+    }
 
     #[test]
     fn persistence_path_cleans_old_bundle_audits_when_gate_is_off() -> Result<()> {

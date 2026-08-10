@@ -1,12 +1,21 @@
 const DEFAULT_DELTA_CHAR_LIMIT: usize = 1200;
+const DELTA_TRUNCATED_MARKER: &str = "\n[remem context delta truncated]\n";
 
 pub(super) struct DeltaOutput {
     pub output: String,
     pub retained_context_chars: usize,
 }
 
-pub(super) fn build_delta_output(output: &str) -> DeltaOutput {
+pub(super) fn build_delta_output(output: &str, item_end_chars: &[usize]) -> DeltaOutput {
     let limit = read_usize_env("REMEM_CONTEXT_DELTA_CHAR_LIMIT", DEFAULT_DELTA_CHAR_LIMIT);
+    build_delta_output_with_limit(output, item_end_chars, limit)
+}
+
+fn build_delta_output_with_limit(
+    output: &str,
+    item_end_chars: &[usize],
+    limit: usize,
+) -> DeltaOutput {
     if limit == 0 {
         return DeltaOutput {
             output: String::new(),
@@ -26,13 +35,57 @@ pub(super) fn build_delta_output(output: &str) -> DeltaOutput {
     let delta_prefix_chars = delta.chars().count();
     delta.push_str(copied_body);
 
+    let was_truncated = delta.chars().count() > limit;
     let retained_delta_chars = enforce_char_limit_preserving_footer(&mut delta, limit, footer);
     let retained_copied_chars = retained_delta_chars
         .saturating_sub(delta_prefix_chars)
         .min(copied_body.chars().count());
+    let retained_context_chars = original_body_offset + retained_copied_chars;
+    if was_truncated && !item_end_chars.is_empty() {
+        let boundary = item_end_chars
+            .iter()
+            .copied()
+            .filter(|end| *end <= retained_context_chars)
+            .max()
+            .unwrap_or(0);
+        if boundary < retained_context_chars {
+            if boundary == 0 && retained_copied_chars == 0 {
+                return DeltaOutput {
+                    output: delta,
+                    retained_context_chars: 0,
+                };
+            }
+            let retained_copied_chars = boundary
+                .saturating_sub(original_body_offset)
+                .min(copied_body.chars().count());
+            let copied_prefix = copied_body
+                .chars()
+                .take(retained_copied_chars)
+                .collect::<String>();
+            delta.clear();
+            delta.push_str(&header);
+            delta.push_str(
+                "Context changed since the previous injection. Showing a compact preview. Full context: `remem context --force`.\n\n",
+            );
+            delta.push_str(&copied_prefix);
+            let marker_chars = DELTA_TRUNCATED_MARKER.chars().count();
+            let footer_chars = footer.chars().count();
+            if marker_chars < limit {
+                delta.push_str(DELTA_TRUNCATED_MARKER);
+                if !footer.is_empty() && marker_chars + footer_chars < limit {
+                    delta.push_str(footer);
+                }
+            }
+            debug_assert!(delta.chars().count() <= limit);
+            return DeltaOutput {
+                output: delta,
+                retained_context_chars: boundary,
+            };
+        }
+    }
     DeltaOutput {
         output: delta,
-        retained_context_chars: original_body_offset + retained_copied_chars,
+        retained_context_chars,
     }
 }
 
@@ -123,14 +176,13 @@ fn enforce_char_limit_preserving_footer(
             .count();
     }
 
-    let marker = "\n[remem context delta truncated]\n";
-    let marker_chars = marker.chars().count();
+    let marker_chars = DELTA_TRUNCATED_MARKER.chars().count();
     let footer_chars = footer.chars().count();
 
     if !footer.is_empty() && marker_chars + footer_chars < char_limit {
         let keep_chars = char_limit - marker_chars - footer_chars;
         let mut truncated: String = output.chars().take(keep_chars).collect();
-        truncated.push_str(marker);
+        truncated.push_str(DELTA_TRUNCATED_MARKER);
         truncated.push_str(footer);
         *output = truncated;
         return keep_chars;
@@ -143,7 +195,7 @@ fn enforce_char_limit_preserving_footer(
 
     let keep_chars = char_limit - marker_chars;
     let mut truncated: String = output.chars().take(keep_chars).collect();
-    truncated.push_str(marker);
+    truncated.push_str(DELTA_TRUNCATED_MARKER);
     *output = truncated;
     keep_chars
 }
@@ -158,6 +210,7 @@ fn read_usize_env(key: &str, default: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::super::*;
+    use super::build_delta_output_with_limit;
     use anyhow::Result;
     use rusqlite::params;
 
@@ -217,6 +270,59 @@ mod tests {
         )?;
         assert_eq!(mode, "delta");
         Ok(())
+    }
+
+    #[test]
+    fn delta_limit_rewinds_to_complete_item_boundary() {
+        let header = "# remem context\n\n";
+        let first = "- retained preference\n";
+        let second = format!("- clipped memory {}\n", "x".repeat(600));
+        let output = format!("{header}{first}{second}");
+        let first_end = format!("{header}{first}").chars().count();
+        let all_end = output.chars().count();
+
+        let delta = build_delta_output_with_limit(&output, &[first_end, all_end], 240);
+
+        assert_eq!(delta.retained_context_chars, first_end);
+        assert!(delta.output.contains("retained preference"));
+        assert!(!delta.output.contains("clipped memory"));
+        assert!(delta.output.contains("context delta truncated"));
+        assert!(delta.output.chars().count() <= 240);
+    }
+
+    #[test]
+    fn delta_boundary_rewind_drops_oversized_stats_footer() {
+        let header = "# remem context\n\n";
+        let first = "- retained preference\n";
+        let second = format!("- clipped memory {}\n", "x".repeat(600));
+        let footer = format!(
+            "## Loaded\n- Memories: 2\n- Preferences: 1\n- Budget: {}\n",
+            "y".repeat(300)
+        );
+        let output = format!("{header}{first}{second}{footer}");
+        let first_end = format!("{header}{first}").chars().count();
+        let all_end = format!("{header}{first}{second}").chars().count();
+
+        let delta = build_delta_output_with_limit(&output, &[first_end, all_end], 240);
+
+        assert_eq!(delta.retained_context_chars, first_end);
+        assert!(delta.output.contains("retained preference"));
+        assert!(!delta.output.contains("clipped memory"));
+        assert!(!delta.output.contains("## Loaded"));
+        assert!(delta.output.contains("context delta truncated"));
+        assert!(delta.output.chars().count() <= 240);
+    }
+
+    #[test]
+    fn delta_under_limit_keeps_trailing_non_item_text() {
+        let output = "# remem context\n\n- retained preference\n\nLoaded: 1\n";
+        let item_end = "# remem context\n\n- retained preference\n".chars().count();
+
+        let delta = build_delta_output_with_limit(output, &[item_end], 500);
+
+        assert_eq!(delta.retained_context_chars, output.chars().count());
+        assert!(delta.output.contains("Loaded: 1"));
+        assert!(!delta.output.contains("context delta truncated"));
     }
 
     #[test]

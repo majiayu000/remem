@@ -10,8 +10,8 @@ use super::format::char_len;
 use super::hook_warning::{append_hook_integrity_warning, claude_hook_integrity_warning};
 use super::host::resolve_profile;
 use super::injection_gate::{
-    apply_context_gate_with_data_version, compute_data_version_hint, pre_render_context_gate,
-    ContextGateAction, ContextGateDecision, ContextGatePrecheck,
+    apply_context_gate_with_data_version_and_boundaries, compute_data_version_hint,
+    pre_render_context_gate, ContextGateAction, ContextGateDecision, ContextGatePrecheck,
 };
 use super::invocation::{
     direct_context_invocation, resolve_context_invocation, resolve_cursor_context_invocation,
@@ -238,11 +238,17 @@ fn generate_context_output_for_invocation(
                 }
             } else {
                 let gate_start = Instant::now();
-                let decision = apply_context_gate_with_data_version(
+                let item_end_chars = audit_items
+                    .iter()
+                    .filter(|item| item.status == "injected")
+                    .filter_map(|item| item.render_end_chars)
+                    .collect::<Vec<_>>();
+                let decision = apply_context_gate_with_data_version_and_boundaries(
                     &conn,
                     &invocation,
                     output,
                     data_version.as_deref(),
+                    &item_end_chars,
                 );
                 stats
                     .timings
@@ -740,6 +746,8 @@ pub(in crate::context) fn render_context_output_from_inputs(
     }
     let audit_start = Instant::now();
     let audit_render = ContextAuditRenderState {
+        preference_rendered_memories: &preference_details.rendered_memories,
+        preference_final_ids: &finalized.final_preference_ids,
         core_selected_ids: &core_selected_ids,
         core_final_ids: &finalized.final_core_ids,
         index_final_ids: &finalized.final_index_ids,
