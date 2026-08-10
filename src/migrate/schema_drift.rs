@@ -85,10 +85,11 @@ impl SchemaInvariant {
 mod invariants;
 
 pub(super) use invariants::{
-    v076_critical_shape_findings, SCHEMA_INVARIANTS, V068_SCHEMA_INVARIANTS,
-    V070_SCHEMA_INVARIANTS, V071_SCHEMA_INVARIANTS, V072_SCHEMA_INVARIANTS, V073_SCHEMA_INVARIANTS,
-    V074_SCHEMA_INVARIANTS, V075_SCHEMA_INVARIANTS, V076_SCHEMA_INVARIANTS, V077_SCHEMA_INVARIANTS,
-    V078_SCHEMA_INVARIANTS, V079_SCHEMA_INVARIANTS, V080_SCHEMA_INVARIANTS, V081_SCHEMA_INVARIANTS,
+    v076_critical_shape_findings, SCHEMA_INVARIANTS, V067_SCHEMA_INVARIANTS,
+    V068_SCHEMA_INVARIANTS, V070_SCHEMA_INVARIANTS, V071_SCHEMA_INVARIANTS, V072_SCHEMA_INVARIANTS,
+    V073_SCHEMA_INVARIANTS, V074_SCHEMA_INVARIANTS, V075_SCHEMA_INVARIANTS, V076_SCHEMA_INVARIANTS,
+    V077_SCHEMA_INVARIANTS, V078_SCHEMA_INVARIANTS, V079_SCHEMA_INVARIANTS, V080_SCHEMA_INVARIANTS,
+    V081_SCHEMA_INVARIANTS, V082_SCHEMA_INVARIANTS,
 };
 
 pub(crate) fn validate_schema_invariants(conn: &Connection) -> Result<Vec<String>> {
@@ -162,6 +163,7 @@ fn missing_schema_invariants(conn: &Connection, applied: &[i64]) -> Result<Vec<S
     let mut missing = Vec::new();
     for invariant in SCHEMA_INVARIANTS
         .iter()
+        .chain(V067_SCHEMA_INVARIANTS)
         .chain(V068_SCHEMA_INVARIANTS)
         .chain(V070_SCHEMA_INVARIANTS)
         .chain(V071_SCHEMA_INVARIANTS)
@@ -175,6 +177,7 @@ fn missing_schema_invariants(conn: &Connection, applied: &[i64]) -> Result<Vec<S
         .chain(V079_SCHEMA_INVARIANTS)
         .chain(V080_SCHEMA_INVARIANTS)
         .chain(V081_SCHEMA_INVARIANTS)
+        .chain(V082_SCHEMA_INVARIANTS)
     {
         if !applied.contains(&invariant.version) || schema_object_exists(conn, invariant.object)? {
             continue;

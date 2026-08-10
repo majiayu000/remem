@@ -11,6 +11,7 @@ mod engine_convergence;
 mod gate_pipeline;
 mod load;
 mod ownership;
+mod project_alias;
 mod render;
 mod render_inline;
 mod render_poisoning;

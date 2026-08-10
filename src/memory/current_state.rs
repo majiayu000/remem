@@ -130,21 +130,39 @@ fn load_state_key_matches(
             conditions.push(format!("owner_scope = ?{idx}"));
             params_vec.push(Box::new(owner_scope.to_string()));
             idx += 1;
-            conditions.push(format!("owner_key = ?{idx}"));
-            params_vec.push(Box::new(owner_key.to_string()));
-            idx += 1;
+            if owner_scope == "repo" {
+                let (clause, next) = crate::project_alias::push_project_value_filter(
+                    conn,
+                    "owner_key",
+                    owner_key,
+                    idx,
+                    &mut params_vec,
+                )?;
+                conditions.push(clause);
+                idx = next;
+            } else {
+                conditions.push(format!("owner_key = ?{idx}"));
+                params_vec.push(Box::new(owner_key.to_string()));
+                idx += 1;
+            }
         }
         (Some(_), None) | (None, Some(_)) => {
             bail!("owner_scope and owner_key must be provided together");
         }
         (None, None) => {
             let project = project_filter(req)?;
+            let (project_clause, next) = crate::project_alias::push_project_value_filter(
+                conn,
+                "owner_key",
+                &project,
+                idx,
+                &mut params_vec,
+            )?;
             conditions.push(format!(
-                "((owner_scope = 'repo' AND owner_key = ?{idx})
+                "((owner_scope = 'repo' AND {project_clause})
                    OR (owner_scope = 'user' AND owner_key = 'user:default'))"
             ));
-            params_vec.push(Box::new(project));
-            idx += 1;
+            idx = next;
         }
     }
     if let Some(as_of_epoch) = req.as_of_epoch {

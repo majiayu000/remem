@@ -38,6 +38,7 @@ pub mod migrate;
 mod observation_extract;
 pub mod observe;
 pub mod perf;
+pub mod project_alias;
 pub mod project_id;
 pub mod retrieval;
 pub mod retrieval_router;

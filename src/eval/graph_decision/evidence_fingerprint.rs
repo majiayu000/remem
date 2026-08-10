@@ -234,6 +234,7 @@ const MIGRATION_SQL_INPUTS: &[&str] = &[
     "src/migrations/v079_candidate_spo_facts.sql",
     "src/migrations/v080_candidate_outcome.sql",
     "src/migrations/v081_context_bundle_audits.sql",
+    "src/migrations/v082_project_identity_aliases.sql",
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -512,6 +513,7 @@ mod tests {
             "src/migrate/schema_drift/invariants/v078.rs",
             "src/migrate/schema_drift/invariants/v079.rs",
             "src/migrate/schema_drift/invariants/v080.rs",
+            "src/migrate/schema_drift/invariants/v081.rs",
             "src/migrate/state.rs",
             "src/migrate/transition.rs",
             "src/migrate/types.rs",

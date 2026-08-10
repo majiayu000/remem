@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://remem.dev/schemas/memory-audit-run-v1.json",
+  "title": "Remem memory audit run",
+  "description": "A model-assisted, non-mutating candidate judgment artifact. Validation does not authorize database changes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "source",
+    "model",
+    "policy",
+    "records"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "database_snapshot_sha256",
+        "selected_ids_sha256",
+        "source_code_commit",
+        "runtime_version",
+        "database_schema_version",
+        "content_redacted"
+      ],
+      "properties": {
+        "database_snapshot_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "selected_ids_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "source_code_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+        },
+        "runtime_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "database_schema_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content_redacted": {
+          "const": true
+        }
+      }
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "model_id",
+        "prompt_protocol_version",
+        "input_schema_version"
+      ],
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "model_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "prompt_protocol_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "input_schema_version": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "confidence_threshold",
+        "max_batch_size",
+        "mutation_authorized"
+      ],
+      "properties": {
+        "confidence_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "max_batch_size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "mutation_authorized": {
+          "const": false
+        }
+      }
+    },
+    "records": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "$ref": "#/$defs/record"
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "memory_id",
+        "row_snapshot_sha256",
+        "verdict",
+        "confidence",
+        "reason_codes",
+        "evidence_refs"
+      ],
+      "properties": {
+        "memory_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "row_snapshot_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "verdict": {
+          "enum": [
+            "keep",
+            "stale",
+            "split",
+            "merge_candidate",
+            "quarantine",
+            "abstain"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "reason_codes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(captured_event|observation|memory|commit|file|user_prompt):[^\\s]{1,240}$"
+          }
+        }
+      }
+    }
+  }
+}

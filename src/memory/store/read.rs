@@ -42,7 +42,8 @@ pub fn get_recent_memories_excluding_types(
     let mut conditions = Vec::new();
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let mut idx = 1;
-    idx = push_project_filter_required("project", project, idx, &mut conditions, &mut params);
+    idx =
+        push_project_filter_required(conn, "project", project, idx, &mut conditions, &mut params)?;
     conditions.push(crate::memory::memory_current_filter_sql(
         "status",
         "expires_at_epoch",
@@ -89,9 +90,15 @@ pub fn get_recent_project_memories_excluding_types(
     let mut conditions = Vec::new();
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let mut idx = 1;
-    conditions.push(format!("project = ?{idx}"));
-    params.push(Box::new(project.to_string()));
-    idx += 1;
+    let (project_clause, next) = crate::project_alias::push_project_value_filter(
+        conn,
+        "project",
+        project,
+        idx,
+        &mut params,
+    )?;
+    conditions.push(project_clause);
+    idx = next;
     conditions.push("COALESCE(scope, 'project') != 'global'".to_string());
     conditions.push(crate::memory::memory_current_filter_sql(
         "status",
@@ -144,9 +151,15 @@ pub fn search_project_memories_excluding_types(
     let mut conditions = Vec::new();
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let mut idx = 1;
-    conditions.push(format!("project = ?{idx}"));
-    params.push(Box::new(project.to_string()));
-    idx += 1;
+    let (project_clause, next) = crate::project_alias::push_project_value_filter(
+        conn,
+        "project",
+        project,
+        idx,
+        &mut params,
+    )?;
+    conditions.push(project_clause);
+    idx = next;
     conditions.push("COALESCE(scope, 'project') != 'global'".to_string());
     conditions.push(crate::memory::memory_current_filter_sql(
         "status",
@@ -234,7 +247,8 @@ pub fn list_memories_with_suppressed_policy(
     let mut conditions = Vec::new();
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let mut idx = 1;
-    idx = push_project_filter_required("project", project, idx, &mut conditions, &mut params);
+    idx =
+        push_project_filter_required(conn, "project", project, idx, &mut conditions, &mut params)?;
 
     conditions.push(crate::memory::memory_current_filter_sql(
         "status",

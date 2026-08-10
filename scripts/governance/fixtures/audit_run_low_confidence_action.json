@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "run_id": "fixture-low-confidence-001",
+  "source": {
+    "database_snapshot_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "selected_ids_sha256": "95bce61a71a78185f4b6f8f25fc6986108043727fe9d9c19dbe44b0081ef928a",
+    "source_code_commit": "d458bfebcac3db98a7db220843016cee614b7309",
+    "runtime_version": "0.6.59 (schema v80)",
+    "database_schema_version": 80,
+    "content_redacted": true
+  },
+  "model": {
+    "provider": "opencode",
+    "model_id": "deepseek-v4-flash-fixture",
+    "prompt_protocol_version": "memory-governance-v1",
+    "input_schema_version": 1
+  },
+  "policy": {
+    "confidence_threshold": 0.85,
+    "max_batch_size": 50,
+    "mutation_authorized": false
+  },
+  "records": [
+    {
+      "memory_id": 11,
+      "row_snapshot_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "verdict": "quarantine",
+      "confidence": 0.4,
+      "reason_codes": [
+        "possible_prompt_injection"
+      ],
+      "evidence_refs": [
+        "observation:55"
+      ]
+    }
+  ]
+}

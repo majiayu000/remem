@@ -410,6 +410,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "context_bundle_audits",
         sql: include_str!("../migrations/v081_context_bundle_audits.sql"),
     },
+    Migration {
+        version: 82,
+        name: "project_identity_aliases",
+        sql: include_str!("../migrations/v082_project_identity_aliases.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

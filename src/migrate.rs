@@ -33,6 +33,8 @@ mod tests_memory_usage;
 #[cfg(test)]
 mod tests_preference_rules;
 #[cfg(test)]
+mod tests_project_identity_aliases;
+#[cfg(test)]
 mod tests_raw_session_identity;
 #[cfg(test)]
 mod tests_retrieval_enrichment;

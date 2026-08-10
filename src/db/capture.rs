@@ -297,8 +297,9 @@ fn record_captured_event_inner(
 /// review candidates outside a live capture session.
 pub(crate) fn ensure_project_row(conn: &Connection, project_path: &str) -> Result<i64> {
     let now = chrono::Utc::now().timestamp();
-    let workspace_id = upsert_workspace(conn, project_path, None, now)?;
-    upsert_project(conn, workspace_id, project_path, now)
+    let project_path = crate::project_alias::canonical_project_path_for_write(conn, project_path)?;
+    let workspace_id = upsert_workspace(conn, &project_path, None, now)?;
+    upsert_project(conn, workspace_id, &project_path, now)
 }
 
 fn upsert_identity(
@@ -308,9 +309,9 @@ fn upsert_identity(
     now: i64,
 ) -> Result<IdentityIds> {
     let host_id = upsert_host(conn, normalize_host(input.host)?, now)?;
-    let root_path = input.project.to_string();
+    let root_path = crate::project_alias::canonical_project_path_for_write(conn, input.project)?;
     let workspace_id = upsert_workspace(conn, &root_path, git_branch, now)?;
-    let project_id = upsert_project(conn, workspace_id, input.project, now)?;
+    let project_id = upsert_project(conn, workspace_id, &root_path, now)?;
     let session_row_id = upsert_session_row(
         conn,
         host_id,
