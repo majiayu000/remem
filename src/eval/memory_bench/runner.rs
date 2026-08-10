@@ -104,6 +104,7 @@ pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBench
         schema_version: 1,
         benchmark_id: fixture.benchmark_id.clone(),
         benchmark_version: fixture.version.clone(),
+        suite: Some(fixture.suite.clone()),
         run_phase: None,
         matrix_namespace: None,
         layer: BenchmarkLayer::MemorySystemCapability,

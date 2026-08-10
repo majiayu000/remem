@@ -2,6 +2,7 @@
   "schema_version": 1,
   "benchmark_id": "adversarial-policy",
   "benchmark_version": "v2",
+  "suite": "adversarial-policy",
   "layer": "memory_system_capability",
   "conditions": [
     "remem_default"

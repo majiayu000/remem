@@ -61,6 +61,8 @@ pub struct PublicBenchmarkReport {
     pub schema_version: u32,
     pub benchmark_id: String,
     pub benchmark_version: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suite: Option<String>,
     #[serde(default)]
     pub run_phase: Option<String>,
     #[serde(default)]

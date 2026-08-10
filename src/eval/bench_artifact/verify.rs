@@ -311,6 +311,21 @@ fn validate_memory_run_artifact(
         );
     }
     require_non_blank(&run.suite, &label, "suite", state);
+    match report.suite.as_deref() {
+        Some(report_suite) => {
+            require_non_blank(report_suite, &label, "report suite", state);
+            if run.suite != report_suite {
+                state.fail(
+                    label.clone(),
+                    format!(
+                        "memory run suite {:?} must match report suite {:?}",
+                        run.suite, report_suite
+                    ),
+                );
+            }
+        }
+        None => state.fail(label.clone(), "memory report suite is missing"),
+    }
     require_non_blank(&run.condition, &label, "condition", state);
     if !report.conditions.contains(&run.condition) {
         state.fail(
