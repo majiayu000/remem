@@ -74,8 +74,10 @@ and should be inspected from the current checkout when needed.
 |------|----------------|
 | `adapter/`, `observe/`, `cursor_hook/` | Host hook parsing, capture filtering, spill/replay, Git evidence, and capture-ledger writes |
 | `db/`, `migrate/`, `migrations/` | SQLite schema, migration execution, connection policy, write/read helpers, job and extraction-task state |
+| `worker.rs`, `worker/`, `extraction_worker.rs` | Background dispatch, worker singleton and heartbeats, job and extraction-task lease claims/recovery, timeout/retry transitions, and task execution |
+| `ai.rs`, `ai/`, `runtime_config.rs`, `runtime_config/` | AI executor dispatch, provider/CLI execution and usage accounting, plus host/profile/model resolution and runtime configuration |
 | `session_rollup/`, `observation_extract/`, `memory_candidate/` | Stop and tool-event distillation, observation persistence, candidate routing, review, and promotion governance |
-| `memory/`, `preference/`, `workstream/`, `truth/` | Curated memory storage, preferences, workstream continuity, lifecycle/current-truth projections |
+| `memory/` (including `memory/preference.rs` and `memory/preference/`), `workstream/`, `truth/` | Curated memory storage, preferences, workstream continuity, lifecycle/current-truth projections |
 | `context/`, `context_bundle/`, `retrieval/`, `retrieval_router/` | SessionStart loading/rendering, bundle audit, search/fusion, intent-aware retrieval planning |
 | `dream/`, `rules/`, `eval/` | Memory consolidation, compiled preference rules, benchmark and policy evaluation gates |
 | `cli/`, `mcp/`, `api/`, `doctor/`, `install/` | User-facing commands, MCP/REST surfaces, diagnostics, and host configuration |
