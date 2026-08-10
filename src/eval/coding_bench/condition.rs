@@ -11,6 +11,7 @@ use super::types::{
 use super::{RememContextAuditSnapshot, RememContextAuditStatus};
 
 const BENCHMARK_CONTEXT_ENV_OVERRIDES: &[&str] = &[
+    "REMEM_CIPHER_KEY",
     "REMEM_CONFIG",
     "REMEM_CONTEXT_CANDIDATE_FETCH_LIMIT",
     "REMEM_CONTEXT_CORE_CHAR_LIMIT",
@@ -136,6 +137,9 @@ fn render_seeded_remem_context(
     repo_dir: &Path,
     task: &CodingBenchTask,
 ) -> Result<(String, CodingMemoryAttributionInput, RememAuditContract)> {
+    let _env_lock = crate::runtime_config::ENV_LOCK.lock().map_err(|error| {
+        anyhow::anyhow!("acquire benchmark environment lock before rendering context: {error}")
+    })?;
     fs::create_dir_all(data_dir).context("create benchmark REMEM_DATA_DIR")?;
     let _env = ScopedEnvVars::set_many([
         ("REMEM_DATA_DIR", data_dir.as_os_str().to_os_string()),
@@ -497,6 +501,43 @@ mod tests {
         for memory in task.seed_memories() {
             assert!(!snapshot.canonical_audit_json.contains(&memory.title));
             assert!(!snapshot.canonical_audit_json.contains(&memory.text));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn remem_condition_ignores_and_restores_ambient_cipher_keys() -> Result<()> {
+        let fixture = super::super::fixture::load_fixture("eval/coding-bench/fixtures/tasks.json")?;
+        let task = fixture.tasks.first().context("missing coding-bench task")?;
+
+        for (label, ambient_key) in [
+            ("malformed", OsString::from("v2:not-a-valid-raw-key")),
+            ("valid", OsString::from(format!("v2:{}", "a".repeat(64)))),
+        ] {
+            let root = crate::db::test_support::ScopedTestDataDir::new(&format!(
+                "coding-bench-ambient-cipher-{label}"
+            ));
+            let repo_dir = root.path.join("repo");
+            let data_dir = root.path.join("remem-data");
+            fs::create_dir_all(&repo_dir)?;
+            let _ambient_cipher =
+                ScopedEnvVars::set_many([("REMEM_CIPHER_KEY", ambient_key.clone())]);
+
+            let (output, _, contract) = render_seeded_remem_context(&data_dir, &repo_dir, task)?;
+
+            assert!(!output.is_empty());
+            assert_eq!(
+                contract.status,
+                RememContextAuditStatus::Verified,
+                "{label}: {:?}",
+                contract.failure_reason
+            );
+            assert_eq!(std::env::var_os("REMEM_CIPHER_KEY"), Some(ambient_key));
+
+            let raw_conn = rusqlite::Connection::open(data_dir.join("remem.db"))?;
+            let schema_entries: i64 =
+                raw_conn.query_row("SELECT COUNT(*) FROM sqlite_master", [], |row| row.get(0))?;
+            assert!(schema_entries > 0, "{label}: benchmark DB has no schema");
         }
         Ok(())
     }

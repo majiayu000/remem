@@ -223,7 +223,7 @@ must not require coding-agent fields such as `resolved`, patch/test logs, or
 ```json
 {
   "schema_version": 1,
-  "benchmark_version": "remem-code-memory-v1",
+  "benchmark_version": "v1",
   "layer": "memory_system_capability",
   "suite": "remem-code-memory",
   "condition": "remem_default",

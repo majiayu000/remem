@@ -291,6 +291,15 @@ fn validate_memory_run_artifact(
         );
     }
     require_non_blank(&run.benchmark_version, &label, "benchmark_version", state);
+    if run.benchmark_version != report.benchmark_version {
+        state.fail(
+            label.clone(),
+            format!(
+                "memory run benchmark_version {:?} must match report benchmark_version {:?}",
+                run.benchmark_version, report.benchmark_version
+            ),
+        );
+    }
     require_non_blank(&run.suite, &label, "suite", state);
     require_non_blank(&run.condition, &label, "condition", state);
     if !report.conditions.contains(&run.condition) {

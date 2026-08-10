@@ -186,7 +186,16 @@ async fn adversarial_policy_bench_reports_zero_policy_leaks() -> Result<()> {
     .await?;
 
     assert_eq!(report.conditions, vec!["remem_default"]);
+    assert_eq!(report.benchmark_version, "v2");
     assert_eq!(report.run_artifacts.len(), 20);
+    for run_path in &report.run_artifacts {
+        let run: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(root.join(run_path))?)?;
+        assert_eq!(
+            run["benchmark_version"], report.benchmark_version,
+            "generated run {run_path} must inherit the suite version"
+        );
+    }
     let policy = &report.aggregate_metrics["policy"];
     assert_eq!(policy["non_retention_leak_rate"], 0.0);
     assert_eq!(policy["false_block_rate"], 0.0);
