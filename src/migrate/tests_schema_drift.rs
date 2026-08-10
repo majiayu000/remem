@@ -11,6 +11,40 @@ fn validate_schema_invariants_is_clean_after_current_migrations() -> Result<()> 
 
     let errors = super::validate_schema_invariants(&conn)?;
     assert!(errors.is_empty(), "unexpected schema drift: {errors:?}");
+    let query_plan: String = conn.query_row(
+        "EXPLAIN QUERY PLAN
+         SELECT COUNT(*) FROM context_injection_items
+         WHERE injection_run_id = 'run-id'",
+        [],
+        |row| row.get(3),
+    )?;
+    assert!(
+        query_plan.contains("idx_context_injection_items_run"),
+        "injection run lookup must use its dedicated index: {query_plan}"
+    );
+    Ok(())
+}
+
+#[test]
+fn dry_run_pending_reports_v081_context_bundle_audit_schema_drift() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_current_schema_missing_versions(&conn, &[81])?;
+
+    let result = dry_run_pending(&conn)?;
+
+    assert_eq!(result.pending_count, 0);
+    let error = result
+        .error
+        .expect("Context Bundle audit schema drift must be reported");
+    assert!(error.contains("v081_context_bundle_audits"), "got: {error}");
+    assert!(
+        error.contains("table context_bundle_audits"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("trigger context_bundle_audits_immutable_update"),
+        "got: {error}"
+    );
     Ok(())
 }
 

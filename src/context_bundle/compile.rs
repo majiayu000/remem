@@ -123,16 +123,7 @@ pub(crate) fn seal_session_start_bundle(
     total_truncated_keys: &std::collections::HashSet<String>,
     output_chars: usize,
 ) {
-    for section in [
-        &mut bundle.preferences,
-        &mut bundle.failure_lessons,
-        &mut bundle.current_truth,
-        &mut bundle.workstreams,
-        &mut bundle.memory_index,
-        &mut bundle.recent_sessions,
-    ] {
-        section.retain(|item| selected_keys.contains(&item.stable_key));
-    }
+    retain_selected_sections(bundle, selected_keys);
     for entry in &mut bundle.audit.entries {
         if entry.selected && !selected_keys.contains(&entry.stable_key) {
             entry.selected = false;
@@ -154,5 +145,52 @@ pub(crate) fn seal_session_start_bundle(
     bundle.audit.token_estimate = (output_chars as u32).div_ceil(4);
     if !total_truncated_keys.is_empty() {
         bundle.audit.truncation_reason = Some("total_char_limit".to_string());
+    }
+}
+
+/// Reseal a rendered bundle to the identities that survived a later output
+/// gate, so the durable audit describes the bytes actually emitted.
+pub(crate) fn reseal_after_emission_gate(
+    bundle: &mut ContextBundle,
+    selected_keys: &std::collections::HashSet<String>,
+    output_chars: usize,
+    drop_reason: &str,
+    output_truncated: bool,
+) {
+    retain_selected_sections(bundle, selected_keys);
+    let mut dropped_by_gate = false;
+    for entry in &mut bundle.audit.entries {
+        if entry.selected && !selected_keys.contains(&entry.stable_key) {
+            entry.selected = false;
+            entry.reason = drop_reason.to_string();
+            dropped_by_gate = true;
+        }
+    }
+    bundle.audit.selected_count = bundle
+        .audit
+        .entries
+        .iter()
+        .filter(|entry| entry.selected)
+        .count() as u32;
+    bundle.audit.dropped_count = bundle.audit.candidates_considered - bundle.audit.selected_count;
+    bundle.audit.token_estimate = (output_chars as u32).div_ceil(4);
+    if dropped_by_gate || output_truncated {
+        bundle.audit.truncation_reason = Some(drop_reason.to_string());
+    }
+}
+
+fn retain_selected_sections(
+    bundle: &mut ContextBundle,
+    selected_keys: &std::collections::HashSet<String>,
+) {
+    for section in [
+        &mut bundle.preferences,
+        &mut bundle.failure_lessons,
+        &mut bundle.current_truth,
+        &mut bundle.workstreams,
+        &mut bundle.memory_index,
+        &mut bundle.recent_sessions,
+    ] {
+        section.retain(|item| selected_keys.contains(&item.stable_key));
     }
 }

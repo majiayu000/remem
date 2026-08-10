@@ -12,6 +12,7 @@ src/context_bundle/
   executor.rs              execute(plan, inputs) -> ContextBundle
   policy.rs                policy version, budgets, validation, reasons
   audit.rs                 audit entry construction
+  persistence.rs           canonical audit hashing, append-only store/verify
   tests/                   determinism, budgets, schema snapshots
 src/retrieval_router/
   planner.rs               deterministic unified RetrievalPlan + plan hash
@@ -116,6 +117,67 @@ indexed Core-type memories are routed to `memory_index`. No SessionStart
 output bytes or gate behavior change. `REMEM_CONTEXT_BUNDLE_RENDER_MODE=legacy`
 is the explicit rollback.
 
+## Durable SessionStart Audit
+
+- Migration v081 creates `context_bundle_audits`, keyed uniquely by
+  `injection_run_id`. A trigger requires at least one matching
+  `context_injection_items` row before insertion, so the bundle summary cannot
+  become detached from the established item-level emission audit. The migration
+  also indexes `context_injection_items(injection_run_id)`, which is the join
+  and integrity-check key used by every persisted audit.
+- The row stores `bundle_schema_version`, `plan_schema_version`,
+  `policy_version`, `relevance_policy_version`, `plan_hash`, `audit_hash`,
+  `degraded_mode`, candidates/selected/dropped counts, token budget/estimate,
+  truncation reason, canonical `audit_json`, and creation epoch. It stores no
+  bundle section, memory title, memory text, or rendered hook output.
+- `audit_json` is a recursively key-sorted canonical serialization of the
+  already-redacted `ContextAudit`. `audit_hash` is lowercase SHA-256 hex over
+  a recursively key-sorted envelope containing that audit value and the stored
+  `plan_schema_version`, so changing the version cannot preserve the hash.
+  Array order remains the deterministic audit-entry order established by the
+  executor/sealer.
+- SessionStart writes finalized `context_injection_items` and the bundle audit
+  in one SQLite transaction. Each emission gets a 128-bit OS-generated
+  nonce in its `injection_run_id`, so distinct same-second PromptSubmit and
+  SessionStart invocations cannot collapse onto one item set. A retry for an
+  explicit existing run succeeds only when the stored and incoming hashes
+  match and matching item rows still exist; otherwise it returns an integrity
+  error. The table rejects in-place updates; retention cleanup may delete
+  expired rows.
+- The production delta gate receives the complete renderer item-end map,
+  including preferences, and rewinds an over-limit preview to the last complete
+  item. Persistence then clones and reseals the bundle to those finalized
+  identities, marks later selected entries as `delta_preview`, recomputes
+  selection counts and emitted-output token estimate, and hashes that post-gate
+  audit so item rows and the verified bundle audit describe the same
+  SessionStart bytes. Output-only delta truncation is recorded even when every
+  selected identity survives. If writing the gate state fails after a delta is
+  built, the fail-open decision preserves that delta's item boundary and
+  truncation metadata so subsequent audit persistence still describes the
+  emitted preview rather than the pre-gate bundle. Full, bypassed, and full
+  fail-open emissions also clone and reseal the rendered bundle after final
+  debug and hook-integrity annotations are appended, so their persisted token
+  estimate describes the complete emitted output rather than the pre-annotation
+  render.
+- Verified reads validate the stored `plan_schema_version` before parsing or
+  decoding `audit_json`, canonicalize and re-hash the version-bound envelope,
+  dispatch to that version's decoder, then compare every
+  denormalized contract field with the parsed audit. Supported historical
+  versions remain readable after the current planner advances; unknown stored
+  versions fail explicitly. A hash mismatch, malformed JSON, missing item link,
+  or summary mismatch is a hard error.
+- `REMEM_CONTEXT_GATE_RETENTION_DAYS` also bounds persisted bundle audits.
+  Cleanup runs exactly once after a context invocation successfully opens the
+  database and before pre-render gating, so strict pre-render suppressions,
+  gate-off, and non-gated direct emissions cannot accumulate unbounded rows. It
+  deletes only rows older than the same cutoff and never rewrites an audit.
+  Item-level retention remains governed by its existing consumers.
+- Audit persistence is attempted only for emitted Bundle-backed SessionStart
+  output. Legacy rollback and pre-render suppressed invocations do not invent
+  a plan/audit. Any write failure is logged at error level while preserving the
+  existing hook fail-open output contract; once an emission run ID has been
+  generated, the error chain and diagnostic include that attempted ID.
+
 ## Doctor Capability Check
 
 - `context::context_bundle_render_mode()` is the single parser for
@@ -204,3 +266,7 @@ is the explicit rollback.
   or enabled rerank configuration is not evaluated by the bundle loader. The
   local-only embedding profile fingerprint changes when effective vector
   provider/model/dimensions or skipped/blocked mode changes.
+- Persistence: migration/schema-drift coverage, atomic item/audit writes,
+  same-run retry idempotency, conflicting-retry and stored-row tamper
+  detection, retention cleanup, and proof that memory title/body/rendered
+  payloads never enter `context_bundle_audits`.

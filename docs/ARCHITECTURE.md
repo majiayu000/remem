@@ -39,6 +39,7 @@
 │  captured_events → extraction_tasks → observations         │
 │  memories (decision/bugfix/preference/discovery/...)       │
 │  session_summaries    workstreams    FTS5 full-text index   │
+│  injection items → Context Bundle audits (hash-bound)      │
 │  git_commits ↔ git_commit_sessions    ai_usage_events       │
 └───────────────────────────────────────────────────────────┘
 ```
@@ -361,6 +362,11 @@ New session starts
        ├─ Active workstreams with status + next action
        └─ Recent session summaries (request/completed)
 ```
+
+Bundle-backed emissions persist the sealed, payload-free `ContextAudit` and
+its SHA-256 in the same transaction as `context_injection_items`. Both share
+`injection_run_id`; verified readers recompute canonical JSON and compare all
+denormalized counts, versions, and hashes before exposing benchmark metadata.
 
 ### 5. Legacy Pending Queue Recovery
 
@@ -709,6 +715,7 @@ Retention matrix:
 |---|---:|---|---|
 | `events` with `retention_class='ephemeral'` | 30 days | Hard delete | Governance/audit and API-referenced rows are retained |
 | `events` with `retention_class='audit'` | Indefinite | No retention delete | Governance provenance remains restorable |
+| Context Bundle audit summaries | `REMEM_CONTEXT_GATE_RETENTION_DAYS` | Hard delete expired summary rows; never update surviving rows | Canonical audit JSON/hash remains linked to item rows by `injection_run_id` during retention |
 | active memories with `expires_at_epoch` | Until expiry | Mark `stale` | Row remains auditable |
 | stale memories | 180 days | Mark `archived` | Row remains auditable |
 | workstreams | 14/30 days inactivity | Pause/abandon | Row remains auditable |
@@ -773,6 +780,16 @@ graph_edges (edge_type, edge_trust, from_node_kind/from_node_id, to_node_kind/to
 session_summaries (memory_session_id, project, request, completed, decisions, learned,
                    next_steps, preferences, discovery_tokens, session_row_id,
                    covered_from_event_id, covered_to_event_id)
+
+-- Per-item injection evidence plus payload-free Context Bundle audit
+context_injection_items (injection_run_id, host, project, session_id, item_kind,
+                         item_id, channel, status, drop_reason, injected_at_epoch)
+context_bundle_audits (injection_run_id, bundle_schema_version,
+                       plan_schema_version, policy_version,
+                       relevance_policy_version, plan_hash, audit_hash,
+                       degraded_mode, candidates_considered, selected_count,
+                       dropped_count, token_budget, token_estimate,
+                       truncation_reason, audit_json, created_at_epoch)
 
 -- WorkStreams (cross-session task tracking)
 workstreams (project, title, status, next_action, blockers,

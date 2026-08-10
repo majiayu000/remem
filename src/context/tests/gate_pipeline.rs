@@ -100,6 +100,39 @@ fn gate_row(
     .map_err(Into::into)
 }
 
+fn insert_expired_bundle_audit(conn: &Connection, project: &str) -> anyhow::Result<()> {
+    conn.execute(
+        "INSERT INTO context_injection_items
+         (injection_run_id, host, project, injection_key, output_mode, decision,
+          item_kind, channel, status, injected_at_epoch)
+         VALUES ('expired-run', 'codex-cli', ?1, 'expired-key', 'full', 'emitted',
+                 'memory', 'core', 'injected', 1)",
+        [project],
+    )?;
+    conn.execute(
+        "INSERT INTO context_bundle_audits
+         (injection_run_id, bundle_schema_version, plan_schema_version,
+          policy_version, relevance_policy_version, plan_hash, audit_hash,
+          degraded_mode, candidates_considered, selected_count, dropped_count,
+          token_budget, token_estimate, truncation_reason, audit_json,
+          created_at_epoch)
+         VALUES ('expired-run', 1, 1, 'router-v1', 'relevance-v1', ?1, ?1,
+                 'full', 0, 0, 0, 1, 0, NULL, '{}', 1)",
+        ["a".repeat(64)],
+    )?;
+    Ok(())
+}
+
+fn expired_bundle_audit_count(conn: &Connection) -> anyhow::Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM context_bundle_audits
+         WHERE injection_run_id = 'expired-run'",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(Into::into)
+}
+
 #[test]
 fn claude_hook_warning_survives_db_open_failure() -> anyhow::Result<()> {
     let data_dir = crate::db::test_support::ScopedTestDataDir::new("context-hook-db-open");
@@ -163,6 +196,52 @@ fn strict_context_pipeline_opens_one_database_connection() -> anyhow::Result<()>
             .is_some_and(|value| !value.is_empty()),
         "first strict render should store a reusable data_version"
     );
+    Ok(())
+}
+
+#[test]
+fn strict_pre_render_suppression_still_cleans_expired_bundle_audits() -> anyhow::Result<()> {
+    let data_dir = crate::db::test_support::ScopedTestDataDir::new("context-strict-audit-cleanup");
+    let setup = crate::db::test_support::runtime_connection()?;
+    drop(setup);
+
+    let cwd = data_dir.path.to_string_lossy().to_string();
+    let transcript_path = data_dir.path.join("transcript.jsonl");
+    let invocation = strict_invocation(&cwd, &transcript_path, "sess-strict-audit-cleanup");
+    generate_context_for_test(invocation.clone(), true)?;
+
+    let conn = Connection::open(data_dir.db_path())?;
+    insert_expired_bundle_audit(&conn, &invocation.project)?;
+    drop(conn);
+
+    let output = generate_context_output_for_test(invocation, true)?;
+    assert!(
+        output.is_empty(),
+        "strict pre-render hit should suppress output"
+    );
+
+    let conn = Connection::open(data_dir.db_path())?;
+    assert_eq!(expired_bundle_audit_count(&conn)?, 0);
+    let (suppress_count, _) = gate_row(&conn, "sess-strict-audit-cleanup")?;
+    assert_eq!(suppress_count, 1);
+    Ok(())
+}
+
+#[test]
+fn direct_context_invocation_still_cleans_expired_bundle_audits() -> anyhow::Result<()> {
+    let data_dir = crate::db::test_support::ScopedTestDataDir::new("context-direct-audit-cleanup");
+    let setup = crate::db::test_support::runtime_connection()?;
+    let cwd = data_dir.path.to_string_lossy().to_string();
+    let project = crate::db::project_from_cwd(&cwd);
+    insert_expired_bundle_audit(&setup, &project)?;
+    drop(setup);
+
+    let transcript_path = data_dir.path.join("transcript.jsonl");
+    let invocation = strict_invocation(&cwd, &transcript_path, "sess-direct-audit-cleanup");
+    generate_context_output_for_test(invocation, false)?;
+
+    let conn = Connection::open(data_dir.db_path())?;
+    assert_eq!(expired_bundle_audit_count(&conn)?, 0);
     Ok(())
 }
 

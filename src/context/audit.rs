@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::params;
 use std::collections::{HashMap, HashSet};
 
@@ -31,6 +31,15 @@ pub(in crate::context) struct ContextAuditItem {
 }
 
 impl ContextAuditItem {
+    pub(in crate::context) fn stable_key(&self) -> Option<String> {
+        match self.item_kind {
+            "memory" => self.memory_id.or(self.item_id).map(memory_stable_key),
+            "session_summary" => self.item_id.map(session_stable_key),
+            "workstream" => self.item_id.map(workstream_stable_key),
+            _ => None,
+        }
+    }
+
     pub fn injected_memory(memory: &Memory, channel: &'static str, render_order: i64) -> Self {
         Self::memory_item(memory, channel, Some(render_order), "injected", None)
     }
@@ -193,6 +202,8 @@ impl ContextAuditItem {
 }
 
 pub(in crate::context) struct ContextAuditRenderState<'a> {
+    pub preference_rendered_memories: &'a [Memory],
+    pub preference_final_ids: &'a [i64],
     pub core_selected_ids: &'a [i64],
     pub core_final_ids: &'a [i64],
     pub index_final_ids: &'a [i64],
@@ -249,7 +260,35 @@ pub(in crate::context) fn record_context_injection_items(
     decision: &ContextGateDecision,
     rendered_items: &[ContextAuditItem],
 ) -> Result<()> {
+    record_context_injection(conn, invocation, decision, rendered_items, None).map(|_| ())
+}
+
+pub(in crate::context) fn record_context_injection(
+    conn: &rusqlite::Connection,
+    invocation: &ContextInvocation,
+    decision: &ContextGateDecision,
+    rendered_items: &[ContextAuditItem],
+    context_bundle: Option<&crate::context_bundle::ContextBundle>,
+) -> Result<String> {
     let now = chrono::Utc::now().timestamp();
+    record_context_injection_at(
+        conn,
+        invocation,
+        decision,
+        rendered_items,
+        context_bundle,
+        now,
+    )
+}
+
+pub(in crate::context) fn record_context_injection_at(
+    conn: &rusqlite::Connection,
+    invocation: &ContextInvocation,
+    decision: &ContextGateDecision,
+    rendered_items: &[ContextAuditItem],
+    context_bundle: Option<&crate::context_bundle::ContextBundle>,
+    now: i64,
+) -> Result<String> {
     let key = decision
         .key
         .clone()
@@ -262,48 +301,67 @@ pub(in crate::context) fn record_context_injection_items(
         ContextGateAction::EmittedFull => "full",
         ContextGateAction::EmittedDelta => "delta",
     });
+    let mut nonce = [0_u8; 16];
+    getrandom::fill(&mut nonce)
+        .map_err(|error| anyhow::anyhow!("generate context audit identity: {error}"))?;
+    let nonce = u128::from_ne_bytes(nonce);
     let run_id = format!(
-        "{}:{}:{}",
+        "{}:{}:{}:{nonce:032x}",
         key,
         now,
         context_hash.unwrap_or(decision.reason)
     );
-
-    let mut statement = conn.prepare(
-        "INSERT INTO context_injection_items
-         (injection_run_id, host, project, session_id, injection_key, hook_source,
-          context_hash, output_mode, decision, item_kind, item_id, memory_id, channel,
-          score, render_order, status, drop_reason, title, provenance, staleness,
-          injected_at_epoch)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                 ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
-    )?;
-    for item in finalize_items_for_decision(decision, rendered_items) {
-        statement.execute(params![
-            run_id,
-            invocation.host.as_env_value(),
-            invocation.project,
-            invocation.session_id,
-            key,
-            invocation.source,
-            context_hash,
-            output_mode,
-            decision.reason,
-            item.item_kind,
-            item.item_id,
-            item.memory_id,
-            item.channel,
-            item.score,
-            item.render_order,
-            item.status,
-            item.drop_reason,
-            item.title,
-            item.provenance,
-            item.staleness,
-            now,
-        ])?;
-    }
-    Ok(())
+    let persistence_result = (|| -> Result<()> {
+        let transaction = conn.unchecked_transaction()?;
+        let mut statement = transaction.prepare(
+            "INSERT INTO context_injection_items
+             (injection_run_id, host, project, session_id, injection_key, hook_source,
+              context_hash, output_mode, decision, item_kind, item_id, memory_id, channel,
+              score, render_order, status, drop_reason, title, provenance, staleness,
+              injected_at_epoch)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                     ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+        )?;
+        for item in finalize_items_for_decision(decision, rendered_items) {
+            statement.execute(params![
+                &run_id,
+                invocation.host.as_env_value(),
+                invocation.project,
+                invocation.session_id,
+                key,
+                invocation.source,
+                context_hash,
+                output_mode,
+                decision.reason,
+                item.item_kind,
+                item.item_id,
+                item.memory_id,
+                item.channel,
+                item.score,
+                item.render_order,
+                item.status,
+                item.drop_reason,
+                item.title,
+                item.provenance,
+                item.staleness,
+                now,
+            ])?;
+        }
+        drop(statement);
+        if let Some(bundle) = context_bundle {
+            crate::context_bundle::persist_context_bundle_audit(
+                &transaction,
+                &run_id,
+                bundle,
+                now,
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    })();
+    persistence_result
+        .with_context(|| format!("persist context audit injection_run_id={run_id}"))?;
+    Ok(run_id)
 }
 
 pub(in crate::context) fn build_context_audit_items(
@@ -316,6 +374,36 @@ pub(in crate::context) fn build_context_audit_items(
     let mut render_order = 1_i64;
     if loaded.memory_abstained {
         items.push(ContextAuditItem::abstained_memory("no_relevant_context"));
+    }
+    let final_preferences = render
+        .preference_final_ids
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    for memory in render.preference_rendered_memories {
+        if final_preferences.contains(&memory.id) {
+            items.push(
+                ContextAuditItem::injected_memory_with_labels(
+                    memory,
+                    "preferences",
+                    render_order,
+                    &loaded.staleness_labels,
+                )
+                .with_render_end(
+                    render
+                        .item_end_chars
+                        .get(&memory_stable_key(memory.id))
+                        .copied(),
+                ),
+            );
+            render_order += 1;
+        } else {
+            items.push(ContextAuditItem::dropped_memory(
+                memory,
+                "preferences",
+                "total_char_limit",
+            ));
+        }
     }
     let core = render
         .core_selected_ids
@@ -547,7 +635,7 @@ pub(in crate::context) fn workstream_stable_key(id: i64) -> String {
     format!("workstream:{id}")
 }
 
-fn finalize_items_for_decision(
+pub(in crate::context) fn finalize_items_for_decision(
     decision: &ContextGateDecision,
     rendered_items: &[ContextAuditItem],
 ) -> Vec<ContextAuditItem> {
@@ -557,11 +645,11 @@ fn finalize_items_for_decision(
         .map(|mut item| {
             let final_drop_reason = match decision.action {
                 ContextGateAction::Suppressed => Some("gate_suppressed"),
-                ContextGateAction::EmittedDelta
+                ContextGateAction::EmittedDelta | ContextGateAction::FailOpen
                     if item.render_end_chars.is_some_and(|end| {
                         decision
                             .retained_context_chars
-                            .is_none_or(|retained| end > retained)
+                            .is_some_and(|retained| end > retained)
                     }) =>
                 {
                     Some("delta_preview")
@@ -579,76 +667,4 @@ fn finalize_items_for_decision(
             item
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn injected_item(title: &str) -> ContextAuditItem {
-        ContextAuditItem {
-            item_kind: "memory",
-            item_id: Some(42),
-            memory_id: Some(42),
-            channel: "index",
-            score: Some(1.0),
-            render_order: Some(1),
-            status: "injected",
-            drop_reason: None,
-            title: title.to_string(),
-            provenance: "src=memory:#42".to_string(),
-            staleness: "fresh".to_string(),
-            render_end_chars: Some(200),
-        }
-    }
-
-    fn decision(action: ContextGateAction, output: &str) -> ContextGateDecision {
-        ContextGateDecision {
-            output: output.to_string(),
-            action,
-            reason: "test",
-            key: None,
-            context_hash: None,
-            output_mode: None,
-            retained_context_chars: (action == ContextGateAction::EmittedDelta).then_some(0),
-        }
-    }
-
-    #[test]
-    fn full_gate_trusts_identity_safe_render_survivors_not_titles() {
-        let title = "a very long title whose rendered form was truncated";
-        let finalized = finalize_items_for_decision(
-            &decision(ContextGateAction::EmittedFull, "#42 a very long title..."),
-            &[injected_item(title)],
-        );
-
-        assert_eq!(finalized[0].status, "injected");
-        assert_eq!(finalized[0].drop_reason, None);
-    }
-
-    #[test]
-    fn suppressed_and_delta_outputs_have_closed_drop_reasons() {
-        let suppressed = finalize_items_for_decision(
-            &decision(ContextGateAction::Suppressed, ""),
-            &[injected_item("duplicate title")],
-        );
-        let delta = finalize_items_for_decision(
-            &decision(ContextGateAction::EmittedDelta, "duplicate title"),
-            &[injected_item("duplicate title")],
-        );
-
-        assert_eq!(suppressed[0].drop_reason, Some("gate_suppressed"));
-        assert_eq!(delta[0].drop_reason, Some("delta_preview"));
-    }
-
-    #[test]
-    fn delta_keeps_items_with_identity_boundaries_inside_preview() {
-        let mut delta_decision = decision(ContextGateAction::EmittedDelta, "preview");
-        delta_decision.retained_context_chars = Some(250);
-
-        let finalized = finalize_items_for_decision(&delta_decision, &[injected_item("title")]);
-
-        assert_eq!(finalized[0].status, "injected");
-        assert_eq!(finalized[0].drop_reason, None);
-    }
 }
