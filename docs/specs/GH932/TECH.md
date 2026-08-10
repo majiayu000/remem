@@ -163,11 +163,11 @@ is the explicit rollback.
   versions fail explicitly. A hash mismatch, malformed JSON, missing item link,
   or summary mismatch is a hard error.
 - `REMEM_CONTEXT_GATE_RETENTION_DAYS` also bounds persisted bundle audits.
-  Cleanup runs from the emission-audit persistence path rather than the
-  context-gate branch, so gate-off and non-gated emissions cannot accumulate
-  unbounded rows. It deletes only rows older than the same cutoff and never
-  rewrites an audit. Item-level retention remains governed by its existing
-  consumers.
+  Cleanup runs exactly once after a context invocation successfully opens the
+  database and before pre-render gating, so strict pre-render suppressions,
+  gate-off, and non-gated direct emissions cannot accumulate unbounded rows. It
+  deletes only rows older than the same cutoff and never rewrites an audit.
+  Item-level retention remains governed by its existing consumers.
 - Audit persistence is attempted only for emitted Bundle-backed SessionStart
   output. Legacy rollback and pre-render suppressed invocations do not invent
   a plan/audit. Any write failure is logged at error level while preserving the

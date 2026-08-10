@@ -193,6 +193,7 @@ fn generate_context_output_for_invocation(
         }
     };
     let db_open_timing = crate::perf::PhaseTiming::elapsed("db_open", db_open_start);
+    audit_persistence::cleanup_persisted_bundle_audits(&conn);
     let (mut decision, mut stats, precheck, audit_items, context_bundle) = if use_gate {
         let precheck_start = Instant::now();
         let precheck =

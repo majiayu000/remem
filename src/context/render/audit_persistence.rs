@@ -16,7 +16,6 @@ pub(super) fn persist_emission_audit(
     audit_items: &[ContextAuditItem],
     context_bundle: Option<&crate::context_bundle::ContextBundle>,
 ) {
-    cleanup_persisted_bundle_audits(conn);
     let emitted_bundle = emitted_context_bundle(decision, audit_items, context_bundle);
     if let Err(error) = record_context_injection(
         conn,
@@ -71,7 +70,7 @@ fn emitted_context_bundle<'a>(
     }
 }
 
-fn cleanup_persisted_bundle_audits(conn: &rusqlite::Connection) {
+pub(super) fn cleanup_persisted_bundle_audits(conn: &rusqlite::Connection) {
     let cutoff =
         super::super::injection_gate::retention_cutoff_epoch(chrono::Utc::now().timestamp());
     if let Err(error) = crate::context_bundle::cleanup_persisted_audits_before(conn, cutoff) {
@@ -297,7 +296,7 @@ mod tests {
     }
 
     #[test]
-    fn persistence_path_cleans_old_bundle_audits_when_gate_is_off() -> Result<()> {
+    fn invocation_cleanup_removes_old_bundle_audits() -> Result<()> {
         let conn = rusqlite::Connection::open_in_memory()?;
         crate::migrate::run_migrations(&conn)?;
         conn.execute(
@@ -375,6 +374,7 @@ mod tests {
             render_end_chars: None,
         };
 
+        cleanup_persisted_bundle_audits(&conn);
         persist_emission_audit(&conn, &invocation, &decision, &[item], None);
 
         let old_count: i64 = conn.query_row(
