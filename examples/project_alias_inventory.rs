@@ -767,5 +767,5 @@ fn summarize(
 }
 
 #[cfg(test)]
-#[path = "project_alias_inventory_tests.rs"]
+#[path = "project_alias_inventory/tests.rs"]
 mod tests;

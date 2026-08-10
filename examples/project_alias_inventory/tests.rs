@@ -1,3 +1,5 @@
+//! Tests for the read-only project alias inventory example.
+
 use super::*;
 
 #[test]
