@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Added
-- Staged source version `0.6.66` for GH-932/GH-931/GH-934: coding-bench remem
+- Staged source version `0.6.67` for GH-932/GH-931/GH-934: coding-bench remem
   runs now consume the exact persisted production SessionStart ContextAudit,
   embed its payload-free canonical JSON plus plan/policy/hash/degraded/count/
   budget contract, and independently recompute SHA-256 during verification.
