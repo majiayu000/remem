@@ -11,6 +11,17 @@ fn validate_schema_invariants_is_clean_after_current_migrations() -> Result<()> 
 
     let errors = super::validate_schema_invariants(&conn)?;
     assert!(errors.is_empty(), "unexpected schema drift: {errors:?}");
+    let query_plan: String = conn.query_row(
+        "EXPLAIN QUERY PLAN
+         SELECT COUNT(*) FROM context_injection_items
+         WHERE injection_run_id = 'run-id'",
+        [],
+        |row| row.get(3),
+    )?;
+    assert!(
+        query_plan.contains("idx_context_injection_items_run"),
+        "injection run lookup must use its dedicated index: {query_plan}"
+    );
     Ok(())
 }
 

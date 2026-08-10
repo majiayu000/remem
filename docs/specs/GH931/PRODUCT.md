@@ -6,11 +6,13 @@ Issue: #931 (refs #384, #385, #849, #928)
 
 ## Problem
 
-The current coding-bench public evidence has two limits: the `remem` condition
-seeds fixture evidence directly and preloads full details into
-`REMEM_CONTEXT.md` (not the real capture → extraction → promotion → retrieval
-path), and `curated_file` is a near-oracle human upper bound built from gold
-evidence. Neither can support the flagship product claim.
+The committed coding-bench public evidence has two limits: its historical
+`remem` condition seeded fixture evidence directly and preloaded full details
+into `REMEM_CONTEXT.md` (not the real capture → extraction → promotion →
+retrieval path), and `curated_file` is a near-oracle human upper bound built
+from gold evidence. The current diagnostic runner no longer appends those full
+bodies, but direct seeding still prevents either condition from supporting the
+flagship product claim.
 
 ## Claim under test
 

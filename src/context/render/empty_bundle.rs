@@ -38,6 +38,8 @@ pub(super) fn compile_empty_bundle(
         output,
     )?;
     let audit_render = ContextAuditRenderState {
+        preference_rendered_memories: &[],
+        preference_final_ids: &empty_ids,
         core_selected_ids: &empty_ids,
         core_final_ids: &empty_ids,
         index_final_ids: &empty_ids,

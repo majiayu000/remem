@@ -232,6 +232,8 @@ fn context_audit_uses_rendered_source_anchor_labels() {
     let core_ids = [201];
     let item_ends = HashMap::from([("memory:201".to_string(), 100)]);
     let render = ContextAuditRenderState {
+        preference_rendered_memories: &[],
+        preference_final_ids: &[],
         core_selected_ids: &core_ids,
         core_final_ids: &core_ids,
         index_final_ids: &[],
@@ -250,6 +252,38 @@ fn context_audit_uses_rendered_source_anchor_labels() {
         .expect("core audit item");
     assert_eq!(core.status, "injected");
     assert!(core.staleness.contains("source_anchor=verify-before-trust"));
+}
+
+#[test]
+fn context_audit_includes_rendered_preference_boundaries() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_context_schema(&conn);
+    setup_context_git_trace_schema(&conn);
+    let loaded = load_context_data(&conn, "/tmp/remem", None);
+    let preference = super::sample_memory(301, "preference", "Retained preference");
+    let preference_ids = [301];
+    let item_ends = HashMap::from([("memory:301".to_string(), 80)]);
+    let relevance = SessionStartRelevancePlan::disabled(&[]);
+    let render = ContextAuditRenderState {
+        preference_rendered_memories: std::slice::from_ref(&preference),
+        preference_final_ids: &preference_ids,
+        core_selected_ids: &[],
+        core_final_ids: &[],
+        index_final_ids: &[],
+        lesson_final_ids: &[],
+        session_final_ids: &[],
+        workstream_selected_ids: &[],
+        workstream_final_ids: &[],
+        item_end_chars: &item_ends,
+    };
+
+    let audit_items = build_context_audit_items(&loaded, &render, &relevance, &HashSet::new());
+    let preference_item = audit_items
+        .iter()
+        .find(|item| item.channel == "preferences")
+        .expect("preference audit item");
+    assert_eq!(preference_item.status, "injected");
+    assert_eq!(preference_item.render_end_chars, Some(80));
 }
 
 fn sample_lesson(id: i64, title: &str, confidence: f64, reinforcement_count: i64) -> LessonMemory {

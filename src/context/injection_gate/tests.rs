@@ -385,6 +385,47 @@ fn compact_source_changed_hash_emits_delta() {
 }
 
 #[test]
+fn delta_gate_write_failure_preserves_emitted_boundary_metadata() -> Result<()> {
+    let conn = setup_gate_conn();
+    let invocation = gate_invocation(Some("delta-write-failure"));
+    let initial = "# remem context\n\n- initial memory\n".to_string();
+    let first =
+        apply_context_gate_with_data_version_and_boundaries(&conn, &invocation, initial, None, &[]);
+    assert_eq!(first.action, ContextGateAction::EmittedFull);
+
+    conn.execute_batch(
+        "CREATE TRIGGER fail_context_gate_update
+         BEFORE UPDATE ON context_injections
+         BEGIN
+             SELECT RAISE(ABORT, 'forced context gate write failure');
+         END;",
+    )?;
+    let header = "# remem context\n\n";
+    let retained = "- retained memory\n";
+    let clipped = format!("- clipped memory {}\n", "x".repeat(2_000));
+    let changed = format!("{header}{retained}{clipped}");
+    let retained_end = format!("{header}{retained}").chars().count();
+    let changed_end = changed.chars().count();
+
+    let decision = apply_context_gate_with_data_version_and_boundaries(
+        &conn,
+        &invocation,
+        changed,
+        None,
+        &[retained_end, changed_end],
+    );
+
+    assert_eq!(decision.action, ContextGateAction::FailOpen);
+    assert_eq!(decision.reason, "gate_write");
+    assert_eq!(decision.output_mode, Some("delta"));
+    assert_eq!(decision.retained_context_chars, Some(retained_end));
+    assert!(decision.output_truncated);
+    assert!(decision.output.contains("retained memory"));
+    assert!(!decision.output.contains("clipped memory"));
+    Ok(())
+}
+
+#[test]
 fn strict_mode_suppresses_changed_hash_after_first_context() {
     let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-gate-strict-changed");
     let mut invocation = gate_invocation(Some("sess-strict-changed"));

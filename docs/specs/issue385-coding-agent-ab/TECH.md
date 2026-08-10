@@ -119,10 +119,10 @@ touched unauthorized files. Generated Python cache paths are ignored.
 
 The `remem` condition seeds a temporary database from committed fixture evidence,
 not from private user memory. The implementation uses `save_memory` against a
-temporary `REMEM_DATA_DIR`, then renders the production SessionStart context.
-Because Codex non-interactive MCP detail calls can be cancelled by the host, the
-benchmark appends full seeded memory details to `REMEM_CONTEXT.md` as preloaded
-`get_observations` details.
+temporary `REMEM_DATA_DIR`, then renders the production SessionStart context and
+writes that exact audited output unchanged to `REMEM_CONTEXT.md`. It must not
+append seeded memory bodies outside the persisted ContextAudit; only memory IDs
+marked injected by that emission may enter run attribution.
 
 The `curated_file` condition uses the fixture's `curated_context` text and writes
 it to `MEMORY.md` in the temporary repository. It must be derived from the same

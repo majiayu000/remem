@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 
 use super::types::{
     BenchCondition, CodingBenchFixture, CodingBenchTask, CodingMemoryAttributionInput, SeedMemory,
@@ -69,7 +69,7 @@ pub fn apply_condition(
                     ("REMEM_ALLOW_PLAINTEXT_DB".to_string(), "1".to_string()),
                 ],
                 prompt_note: Some(
-                    "A remem SessionStart context file is available at REMEM_CONTEXT.md. Read it before editing; if it contains Benchmark Memory Details, use those preloaded remem details before calling any memory tool."
+                    "The exact audited remem SessionStart context is available at REMEM_CONTEXT.md. Read it before editing."
                         .to_string(),
                 ),
                 memory_attribution,
@@ -101,17 +101,6 @@ fn render_seeded_remem_context(
     let conn = crate::db::open_db().context("open benchmark remem database")?;
     let project = repo_dir.to_string_lossy().to_string();
     let seeded = seed_task_memories(&conn, &project, task)?;
-    let seeded_ids = seeded.iter().map(|memory| memory.id).collect::<Vec<_>>();
-    let seeded_memories = crate::memory::get_memories_by_ids(&conn, &seeded_ids, Some(&project))
-        .context("load seeded benchmark memories")?;
-    if seeded_memories.len() != seeded_ids.len() {
-        bail!(
-            "seeded {} remem memories but only {} are visible to project {}",
-            seeded_ids.len(),
-            seeded_memories.len(),
-            project
-        );
-    }
     let emission =
         crate::context::session_start_benchmark_emission(&project, &project, "codex-cli")
             .context("render and persist benchmark SessionStart context")?;
@@ -160,15 +149,10 @@ fn render_seeded_remem_context(
             snapshot: None,
         },
     };
-    let mut injected_memory_ids =
+    let injected_memory_ids =
         query_injected_memory_ids(&conn, emission.injection_run_id.as_deref())?;
-    injected_memory_ids.extend(seeded_ids.iter().copied());
-    injected_memory_ids.sort_unstable();
-    injected_memory_ids.dedup();
-    let mut output = emission.rendered_output;
-    append_benchmark_memory_details(&mut output, &seeded_memories);
     let memory_attribution = build_attribution_input(task, &seeded, injected_memory_ids);
-    Ok((output, memory_attribution, audit_contract))
+    Ok((emission.rendered_output, memory_attribution, audit_contract))
 }
 
 fn save_seed_memory(
@@ -300,32 +284,6 @@ fn query_injected_memory_ids(
     Ok(ids)
 }
 
-fn append_benchmark_memory_details(output: &mut String, memories: &[crate::memory::Memory]) {
-    if memories.is_empty() {
-        return;
-    }
-    if !output.ends_with('\n') {
-        output.push('\n');
-    }
-    output.push_str("\n## Benchmark Memory Details\n");
-    output.push_str(
-        "The entries below are full memory details loaded from the same temporary remem database used for this benchmark run. Treat them as preloaded get_observations results.\n\n",
-    );
-    for memory in memories {
-        output.push_str(&format!("### memory:#{} {}\n", memory.id, memory.title));
-        output.push_str(&format!("- type: {}\n", memory.memory_type));
-        if let Some(topic_key) = &memory.topic_key {
-            output.push_str(&format!("- topic_key: {topic_key}\n"));
-        }
-        if let Some(files) = &memory.files {
-            output.push_str(&format!("- files: {files}\n"));
-        }
-        output.push('\n');
-        output.push_str(memory.text.trim_end());
-        output.push_str("\n\n");
-    }
-}
-
 struct ScopedEnvVars {
     previous: Vec<(&'static str, Option<OsString>)>,
 }
@@ -389,8 +347,9 @@ mod tests {
         let data_dir = root.path.join("remem-data");
         fs::create_dir_all(&repo_dir)?;
 
-        let (_output, _attribution, contract) =
+        let (output, attribution, contract) =
             render_seeded_remem_context(&data_dir, &repo_dir, task)?;
+        assert!(!output.contains("## Benchmark Memory Details"));
         assert_eq!(contract.status, RememContextAuditStatus::Verified);
         assert!(contract.failure_reason.is_none());
         let snapshot = contract
@@ -402,40 +361,23 @@ mod tests {
             snapshot.plan_schema_version,
             crate::retrieval_router::RETRIEVAL_PLAN_SCHEMA_VERSION
         );
+        let (audit, _) = crate::context_bundle::persistence::decode_verified_context_audit_json(
+            &snapshot.canonical_audit_json,
+            snapshot.plan_schema_version,
+        )?;
+        let mut audited_memory_ids = audit
+            .entries
+            .iter()
+            .filter(|entry| entry.selected)
+            .filter_map(|entry| entry.stable_key.strip_prefix("memory:"))
+            .map(str::parse::<i64>)
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        audited_memory_ids.sort_unstable();
+        assert_eq!(attribution.injected_memory_ids, audited_memory_ids);
         for memory in task.seed_memories() {
             assert!(!snapshot.canonical_audit_json.contains(&memory.title));
             assert!(!snapshot.canonical_audit_json.contains(&memory.text));
         }
         Ok(())
-    }
-
-    #[test]
-    fn remem_context_preloads_full_detail_for_indexed_memory() {
-        let mut rendered =
-            "remem context\n\n## Index\n**Procedures** (1): #1 Slug normalizer contract\n"
-                .to_string();
-        append_benchmark_memory_details(
-            &mut rendered,
-            &[crate::memory::Memory {
-                id: 1,
-                session_id: Some("coding-bench-seed".to_string()),
-                project: "/tmp/repo".to_string(),
-                topic_key: Some("slug-normalizer".to_string()),
-                title: "Slug normalizer contract".to_string(),
-                text: "Empty slug output must be `untitled`.".to_string(),
-                memory_type: "procedure".to_string(),
-                files: Some("[\"memory_demo/slug.py\"]".to_string()),
-                created_at_epoch: 1,
-                updated_at_epoch: 1,
-                status: "active".to_string(),
-                branch: None,
-                scope: "project".to_string(),
-            }],
-        );
-
-        assert!(rendered.contains("## Index"));
-        assert!(rendered.contains("## Benchmark Memory Details"));
-        assert!(rendered.contains("Slug normalizer contract"));
-        assert!(rendered.contains("`untitled`"));
     }
 }

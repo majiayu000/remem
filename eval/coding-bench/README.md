@@ -30,7 +30,8 @@ Machine-readable registry: `eval/coding-bench/conditions.json`, validated by
 
 - `remem_preloaded`: the former `remem` condition — fixture evidence saved into
   a temporary remem database, rendered through the SessionStart context path,
-  and preloaded into `REMEM_CONTEXT.md`.
+  and the exact audited SessionStart output written unchanged to
+  `REMEM_CONTEXT.md`.
 - `curated_file_expert`: the former `curated_file` condition — unbudgeted,
   gold-evidence-derived `MEMORY.md`; near-oracle human upper bound.
 - `oracle_evidence`, `remem_oracle_retrieval`, `full_history`,
@@ -261,11 +262,12 @@ cargo run -- eval-coding-bench \
 
 Codex non-interactive MCP calls can be cancelled by the host. The
 `remem_preloaded` diagnostic condition therefore seeds a temporary remem
-database, uses the production SessionStart render path, then appends full
-seeded memory details to `REMEM_CONTEXT.md` as preloaded `get_observations`
-details. That shortcut is exactly why `remem_preloaded` is diagnostic-only
-under #931: `remem_e2e` must not preload gold evidence, and MCP availability
-issues in `remem_e2e` count as real failures with a stage attribution.
+database and writes the production SessionStart output to `REMEM_CONTEXT.md`.
+The runner does not append seeded memory bodies: the file remains byte-for-byte
+aligned with the persisted ContextAudit. This condition is still diagnostic-only
+under #931 because it directly seeds gold-derived memories instead of exercising
+capture, extraction, promotion, and live retrieval. MCP availability issues in
+`remem_e2e` count as real failures with a stage attribution.
 
 The Codex runner uses `--ignore-user-config`, `--ignore-rules`, `--ephemeral`,
 and `--disable hooks` so benchmark agents do not inherit the host's MCP servers,

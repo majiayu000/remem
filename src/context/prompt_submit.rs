@@ -234,6 +234,7 @@ fn empty_prompt_submit_decision() -> ContextGateDecision {
         context_hash: None,
         output_mode: Some("prompt_submit"),
         retained_context_chars: None,
+        output_truncated: false,
     }
 }
 
@@ -246,6 +247,7 @@ fn prompt_submit_decision(output: String) -> ContextGateDecision {
         context_hash: None,
         output_mode: Some("prompt_submit"),
         retained_context_chars: None,
+        output_truncated: false,
     }
 }
 
@@ -494,6 +496,7 @@ mod tests {
             context_hash: Some("seed-session-start-context".to_string()),
             output_mode: Some("full"),
             retained_context_chars: None,
+            output_truncated: false,
         };
         record_context_injection_items(
             &conn,

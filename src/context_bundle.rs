@@ -30,7 +30,9 @@ mod policy;
 mod tests;
 
 pub use compile::compile_session_start_bundle;
-pub(crate) use compile::{compile_session_start_for_renderer, seal_session_start_bundle};
+pub(crate) use compile::{
+    compile_session_start_for_renderer, reseal_after_emission_gate, seal_session_start_bundle,
+};
 pub use domain::{
     AgentRole, AuditEntry, ChannelKind, ContextAudit, ContextBundle, ContextFilters, ContextIntent,
     ContextItem, ContextRequest, DegradedMode, ItemValidity, PlannedChannel, ProjectRef, RiskClass,

@@ -2,10 +2,8 @@ use anyhow::{bail, Result};
 use rusqlite::Connection;
 use serde::Serialize;
 
-use crate::context_bundle::{ContextAudit, DegradedMode};
-use crate::retrieval_router::RETRIEVAL_PLAN_SCHEMA_VERSION;
-
 use super::types::{BenchCondition, RunReport};
+use crate::context_bundle::{ContextAudit, DegradedMode};
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -54,6 +52,7 @@ pub fn verify_context_audit_snapshot(snapshot: &RememContextAuditSnapshot) -> Re
     let (audit, actual_hash) =
         crate::context_bundle::persistence::decode_verified_context_audit_json(
             &snapshot.canonical_audit_json,
+            snapshot.plan_schema_version,
         )?;
     if actual_hash != snapshot.audit_hash {
         bail!(
@@ -177,7 +176,6 @@ fn snapshot_from_persisted(
 
 fn verify_summary(snapshot: &RememContextAuditSnapshot, audit: &ContextAudit) -> Result<()> {
     let matches = snapshot.bundle_schema_version == audit.schema_version
-        && snapshot.plan_schema_version == RETRIEVAL_PLAN_SCHEMA_VERSION
         && snapshot.policy_version == audit.policy_version
         && snapshot.relevance_policy_version == audit.relevance_policy_version
         && snapshot.plan_hash == audit.plan_hash
@@ -218,11 +216,14 @@ mod tests {
             entries: Vec::new(),
         };
         let (canonical_audit_json, audit_hash) =
-            crate::context_bundle::persistence::canonical_context_audit(&audit)?;
+            crate::context_bundle::persistence::canonical_context_audit(
+                &audit,
+                crate::context_bundle::persistence::PERSISTED_PLAN_SCHEMA_V1,
+            )?;
         Ok(RememContextAuditSnapshot {
             injection_run_id: "run-1".to_string(),
             bundle_schema_version: CONTEXT_BUNDLE_SCHEMA_VERSION,
-            plan_schema_version: RETRIEVAL_PLAN_SCHEMA_VERSION,
+            plan_schema_version: crate::context_bundle::persistence::PERSISTED_PLAN_SCHEMA_V1,
             policy_version: audit.policy_version,
             relevance_policy_version: audit.relevance_policy_version,
             plan_hash: audit.plan_hash,
@@ -256,6 +257,13 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("summary mismatch"));
+
+        let mut unsupported_version = snapshot()?;
+        unsupported_version.plan_schema_version = 2;
+        assert!(verify_context_audit_snapshot(&unsupported_version)
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported persisted retrieval plan schema version 2"));
         Ok(())
     }
 }

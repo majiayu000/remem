@@ -64,7 +64,10 @@ fn context_audit_snapshot() -> Result<RememContextAuditSnapshot> {
         entries: Vec::new(),
     };
     let (canonical_audit_json, audit_hash) =
-        crate::context_bundle::persistence::canonical_context_audit(&audit)?;
+        crate::context_bundle::persistence::canonical_context_audit(
+            &audit,
+            crate::retrieval_router::RETRIEVAL_PLAN_SCHEMA_VERSION,
+        )?;
     Ok(RememContextAuditSnapshot {
         injection_run_id: "coding-bench-run-1".to_string(),
         bundle_schema_version: audit.schema_version,
