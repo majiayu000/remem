@@ -6,10 +6,11 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use super::types::{
-    BenchVerifyFailure, BenchVerifyOptions, BenchVerifyReport, BenchmarkLayer,
-    CodingMemoryContract, CodingRunArtifact, MemoryRunArtifact, PublicBenchmarkManifest,
-    PublicBenchmarkReport,
+    BenchVerifyFailure, BenchVerifyOptions, BenchVerifyReport, BenchmarkLayer, MemoryRunArtifact,
+    PublicBenchmarkManifest, PublicBenchmarkReport,
 };
+
+pub(super) mod coding;
 
 const REQUIRED_SCHEMA_FILES: [&str; 6] = [
     "schemas/benchmark-manifest.schema.json",
@@ -26,22 +27,6 @@ const MEMORY_ARTIFACT_KEYS: [&str; 5] = [
     "answer",
     "score",
     "diagnosis",
-];
-
-const CODING_ARTIFACT_KEYS: [&str; 3] = ["patch", "tool_log", "test_log"];
-
-const CODING_FAILURE_REASONS: [&str; 11] = [
-    "test_failure",
-    "timeout",
-    "compile_failure",
-    "wrong_file_modified",
-    "ignored_memory",
-    "missing_memory",
-    "stale_memory_followed",
-    "irrelevant_memory_distracted",
-    "over_context_budget",
-    "agent_hallucinated_memory",
-    "oracle_inconclusive",
 ];
 
 pub fn verify_benchmark_artifacts(options: BenchVerifyOptions) -> Result<BenchVerifyReport> {
@@ -127,6 +112,13 @@ fn validate_manifest(path: &Path, manifest: &PublicBenchmarkManifest, state: &mu
     if manifest.conditions.is_empty() {
         state.fail(label.clone(), "manifest conditions must not be empty");
     }
+    validate_condition_list(
+        &manifest.conditions,
+        manifest.layer,
+        &label,
+        "manifest conditions",
+        state,
+    );
     if manifest.reports.is_empty() {
         state.fail(label.clone(), "manifest reports must not be empty");
     }
@@ -173,6 +165,16 @@ fn validate_report_path_layer(
         "benchmark_version",
         state,
     );
+    if report.layer == BenchmarkLayer::CodingAgentOutcome {
+        match report.run_phase.as_deref() {
+            Some(run_phase) => require_non_blank(run_phase, &label, "run_phase", state),
+            None => state.fail(label.clone(), "coding report run_phase is missing"),
+        }
+        match report.matrix_namespace.as_deref() {
+            Some(namespace) => require_non_blank(namespace, &label, "matrix_namespace", state),
+            None => state.fail(label.clone(), "coding report matrix_namespace is missing"),
+        }
+    }
     require_non_blank(&report.claim_level, &label, "claim_level", state);
     if report.layer != manifest.layer {
         state.fail(
@@ -188,6 +190,19 @@ fn validate_report_path_layer(
     }
     if report.conditions.is_empty() {
         state.fail(label.clone(), "report conditions must not be empty");
+    }
+    validate_condition_list(
+        &report.conditions,
+        report.layer,
+        &label,
+        "report conditions",
+        state,
+    );
+    if condition_set(&report.conditions) != condition_set(&manifest.conditions) {
+        state.fail(
+            label.clone(),
+            "report conditions must exactly match manifest conditions",
+        );
     }
     if report.schema_refs.is_empty() {
         state.fail(label.clone(), "report schema_refs must not be empty");
@@ -218,18 +233,33 @@ fn validate_report_path_layer(
             state.fail(schema_ref.clone(), "report schema_ref does not exist");
         }
     }
+    let mut represented_conditions = BTreeSet::new();
     for run_artifact in &report.run_artifacts {
         let Some(run_path) = resolve_public_path(state, run_artifact, run_artifact) else {
             continue;
         };
-        match report.layer {
+        let run_label = rel_display(&state.root, &run_path);
+        if !state.run_artifact_paths.insert(run_label.clone()) {
+            state.fail(run_label, "run artifact path must be referenced only once");
+            continue;
+        }
+        let represented_condition = match report.layer {
             BenchmarkLayer::MemorySystemCapability => {
                 validate_memory_run_artifact(&run_path, &report, manifest_path, state)
             }
             BenchmarkLayer::CodingAgentOutcome => {
-                validate_coding_run_artifact(&run_path, &report, manifest_path, state)
+                coding::validate_coding_run_artifact(&run_path, &report, manifest_path, state)
             }
+        };
+        if let Some(condition) = represented_condition {
+            represented_conditions.insert(condition);
         }
+    }
+    if represented_conditions != condition_set(&report.conditions) {
+        state.fail(
+            label,
+            "report conditions must exactly match conditions represented by run artifacts",
+        );
     }
 }
 
@@ -238,11 +268,9 @@ fn validate_memory_run_artifact(
     report: &PublicBenchmarkReport,
     _manifest_path: &Path,
     state: &mut VerifyState,
-) {
+) -> Option<String> {
     state.run_artifacts_checked += 1;
-    let Some(run) = read_json::<MemoryRunArtifact>(run_path, state, "memory run artifact") else {
-        return;
-    };
+    let run = read_json::<MemoryRunArtifact>(run_path, state, "memory run artifact")?;
     let label = rel_display(&state.root, run_path);
     if run.schema_version != 1 {
         state.fail(label.clone(), "memory run schema_version must be 1");
@@ -256,6 +284,12 @@ fn validate_memory_run_artifact(
     require_non_blank(&run.benchmark_version, &label, "benchmark_version", state);
     require_non_blank(&run.suite, &label, "suite", state);
     require_non_blank(&run.condition, &label, "condition", state);
+    if !report.conditions.contains(&run.condition) {
+        state.fail(
+            label.clone(),
+            "memory run condition must be declared by its report",
+        );
+    }
     require_non_blank(&run.task_id, &label, "task_id", state);
     if run.reference_time_epoch <= 0 {
         state.fail(
@@ -337,179 +371,7 @@ fn validate_memory_run_artifact(
         "$",
         state,
     );
-}
-
-fn validate_coding_run_artifact(
-    run_path: &Path,
-    report: &PublicBenchmarkReport,
-    _manifest_path: &Path,
-    state: &mut VerifyState,
-) {
-    state.run_artifacts_checked += 1;
-    let Some(run) = read_json::<CodingRunArtifact>(run_path, state, "coding run artifact") else {
-        return;
-    };
-    let label = rel_display(&state.root, run_path);
-    if run.schema_version != 1 {
-        state.fail(label.clone(), "coding run schema_version must be 1");
-    }
-    if run.layer != BenchmarkLayer::CodingAgentOutcome || run.layer != report.layer {
-        state.fail(
-            label.clone(),
-            "coding run layer must be coding_agent_outcome",
-        );
-    }
-    require_non_blank(&run.benchmark_version, &label, "benchmark_version", state);
-    require_non_blank(&run.condition, &label, "condition", state);
-    require_non_blank(&run.task_id, &label, "task_id", state);
-    validate_environment(&run.environment, &label, state);
-    if run.model.is_null() {
-        state.fail(label.clone(), "coding run model must be present");
-    }
-    if run.resolved {
-        if run.failure_reason.is_some() {
-            state.fail(
-                label.clone(),
-                "resolved coding run must not carry failure_reason",
-            );
-        }
-    } else {
-        let Some(reason) = run.failure_reason.as_deref().map(str::trim) else {
-            state.fail(label.clone(), "failed coding run must carry failure_reason");
-            return;
-        };
-        if !CODING_FAILURE_REASONS.contains(&reason) {
-            state.fail(label.clone(), "coding run has unknown failure_reason enum");
-        }
-    }
-    validate_coding_metrics(&run, &label, state);
-    validate_artifact_map(&run.artifacts, CODING_ARTIFACT_KEYS, &label, state);
-    if run.condition == "remem" {
-        require_artifact_key(&run.artifacts, "injected_context", &label, state);
-        require_artifact_key(&run.artifacts, "remem_db_snapshot", &label, state);
-        if let Some(contract) = &run.memory_contract {
-            validate_coding_memory_contract(contract, run.failure_reason.as_deref(), &label, state);
-        } else {
-            state.fail(
-                label.clone(),
-                "remem coding run must include memory_contract",
-            );
-        }
-    }
-    scan_private_json(
-        &serde_json::to_value(&run).unwrap_or(Value::Null),
-        run_path,
-        "$",
-        state,
-    );
-}
-
-fn validate_coding_memory_contract(
-    contract: &CodingMemoryContract,
-    failure_reason: Option<&str>,
-    label: &str,
-    state: &mut VerifyState,
-) {
-    validate_rate(
-        contract.citation_precision,
-        "memory_contract.citation_precision",
-        label,
-        state,
-    );
-    validate_rate(
-        contract.citation_recall,
-        "memory_contract.citation_recall",
-        label,
-        state,
-    );
-    require_unique_positive_ids(
-        &contract.injected_memory_ids,
-        "memory_contract.injected_memory_ids",
-        label,
-        state,
-    );
-    require_unique_positive_ids(
-        &contract.used_memory_ids,
-        "memory_contract.used_memory_ids",
-        label,
-        state,
-    );
-    if contract.memory_helped && contract.memory_hurt {
-        state.fail(
-            label.to_string(),
-            "memory_contract cannot mark both memory_helped and memory_hurt",
-        );
-    }
-    if failure_reason.is_some_and(is_memory_specific_failure_reason) && !contract.memory_hurt {
-        state.fail(
-            label.to_string(),
-            "memory-specific failure_reason requires memory_contract.memory_hurt=true",
-        );
-    }
-}
-
-fn validate_rate(value: f64, field: &str, label: &str, state: &mut VerifyState) {
-    if !(0.0..=1.0).contains(&value) || !value.is_finite() {
-        state.fail(
-            label.to_string(),
-            format!("{field} must be a finite rate between 0 and 1"),
-        );
-    }
-}
-
-fn require_unique_positive_ids(ids: &[i64], field: &str, label: &str, state: &mut VerifyState) {
-    let mut seen = BTreeSet::new();
-    for id in ids {
-        if *id <= 0 {
-            state.fail(
-                label.to_string(),
-                format!("{field} contains non-positive id"),
-            );
-        }
-        if !seen.insert(*id) {
-            state.fail(label.to_string(), format!("{field} contains duplicate id"));
-        }
-    }
-}
-
-fn is_memory_specific_failure_reason(reason: &str) -> bool {
-    matches!(
-        reason,
-        "ignored_memory"
-            | "missing_memory"
-            | "stale_memory_followed"
-            | "irrelevant_memory_distracted"
-            | "agent_hallucinated_memory"
-    )
-}
-
-fn validate_coding_metrics(run: &CodingRunArtifact, label: &str, state: &mut VerifyState) {
-    if let (Some(input), Some(output), Some(total)) = (
-        run.metrics.tokens_input,
-        run.metrics.tokens_output,
-        run.metrics.tokens_total,
-    ) {
-        if input.saturating_add(output) != total {
-            state.fail(label.to_string(), "coding run token totals do not add up");
-        }
-    } else {
-        state.fail(
-            label.to_string(),
-            "coding run must include complete token accounting",
-        );
-    }
-    if run.metrics.turns.is_none() {
-        state.fail(label.to_string(), "coding run is missing turns");
-    }
-    if run.metrics.wall_time_ms.is_none() {
-        state.fail(label.to_string(), "coding run is missing wall_time_ms");
-    }
-    if run.metrics.tool_calls.is_none() {
-        state.fail(label.to_string(), "coding run is missing tool_calls");
-    }
-    if run.metrics.commands_run.is_none() {
-        state.fail(label.to_string(), "coding run is missing commands_run");
-    }
+    Some(run.condition)
 }
 
 fn validate_environment(env: &super::types::RunEnvironment, label: &str, state: &mut VerifyState) {
@@ -580,6 +442,34 @@ fn require_non_blank(value: &str, label: &str, field: &str, state: &mut VerifySt
     if value.trim().is_empty() {
         state.fail(label.to_string(), format!("{field} must not be blank"));
     }
+}
+
+fn validate_condition_list(
+    conditions: &[String],
+    layer: BenchmarkLayer,
+    label: &str,
+    field: &str,
+    state: &mut VerifyState,
+) {
+    let mut seen = BTreeSet::new();
+    for condition in conditions {
+        require_non_blank(condition, label, field, state);
+        if !seen.insert(condition.as_str()) {
+            state.fail(label.to_string(), format!("{field} must be unique"));
+        }
+        if layer == BenchmarkLayer::CodingAgentOutcome
+            && !coding::is_public_coding_condition(condition)
+        {
+            state.fail(
+                label.to_string(),
+                format!("{field} contains unknown coding condition identity {condition}"),
+            );
+        }
+    }
+}
+
+fn condition_set(conditions: &[String]) -> BTreeSet<String> {
+    conditions.iter().cloned().collect()
 }
 
 fn read_json<T: DeserializeOwned>(path: &Path, state: &mut VerifyState, label: &str) -> Option<T> {
@@ -717,6 +607,8 @@ struct VerifyState {
     reports_checked: usize,
     run_artifacts_checked: usize,
     artifact_files: BTreeSet<String>,
+    run_artifact_paths: BTreeSet<String>,
+    coding_run_keys: BTreeSet<String>,
     failures: Vec<BenchVerifyFailure>,
 }
 
@@ -728,6 +620,8 @@ impl VerifyState {
             reports_checked: 0,
             run_artifacts_checked: 0,
             artifact_files: BTreeSet::new(),
+            run_artifact_paths: BTreeSet::new(),
+            coding_run_keys: BTreeSet::new(),
             failures: Vec::new(),
         }
     }

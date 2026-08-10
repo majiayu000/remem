@@ -71,7 +71,7 @@ Allowed claim levels:
 | Level | Claim | Required evidence |
 |---|---|---|
 | 1 | Reproducible local memory benchmark | A memory-system report from a clean checkout, full reproduction commands, and a passing artifact verifier. |
-| 2 | Coding-agent outcome improvement | The #385 `no_memory` / `remem` / `curated_file` matrix on the same task set, at least three runs per condition, positive remem delta versus `no_memory`, reported token/turn/wall-time regressions, and the coding outcome stop-loss gate. |
+| 2 | Coding-agent outcome improvement | A passing artifact verifier; the #931 `no_memory` / `remem_e2e` / `curated_file_budgeted` matrix on the registered 16-task set, exactly registered run indices 0/1/2 per task and condition; positive remem delta versus `no_memory`; reported token/turn/wall-time regressions; and the coding outcome stop-loss gate. |
 | 3 | Public SOTA claim | A public benchmark comparison using the same model, budget, harness, and published artifacts; wording must name the benchmark and condition instead of generalizing to all long-term memory or all coding agents. |
 
 The coding outcome stop-loss gate applies to README, release, marketing, and
@@ -79,16 +79,19 @@ roadmap wording that says remem improves coding-agent outcomes, beats a
 maintained context file, or is broadly superior for coding workflows. The gate
 passes only when all of these are true:
 
-- remem beats `no_memory` on resolved rate by at least 10 percentage points, or
-  by a statistically credible positive bootstrap interval.
-- remem is not worse than `curated_file` by more than 3 percentage points.
-- remem total token cost is at most `curated_file + 20%`, unless the report
-  justifies a higher cost with a higher resolved rate.
-- stale-memory-caused failures stay under 2% of runs.
+- `remem_e2e` beats `no_memory` on resolved rate by at least 10 percentage
+  points and its paired 95% bootstrap interval has a lower bound above 0.
+- `remem_e2e` versus `curated_file_budgeted` has a paired 95% interval lower
+  bound of at least -3 percentage points and reduces human maintenance time by
+  at least 70% on the same denominator.
+- token and latency costs are reported as mandatory secondary outcomes.
+- `memory_hurt` stays at or below 2% and `stale_memory_followed` stays at or
+  below 1% across the 48 registered `remem_e2e` tuples; missing or ambiguous
+  causal evidence makes the gate insufficient rather than counting as no harm.
 - privacy and non-retention leak rate is 0 on the adversarial suite.
 - All linked artifacts reproduce from a clean checkout.
 
-If `curated_file` ties or beats remem with lower cost and no material usability
+If `curated_file_budgeted` ties or beats remem with lower cost and no material usability
 downside, record the stop-loss signal in the M6 roadmap before strengthening
 release wording. The next slice should focus on ergonomics, export/import,
 human-maintained memory workflows, and context-file integration.

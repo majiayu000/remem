@@ -3,6 +3,8 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use crate::eval::coding_bench::{RememContextAuditSnapshot, RememContextAuditStatus};
+
 #[derive(Debug, Clone)]
 pub struct BenchVerifyOptions {
     pub root: PathBuf,
@@ -59,6 +61,10 @@ pub struct PublicBenchmarkReport {
     pub schema_version: u32,
     pub benchmark_id: String,
     pub benchmark_version: String,
+    #[serde(default)]
+    pub run_phase: Option<String>,
+    #[serde(default)]
+    pub matrix_namespace: Option<String>,
     pub layer: BenchmarkLayer,
     #[serde(default)]
     pub conditions: Vec<String>,
@@ -149,7 +155,10 @@ pub struct MemoryDiagnosis {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CodingRunArtifact {
     pub schema_version: u32,
+    pub benchmark_id: String,
     pub benchmark_version: String,
+    pub run_phase: String,
+    pub matrix_namespace: String,
     pub layer: BenchmarkLayer,
     pub condition: String,
     pub task_id: String,
@@ -162,6 +171,14 @@ pub struct CodingRunArtifact {
     pub metrics: CodingRunMetrics,
     #[serde(default)]
     pub memory_contract: Option<CodingMemoryContract>,
+    #[serde(default)]
+    pub context_audit_status: Option<RememContextAuditStatus>,
+    #[serde(default)]
+    pub context_audit_failure_reason: Option<String>,
+    #[serde(default)]
+    pub remem_context_audit: Option<RememContextAuditSnapshot>,
+    #[serde(default)]
+    pub injected_context_sha256: Option<String>,
     #[serde(default)]
     pub artifacts: BTreeMap<String, String>,
 }

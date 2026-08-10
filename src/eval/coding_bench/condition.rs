@@ -154,7 +154,9 @@ fn render_seeded_remem_context(
             match super::audit_contract::load_context_audit_snapshot(&conn, injection_run_id) {
                 Ok(Some(snapshot)) => {
                     match super::audit_contract::verify_snapshot_against_persisted_injection(
-                        &conn, &snapshot,
+                        &conn,
+                        &snapshot,
+                        &emission.rendered_output,
                     ) {
                         Ok(()) => RememAuditContract {
                             status: RememContextAuditStatus::Verified,
@@ -417,12 +419,57 @@ mod tests {
             Ok("1")
         );
         assert!(!output.contains("## Benchmark Memory Details"));
-        assert_eq!(contract.status, RememContextAuditStatus::Verified);
+        assert_eq!(
+            contract.status,
+            RememContextAuditStatus::Verified,
+            "{:?}",
+            contract.failure_reason
+        );
         assert!(contract.failure_reason.is_none());
         let snapshot = contract
             .snapshot
             .context("missing verified audit snapshot")?;
         super::super::verify_context_audit_snapshot(&snapshot)?;
+        let _snapshot_env = ScopedEnvVars::set_many([
+            ("REMEM_DATA_DIR", data_dir.as_os_str().to_os_string()),
+            ("REMEM_ALLOW_PLAINTEXT_DB", OsString::from("1")),
+        ]);
+        let snapshot_conn = crate::db::open_db()?;
+        super::super::audit_contract::verify_snapshot_against_persisted_injection(
+            &snapshot_conn,
+            &snapshot,
+            &output,
+        )?;
+        assert!(
+            super::super::audit_contract::verify_snapshot_against_persisted_injection(
+                &snapshot_conn,
+                &snapshot,
+                &format!("{output}\ntampered"),
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("differs from persisted")
+        );
+        snapshot_conn.execute(
+            "UPDATE context_injection_items
+             SET channel = 'tampered'
+             WHERE id = (
+               SELECT id FROM context_injection_items
+               WHERE injection_run_id = ?1 AND item_kind = 'memory'
+               ORDER BY id LIMIT 1
+             )",
+            [&snapshot.injection_run_id],
+        )?;
+        assert!(
+            super::super::audit_contract::verify_snapshot_against_persisted_injection(
+                &snapshot_conn,
+                &snapshot,
+                &output,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("differs from canonical audit")
+        );
         assert!(!snapshot.injection_run_id.is_empty());
         assert_eq!(
             snapshot.plan_schema_version,

@@ -116,9 +116,9 @@ pub(crate) fn session_start_benchmark_emission(
         use_colors: false,
         debug: false,
         force: true,
-        gate_mode: Some("off".to_string()),
+        gate_mode: Some("auto".to_string()),
     };
-    let rendered_output = super::generate_context_output_for_invocation(invocation, false)?;
+    let rendered_output = super::generate_context_output_for_invocation(invocation, true)?;
     let conn = crate::db::open_db()?;
     let injection_run_id = conn
         .query_row(

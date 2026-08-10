@@ -728,8 +728,9 @@ artifacts, and 225 artifact files. It includes:
   reads policy counts from the resulting SQLite state. Each artifact records
   that verification path plus the exact source/generated scanner split;
   direct-memory fixture conditions remain labeled comparative baselines.
-- `issue385-smoke`: one committed coding-agent smoke run artifact with
-  memory-contract fields for `remem` runs. The full `issue385-v1` fixture pack
+- `issue385-smoke`: one committed historical coding-agent smoke run artifact
+  classified as `remem_preloaded`, with memory-contract fields. The full
+  `issue385-v1` fixture pack
   is referenced for dry-run reproduction, but it is not yet part of the
   verified public outcome report.
 

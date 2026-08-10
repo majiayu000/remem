@@ -54,7 +54,8 @@ remem eval-coding-bench \
 Required flags:
 
 - `--fixture`: task-set definition.
-- `--runs-per-condition`: minimum 3 for baseline publication.
+- `--runs-per-condition`: exactly 3 (registered indices 0, 1, and 2) for every
+  task and condition in an official baseline publication.
 - `--json-out`: report path.
 
 Optional flags:
@@ -197,12 +198,16 @@ Each run entry records:
   `stale_memory_followed`, `irrelevant_memory_distracted`,
   `over_context_budget`, `agent_hallucinated_memory`, or
   `oracle_inconclusive`
-- `memory_contract` for `remem_seeded_sessionstart` runs, including injected memory IDs,
+- `memory_contract` for remem-backed runs, including injected memory IDs,
   cited/used memory IDs, citation precision/recall, stale used count,
   irrelevant injection count, missing relevant memory count, `memory_helped`,
   and `memory_hurt`
+- `context_audit_status`, `context_audit_failure_reason`, and
+  `remem_context_audit` for current audited remem conditions; public evidence
+  requires a verified, hash-checked ContextAudit bound to the injection run
 
-For `remem` condition runs, the run entry must also include
+For current audited remem condition runs (`remem_seeded_sessionstart`,
+`remem_e2e`, and registered remem ablations), the run entry must also include
 `remem_contract_snapshot`. The snapshot is the benchmark handoff from
 `docs/specs/current-memory-contracts/TECH.md` and must include:
 
@@ -213,8 +218,14 @@ For `remem` condition runs, the run entry must also include
 - staleness/source-anchor handling;
 - temporal fact eligibility checks.
 
-`no_memory` and `curated_file` runs must set `memory_contract_status` to
-`not_applicable` and must not carry a `remem_contract_snapshot`. This keeps the
+Historical `remem_preloaded` artifacts predate the persisted ContextAudit
+contract. They may remain as explicitly historical, non-claim-bearing evidence
+without a retroactive audit snapshot, but must never be accepted as a current
+audited condition or as part of the #931 primary claim matrix.
+
+`no_memory`, `curated_file_budgeted`, and other non-remem control runs must set
+`memory_contract_status` to `not_applicable` and must not carry a
+`remem_contract_snapshot`. This keeps the
 three benchmark conditions comparable and prevents control runs from faking
 remem runtime evidence.
 

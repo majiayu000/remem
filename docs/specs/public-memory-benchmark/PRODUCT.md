@@ -39,8 +39,8 @@ chainable evidence layers:
 1. **Memory-system capability evidence**: long-term memory QA, retrieval,
    citation, temporal update, conflict, abstention, staleness, privacy, and
    non-retention gates.
-2. **Coding-agent outcome evidence**: the #385 no-memory/remem/curated-file
-   A/B benchmark on memory-dependent engineering tasks.
+2. **Coding-agent outcome evidence**: the #931 `no_memory` / `remem_e2e` /
+   `curated_file_budgeted` benchmark on memory-dependent engineering tasks.
 
 The public report must say which layer a result supports. Memory capability
 results may support claims about memory-system quality. Only the coding-agent
@@ -93,12 +93,11 @@ not sufficient. The report must answer whether the failure came from:
 
 #### Layer 2: Coding-Agent Outcome
 
-This layer is the existing #385 benchmark. It runs real engineering tasks under
-the required conditions:
+This layer extends the #385 benchmark with the exact #931 claim-bearing matrix:
 
 - `no_memory`;
-- `remem`;
-- `curated_file`.
+- `remem_e2e`;
+- `curated_file_budgeted`.
 
 The #385 layer remains the authority for outcome claims such as "remem helps
 coding agents solve more tasks", "remem saves tokens", or "remem outperforms a
@@ -200,20 +199,27 @@ The diagnostic interpretation follows the same shape as the WhenLoss protocol:
 compare truncated full context, oracle evidence, complete stored memory, and
 retrieved memory to separate write-side from retrieval-side bottlenecks.
 
-Coding-agent outcome suites keep the #385 required conditions:
+Coding-agent outcome claims use exactly the #931 primary conditions:
 
 | Condition | Purpose |
 |---|---|
 | `no_memory` | Agent runs without remem hooks, MCP, native memory, or curated context. |
-| `remem_seeded_sessionstart` | Agent receives exact audited production SessionStart selection over a directly seeded temporary data dir. |
-| `curated_file` | Agent receives a realistic hand-maintained context file derived from the same source evidence. |
+| `remem_e2e` | Agent uses the full production capture, extraction, promotion, retrieval, and audited SessionStart/MCP path; direct gold-memory seeding and full-evidence preload are forbidden. |
+| `curated_file_budgeted` | Agent receives only a target-blind, time-budgeted maintained context file frozen before the target task is revealed. |
 
-Optional coding-agent extensions are allowed only after the base three pass:
+Diagnostic conditions are non-claim-bearing and must not be mixed into the
+claim-ready report matrix:
 
-- `oracle_notes`;
-- `remem_search_only`;
-- `remem_no_staleness`;
-- `remem_no_temporal`.
+- `remem_seeded_sessionstart`;
+- `curated_file_expert`;
+- `oracle_evidence`;
+- `remem_oracle_retrieval`;
+- `full_history`;
+- `remem_no_enrichment`;
+- `remem_fts_only`.
+
+Historical full-preload artifacts retain the `remem_preloaded` identity but
+cannot satisfy current ContextAudit or coding-outcome claim gates.
 
 ### Metrics
 
@@ -336,8 +342,10 @@ published #385 harness."
 
 Required evidence:
 
-- `no_memory`, `remem`, and `curated_file` all run on the same task set;
-- at least three runs per condition;
+- `no_memory`, `remem_e2e`, and `curated_file_budgeted` all run on the registered
+  16-task set;
+- exactly the registered run indices 0, 1, and 2 per task and condition;
+- artifacts pass the public verifier;
 - remem has positive resolution delta versus no memory;
 - token, turn, and wall-time regressions are reported and justified;
 - remem is not materially worse than curated file, or the report explains the
@@ -372,18 +380,21 @@ memory benchmark, this coding outcome gate still applies.
 For coding-outcome superiority claims, `remem-public-coding-claim` passes only
 if all are true:
 
-1. remem beats `no_memory` on coding-agent resolved rate by at least 10
-   percentage points, or by a statistically credible positive bootstrap
-   interval.
-2. remem is not worse than `curated_file` by more than 3 percentage points.
-3. remem total token cost is at most `curated_file + 20%`, unless a higher
-   resolved rate justifies the cost.
-4. stale-memory-caused failures are under 2% of runs.
-5. privacy and non-retention leak rate is 0 on the adversarial suite.
-6. All artifacts reproduce from a clean checkout.
+1. `remem_e2e` beats `no_memory` on resolved rate by at least 10 percentage
+   points and its paired 95% bootstrap interval has a lower bound above 0.
+2. `remem_e2e` versus `curated_file_budgeted` has a paired 95% interval lower
+   bound of at least -3 percentage points and reduces human maintenance time by
+   at least 70% on the same denominator.
+3. Token and latency costs are reported as mandatory secondary outcomes.
+4. `memory_hurt` stays at or below 2% and `stale_memory_followed` stays at or
+   below 1% across the 48 registered `remem_e2e` tuples; missing or ambiguous
+   causal evidence makes the gate insufficient rather than counting as no harm.
+5. Privacy and non-retention leak rate is 0 on the adversarial suite.
+6. The public artifact verifier passes and all linked artifacts reproduce from
+   a clean checkout.
 
-If `curated_file` ties or beats remem with lower cost and no material usability
-downside, the roadmap must record a stop-loss signal. The next slice should
+If `curated_file_budgeted` ties or beats remem with lower cost and no material
+usability downside, the roadmap must record a stop-loss signal. The next slice should
 focus on ergonomics, export/import, human-maintained memory workflows, and
 context-file integration rather than more retrieval machinery.
 
@@ -410,7 +421,8 @@ Issues: #634, #635, #636
 
 Implement the #385 runner, task fixture pack, and memory attribution/failure
 taxonomy. The first fixture set should contain 12-20 tasks with objective
-oracles and at least three runs per condition before publication.
+oracles and exactly the registered run indices 0, 1, and 2 per task and
+condition before publication.
 
 ### Phase 4: Baseline Report And Claim Gate
 

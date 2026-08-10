@@ -349,8 +349,8 @@ cargo run -- bench verify --root eval/public --json-out /tmp/remem-bench-verify.
 cargo run -- bench report --root eval/public --json-out eval/public/reports/baseline.json --markdown-out eval/public/reports/baseline.md
 ```
 
-当前 directional report 会验证 4 个 manifest、4 个 report、25 个 run
-artifact 和 125 个 artifact 文件。它包含：
+当前 directional report 会验证 5 个 manifest、5 个 report、45 个 run
+artifact 和 225 个 artifact 文件。它包含：
 
 - `remem-code-memory`：8 个 memory QA run，覆盖 temporal/as-of 回答、stale
   decision avoidance、conflict、workstream continuity、prior bug root cause、
@@ -359,8 +359,9 @@ artifact 和 125 个 artifact 文件。它包含：
   payment data、unsupported assistant claim、unapproved external source、
   roleplay、negation、same-name repo、branch divergence、stale file anchor
   和 unresolved conflict。
-- `issue385-smoke`：一个已提交的 coding-agent smoke run artifact，并为
-  `remem` run 记录 memory-contract 字段。完整 `issue385-v1` fixture pack
+- `issue385-smoke`：一个已提交且归类为历史 `remem_preloaded` 的
+  coding-agent smoke run artifact，并记录 memory-contract 字段。完整
+  `issue385-v1` fixture pack
   目前只作为 dry-run 复现输入引用，还不属于已验证的 public outcome report。
 
 该报告有意标记为 `directional_only_no_public_claim`。README 和 release

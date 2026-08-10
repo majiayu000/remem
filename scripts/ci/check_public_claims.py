@@ -77,14 +77,14 @@ def load_claim_gate() -> dict[str, str | bool]:
 def coding_claim_ready(gate: dict[str, str | bool]) -> bool:
     return (
         gate.get("artifact_verifier_passed") is True
+        and gate.get("coding_claim_level") == "level_2_coding_outcome_improvement"
         and gate.get("coding_outcome_stop_loss_status")
-        == "ready_for_stop_loss_evaluation"
+        == "passed_coding_outcome_stop_loss"
     )
 
 
 def sota_claim_ready(gate: dict[str, str | bool]) -> bool:
-    status = gate.get("public_sota_status")
-    return isinstance(status, str) and not status.startswith("not_")
+    return gate.get("public_sota_status") == "passed_level3_public_sota"
 
 
 def line_is_policy_or_negative(text: str) -> bool:
@@ -138,13 +138,29 @@ def check_surfaces(gate: dict[str, str | bool]) -> list[str]:
 def run_self_test() -> int:
     blocked_gate = {
         "artifact_verifier_passed": True,
+        "coding_claim_level": "directional_only_no_public_claim",
         "coding_outcome_stop_loss_status": "not_evaluated_insufficient_coding_matrix",
         "public_sota_status": "not_evaluated_no_public_sota_claim",
     }
-    ready_gate = {
+    evaluation_ready_gate = {
         "artifact_verifier_passed": True,
+        "coding_claim_level": "directional_only_no_public_claim",
         "coding_outcome_stop_loss_status": "ready_for_stop_loss_evaluation",
-        "public_sota_status": "ready_level3_public_claim",
+        "public_sota_status": "not_evaluated_no_public_sota_claim",
+    }
+    sota_evaluation_ready_gate = {
+        **evaluation_ready_gate,
+        "public_sota_status": "ready_for_level3_evaluation",
+    }
+    sota_unknown_gate = {
+        **evaluation_ready_gate,
+        "public_sota_status": "unknown",
+    }
+    passed_gate = {
+        "artifact_verifier_passed": True,
+        "coding_claim_level": "level_2_coding_outcome_improvement",
+        "coding_outcome_stop_loss_status": "passed_coding_outcome_stop_loss",
+        "public_sota_status": "passed_level3_public_sota",
     }
 
     cases = [
@@ -167,15 +183,39 @@ def run_self_test() -> int:
             "SOTA/best claim",
         ),
         (
+            "SOTA evaluation-ready state remains blocked",
+            "remem is the best system; see eval/public/reports/baseline.md.",
+            sota_evaluation_ready_gate,
+            "SOTA/best claim",
+        ),
+        (
+            "unknown SOTA state remains blocked",
+            "remem is the best system; see eval/public/reports/baseline.md.",
+            sota_unknown_gate,
+            "SOTA/best claim",
+        ),
+        (
+            "fully passed grounded SOTA claim passes",
+            "remem is best on benchmark X; see eval/public/reports/baseline.md.",
+            passed_gate,
+            None,
+        ),
+        (
             "unguarded coding superiority fails",
             "remem outperforms a maintained context file on coding tasks.",
             blocked_gate,
             "coding-outcome superiority",
         ),
         (
-            "ready grounded coding claim passes",
+            "matrix-ready coding claim remains blocked",
             "remem outperforms no_memory on fixture X; see eval/public/reports/baseline.md.",
-            ready_gate,
+            evaluation_ready_gate,
+            "coding-outcome superiority",
+        ),
+        (
+            "fully passed grounded coding claim passes",
+            "remem outperforms no_memory on fixture X; see eval/public/reports/baseline.md.",
+            passed_gate,
             None,
         ),
     ]

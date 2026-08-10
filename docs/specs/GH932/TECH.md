@@ -199,6 +199,11 @@ is the explicit rollback.
   field, derives candidate/selected/dropped counts from the audit entries, and
   rejects a blank or renamed injection ID or a snapshot that differs from the
   persisted row.
+- Public artifact verification additionally opens the declared read-only
+  SQLite `remem_db_snapshot`, reloads that exact persisted row and its linked
+  injection items, compares the production context fingerprint, and checks an
+  exact SHA-256 binding for the published `injected_context` bytes. An opaque,
+  placeholder, missing, or unrelated database snapshot fails closed.
 - `CodingBenchRunReport` and the executable runner report carry an explicit
   audit-contract status: `verified`, `contract_failure`, or `not_applicable`.
   Remem requires `verified` plus a snapshot; a missing, malformed, tampered, or

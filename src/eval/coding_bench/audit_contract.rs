@@ -1,14 +1,15 @@
 use anyhow::{bail, Result};
 use rusqlite::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 
 use super::types::{BenchCondition, RunReport};
-use crate::context_bundle::{ContextAudit, DegradedMode};
+use crate::context_bundle::{ChannelKind, ContextAudit, DegradedMode};
 
 const SUPPORTED_CONTEXT_BUNDLE_SCHEMA_V1: u32 = 1;
 
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RememContextAuditStatus {
     Verified,
@@ -16,7 +17,8 @@ pub enum RememContextAuditStatus {
     NotApplicable,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct RememContextAuditSnapshot {
     pub injection_run_id: String,
     pub bundle_schema_version: u32,
@@ -92,6 +94,7 @@ pub(crate) fn context_audit_binding_hash(injection_run_id: &str, audit_hash: &st
 pub(crate) fn verify_snapshot_against_persisted_injection(
     conn: &Connection,
     snapshot: &RememContextAuditSnapshot,
+    injected_context: &str,
 ) -> Result<()> {
     let actual =
         load_context_audit_snapshot(conn, &snapshot.injection_run_id)?.ok_or_else(|| {
@@ -106,7 +109,238 @@ pub(crate) fn verify_snapshot_against_persisted_injection(
             snapshot.injection_run_id
         );
     }
+    let context_hashes = {
+        let mut statement = conn.prepare(
+            "SELECT DISTINCT context_hash
+             FROM context_injection_items
+             WHERE injection_run_id = ?1",
+        )?;
+        let hashes = statement
+            .query_map([&snapshot.injection_run_id], |row| {
+                row.get::<_, Option<String>>(0)
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        hashes
+    };
+    if context_hashes.len() != 1 {
+        bail!(
+            "coding-bench ContextAudit injection_run_id={} must link exactly one emitted context hash",
+            snapshot.injection_run_id
+        );
+    }
+    let persisted_context_hash = context_hashes[0].as_deref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "coding-bench ContextAudit injection_run_id={} has no emitted context hash",
+            snapshot.injection_run_id
+        )
+    })?;
+    let actual_context_hash = crate::context::context_output_fingerprint(injected_context);
+    if persisted_context_hash != actual_context_hash {
+        bail!(
+            "coding-bench injected context differs from persisted injection_run_id={}",
+            snapshot.injection_run_id
+        );
+    }
+    verify_persisted_item_mapping(conn, snapshot)?;
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct PersistedInjectionAuditItem {
+    item_kind: String,
+    item_id: Option<i64>,
+    memory_id: Option<i64>,
+    channel: String,
+    score: Option<f64>,
+    status: String,
+    drop_reason: Option<String>,
+}
+
+fn verify_persisted_item_mapping(
+    conn: &Connection,
+    snapshot: &RememContextAuditSnapshot,
+) -> Result<()> {
+    let (audit, _) = crate::context_bundle::persistence::decode_verified_context_audit_json(
+        &snapshot.canonical_audit_json,
+        snapshot.plan_schema_version,
+    )?;
+    let persisted_items = {
+        let mut statement = conn.prepare(
+            "SELECT item_kind, item_id, memory_id, channel, score, status, drop_reason
+             FROM context_injection_items
+             WHERE injection_run_id = ?1
+             ORDER BY id",
+        )?;
+        let items = statement
+            .query_map([&snapshot.injection_run_id], |row| {
+                Ok(PersistedInjectionAuditItem {
+                    item_kind: row.get(0)?,
+                    item_id: row.get(1)?,
+                    memory_id: row.get(2)?,
+                    channel: row.get(3)?,
+                    score: row.get(4)?,
+                    status: row.get(5)?,
+                    drop_reason: row.get(6)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        items
+    };
+    verify_persisted_items(snapshot, &audit, persisted_items)
+}
+
+fn verify_persisted_items(
+    snapshot: &RememContextAuditSnapshot,
+    audit: &ContextAudit,
+    persisted_items: Vec<PersistedInjectionAuditItem>,
+) -> Result<()> {
+    let mut keyed_items = BTreeMap::new();
+    let mut relevance_policy_count = 0_u32;
+    let mut abstention_count = 0_u32;
+    for item in persisted_items {
+        if item.item_kind == "sessionstart_relevance_policy" {
+            verify_relevance_policy_item(&item)?;
+            relevance_policy_count += 1;
+            continue;
+        }
+        if item.item_kind == "memory" && item.item_id.is_none() && item.memory_id.is_none() {
+            verify_abstention_item(&item)?;
+            abstention_count += 1;
+            continue;
+        }
+        let Some(stable_key) = persisted_item_stable_key(&item)? else {
+            bail!("linked ContextAudit item is missing its stable identity");
+        };
+        if keyed_items.insert(stable_key.clone(), item).is_some() {
+            bail!(
+                "coding-bench ContextAudit injection_run_id={} has duplicate linked item {stable_key}",
+                snapshot.injection_run_id
+            );
+        }
+    }
+    if relevance_policy_count != 1 {
+        bail!(
+            "coding-bench ContextAudit injection_run_id={} must have exactly one linked relevance policy row",
+            snapshot.injection_run_id
+        );
+    }
+    if abstention_count > 1 {
+        bail!(
+            "coding-bench ContextAudit injection_run_id={} has duplicate linked abstention rows",
+            snapshot.injection_run_id
+        );
+    }
+    if keyed_items.len() != audit.entries.len() {
+        bail!(
+            "coding-bench ContextAudit injection_run_id={} linked item set does not match canonical audit",
+            snapshot.injection_run_id
+        );
+    }
+    for entry in &audit.entries {
+        let Some(item) = keyed_items.remove(&entry.stable_key) else {
+            bail!(
+                "coding-bench ContextAudit injection_run_id={} is missing linked item {}",
+                snapshot.injection_run_id,
+                entry.stable_key
+            );
+        };
+        let expected_status = if entry.selected {
+            "injected"
+        } else {
+            "dropped"
+        };
+        let expected_drop_reason = if entry.selected {
+            let expected_selected_reason = if entry.relevance_score.is_some() {
+                "relevance_selected"
+            } else {
+                "channel_default_selected"
+            };
+            if entry.reason != expected_selected_reason {
+                bail!(
+                    "coding-bench ContextAudit injection_run_id={} selected item {} has non-canonical reason {}",
+                    snapshot.injection_run_id,
+                    entry.stable_key,
+                    entry.reason
+                );
+            }
+            None
+        } else {
+            Some(entry.reason.as_str())
+        };
+        if item.channel != channel_name(entry.channel)
+            || item.score != entry.relevance_score
+            || item.status != expected_status
+            || item.drop_reason.as_deref() != expected_drop_reason
+        {
+            bail!(
+                "coding-bench ContextAudit injection_run_id={} linked item {} differs from canonical audit: persisted={item:?} canonical={entry:?}",
+                snapshot.injection_run_id,
+                entry.stable_key
+            );
+        }
+    }
+    if !keyed_items.is_empty() {
+        bail!(
+            "coding-bench ContextAudit injection_run_id={} has extra linked items",
+            snapshot.injection_run_id
+        );
+    }
+    Ok(())
+}
+
+fn persisted_item_stable_key(item: &PersistedInjectionAuditItem) -> Result<Option<String>> {
+    match item.item_kind.as_str() {
+        "memory" => match (item.item_id, item.memory_id) {
+            (Some(item_id), Some(memory_id)) if item_id == memory_id => {
+                Ok(Some(format!("memory:{memory_id}")))
+            }
+            _ => bail!("linked memory item has non-canonical identity columns"),
+        },
+        "session_summary" => match (item.item_id, item.memory_id) {
+            (Some(id), None) => Ok(Some(format!("session_summary:{id}"))),
+            _ => bail!("linked session summary has non-canonical identity columns"),
+        },
+        "workstream" => match (item.item_id, item.memory_id) {
+            (Some(id), None) => Ok(Some(format!("workstream:{id}"))),
+            _ => bail!("linked workstream has non-canonical identity columns"),
+        },
+        other => bail!("linked ContextAudit item has unknown item_kind={other}"),
+    }
+}
+
+fn verify_relevance_policy_item(item: &PersistedInjectionAuditItem) -> Result<()> {
+    if item.item_id.is_some()
+        || item.memory_id.is_some()
+        || item.channel != "policy"
+        || item.score.is_some_and(|score| !score.is_finite())
+        || item.status != "injected"
+        || item.drop_reason.is_some()
+    {
+        bail!("linked ContextAudit relevance policy row has non-canonical fields");
+    }
+    Ok(())
+}
+
+fn verify_abstention_item(item: &PersistedInjectionAuditItem) -> Result<()> {
+    if item.channel != "memory"
+        || item.score.is_some()
+        || item.status != "abstained"
+        || item.drop_reason.as_deref() != Some("no_relevant_context")
+    {
+        bail!("linked ContextAudit abstention row has non-canonical fields");
+    }
+    Ok(())
+}
+
+const fn channel_name(channel: ChannelKind) -> &'static str {
+    match channel {
+        ChannelKind::Preferences => "preferences",
+        ChannelKind::Lessons => "lessons",
+        ChannelKind::Core => "core",
+        ChannelKind::Workstreams => "workstreams",
+        ChannelKind::MemoryIndex => "index",
+        ChannelKind::Sessions => "sessions",
+    }
 }
 
 pub(crate) fn validate_run_context_audit(run: &RunReport) -> Result<()> {
@@ -264,7 +498,7 @@ mod tests {
             validity: ItemValidity::Current,
             selected,
             reason: if selected {
-                "selected_channel".to_string()
+                "relevance_selected".to_string()
             } else {
                 "section_budget".to_string()
             },
@@ -316,6 +550,127 @@ mod tests {
             truncation_reason: audit.truncation_reason,
             canonical_audit_json,
         })
+    }
+
+    fn persisted_item(
+        id: i64,
+        status: &str,
+        drop_reason: Option<&str>,
+    ) -> PersistedInjectionAuditItem {
+        PersistedInjectionAuditItem {
+            item_kind: "memory".to_string(),
+            item_id: Some(id),
+            memory_id: Some(id),
+            channel: "core".to_string(),
+            score: Some(0.75),
+            status: status.to_string(),
+            drop_reason: drop_reason.map(str::to_string),
+        }
+    }
+
+    fn persisted_items() -> Vec<PersistedInjectionAuditItem> {
+        vec![
+            PersistedInjectionAuditItem {
+                item_kind: "sessionstart_relevance_policy".to_string(),
+                item_id: None,
+                memory_id: None,
+                channel: "policy".to_string(),
+                score: Some(0.5),
+                status: "injected".to_string(),
+                drop_reason: None,
+            },
+            persisted_item(1, "injected", None),
+            persisted_item(2, "dropped", Some("section_budget")),
+        ]
+    }
+
+    fn abstention_item() -> PersistedInjectionAuditItem {
+        PersistedInjectionAuditItem {
+            item_kind: "memory".to_string(),
+            item_id: None,
+            memory_id: None,
+            channel: "memory".to_string(),
+            score: None,
+            status: "abstained".to_string(),
+            drop_reason: Some("no_relevant_context".to_string()),
+        }
+    }
+
+    #[test]
+    fn persisted_item_mapping_rejects_every_provenance_mutation() -> Result<()> {
+        let snapshot = snapshot()?;
+        let (audit, _) = crate::context_bundle::persistence::decode_verified_context_audit_json(
+            &snapshot.canonical_audit_json,
+            snapshot.plan_schema_version,
+        )?;
+        verify_persisted_items(&snapshot, &audit, persisted_items())?;
+        let mut with_abstention = persisted_items();
+        with_abstention.push(abstention_item());
+        verify_persisted_items(&snapshot, &audit, with_abstention)?;
+
+        let mut mutations = Vec::new();
+        let mut missing = persisted_items();
+        missing.pop();
+        mutations.push(missing);
+        let mut extra = persisted_items();
+        extra.push(persisted_item(3, "dropped", Some("section_budget")));
+        mutations.push(extra);
+        let mut duplicate = persisted_items();
+        duplicate.push(duplicate[1].clone());
+        mutations.push(duplicate);
+        let mut identity = persisted_items();
+        identity[1].item_id = Some(9);
+        mutations.push(identity);
+        let mut score = persisted_items();
+        score[1].score = Some(0.5);
+        mutations.push(score);
+        let mut status = persisted_items();
+        status[1].status = "dropped".to_string();
+        mutations.push(status);
+        let mut reason = persisted_items();
+        reason[2].drop_reason = Some("tampered".to_string());
+        mutations.push(reason);
+        let mut duplicate_policy = persisted_items();
+        duplicate_policy.push(duplicate_policy[0].clone());
+        mutations.push(duplicate_policy);
+        let mut malformed_policy = persisted_items();
+        malformed_policy[0].status = "dropped".to_string();
+        mutations.push(malformed_policy);
+        let mut malformed_abstention = persisted_items();
+        let mut abstention = abstention_item();
+        abstention.drop_reason = Some("tampered".to_string());
+        malformed_abstention.push(abstention);
+        mutations.push(malformed_abstention);
+        let mut duplicate_abstention = persisted_items();
+        duplicate_abstention.extend([abstention_item(), abstention_item()]);
+        mutations.push(duplicate_abstention);
+        for item_kind in ["session_summary", "workstream"] {
+            let mut unexpected_identity = persisted_items();
+            let mut item = persisted_item(3, "injected", None);
+            item.item_kind = item_kind.to_string();
+            unexpected_identity.push(item);
+            mutations.push(unexpected_identity);
+        }
+        let mut unknown = persisted_items();
+        unknown.push(PersistedInjectionAuditItem {
+            item_kind: "unknown".to_string(),
+            item_id: Some(3),
+            memory_id: None,
+            channel: "core".to_string(),
+            score: None,
+            status: "injected".to_string(),
+            drop_reason: None,
+        });
+        mutations.push(unknown);
+
+        for mutated in mutations {
+            assert!(verify_persisted_items(&snapshot, &audit, mutated).is_err());
+        }
+
+        let mut selected_reason = audit.clone();
+        selected_reason.entries[0].reason = "tampered".to_string();
+        assert!(verify_persisted_items(&snapshot, &selected_reason, persisted_items()).is_err());
+        Ok(())
     }
 
     #[test]

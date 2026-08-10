@@ -25,13 +25,13 @@ This report separates memory-system capability evidence from coding-agent outcom
 
 | Condition | Runs | Resolved rate | Token mean | Token variance | Wall-time mean ms | Variance status |
 |---|---:|---:|---:|---:|---:|---|
-| `remem` | 1 | 1.000 | 125.000 | n/a | 1000.000 | `insufficient_runs_for_variance` |
+| `remem_preloaded` | 1 | 1.000 | 125.000 | n/a | 1000.000 | `insufficient_runs_for_variance` |
 
 ## Coding Task Outcomes
 
 | Task | Condition | Run | Resolved | Failure reason | Tokens | Wall time ms | Memory helped | Memory hurt |
 |---|---|---:|---|---|---:|---:|---|---|
-| `smoke-fix-startup-race-001` | `remem` | 0 | `true` | `none` | 125 | 1000 | `true` | `false` |
+| `smoke-fix-startup-race-001` | `remem_preloaded` | 0 | `true` | `none` | 125 | 1000 | `true` | `false` |
 
 ## Failure Decomposition
 
@@ -70,5 +70,4 @@ Locks and evidence are recorded in the JSON report under `reproducibility`, incl
 - Public SOTA status: `not_evaluated_no_public_sota_claim`
 - This baseline is directional only and must not be used for coding-task superiority claims.
 - README and release wording must not claim SOTA or coding outcome improvement from this report.
-- Coding artifacts do not yet include no_memory, remem, and curated_file conditions.
-- Coding artifacts do not yet have at least three runs per condition.
+- Coding artifacts are not the registered issue385-v1/official-v1 official matrix.

@@ -60,6 +60,58 @@ def check_conditions(errors):
     if "curated_file" in all_ids:
         errors.append("legacy condition id 'curated_file' must not appear; use curated_file_expert")
 
+    public_run_schema = load(REPO_ROOT / "eval" / "public" / "schemas" / "coding-run.schema.json")
+    public_report_schema = load(
+        REPO_ROOT / "eval" / "public" / "schemas" / "coding-report.schema.json"
+    )
+    identity_fields = {"benchmark_id", "benchmark_version", "run_phase", "matrix_namespace"}
+    if not identity_fields.issubset(public_run_schema["required"]):
+        errors.append("public coding-run schema must require canonical benchmark identity")
+    if not identity_fields.issubset(public_report_schema["required"]):
+        errors.append("public coding-report schema must require canonical benchmark identity")
+    public_ids = public_run_schema["properties"]["condition"]["enum"]
+    expected_public_ids = set(all_ids) | {"remem_preloaded"}
+    if set(public_ids) != expected_public_ids or len(public_ids) != len(set(public_ids)):
+        errors.append(
+            "public coding-run condition enum must match the machine registry plus "
+            "historical remem_preloaded"
+        )
+    audited_public_ids = set(
+        public_run_schema["allOf"][0]["if"]["properties"]["condition"]["enum"]
+    )
+    expected_audited_ids = {condition for condition in all_ids if condition.startswith("remem_")}
+    if audited_public_ids != expected_audited_ids:
+        errors.append("public coding-run audited condition set must match current remem conditions")
+    audited_required = set(public_run_schema["allOf"][0]["then"]["required"])
+    if "injected_context_sha256" not in audited_required:
+        errors.append("current remem coding runs must bind exact injected-context bytes")
+    remem_contract_ids = set(
+        public_run_schema["allOf"][1]["if"]["properties"]["condition"]["enum"]
+    )
+    expected_remem_contract_ids = {
+        condition for condition in expected_public_ids if condition.startswith("remem_")
+    }
+    if remem_contract_ids != expected_remem_contract_ids:
+        errors.append("public coding-run memory-contract set must match remem conditions")
+    control_ids = set(
+        public_run_schema["allOf"][2]["if"]["properties"]["condition"]["enum"]
+    )
+    expected_control_ids = {condition for condition in all_ids if not condition.startswith("remem_")}
+    if control_ids != expected_control_ids:
+        errors.append("public coding-run control set must match current non-remem conditions")
+    historical_audit_rule = public_run_schema["allOf"][3]
+    if (
+        historical_audit_rule["if"]["properties"]["condition"] != {"const": "remem_preloaded"}
+        or historical_audit_rule["then"]["properties"]
+        != {
+            "context_audit_status": {"type": "null"},
+            "context_audit_failure_reason": {"type": "null"},
+            "remem_context_audit": {"type": "null"},
+            "injected_context_sha256": {"type": "null"},
+        }
+    ):
+        errors.append("historical remem_preloaded must not accept current ContextAudit evidence")
+
     seen_enums = []
     for stage, enums in registry["failure_stages"].items():
         seen_enums.extend(enums)

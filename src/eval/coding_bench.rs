@@ -20,6 +20,7 @@ pub use artifact::{
     RememTemporalFactEligibilitySnapshot, RememUsageFeedbackCoverageSnapshot,
     CODING_AGENT_AB_SPEC_PATH, CURRENT_MEMORY_CONTRACT_SPEC_PATH, MIN_RUNS_PER_CONDITION,
 };
+pub(crate) use audit_contract::verify_snapshot_against_persisted_injection;
 pub use audit_contract::{
     verify_context_audit_snapshot, RememContextAuditSnapshot, RememContextAuditStatus,
 };

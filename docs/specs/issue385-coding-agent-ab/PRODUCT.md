@@ -36,7 +36,8 @@ set under three memory conditions:
    the same source material that remem is allowed to use.
 
 The benchmark reports task-resolution rate, token usage, turn count, wall time,
-and variance across at least three runs per condition.
+and variance across exactly the registered run indices 0, 1, and 2 per task
+and condition.
 
 ## Non-Goals
 
@@ -146,8 +147,8 @@ The report aggregates by condition:
 
 ## Acceptance Criteria
 
-- A baseline report is committed with three conditions and at least three runs
-  per condition.
+- A baseline report is committed with three conditions and exactly the
+  registered run indices 0, 1, and 2 per task and condition.
 - The benchmark runs from a clean checkout with one documented command.
 - The benchmark uses a temporary data directory and does not read or write the
   user's real remem database.

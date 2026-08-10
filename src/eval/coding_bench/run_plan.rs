@@ -30,7 +30,7 @@ fn build_run_plan(
     let mut plan = Vec::with_capacity(conditions.len() * task_count * runs_per_condition);
     for condition in conditions {
         for task_index in 0..task_count {
-            for run_index in 1..=runs_per_condition {
+            for run_index in 0..runs_per_condition {
                 plan.push(RunPlanEntry {
                     condition: *condition,
                     task_index,
@@ -74,6 +74,12 @@ mod tests {
     fn randomized_run_plan_keeps_complete_matrix_without_grouped_order() {
         let conditions = BenchCondition::ALL.to_vec();
         let sequential = build_run_plan(&conditions, 5, 3);
+        let run_indices = sequential
+            .iter()
+            .filter(|entry| entry.condition == conditions[0] && entry.task_index == 0)
+            .map(|entry| entry.run_index)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(run_indices, std::collections::BTreeSet::from([0, 1, 2]));
         let mut randomized = sequential.clone();
         shuffle_run_plan_with_seed(&mut randomized, 0x1234_5678_9ABC_DEF0);
 

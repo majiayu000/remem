@@ -509,7 +509,7 @@ fn normalize_path_lexically(path: &Path) -> PathBuf {
     }
 }
 
-fn context_fingerprint(output: &str) -> String {
+pub(crate) fn context_fingerprint(output: &str) -> String {
     sha256_hex(&normalize_context_for_hash(output))
 }
 

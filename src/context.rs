@@ -13,6 +13,7 @@ mod host;
 mod hybrid_context;
 mod implicit_query;
 mod injection_gate;
+pub(crate) use injection_gate::context_fingerprint as context_output_fingerprint;
 mod invocation;
 mod memory_selection;
 mod memory_traits;
