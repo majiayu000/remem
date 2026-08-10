@@ -73,15 +73,18 @@ and should be inspected from the current checkout when needed.
 | Area | Responsibility |
 |------|----------------|
 | `adapter/`, `observe/`, `cursor_hook/` | Host hook parsing, capture filtering, spill/replay, and capture-ledger writes |
-| `git_evidence.rs`, `captured_git.rs`, `git_trace.rs` | Successful-commit evidence extraction, claimed-range evidence linking, durable commit/session links, and trace lookup |
+| `git_evidence.rs`, `captured_git.rs`, `git_trace.rs` | Successful-commit evidence extraction and metadata resolution, exact claimed-event-range linking, durable commit/session persistence, and commit/session lookup |
 | `db/`, `migrate/`, `migrations/` | SQLite schema, migration execution, connection policy, write/read helpers, job and extraction-task state |
-| `worker.rs`, `worker/`, `extraction_worker.rs` | Background dispatch, worker singleton and heartbeats, job and extraction-task lease claims/recovery, timeout/retry transitions, and task execution |
+| `worker.rs`, `worker/`, `extraction_worker.rs`, `maintenance/` | Background dispatch, worker singleton and heartbeats, job and extraction-task lease claims/recovery, timeout/retry transitions, task execution, and lifecycle cleanup |
 | `ai.rs`, `ai/`, `runtime_config.rs`, `runtime_config/` | AI executor dispatch, provider/CLI execution and usage accounting, plus host/profile/model resolution and runtime configuration |
-| `summarize.rs`, `summarize/` | Summarize input and parsing plus summary and compress worker phases, including spill/replay and finalization |
-| `session_rollup/`, `observation_extract/`, `memory_candidate/` | Stop and tool-event distillation, observation persistence, candidate routing, review, and promotion governance |
+| `summarize.rs`, `summarize/` | Stop-hook payload intake, capture-ledger enqueue/spill-replay, once-worker launch, active Compress processing, and compatibility-only legacy Summary parsing/finalization |
+| `session_rollup/`, `observation_extract.rs`, `observation_extract/` | Production session-summary generation and persistence, required side effects, and tool-event observation extraction and persistence |
+| `memory_candidate.rs`, `memory_candidate/`, `graph_candidate/` | Governed memory and graph candidate generation, source/evidence validation, review/quarantine, and promotion |
+| `user_context.rs`, `user_context/` | Governed user-context candidate and claim extraction, review/promotion, profile summaries, source-attributed recall, and retention/usage policy |
 | `memory/` (including `memory/preference.rs` and `memory/preference/`), `workstream/`, `truth/` | Curated memory storage, preferences, workstream continuity, lifecycle/current-truth projections |
 | `context/`, `context_bundle/`, `retrieval/`, `retrieval_router/` | SessionStart loading/rendering, bundle audit, search/fusion, intent-aware retrieval planning |
-| `timeline.rs`, `timeline/` | Timeline query aggregation and structured/Markdown report generation for the `timeline` and `timeline_report` MCP flows |
+| `timeline.rs`, `timeline/` | Aggregated project queries and structured/Markdown report generation for the `timeline_report` MCP flow |
+| `db/query/timeline.rs` | Chronological observation-neighborhood queries for the `timeline` MCP flow |
 | `dream/`, `rules/`, `eval/` | Memory consolidation, compiled preference rules, benchmark and policy evaluation gates |
 | `cli/`, `mcp/`, `api/`, `doctor/`, `install/` | User-facing commands, MCP/REST surfaces, diagnostics, and host configuration |
 
