@@ -54,6 +54,7 @@ fn post_gate_debug_trace_preserves_request_source_for_delta_output() {
         context_hash: Some("hash-a".to_string()),
         output_mode: Some("delta"),
         retained_context_chars: Some(0),
+        output_truncated: true,
     };
     let mut output = "[remem context delta truncated]\n".to_string();
 

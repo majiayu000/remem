@@ -150,7 +150,11 @@ is the explicit rollback.
   identities, marks later selected entries as `delta_preview`, recomputes
   selection counts and emitted-output token estimate, and hashes that post-gate
   audit so item rows and the verified bundle audit describe the same
-  SessionStart bytes.
+  SessionStart bytes. Output-only delta truncation is recorded even when every
+  selected identity survives. If writing the gate state fails after a delta is
+  built, the fail-open decision preserves that delta's item boundary and
+  truncation metadata so subsequent audit persistence still describes the
+  emitted preview rather than the pre-gate bundle.
 - Verified reads validate the stored `plan_schema_version` before parsing or
   decoding `audit_json`, canonicalize and re-hash the version-bound envelope,
   dispatch to that version's decoder, then compare every

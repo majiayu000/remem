@@ -645,11 +645,11 @@ pub(in crate::context) fn finalize_items_for_decision(
         .map(|mut item| {
             let final_drop_reason = match decision.action {
                 ContextGateAction::Suppressed => Some("gate_suppressed"),
-                ContextGateAction::EmittedDelta
+                ContextGateAction::EmittedDelta | ContextGateAction::FailOpen
                     if item.render_end_chars.is_some_and(|end| {
                         decision
                             .retained_context_chars
-                            .is_none_or(|retained| end > retained)
+                            .is_some_and(|retained| end > retained)
                     }) =>
                 {
                     Some("delta_preview")

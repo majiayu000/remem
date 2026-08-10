@@ -51,8 +51,9 @@ external database.
   contains plan/policy/schema versions, selection and token-budget aggregates,
   degraded/truncation state, and canonical audit reason metadata. Delta-mode
   previews rewind to the last complete item boundary, then records are resealed
-  to the identities and token estimate actually emitted; no record stores
-  memory titles, memory bodies, or rendered hook output.
+  to the identities and token estimate actually emitted, including when gate
+  state persistence fails after preview construction; no record stores memory
+  titles, memory bodies, or rendered hook output.
 - Current-memory contracts expose staleness, temporal/as-of truth, citation
   usage, and injection audit state instead of treating recall as a black box.
 - User-context controls keep personal claims, profile summaries, suppression

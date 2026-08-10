@@ -155,6 +155,7 @@ pub(crate) fn reseal_after_emission_gate(
     selected_keys: &std::collections::HashSet<String>,
     output_chars: usize,
     drop_reason: &str,
+    output_truncated: bool,
 ) {
     retain_selected_sections(bundle, selected_keys);
     let mut dropped_by_gate = false;
@@ -173,7 +174,7 @@ pub(crate) fn reseal_after_emission_gate(
         .count() as u32;
     bundle.audit.dropped_count = bundle.audit.candidates_considered - bundle.audit.selected_count;
     bundle.audit.token_estimate = (output_chars as u32).div_ceil(4);
-    if dropped_by_gate {
+    if dropped_by_gate || output_truncated {
         bundle.audit.truncation_reason = Some(drop_reason.to_string());
     }
 }

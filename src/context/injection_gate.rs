@@ -49,6 +49,7 @@ pub(super) struct ContextGateDecision {
     pub context_hash: Option<String>,
     pub output_mode: Option<&'static str>,
     pub retained_context_chars: Option<usize>,
+    pub output_truncated: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -278,7 +279,7 @@ pub(super) fn apply_context_gate_with_data_version_and_boundaries(
         };
     }
 
-    let (output, action, output_mode, retained_context_chars) =
+    let (output, action, output_mode, retained_context_chars, output_truncated) =
         if matches!(mode, ContextGateMode::Auto | ContextGateMode::Delta) {
             let delta = delta::build_delta_output(&output, item_end_chars);
             (
@@ -286,9 +287,10 @@ pub(super) fn apply_context_gate_with_data_version_and_boundaries(
                 ContextGateAction::EmittedDelta,
                 "delta",
                 Some(delta.retained_context_chars),
+                delta.was_truncated,
             )
         } else {
-            (output, ContextGateAction::EmittedFull, "full", None)
+            (output, ContextGateAction::EmittedFull, "full", None, false)
         };
 
     match upsert_emit_row(
@@ -306,9 +308,18 @@ pub(super) fn apply_context_gate_with_data_version_and_boundaries(
             let mut decision =
                 gate_decision(output, action, "changed_hash", &key, &hash, output_mode);
             decision.retained_context_chars = retained_context_chars;
+            decision.output_truncated = output_truncated;
             decision
         }
-        Err(error) => fail_open(output, "gate_write", error),
+        Err(error) => {
+            let mut decision = fail_open(output, "gate_write", error);
+            decision.key = Some(key);
+            decision.context_hash = Some(hash);
+            decision.output_mode = Some(output_mode);
+            decision.retained_context_chars = retained_context_chars;
+            decision.output_truncated = output_truncated;
+            decision
+        }
     }
 }
 
@@ -325,6 +336,7 @@ fn decision(
         context_hash: None,
         output_mode: None,
         retained_context_chars: None,
+        output_truncated: false,
     }
 }
 
@@ -344,6 +356,7 @@ fn gate_decision(
         context_hash: Some(context_hash.to_string()),
         output_mode: Some(output_mode),
         retained_context_chars: None,
+        output_truncated: false,
     }
 }
 

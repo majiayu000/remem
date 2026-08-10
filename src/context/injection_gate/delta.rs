@@ -4,6 +4,7 @@ const DELTA_TRUNCATED_MARKER: &str = "\n[remem context delta truncated]\n";
 pub(super) struct DeltaOutput {
     pub output: String,
     pub retained_context_chars: usize,
+    pub was_truncated: bool,
 }
 
 pub(super) fn build_delta_output(output: &str, item_end_chars: &[usize]) -> DeltaOutput {
@@ -20,6 +21,7 @@ fn build_delta_output_with_limit(
         return DeltaOutput {
             output: String::new(),
             retained_context_chars: 0,
+            was_truncated: !output.is_empty(),
         };
     }
 
@@ -53,6 +55,7 @@ fn build_delta_output_with_limit(
                 return DeltaOutput {
                     output: delta,
                     retained_context_chars: 0,
+                    was_truncated,
                 };
             }
             let retained_copied_chars = boundary
@@ -80,12 +83,14 @@ fn build_delta_output_with_limit(
             return DeltaOutput {
                 output: delta,
                 retained_context_chars: boundary,
+                was_truncated,
             };
         }
     }
     DeltaOutput {
         output: delta,
         retained_context_chars,
+        was_truncated,
     }
 }
 

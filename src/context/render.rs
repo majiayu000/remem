@@ -158,6 +158,7 @@ fn generate_context_output_for_invocation(
                     context_hash: None,
                     output_mode: None,
                     retained_context_chars: None,
+                    output_truncated: false,
                 }
             } else {
                 ContextGateDecision {
@@ -168,6 +169,7 @@ fn generate_context_output_for_invocation(
                     context_hash: None,
                     output_mode: None,
                     retained_context_chars: None,
+                    output_truncated: false,
                 }
             };
             if debug_enabled {
@@ -235,6 +237,7 @@ fn generate_context_output_for_invocation(
                     context_hash: None,
                     output_mode: Some("fail_open"),
                     retained_context_chars: None,
+                    output_truncated: false,
                 }
             } else {
                 let gate_start = Instant::now();
@@ -277,6 +280,7 @@ fn generate_context_output_for_invocation(
                 context_hash: None,
                 output_mode: None,
                 retained_context_chars: None,
+                output_truncated: false,
             },
             stats,
             ContextGatePrecheck::Off,

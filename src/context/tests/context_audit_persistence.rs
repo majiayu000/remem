@@ -37,6 +37,7 @@ fn decision(action: ContextGateAction, output: &str) -> ContextGateDecision {
         context_hash: None,
         output_mode: None,
         retained_context_chars: (action == ContextGateAction::EmittedDelta).then_some(0),
+        output_truncated: action == ContextGateAction::EmittedDelta,
     }
 }
 
@@ -73,6 +74,29 @@ fn delta_keeps_items_with_identity_boundaries_inside_preview() {
     delta_decision.retained_context_chars = Some(250);
 
     let finalized = finalize_items_for_decision(&delta_decision, &[injected_item("title")]);
+
+    assert_eq!(finalized[0].status, "injected");
+    assert_eq!(finalized[0].drop_reason, None);
+}
+
+#[test]
+fn delta_gate_write_fail_open_still_drops_items_beyond_emitted_boundary() {
+    let mut fail_open = decision(ContextGateAction::FailOpen, "preview");
+    fail_open.output_mode = Some("delta");
+    fail_open.retained_context_chars = Some(0);
+    fail_open.output_truncated = true;
+
+    let finalized = finalize_items_for_decision(&fail_open, &[injected_item("title")]);
+
+    assert_eq!(finalized[0].status, "dropped");
+    assert_eq!(finalized[0].drop_reason, Some("delta_preview"));
+}
+
+#[test]
+fn non_delta_fail_open_keeps_fully_emitted_items() {
+    let fail_open = decision(ContextGateAction::FailOpen, "full output");
+
+    let finalized = finalize_items_for_decision(&fail_open, &[injected_item("title")]);
 
     assert_eq!(finalized[0].status, "injected");
     assert_eq!(finalized[0].drop_reason, None);
@@ -282,6 +306,7 @@ fn distinct_same_second_invocations_keep_both_item_sets() -> anyhow::Result<()> 
         context_hash: None,
         output_mode: Some("bypassed"),
         retained_context_chars: None,
+        output_truncated: false,
     };
     let audit_item = |title: &str| ContextAuditItem {
         item_kind: "memory",

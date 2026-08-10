@@ -43,26 +43,31 @@ fn emitted_context_bundle<'a>(
     context_bundle: Option<&'a crate::context_bundle::ContextBundle>,
 ) -> Option<Cow<'a, crate::context_bundle::ContextBundle>> {
     let bundle = context_bundle?;
+    if decision.action == ContextGateAction::EmittedDelta
+        || (decision.action == ContextGateAction::FailOpen
+            && decision.retained_context_chars.is_some())
+    {
+        let selected_keys = finalize_items_for_decision(decision, audit_items)
+            .into_iter()
+            .filter(|item| item.status == "injected")
+            .filter_map(|item| item.stable_key())
+            .collect::<HashSet<_>>();
+        let mut emitted = bundle.clone();
+        crate::context_bundle::reseal_after_emission_gate(
+            &mut emitted,
+            &selected_keys,
+            decision.output.chars().count(),
+            "delta_preview",
+            decision.output_truncated,
+        );
+        return Some(Cow::Owned(emitted));
+    }
     match decision.action {
         ContextGateAction::Suppressed => None,
-        ContextGateAction::EmittedDelta => {
-            let selected_keys = finalize_items_for_decision(decision, audit_items)
-                .into_iter()
-                .filter(|item| item.status == "injected")
-                .filter_map(|item| item.stable_key())
-                .collect::<HashSet<_>>();
-            let mut emitted = bundle.clone();
-            crate::context_bundle::reseal_after_emission_gate(
-                &mut emitted,
-                &selected_keys,
-                decision.output.chars().count(),
-                "delta_preview",
-            );
-            Some(Cow::Owned(emitted))
-        }
         ContextGateAction::Bypassed
         | ContextGateAction::EmittedFull
-        | ContextGateAction::FailOpen => Some(Cow::Borrowed(bundle)),
+        | ContextGateAction::FailOpen
+        | ContextGateAction::EmittedDelta => Some(Cow::Borrowed(bundle)),
     }
 }
 
@@ -135,12 +140,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn delta_persistence_reseals_bundle_to_retained_items() -> Result<()> {
-        let conn = rusqlite::Connection::open_in_memory()?;
-        crate::migrate::run_migrations(&conn)?;
+    fn selected_bundle() -> ContextBundle {
         let plan_hash = "a".repeat(64);
-        let bundle = ContextBundle {
+        ContextBundle {
             schema_version: CONTEXT_BUNDLE_SCHEMA_VERSION,
             plan_hash: plan_hash.clone(),
             degraded_mode: DegradedMode::Full,
@@ -164,7 +166,14 @@ mod tests {
                 truncation_reason: None,
                 entries: vec![selected_audit_entry(1), selected_audit_entry(2)],
             },
-        };
+        }
+    }
+
+    #[test]
+    fn delta_persistence_reseals_bundle_to_retained_items() -> Result<()> {
+        let conn = rusqlite::Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        let bundle = selected_bundle();
         let invocation = ContextInvocation {
             cwd: "/repo".to_string(),
             project: "/repo".to_string(),
@@ -185,6 +194,7 @@ mod tests {
             context_hash: Some("b".repeat(64)),
             output_mode: Some("delta"),
             retained_context_chars: Some(100),
+            output_truncated: true,
         };
 
         persist_emission_audit(
@@ -222,6 +232,67 @@ mod tests {
         assert!(persisted.audit.entries[0].selected);
         assert!(!persisted.audit.entries[1].selected);
         assert_eq!(persisted.audit.entries[1].reason, "delta_preview");
+        Ok(())
+    }
+
+    #[test]
+    fn delta_reseal_records_output_only_truncation() -> Result<()> {
+        let bundle = selected_bundle();
+        let decision = ContextGateDecision {
+            output: "truncated delta output".to_string(),
+            action: ContextGateAction::EmittedDelta,
+            reason: "changed_hash",
+            key: None,
+            context_hash: None,
+            output_mode: Some("delta"),
+            retained_context_chars: Some(200),
+            output_truncated: true,
+        };
+
+        let emitted = emitted_context_bundle(
+            &decision,
+            &[rendered_audit_item(1, 50), rendered_audit_item(2, 150)],
+            Some(&bundle),
+        )
+        .ok_or_else(|| anyhow::anyhow!("delta bundle should be resealed"))?;
+
+        assert_eq!(emitted.audit.selected_count, 2);
+        assert_eq!(emitted.audit.dropped_count, 0);
+        assert_eq!(
+            emitted.audit.truncation_reason.as_deref(),
+            Some("delta_preview")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn delta_gate_write_fail_open_reseals_to_emitted_items() -> Result<()> {
+        let bundle = selected_bundle();
+        let decision = ContextGateDecision {
+            output: "fail-open delta output".to_string(),
+            action: ContextGateAction::FailOpen,
+            reason: "gate_write",
+            key: None,
+            context_hash: None,
+            output_mode: Some("delta"),
+            retained_context_chars: Some(100),
+            output_truncated: true,
+        };
+
+        let emitted = emitted_context_bundle(
+            &decision,
+            &[rendered_audit_item(1, 50), rendered_audit_item(2, 150)],
+            Some(&bundle),
+        )
+        .ok_or_else(|| anyhow::anyhow!("fail-open delta bundle should be resealed"))?;
+
+        assert_eq!(emitted.audit.selected_count, 1);
+        assert_eq!(emitted.audit.dropped_count, 1);
+        assert_eq!(emitted.audit.entries[1].reason, "delta_preview");
+        assert_eq!(
+            emitted.audit.truncation_reason.as_deref(),
+            Some("delta_preview")
+        );
         Ok(())
     }
 
@@ -287,6 +358,7 @@ mod tests {
             context_hash: None,
             output_mode: Some("bypassed"),
             retained_context_chars: None,
+            output_truncated: false,
         };
         let item = ContextAuditItem {
             item_kind: "memory",
