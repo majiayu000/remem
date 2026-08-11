@@ -66,16 +66,28 @@ from an ordinary Stop event or worker-time `HEAD`.
 
 ## Module Map
 
-This map records responsibility boundaries only. Do not hand-maintain line
-counts here; source file sizes are enforced by `scripts/ci/check_file_size.py`
-and should be inspected from the current checkout when needed.
+This ownership map is intentionally non-exhaustive. It includes primary
+product-domain roots, reusable root-level owners with production callers in
+at least three architectural subsystems, and owners of cross-cutting contracts
+explicitly named in the data flow. It excludes executable/module-registration
+glue, test-only helpers, and one- or two-subsystem implementation details. A
+directory-form area includes its same-named Rust module root and production
+children unless a sibling is named separately. Do not hand-maintain line
+counts here; source sizes are enforced by
+[`scripts/ci/check_file_size.py`](../scripts/ci/check_file_size.py) and should
+be inspected from the current checkout when needed.
 
 | Area | Responsibility |
 |------|----------------|
 | `adapter/`, `observe/`, `cursor_hook/` | Host hook parsing, capture filtering, capture-specific spill serialization/replay, and capture-ledger writes |
 | `identity.rs`, `project_id.rs`, `project_alias.rs` | Hook-host and capture-identity type contracts, canonical project-root resolution, and alias-governed canonical writes/alias-aware reads |
 | `spill_queue.rs` | Shared cross-process spill locking/appends, atomic replay claims, failed-record recovery, and orphan restoration |
-| `git_evidence.rs`, `captured_git.rs`, `git_trace.rs` | Successful-commit evidence extraction and metadata resolution, exact claimed-event-range linking, durable commit/session persistence, and commit/session lookup |
+| `git_util.rs` | Bounded Git subprocess execution and cleanup, repository-root and commit-metadata resolution, metadata sanitization, and shared Git evidence types/parsers |
+| `git_evidence.rs`, `captured_git.rs`, `git_trace.rs`, `git_trace/` | Successful-commit evidence extraction, exact claimed-event-range linking, durable commit/session persistence, poisoning-gated trace exposure, and commit/session lookup |
+| `hook_integrity.rs`, `hook_integrity/` | Canonical host-hook specifications and command parsing, installed-hook integrity evaluation/removal, and executable consistency checks for context warnings, doctor, and install |
+| `atomic_file.rs` | Permission-preserving atomic file publication with unique sibling temp files, durable file/directory synchronization, final-target symlink resolution, and cross-platform replacement |
+| `build_info.rs` | Canonical package/schema version labels shared by CLI, API/MCP, doctor, migrations, and persisted procedure metadata |
+| `perf.rs` | Shared phase-timing capture and formatting for context loading, retrieval, summarization, evaluation, and CLI diagnostics |
 | `db/`, `migrate/`, `migrations/` | SQLite/SQLCipher schema and connection policy, encrypted spill payloads, migrations, read/write helpers, and job, extraction-task, and frozen-legacy state |
 | `worker.rs`, `worker/`, `extraction_worker.rs`, `maintenance/` | Background dispatch, worker singleton and heartbeats, job and extraction-task lease claims/recovery, timeout/retry transitions, task execution, idle legacy-pending migration, and lifecycle cleanup |
 | `ai.rs`, `ai/`, `runtime_config.rs`, `runtime_config/` | AI executor dispatch, provider/CLI execution and usage accounting, plus host/profile/model resolution and runtime configuration |
