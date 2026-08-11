@@ -70,16 +70,17 @@ This ownership map is intentionally non-exhaustive. It includes primary
 product-domain roots, reusable root-level owners with production callers in
 at least three architectural subsystems, and owners of cross-cutting contracts
 explicitly named in the data flow. It excludes executable/module-registration
-glue, test-only helpers, and one- or two-subsystem implementation details. A
-directory-form area includes its same-named Rust module root and production
-children unless a sibling is named separately. Do not hand-maintain line
-counts here; source sizes are enforced by
+glue, test-only helpers, and one- or two-subsystem implementation details.
+Entries are bounded routing hints, not exhaustive or exclusive ownership
+claims: a directory row describes its primary domain, while a cross-cutting
+child may be routed separately when another flow owns its contract. Do not
+hand-maintain line counts here; source sizes are enforced by
 [`scripts/ci/check_file_size.py`](../scripts/ci/check_file_size.py) and should
 be inspected from the current checkout when needed.
 
 | Area | Responsibility |
 |------|----------------|
-| `adapter/`, `observe/`, `cursor_hook/` | Host hook parsing, capture filtering, capture-specific spill serialization/replay, and capture-ledger writes |
+| `adapter/` (including `adapter/redaction.rs`), `observe/`, `cursor_hook/` | Host hook parsing, capture filtering, shared evidence sanitization/redaction for secrets, tokens, headers, URL userinfo, and malformed payloads, capture-specific spill serialization/replay, and capture-ledger writes |
 | `identity.rs`, `project_id.rs`, `project_alias.rs` | Hook-host and capture-identity type contracts, canonical project-root resolution, and alias-governed canonical writes/alias-aware reads |
 | `spill_queue.rs` | Shared cross-process spill locking/appends, atomic replay claims, failed-record recovery, and orphan restoration |
 | `git_util.rs` | Bounded Git subprocess execution and cleanup, repository-root and commit-metadata resolution, metadata sanitization, and shared Git evidence types/parsers |
@@ -95,7 +96,7 @@ be inspected from the current checkout when needed.
 | `session_rollup/`, `observation_extract.rs`, `observation_extract/` | Production session-summary generation and persistence, required side effects, and tool-event observation extraction and persistence |
 | `memory_candidate.rs`, `memory_candidate/`, `graph_candidate/` | Governed memory and graph candidate generation, source/evidence validation, review/quarantine, and promotion |
 | `user_context.rs`, `user_context/` | Governed user-context candidate and claim extraction, review/promotion, profile summaries, source-attributed recall, and retention/usage policy |
-| `ingest/`, `memory/raw_archive.rs`, `memory/raw_query.rs`, `memory/raw_reconcile.rs` | Transcript discovery and identity-ledger ingestion, raw-archive persistence, typed/query-bounded raw reads, and aggregate reconciliation |
+| `ingest/`, `memory/raw_archive.rs`, `memory/raw_occurrence.rs`, `memory/raw_query.rs`, `memory/raw_reconcile.rs`, `memory/raw_transcript.rs` | Transcript discovery and parsing, identity-ledger and occurrence ingestion, raw-archive persistence, typed/query-bounded raw reads, and aggregate reconciliation |
 | `memory/` (including `memory/preference.rs` and `memory/preference/`), `workstream/`, `truth/` | Curated memory storage, formatting/deduplication, preferences, workstream continuity, and lifecycle/current-truth projections |
 | `context/`, `context_bundle/`, `retrieval/`, `retrieval_router/` | SessionStart loading/rendering, optional Claude native-memory mirror rendering/sync, bundle audit, lexical/vector search and fusion, and intent-aware retrieval planning |
 | `timeline.rs`, `timeline/` | Aggregated project queries and structured/Markdown report generation for the `timeline_report` MCP flow |
