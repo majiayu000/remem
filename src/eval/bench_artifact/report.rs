@@ -12,6 +12,8 @@ use super::types::{
     PublicBenchmarkManifest, PublicBenchmarkReport, RunEnvironment,
 };
 
+pub(super) mod matrix;
+
 #[derive(Debug, Clone)]
 pub struct BenchReportOptions {
     pub root: PathBuf,
@@ -90,6 +92,10 @@ pub struct MemoryTaskOutcome {
 #[derive(Debug, Clone, Serialize)]
 pub struct CodingTaskOutcome {
     pub report_path: String,
+    pub benchmark_id: String,
+    pub benchmark_version: String,
+    pub run_phase: String,
+    pub matrix_namespace: String,
     pub condition: String,
     pub task_id: String,
     pub run_index: u32,
@@ -134,6 +140,7 @@ pub struct ReproducibilitySummary {
 #[derive(Debug, Clone, Serialize)]
 pub struct ClaimGateSummary {
     pub artifact_verifier_passed: bool,
+    pub coding_claim_level: String,
     pub coding_outcome_stop_loss_status: String,
     pub public_sota_status: String,
     pub notes: Vec<String>,
@@ -196,7 +203,7 @@ pub fn generate_public_baseline_report(root: &Path) -> Result<PublicBaselineRepo
     }
 
     let coding_condition_variance = coding_variance(&state.coding_outcomes);
-    let claim_gate = claim_gate(&artifact_verifier, &state, &coding_condition_variance);
+    let claim_gate = claim_gate(&artifact_verifier, &state);
     let memory_summary = layer_summary(
         "directional_memory_system_evidence",
         &state.memory_benchmarks,
@@ -216,7 +223,7 @@ pub fn generate_public_baseline_report(root: &Path) -> Result<PublicBaselineRepo
         state.coding_outcomes.len(),
         &[
             "Current committed coding artifacts are smoke-only.".to_string(),
-            "The #385 claim gate requires no_memory, remem, and curated_file with at least three runs per condition.".to_string(),
+            "The #931 claim gate requires no_memory, remem_e2e, and curated_file_budgeted across the registered 16-task fixture with exactly run indices 0, 1, and 2 per task and condition.".to_string(),
         ],
     );
 
@@ -496,6 +503,10 @@ fn load_coding_runs(
         }
         state.coding_outcomes.push(CodingTaskOutcome {
             report_path: report_path.to_string(),
+            benchmark_id: run.benchmark_id,
+            benchmark_version: run.benchmark_version,
+            run_phase: run.run_phase,
+            matrix_namespace: run.matrix_namespace,
             condition: run.condition,
             task_id: run.task_id,
             run_index: run.run_index,
@@ -557,17 +568,12 @@ fn coding_variance(outcomes: &[CodingTaskOutcome]) -> Vec<CodingConditionVarianc
         .collect()
 }
 
-fn claim_gate(
-    artifact_verifier: &BenchVerifyReport,
-    state: &BuildState,
-    variance: &[CodingConditionVariance],
-) -> ClaimGateSummary {
-    let required_conditions = ["no_memory", "remem", "curated_file"];
-    let has_required_conditions = required_conditions
-        .iter()
-        .all(|condition| state.coding_conditions.contains(*condition));
-    let has_three_runs = variance.iter().all(|entry| entry.runs >= 3);
-    let coding_outcome_stop_loss_status = if has_required_conditions && has_three_runs {
+fn claim_gate(artifact_verifier: &BenchVerifyReport, state: &BuildState) -> ClaimGateSummary {
+    let matrix = matrix::coding_matrix_readiness(&state.coding_outcomes);
+    let coding_outcome_stop_loss_status = if matrix::has_claim_ready_coding_matrix(
+        artifact_verifier.passed,
+        &state.coding_outcomes,
+    ) {
         "ready_for_stop_loss_evaluation"
     } else {
         "not_evaluated_insufficient_coding_matrix"
@@ -576,19 +582,33 @@ fn claim_gate(
         "This baseline is directional only and must not be used for coding-task superiority claims.".to_string(),
         "README and release wording must not claim SOTA or coding outcome improvement from this report.".to_string(),
     ];
-    if !has_required_conditions {
+    if !artifact_verifier.passed {
+        notes.push("Coding artifacts must pass the public artifact verifier.".to_string());
+    }
+    if !matrix.has_registered_identity {
         notes.push(
-            "Coding artifacts do not yet include no_memory, remem, and curated_file conditions."
+            "Coding artifacts are not the registered issue385-v1/official-v1 official matrix."
                 .to_string(),
         );
-    }
-    if !has_three_runs {
+    } else if !matrix.has_required_conditions {
         notes.push(
-            "Coding artifacts do not yet have at least three runs per condition.".to_string(),
+            "Coding artifacts do not yet include no_memory, remem_e2e, and curated_file_budgeted conditions."
+                .to_string(),
+        );
+    } else if !matrix.has_identical_task_sets {
+        notes.push(
+            "Claim-bearing coding conditions must use the exact registered 16-task set in one report."
+                .to_string(),
+        );
+    } else if !matrix.has_three_runs_per_task {
+        notes.push(
+            "Coding artifacts do not yet have exactly the registered run indices 0, 1, and 2 per task and condition."
+                .to_string(),
         );
     }
     ClaimGateSummary {
         artifact_verifier_passed: artifact_verifier.passed,
+        coding_claim_level: "directional_only_no_public_claim".to_string(),
         coding_outcome_stop_loss_status: coding_outcome_stop_loss_status.to_string(),
         public_sota_status: "not_evaluated_no_public_sota_claim".to_string(),
         notes,

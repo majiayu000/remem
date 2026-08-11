@@ -139,7 +139,7 @@ Required behavior:
     "requires_temp_remem_data_dir": true,
     "external_dataset_revision": null
   },
-  "conditions": ["no_memory", "remem", "curated_file"],
+  "conditions": ["no_memory", "remem_e2e", "curated_file_budgeted"],
   "reports": ["eval/public/coding/reports/coding-report-v1.json"]
 }
 ```
@@ -223,7 +223,8 @@ must not require coding-agent fields such as `resolved`, patch/test logs, or
 ```json
 {
   "schema_version": 1,
-  "benchmark_version": "remem-code-memory-v1",
+  "benchmark_id": "remem-code-memory",
+  "benchmark_version": "v1",
   "layer": "memory_system_capability",
   "suite": "remem-code-memory",
   "condition": "remem_default",
@@ -302,9 +303,12 @@ retains coding-specific oracle, patch, test, and repository fields.
 ```json
 {
   "schema_version": 1,
-  "benchmark_version": "issue385-v1",
+  "benchmark_id": "issue385-v1",
+  "benchmark_version": "official-v1",
+  "run_phase": "official",
+  "matrix_namespace": "issue385-v1/official-v1",
   "layer": "coding_agent_outcome",
-  "condition": "remem",
+  "condition": "remem_e2e",
   "task_id": "state-key-stale-api-001",
   "run_index": 2,
   "model": {
@@ -343,15 +347,45 @@ retains coding-specific oracle, patch, test, and repository fields.
     "memory_helped": true,
     "memory_hurt": false
   },
+  "context_audit_status": "verified",
+  "context_audit_failure_reason": null,
+  "injected_context_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "remem_context_audit": {
+    "injection_run_id": "registered-run-id",
+    "bundle_schema_version": 1,
+    "plan_schema_version": 1,
+    "policy_version": "retrieval_router_v2",
+    "relevance_policy_version": "sessionstart_significant_token_v1",
+    "plan_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "audit_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "injection_binding_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "degraded_mode": "full",
+    "candidates_considered": 2,
+    "selected_count": 1,
+    "dropped_count": 1,
+    "token_budget": 4096,
+    "token_estimate": 512,
+    "truncation_reason": null,
+    "canonical_audit_json": "{...canonical payload-free ContextAudit...}"
+  },
   "artifacts": {
     "patch": "artifacts/.../patch.diff",
     "tool_log": "artifacts/.../tool_log.jsonl",
     "test_log": "artifacts/.../test.log",
     "injected_context": "artifacts/.../injected_context.txt",
-    "remem_db_snapshot": "artifacts/.../remem.db.snapshot.tar.zst"
+    "remem_db_snapshot": "artifacts/.../remem.db.snapshot.sqlite3"
   }
 }
 ```
+
+For every current `remem_*` coding condition, `remem_db_snapshot` is a
+read-only SQLite snapshot, not a placeholder or opaque archive. The public
+verifier opens it without migration, reloads the exact persisted
+`context_bundle_audits` row and linked `context_injection_items` by
+`injection_run_id`, compares the typed snapshot, verifies the production
+context fingerprint, and separately checks `injected_context_sha256` against
+the exact injected-context bytes. Historical `remem_preloaded` artifacts do
+not claim this provenance.
 
 ## Runner Architecture
 
@@ -383,9 +417,12 @@ The coding runner follows #385 and adds public artifact requirements:
 2. Create a fresh temporary `REMEM_DATA_DIR`.
 3. Apply the selected condition:
    - `no_memory`: disable remem hooks, MCP, native memory, and curated files;
-   - `remem`: seed remem through supported ingestion and enable the supported
-     runtime path;
-   - `curated_file`: provide only the approved curated context file.
+   - `remem_e2e`: feed raw session and tool evidence through production capture,
+     extraction, promotion, and audited SessionStart/MCP retrieval; direct
+     gold-memory seeding and full-evidence preload files are forbidden;
+   - `curated_file_budgeted`: provide only the target-blind context file frozen
+     under the registered maintenance-time and size budgets, with its curator
+     log attached.
 4. Start the coding agent with the same model, budget, and target prompt.
 5. Capture tool log, injected context, token usage, command count, and wall
    time.

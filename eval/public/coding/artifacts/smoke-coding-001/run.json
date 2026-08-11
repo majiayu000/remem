@@ -1,8 +1,11 @@
 {
   "schema_version": 1,
-  "benchmark_version": "issue385-smoke-v1",
+  "benchmark_id": "issue385-smoke",
+  "benchmark_version": "v1",
+  "run_phase": "smoke",
+  "matrix_namespace": "issue385-smoke/smoke-v1",
   "layer": "coding_agent_outcome",
-  "condition": "remem",
+  "condition": "remem_preloaded",
   "task_id": "smoke-fix-startup-race-001",
   "run_index": 0,
   "model": {

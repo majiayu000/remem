@@ -1,10 +1,169 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{verify_benchmark_artifacts, BenchVerifyOptions};
+
+#[test]
+fn remem_backed_conditions_require_full_evidence() {
+    for condition in [
+        "remem_preloaded",
+        "remem_seeded_sessionstart",
+        "remem_e2e",
+        "remem_oracle_retrieval",
+        "remem_no_enrichment",
+        "remem_fts_only",
+    ] {
+        assert!(super::verify::coding::requires_remem_evidence(condition));
+    }
+    assert!(!super::verify::coding::requires_remem_evidence("remem"));
+    assert!(!super::verify::coding::requires_remem_evidence("no_memory"));
+}
+
+#[test]
+fn public_condition_allowlist_matches_machine_registry() -> serde_json::Result<()> {
+    let registry: Value =
+        serde_json::from_str(include_str!("../../../eval/coding-bench/conditions.json"))?;
+    let mut registered = registry["primary_conditions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(registry["diagnostic_conditions"].as_array().unwrap())
+        .map(|condition| condition["id"].as_str().unwrap().to_string())
+        .collect::<BTreeSet<_>>();
+    registered.insert("remem_preloaded".to_string());
+    let verifier_conditions = super::verify::coding::public_coding_conditions()
+        .iter()
+        .map(|condition| (*condition).to_string())
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(verifier_conditions, registered);
+    Ok(())
+}
+
+#[test]
+fn claim_task_allowlist_matches_public_fixture() -> serde_json::Result<()> {
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../eval/coding-bench/fixtures/tasks.json"
+    ))?;
+    let fixture_tasks = fixture["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|task| task["id"].as_str().unwrap())
+        .collect::<BTreeSet<_>>();
+    let claim_tasks = super::report::matrix::CLAIM_BEARING_TASK_IDS
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(claim_tasks, fixture_tasks);
+    Ok(())
+}
+
+#[test]
+fn claim_gate_excludes_historical_and_diagnostic_coding_conditions() {
+    let historical = BTreeSet::from([
+        "no_memory".to_string(),
+        "remem_preloaded".to_string(),
+        "curated_file_expert".to_string(),
+    ]);
+    assert!(!super::report::matrix::has_claim_bearing_coding_conditions(
+        &historical
+    ));
+
+    let claim_bearing = BTreeSet::from([
+        "no_memory".to_string(),
+        "remem_e2e".to_string(),
+        "curated_file_budgeted".to_string(),
+    ]);
+    assert!(super::report::matrix::has_claim_bearing_coding_conditions(
+        &claim_bearing
+    ));
+
+    let mut mixed = claim_bearing;
+    mixed.insert("oracle_evidence".to_string());
+    assert!(!super::report::matrix::has_claim_bearing_coding_conditions(
+        &mixed
+    ));
+}
+
+#[test]
+fn claim_gate_requires_verified_unique_same_task_matrix() {
+    let valid = claim_matrix(&super::report::matrix::CLAIM_BEARING_TASK_IDS);
+    assert!(super::report::matrix::has_claim_ready_coding_matrix(
+        true, &valid
+    ));
+    assert!(!super::report::matrix::has_claim_ready_coding_matrix(
+        false, &valid
+    ));
+
+    let mut smoke_identity = valid.clone();
+    for outcome in &mut smoke_identity {
+        outcome.run_phase = "smoke".to_string();
+        outcome.matrix_namespace = "issue385-v1/smoke-reviewed".to_string();
+    }
+    assert!(!super::report::matrix::has_claim_ready_coding_matrix(
+        true,
+        &smoke_identity
+    ));
+
+    let mut mismatched = valid.clone();
+    mismatched.retain(|run| {
+        !(run.condition == "curated_file_budgeted"
+            && run.task_id == super::report::matrix::CLAIM_BEARING_TASK_IDS[0])
+    });
+    assert!(!super::report::matrix::has_claim_ready_coding_matrix(
+        true,
+        &mismatched
+    ));
+
+    let duplicate_indices = ["no_memory", "remem_e2e", "curated_file_budgeted"]
+        .into_iter()
+        .flat_map(|condition| {
+            super::report::matrix::CLAIM_BEARING_TASK_IDS
+                .into_iter()
+                .flat_map(move |task| {
+                    (0..3).map(move |_| coding_outcome("matrix.json", condition, task, 0))
+                })
+        })
+        .collect::<Vec<_>>();
+    assert!(!super::report::matrix::has_claim_ready_coding_matrix(
+        true,
+        &duplicate_indices
+    ));
+
+    let mut extra_run = valid;
+    extra_run.extend(
+        ["no_memory", "remem_e2e", "curated_file_budgeted"]
+            .into_iter()
+            .map(|condition| {
+                coding_outcome(
+                    "matrix.json",
+                    condition,
+                    super::report::matrix::CLAIM_BEARING_TASK_IDS[0],
+                    3,
+                )
+            }),
+    );
+    assert!(!super::report::matrix::has_claim_ready_coding_matrix(
+        true, &extra_run
+    ));
+
+    let mut mixed_conditions = claim_matrix(&super::report::matrix::CLAIM_BEARING_TASK_IDS);
+    mixed_conditions.push(coding_outcome(
+        "matrix.json",
+        "oracle_evidence",
+        super::report::matrix::CLAIM_BEARING_TASK_IDS[0],
+        0,
+    ));
+    assert!(!super::report::matrix::has_claim_ready_coding_matrix(
+        true,
+        &mixed_conditions
+    ));
+}
 
 #[test]
 fn committed_public_fixture_passes() -> Result<()> {
@@ -17,6 +176,95 @@ fn committed_public_fixture_passes() -> Result<()> {
     assert_eq!(report.reports_checked, 5);
     assert_eq!(report.run_artifacts_checked, 45);
     assert_eq!(report.artifact_files_checked, 225);
+    Ok(())
+}
+
+#[test]
+fn verifier_rejects_report_version_that_differs_from_manifest() -> Result<()> {
+    let root = copy_public_fixture("manifest-report-version-mismatch")?;
+    mutate_json(
+        &root.join("coding/manifests/issue385-smoke-v1.json"),
+        |json| json["version"] = Value::String("mismatched-v2".to_string()),
+    )?;
+
+    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+
+    assert!(!report.passed);
+    assert_eq!(
+        report.failures,
+        vec![super::types::BenchVerifyFailure {
+            path: "coding/reports/coding-report-v1.json".to_string(),
+            message:
+                "report benchmark_version \"v1\" must match manifest version \"mismatched-v2\""
+                    .to_string(),
+        }]
+    );
+    Ok(())
+}
+
+#[test]
+fn verifier_rejects_memory_run_version_that_differs_from_report() -> Result<()> {
+    let root = copy_public_fixture("memory-run-report-version-mismatch")?;
+    mutate_json(
+        &root.join("memory/artifacts/smoke-memory-001/run.json"),
+        |json| json["benchmark_version"] = Value::String("mismatched-v2".to_string()),
+    )?;
+
+    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+
+    assert!(!report.passed);
+    assert_eq!(
+        report.failures,
+        vec![super::types::BenchVerifyFailure {
+            path: "memory/artifacts/smoke-memory-001/run.json".to_string(),
+            message: "memory run benchmark_version \"mismatched-v2\" must match report benchmark_version \"v1\""
+                .to_string(),
+        }]
+    );
+    Ok(())
+}
+
+#[test]
+fn verifier_rejects_memory_run_benchmark_id_that_differs_from_report() -> Result<()> {
+    let root = copy_public_fixture("memory-run-report-benchmark-id-mismatch")?;
+    mutate_json(
+        &root.join("memory/artifacts/smoke-memory-001/run.json"),
+        |json| json["benchmark_id"] = Value::String("misrouted-benchmark".to_string()),
+    )?;
+
+    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+
+    assert!(!report.passed);
+    assert_eq!(
+        report.failures,
+        vec![super::types::BenchVerifyFailure {
+            path: "memory/artifacts/smoke-memory-001/run.json".to_string(),
+            message: "memory run benchmark_id \"misrouted-benchmark\" must match report benchmark_id \"remem-code-memory-smoke\""
+                .to_string(),
+        }]
+    );
+    Ok(())
+}
+
+#[test]
+fn verifier_rejects_memory_run_suite_that_differs_from_report() -> Result<()> {
+    let root = copy_public_fixture("memory-run-report-suite-mismatch")?;
+    mutate_json(
+        &root.join("memory/artifacts/smoke-memory-001/run.json"),
+        |json| json["suite"] = Value::String("misrouted-suite".to_string()),
+    )?;
+
+    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+
+    assert!(!report.passed);
+    assert_eq!(
+        report.failures,
+        vec![super::types::BenchVerifyFailure {
+            path: "memory/artifacts/smoke-memory-001/run.json".to_string(),
+            message: "memory run suite \"misrouted-suite\" must match report suite \"remem-code-memory-smoke\""
+                .to_string(),
+        }]
+    );
     Ok(())
 }
 
@@ -85,6 +333,211 @@ fn coding_bench_attribution_verifier_rejects_unknown_coding_failure_reason() -> 
 }
 
 #[test]
+fn verifier_rejects_legacy_bare_coding_condition_identity() -> Result<()> {
+    let root = copy_public_fixture("legacy-bare-condition")?;
+    for path in [
+        "coding/manifests/issue385-smoke-v1.json",
+        "coding/reports/coding-report-v1.json",
+    ] {
+        mutate_json(&root.join(path), |json| {
+            json["conditions"] = Value::Array(vec![Value::String("remem".to_string())]);
+        })?;
+    }
+    mutate_json(
+        &root.join("coding/artifacts/smoke-coding-001/run.json"),
+        |json| json["condition"] = Value::String("remem".to_string()),
+    )?;
+
+    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+
+    assert!(!report.passed);
+    assert!(failure_text(&report).contains("unknown coding condition identity remem"));
+    Ok(())
+}
+
+#[test]
+fn verifier_rejects_coding_condition_layer_mismatch() -> Result<()> {
+    let root = copy_public_fixture("condition-layer-mismatch")?;
+    mutate_json(
+        &root.join("coding/artifacts/smoke-coding-001/run.json"),
+        |json| json["condition"] = Value::String("no_memory".to_string()),
+    )?;
+
+    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+
+    assert!(!report.passed);
+    assert!(failure_text(&report).contains("condition must be declared by its report"));
+    Ok(())
+}
+
+#[test]
+fn verifier_rejects_duplicate_coding_run_artifact_reference() -> Result<()> {
+    let root = copy_public_fixture("duplicate-coding-run")?;
+    mutate_json(&root.join("coding/reports/coding-report-v1.json"), |json| {
+        let run_path = json["run_artifacts"][0].clone();
+        json["run_artifacts"].as_array_mut().unwrap().push(run_path);
+    })?;
+
+    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+
+    assert!(!report.passed);
+    assert!(failure_text(&report).contains("run artifact path must be referenced only once"));
+    Ok(())
+}
+
+#[test]
+fn verifier_rejects_declared_coding_condition_without_run() -> Result<()> {
+    let root = copy_public_fixture("unrepresented-coding-condition")?;
+    for path in [
+        "coding/manifests/issue385-smoke-v1.json",
+        "coding/reports/coding-report-v1.json",
+    ] {
+        mutate_json(&root.join(path), |json| {
+            json["conditions"] = Value::Array(vec![
+                Value::String("remem_preloaded".to_string()),
+                Value::String("no_memory".to_string()),
+            ]);
+        })?;
+    }
+
+    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+
+    assert!(!report.passed);
+    assert!(failure_text(&report)
+        .contains("report conditions must exactly match conditions represented by run artifacts"));
+    Ok(())
+}
+
+#[test]
+fn verifier_accepts_not_applicable_context_audit_for_control() -> Result<()> {
+    let root = copy_public_fixture("control-not-applicable")?;
+    set_public_coding_condition(&root, "no_memory")?;
+    mutate_json(
+        &root.join("coding/artifacts/smoke-coding-001/run.json"),
+        |json| {
+            json["memory_contract"] = Value::Null;
+            json["context_audit_status"] = Value::String("not_applicable".to_string());
+            json["context_audit_failure_reason"] = Value::Null;
+            json["remem_context_audit"] = Value::Null;
+            json["injected_context_sha256"] = Value::Null;
+        },
+    )?;
+
+    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+
+    assert!(report.passed, "{:#?}", report.failures);
+    Ok(())
+}
+
+#[test]
+fn verifier_rejects_omitted_control_context_audit_nulls() -> Result<()> {
+    let root = copy_public_fixture("control-omitted-audit-nulls")?;
+    set_public_coding_condition(&root, "no_memory")?;
+    mutate_json(
+        &root.join("coding/artifacts/smoke-coding-001/run.json"),
+        |json| {
+            json["memory_contract"] = Value::Null;
+            json["context_audit_status"] = Value::String("not_applicable".to_string());
+            json["injected_context_sha256"] = Value::Null;
+            json.as_object_mut()
+                .unwrap()
+                .remove("context_audit_failure_reason");
+            json.as_object_mut().unwrap().remove("remem_context_audit");
+        },
+    )?;
+
+    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+
+    assert!(!report.passed);
+    let text = failure_text(&report);
+    assert!(text.contains("must include explicit context_audit_failure_reason"));
+    assert!(text.contains("must include explicit remem_context_audit"));
+    Ok(())
+}
+
+#[test]
+fn context_audit_snapshot_rejects_unknown_fields() -> serde_json::Result<()> {
+    let mut snapshot = serde_json::to_value(serde_json::from_str::<
+        crate::eval::coding_bench::RememContextAuditSnapshot,
+    >(
+        r#"{
+                "injection_run_id":"run-1",
+                "bundle_schema_version":1,
+                "plan_schema_version":1,
+                "policy_version":"policy-v1",
+                "relevance_policy_version":"relevance-v1",
+                "plan_hash":"plan-hash",
+                "audit_hash":"audit-hash",
+                "injection_binding_hash":"binding-hash",
+                "degraded_mode":"full",
+                "candidates_considered":1,
+                "selected_count":1,
+                "dropped_count":0,
+                "token_budget":100,
+                "token_estimate":10,
+                "truncation_reason":null,
+                "canonical_audit_json":"{}"
+            }"#,
+    )?)?;
+    snapshot["unexpected"] = Value::Bool(true);
+
+    assert!(
+        serde_json::from_value::<crate::eval::coding_bench::RememContextAuditSnapshot>(snapshot)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn verifier_rejects_memory_contract_for_control() -> Result<()> {
+    let root = copy_public_fixture("control-memory-contract")?;
+    set_public_coding_condition(&root, "no_memory")?;
+    mutate_json(
+        &root.join("coding/artifacts/smoke-coding-001/run.json"),
+        |json| {
+            json["context_audit_status"] = Value::String("not_applicable".to_string());
+            json["context_audit_failure_reason"] = Value::Null;
+            json["remem_context_audit"] = Value::Null;
+            json["injected_context_sha256"] = Value::Null;
+        },
+    )?;
+
+    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+
+    assert!(!report.passed);
+    assert!(failure_text(&report).contains("must not include memory_contract"));
+    Ok(())
+}
+
+#[test]
+fn verifier_requires_context_audit_for_current_remem_condition() -> Result<()> {
+    let root = copy_public_fixture("missing-current-context-audit")?;
+    for path in [
+        "coding/manifests/issue385-smoke-v1.json",
+        "coding/reports/coding-report-v1.json",
+    ] {
+        mutate_json(&root.join(path), |json| {
+            json["conditions"] =
+                Value::Array(vec![Value::String("remem_seeded_sessionstart".to_string())]);
+        })?;
+    }
+    mutate_json(
+        &root.join("coding/artifacts/smoke-coding-001/run.json"),
+        |json| {
+            json["condition"] = Value::String("remem_seeded_sessionstart".to_string());
+        },
+    )?;
+
+    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+
+    assert!(!report.passed);
+    let text = failure_text(&report);
+    assert!(text.contains("must carry verified ContextAudit status"));
+    assert!(text.contains("must include a ContextAudit snapshot"));
+    Ok(())
+}
+
+#[test]
 fn coding_bench_attribution_verifier_rejects_invalid_memory_contract() -> Result<()> {
     let root = copy_public_fixture("invalid-memory-contract")?;
     mutate_json(
@@ -149,6 +602,58 @@ fn failure_text(report: &super::types::BenchVerifyReport) -> String {
         .map(|failure| format!("{}: {}", failure.path, failure.message))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn claim_matrix(tasks: &[&str]) -> Vec<super::report::CodingTaskOutcome> {
+    ["no_memory", "remem_e2e", "curated_file_budgeted"]
+        .into_iter()
+        .flat_map(|condition| {
+            tasks.iter().flat_map(move |task| {
+                (0..3)
+                    .map(move |run_index| coding_outcome("matrix.json", condition, task, run_index))
+            })
+        })
+        .collect()
+}
+
+fn coding_outcome(
+    report_path: &str,
+    condition: &str,
+    task_id: &str,
+    run_index: u32,
+) -> super::report::CodingTaskOutcome {
+    super::report::CodingTaskOutcome {
+        report_path: report_path.to_string(),
+        benchmark_id: "issue385-v1".to_string(),
+        benchmark_version: "official-v1".to_string(),
+        run_phase: "official".to_string(),
+        matrix_namespace: "issue385-v1/official-v1".to_string(),
+        condition: condition.to_string(),
+        task_id: task_id.to_string(),
+        run_index,
+        resolved: true,
+        failure_reason: None,
+        tokens_total: Some(1),
+        turns: Some(1),
+        wall_time_ms: Some(1),
+        memory_helped: None,
+        memory_hurt: None,
+    }
+}
+
+fn set_public_coding_condition(root: &Path, condition: &str) -> Result<()> {
+    for path in [
+        "coding/manifests/issue385-smoke-v1.json",
+        "coding/reports/coding-report-v1.json",
+    ] {
+        mutate_json(&root.join(path), |json| {
+            json["conditions"] = Value::Array(vec![Value::String(condition.to_string())]);
+        })?;
+    }
+    mutate_json(
+        &root.join("coding/artifacts/smoke-coding-001/run.json"),
+        |json| json["condition"] = Value::String(condition.to_string()),
+    )
 }
 
 fn mutate_json(path: &Path, mutate: impl FnOnce(&mut Value)) -> Result<()> {

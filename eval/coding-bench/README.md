@@ -28,20 +28,22 @@ Machine-readable registry: `eval/coding-bench/conditions.json`, validated by
 
 ### Diagnostic conditions (localization only, never claim-bearing)
 
-- `remem_preloaded`: the former `remem` condition — fixture evidence saved into
-  a temporary remem database, rendered through the SessionStart context path,
-  and preloaded into `REMEM_CONTEXT.md`.
+- `remem_seeded_sessionstart`: fixture evidence saved into a temporary remem
+  database, selected and rendered
+  through the production SessionStart path, and the exact audited output written
+  unchanged to `REMEM_CONTEXT.md`. It is retrieval-dependent and is not
+  comparable with the historical `remem_preloaded` baseline.
 - `curated_file_expert`: the former `curated_file` condition — unbudgeted,
   gold-evidence-derived `MEMORY.md`; near-oracle human upper bound.
 - `oracle_evidence`, `remem_oracle_retrieval`, `full_history`,
   `remem_no_enrichment`, `remem_fts_only`: see `conditions.json`.
 
-Runner status: the Rust runner (`src/eval/coding_bench`) currently implements
-`no_memory` plus the two diagnostic conditions under their legacy CLI ids
-`remem` and `curated_file`. The id rename and `remem_e2e` /
-`curated_file_budgeted` execution support are tracked as the src-side follow-up
-of #931; `conditions.json` records per-condition `runner_status` so drift is
-visible.
+Runner status: the Rust runner (`src/eval/coding_bench`) implements `no_memory`
+and `remem_seeded_sessionstart` under their stable ids, plus
+`curated_file_expert` under the legacy CLI id `curated_file`. The remaining
+curated id rename and `remem_e2e` / `curated_file_budgeted` execution support
+are tracked as src-side follow-ups of #931; `conditions.json` records
+per-condition `runner_status` so drift is visible.
 
 ## Isolated Baseline (predates #931 renames)
 
@@ -143,7 +145,13 @@ to carry current-memory evidence. The contract helper in
 `src/eval/coding_bench` defines the canonical fields:
 
 - `remem_contract_snapshot`, built from the current-memory-contracts
-  deterministic report;
+  deterministic report and the exact persisted SessionStart ContextAudit;
+- `context_audit_status`: `verified`, `contract_failure`, or
+  `not_applicable`, plus a diagnostic failure reason when applicable;
+- the payload-free ContextAudit snapshot: injection run id, bundle/plan and
+  policy versions, plan/audit hashes, an injection-run binding hash, degraded
+  mode, candidate/selection/drop counts, token budget/estimate, truncation
+  reason, and canonical audit JSON;
 - `memory_contract_status`: `passed`, `failed`, or `not_applicable`;
 - `runtime_contract_failure` and `runtime_contract_failure_reason`;
 - `memory_contract`, with injected memory ids, cited/used memory ids, citation
@@ -151,10 +159,19 @@ to carry current-memory evidence. The contract helper in
   relevant memory count, `memory_helped`, and `memory_hurt`;
 - score command evidence, patch evidence, token metrics, turns, and wall time.
 
-`no_memory` and curated-file runs must set `memory_contract_status` to
-`not_applicable` and must not include remem contract evidence or memory
-attribution. `curated_file_budgeted` runs must additionally attach the curator
-log artifact and a `MEMORY.md` hash matching `final_file_sha256`.
+`no_memory` and curated-file runs must set both `memory_contract_status` and
+`context_audit_status` to `not_applicable` and must not include remem contract
+evidence or memory attribution. `curated_file_budgeted` runs must additionally
+attach the curator log artifact and a `MEMORY.md` hash matching
+`final_file_sha256`.
+
+The verifier canonicalizes the embedded ContextAudit JSON, dispatches on the
+artifact's supported plan and ContextAudit bundle schema versions, recomputes
+its SHA-256 and the domain-separated injection binding, rejects unknown v1
+audit fields, checks every summary field, and derives candidate/selected/drop
+counts from the audit entries. Condition setup also compares the snapshot with
+the persisted `injection_run_id`. A missing or invalid audit is a runtime
+contract failure even when the coding task resolves.
 
 Runtime contract failure is separate from agent task failure. A run may solve
 the coding task while still failing the remem runtime contract; reports must
@@ -236,7 +253,7 @@ Focused smoke (legacy runner id until the src-side rename lands):
 cargo run -- eval-coding-bench \
   --fixture eval/coding-bench/fixtures/tasks.json \
   --runs-per-condition 1 \
-  --condition remem \
+  --condition remem_seeded_sessionstart \
   --task slug-normalizer-contract \
   --runner codex \
   --model gpt-5.5 \
@@ -249,11 +266,13 @@ cargo run -- eval-coding-bench \
 ## Current Caveat
 
 Codex non-interactive MCP calls can be cancelled by the host. The
-`remem_preloaded` diagnostic condition therefore seeds a temporary remem
-database, uses the production SessionStart render path, then appends full
-seeded memory details to `REMEM_CONTEXT.md` as preloaded `get_observations`
-details. That shortcut is exactly why `remem_preloaded` is diagnostic-only
-under #931: `remem_e2e` must not preload gold evidence, and MCP availability
+`remem_seeded_sessionstart` diagnostic condition therefore seeds a temporary
+remem database and writes the production SessionStart output to
+`REMEM_CONTEXT.md`. The runner does not append seeded memory bodies: the file
+remains byte-for-byte aligned with the persisted ContextAudit. This condition
+is still diagnostic-only under #931 because it directly seeds gold-derived
+memories instead of exercising capture, extraction, and promotion. It is not
+comparable with the historical `remem_preloaded` 15/15 result. MCP availability
 issues in `remem_e2e` count as real failures with a stage attribution.
 
 The Codex runner uses `--ignore-user-config`, `--ignore-rules`, `--ephemeral`,

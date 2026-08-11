@@ -9,6 +9,6 @@
     "requires_temp_remem_data_dir": true,
     "external_dataset_revision": null
   },
-  "conditions": ["remem"],
+  "conditions": ["remem_preloaded"],
   "reports": ["coding/reports/coding-report-v1.json"]
 }

@@ -13,6 +13,7 @@ mod host;
 mod hybrid_context;
 mod implicit_query;
 mod injection_gate;
+pub(crate) use injection_gate::context_fingerprint as context_output_fingerprint;
 mod invocation;
 mod memory_selection;
 mod memory_traits;
@@ -51,6 +52,7 @@ pub(crate) use relevance::{
     SessionStartRelevancePlan, SESSIONSTART_RELEVANCE_POLICY_VERSION,
 };
 pub(crate) use render::governance_eval_snapshot;
+pub(crate) use render::session_start_benchmark_emission;
 pub(crate) use render::session_start_eval_snapshot;
 pub(crate) use render::RENDER_CONTRACT_VERSION;
 pub use render::{

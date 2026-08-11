@@ -3,12 +3,29 @@
   "$id": "https://majiayu000.github.io/remem/schemas/coding-run.schema.json",
   "title": "remem public coding run artifact",
   "type": "object",
-  "required": ["schema_version", "benchmark_version", "layer", "condition", "task_id", "run_index", "model", "environment", "resolved", "failure_reason", "metrics", "memory_contract", "artifacts"],
+  "required": ["schema_version", "benchmark_id", "benchmark_version", "run_phase", "matrix_namespace", "layer", "condition", "task_id", "run_index", "model", "environment", "resolved", "failure_reason", "metrics", "artifacts"],
   "properties": {
     "schema_version": { "const": 1 },
+    "benchmark_id": { "type": "string", "minLength": 1 },
+    "run_phase": { "enum": ["smoke", "official"] },
+    "matrix_namespace": { "type": "string", "minLength": 1 },
     "layer": { "const": "coding_agent_outcome" },
     "benchmark_version": { "type": "string", "minLength": 1 },
-    "condition": { "type": "string", "minLength": 1 },
+    "condition": {
+      "enum": [
+        "no_memory",
+        "curated_file_budgeted",
+        "remem_e2e",
+        "remem_seeded_sessionstart",
+        "curated_file_expert",
+        "oracle_evidence",
+        "remem_oracle_retrieval",
+        "full_history",
+        "remem_no_enrichment",
+        "remem_fts_only",
+        "remem_preloaded"
+      ]
+    },
     "task_id": { "type": "string", "minLength": 1 },
     "run_index": { "type": "integer", "minimum": 0 },
     "model": { "type": "object" },
@@ -20,7 +37,7 @@
     },
     "metrics": { "type": "object" },
     "memory_contract": {
-      "type": "object",
+      "type": ["object", "null"],
       "required": [
         "injected_memory_ids",
         "used_memory_ids",
@@ -52,6 +69,160 @@
         "memory_hurt": { "type": "boolean" }
       }
     },
+    "context_audit_status": {
+      "enum": ["verified", "contract_failure", "not_applicable", null]
+    },
+    "context_audit_failure_reason": { "type": ["string", "null"] },
+    "remem_context_audit": {
+      "type": ["object", "null"],
+      "required": [
+        "injection_run_id",
+        "bundle_schema_version",
+        "plan_schema_version",
+        "policy_version",
+        "relevance_policy_version",
+        "plan_hash",
+        "audit_hash",
+        "injection_binding_hash",
+        "degraded_mode",
+        "candidates_considered",
+        "selected_count",
+        "dropped_count",
+        "token_budget",
+        "token_estimate",
+        "truncation_reason",
+        "canonical_audit_json"
+      ],
+      "properties": {
+        "injection_run_id": { "type": "string", "minLength": 1 },
+        "bundle_schema_version": { "const": 1 },
+        "plan_schema_version": { "const": 1 },
+        "policy_version": { "type": "string", "minLength": 1 },
+        "relevance_policy_version": { "type": "string", "minLength": 1 },
+        "plan_hash": { "type": "string", "minLength": 1 },
+        "audit_hash": { "type": "string", "minLength": 1 },
+        "injection_binding_hash": { "type": "string", "minLength": 1 },
+        "degraded_mode": { "enum": ["full", "canonical_only", "blocked"] },
+        "candidates_considered": { "type": "integer", "minimum": 0 },
+        "selected_count": { "type": "integer", "minimum": 0 },
+        "dropped_count": { "type": "integer", "minimum": 0 },
+        "token_budget": { "type": "integer", "minimum": 0 },
+        "token_estimate": { "type": "integer", "minimum": 0 },
+        "truncation_reason": { "type": ["string", "null"] },
+        "canonical_audit_json": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "injected_context_sha256": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    },
     "artifacts": { "type": "object" }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "condition": {
+            "enum": [
+              "remem_seeded_sessionstart",
+              "remem_e2e",
+              "remem_oracle_retrieval",
+              "remem_no_enrichment",
+              "remem_fts_only"
+            ]
+          }
+        },
+        "required": ["condition"]
+      },
+      "then": {
+        "required": [
+          "context_audit_status",
+          "context_audit_failure_reason",
+          "remem_context_audit",
+          "injected_context_sha256"
+        ],
+        "properties": {
+          "context_audit_status": { "const": "verified" },
+          "context_audit_failure_reason": { "type": "null" },
+          "remem_context_audit": { "type": "object" },
+          "injected_context_sha256": { "type": "string" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "condition": {
+            "enum": [
+              "remem_preloaded",
+              "remem_seeded_sessionstart",
+              "remem_e2e",
+              "remem_oracle_retrieval",
+              "remem_no_enrichment",
+              "remem_fts_only"
+            ]
+          }
+        },
+        "required": ["condition"]
+      },
+      "then": {
+        "required": ["memory_contract"],
+        "properties": {
+          "memory_contract": { "type": "object" }
+        }
+      },
+      "else": {
+        "properties": {
+          "memory_contract": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "condition": {
+            "enum": [
+              "no_memory",
+              "curated_file_budgeted",
+              "curated_file_expert",
+              "oracle_evidence",
+              "full_history"
+            ]
+          }
+        },
+        "required": ["condition"]
+      },
+      "then": {
+        "required": [
+          "context_audit_status",
+          "context_audit_failure_reason",
+          "remem_context_audit",
+          "injected_context_sha256"
+        ],
+        "properties": {
+          "context_audit_status": { "const": "not_applicable" },
+          "context_audit_failure_reason": { "type": "null" },
+          "remem_context_audit": { "type": "null" },
+          "injected_context_sha256": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "condition": { "const": "remem_preloaded" }
+        },
+        "required": ["condition"]
+      },
+      "then": {
+        "properties": {
+          "context_audit_status": { "type": "null" },
+          "context_audit_failure_reason": { "type": "null" },
+          "remem_context_audit": { "type": "null" },
+          "injected_context_sha256": { "type": "null" }
+        }
+      }
+    }
+  ]
 }

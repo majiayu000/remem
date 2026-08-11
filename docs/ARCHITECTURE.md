@@ -359,6 +359,13 @@ Bundle-backed emissions persist the sealed, payload-free `ContextAudit` and
 its SHA-256 in the same transaction as `context_injection_items`. Both share
 `injection_run_id`; verified readers recompute canonical JSON and compare all
 denormalized counts, versions, and hashes before exposing benchmark metadata.
+Coding-bench remem conditions consume that exact injection row, embed its
+payload-free canonical audit in the run contract, and independently recompute
+the hash. Its v1 verifier rejects unknown audit fields and derives selection
+counts from the embedded entries. A domain-separated artifact binding
+additionally covers the `injection_run_id` and audit hash. Control conditions
+carry an explicit `not_applicable` status instead of an empty or synthetic
+audit.
 
 ### 5. Legacy Pending Queue Recovery
 

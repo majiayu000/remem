@@ -597,7 +597,7 @@ remem bench coding --suite issue385-v1 --condition <primary-id> \
   --task <task-id> --runs-per-condition 1 \
   --approval-key <key> --confirm-live-run --max-agent-calls <n> \
   --max-llm-calls <n> --max-estimated-cost-usd <usd> --json-out <path>
-remem bench coding --suite issue385-v1 --condition remem_preloaded ...
+remem bench coding --suite issue385-v1 --condition remem_seeded_sessionstart ...
 remem bench report --root <artifact-root> \
   --json-out <path> --markdown-out <path>
 remem bench report --root <artifact-root> --verify-current-freshness --freshness-receipt-out <path>

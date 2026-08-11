@@ -54,12 +54,14 @@ remem eval-coding-bench \
 Required flags:
 
 - `--fixture`: task-set definition.
-- `--runs-per-condition`: minimum 3 for baseline publication.
+- `--runs-per-condition`: exactly 3 (registered indices 0, 1, and 2) for every
+  task and condition in an official baseline publication.
 - `--json-out`: report path.
 
 Optional flags:
 
-- `--condition no_memory|remem|curated_file`: run one condition for debugging.
+- `--condition no_memory|remem_seeded_sessionstart|curated_file`: run one
+  condition for debugging.
 - `--task <id>`: run one task for debugging.
 - `--keep-workdirs`: preserve temporary workdirs after failure.
 - `--model <name>` and `--provider <name>`: override runner defaults.
@@ -117,12 +119,14 @@ touched unauthorized files. Generated Python cache paths are ignored.
 
 ## Memory Seeding
 
-The `remem` condition seeds a temporary database from committed fixture evidence,
-not from private user memory. The implementation uses `save_memory` against a
-temporary `REMEM_DATA_DIR`, then renders the production SessionStart context.
-Because Codex non-interactive MCP detail calls can be cancelled by the host, the
-benchmark appends full seeded memory details to `REMEM_CONTEXT.md` as preloaded
-`get_observations` details.
+The `remem_seeded_sessionstart` condition seeds a temporary database from
+committed fixture evidence, not from private user memory. The implementation
+uses `save_memory` against a temporary `REMEM_DATA_DIR`, then renders the
+production SessionStart context and writes that exact audited output unchanged
+to `REMEM_CONTEXT.md`. It must not append seeded memory bodies outside the
+persisted ContextAudit; only memory IDs marked injected by that emission may
+enter run attribution. The CLI and new reports use this full identity with no
+`remem` alias.
 
 The `curated_file` condition uses the fixture's `curated_context` text and writes
 it to `MEMORY.md` in the temporary repository. It must be derived from the same
@@ -134,7 +138,7 @@ memory file injection for the temporary agent run.
 Codex runs must not inherit the host's normal Codex config, rules, hooks, MCP
 servers, or session persistence. The runner invokes `codex exec` with
 `--ignore-user-config`, `--ignore-rules`, `--ephemeral`, and `--disable hooks`.
-The `remem` condition is represented by a temporary remem database plus the
+The `remem_seeded_sessionstart` condition is represented by a temporary remem database plus the
 production SessionStart render path written into `REMEM_CONTEXT.md`.
 
 ## Report Schema
@@ -159,7 +163,7 @@ production SessionStart render path written into `REMEM_CONTEXT.md`.
   "runs_per_condition": 3,
   "conditions": [
     {
-      "name": "remem",
+      "name": "remem_seeded_sessionstart",
       "summary": {
         "resolution_rate": 0.0,
         "tokens_total_mean": 0.0,
@@ -194,12 +198,16 @@ Each run entry records:
   `stale_memory_followed`, `irrelevant_memory_distracted`,
   `over_context_budget`, `agent_hallucinated_memory`, or
   `oracle_inconclusive`
-- `memory_contract` for remem runs, including injected memory IDs,
+- `memory_contract` for remem-backed runs, including injected memory IDs,
   cited/used memory IDs, citation precision/recall, stale used count,
   irrelevant injection count, missing relevant memory count, `memory_helped`,
   and `memory_hurt`
+- `context_audit_status`, `context_audit_failure_reason`, and
+  `remem_context_audit` for current audited remem conditions; public evidence
+  requires a verified, hash-checked ContextAudit bound to the injection run
 
-For `remem` condition runs, the run entry must also include
+For current audited remem condition runs (`remem_seeded_sessionstart`,
+`remem_e2e`, and registered remem ablations), the run entry must also include
 `remem_contract_snapshot`. The snapshot is the benchmark handoff from
 `docs/specs/current-memory-contracts/TECH.md` and must include:
 
@@ -210,8 +218,14 @@ For `remem` condition runs, the run entry must also include
 - staleness/source-anchor handling;
 - temporal fact eligibility checks.
 
-`no_memory` and `curated_file` runs must set `memory_contract_status` to
-`not_applicable` and must not carry a `remem_contract_snapshot`. This keeps the
+Historical `remem_preloaded` artifacts predate the persisted ContextAudit
+contract. They may remain as explicitly historical, non-claim-bearing evidence
+without a retroactive audit snapshot, but must never be accepted as a current
+audited condition or as part of the #931 primary claim matrix.
+
+`no_memory`, `curated_file_budgeted`, and other non-remem control runs must set
+`memory_contract_status` to `not_applicable` and must not carry a
+`remem_contract_snapshot`. This keeps the
 three benchmark conditions comparable and prevents control runs from faking
 remem runtime evidence.
 
@@ -268,12 +282,13 @@ runner ignored host config, rules, hooks, and session persistence:
 | Condition | Resolved | Resolution | Mean tokens | Mean wall time |
 |---|---:|---:|---:|---:|
 | `no_memory` | 3/15 | 20.0% | 390,003 | 133.6s |
-| `remem` | 15/15 | 100.0% | 170,284 | 62.2s |
+| historical `remem_preloaded` (recorded as `remem`) | 15/15 | 100.0% | 170,284 | 62.2s |
 | `curated_file` | 15/15 | 100.0% | 146,840 | 60.5s |
 
 Result: this draft run is report-shape evidence only and must be regenerated
 before publication or issue closure. It is not evidence that remem beats a
-carefully maintained `MEMORY.md`.
+carefully maintained `MEMORY.md`, and it is not comparable with current
+`remem_seeded_sessionstart` runs.
 
 ## Failure Handling
 

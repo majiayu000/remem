@@ -2,8 +2,10 @@
   "schema_version": 1,
   "benchmark_id": "issue385-smoke",
   "benchmark_version": "v1",
+  "run_phase": "smoke",
+  "matrix_namespace": "issue385-smoke/smoke-v1",
   "layer": "coding_agent_outcome",
-  "conditions": ["remem"],
+  "conditions": ["remem_preloaded"],
   "schema_refs": [
     "schemas/benchmark-manifest.schema.json",
     "schemas/coding-report.schema.json",

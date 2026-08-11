@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use super::fixture::load_suite;
+use super::fixture::{load_suite, validate_suite, validate_suite_selection};
 use super::runner::{run_memory_bench, MemoryBenchOptions};
 use super::types::{
     MemoryBenchCondition, ADVERSARIAL_POLICY_SUITE, DEFAULT_PUBLIC_ROOT, DEFAULT_SUITE,
@@ -52,6 +52,28 @@ fn memory_bench_conditions_are_supported() {
         );
     }
     assert_eq!(MemoryBenchCondition::parse("unknown"), None);
+}
+
+#[test]
+fn memory_bench_fixture_allows_suite_to_differ_from_benchmark_id() -> Result<()> {
+    let mut fixture = load_suite(DEFAULT_SUITE)?;
+    fixture.benchmark_id = "independent-benchmark-id".to_string();
+
+    validate_suite(&fixture)?;
+    validate_suite_selection(&fixture, DEFAULT_SUITE)?;
+    assert_ne!(fixture.suite, fixture.benchmark_id);
+    Ok(())
+}
+
+#[test]
+fn memory_bench_fixture_rejects_mismatched_requested_suite() -> Result<()> {
+    let fixture = load_suite(DEFAULT_SUITE)?;
+
+    assert!(validate_suite_selection(&fixture, "misrouted-suite")
+        .unwrap_err()
+        .to_string()
+        .contains("must match requested suite"));
+    Ok(())
 }
 
 #[test]
@@ -186,7 +208,16 @@ async fn adversarial_policy_bench_reports_zero_policy_leaks() -> Result<()> {
     .await?;
 
     assert_eq!(report.conditions, vec!["remem_default"]);
+    assert_eq!(report.benchmark_version, "v2");
     assert_eq!(report.run_artifacts.len(), 20);
+    for run_path in &report.run_artifacts {
+        let run: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(root.join(run_path))?)?;
+        assert_eq!(
+            run["benchmark_version"], report.benchmark_version,
+            "generated run {run_path} must inherit the suite version"
+        );
+    }
     let policy = &report.aggregate_metrics["policy"];
     assert_eq!(policy["non_retention_leak_rate"], 0.0);
     assert_eq!(policy["false_block_rate"], 0.0);
