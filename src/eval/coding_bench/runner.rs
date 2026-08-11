@@ -84,6 +84,7 @@ pub fn run_coding_bench(options: &CodingBenchOptions) -> Result<CodingBenchRepor
             entry.run_index,
             &artifact_root,
         )?;
+        super::audit_contract::validate_run_context_audit(&run)?;
         eprintln!(
             "[coding-bench] {} {} run {}: resolved={} tokens={}",
             entry.condition.as_str(),
@@ -231,7 +232,7 @@ fn run_one(
         });
     }
 
-    let mut memory_contract = (condition == BenchCondition::Remem)
+    let mut memory_contract = (condition == BenchCondition::RememSeededSessionStart)
         .then(|| build_memory_attribution(&setup.memory_attribution, &runner_outcome.stdout));
     let final_head_sha = current_git_rev(&repo_dir);
     let failure_reason = classify_failure_reason(FailureEvidence {
@@ -273,6 +274,12 @@ fn run_one(
         unauthorized_path_changes: unauthorized,
         runner_exit_code: runner_outcome.exit_code,
         runner_timed_out: runner_outcome.timed_out,
+        runtime_contract_failure: setup.context_audit_status
+            == super::RememContextAuditStatus::ContractFailure,
+        runtime_contract_failure_reason: setup.context_audit_failure_reason.clone(),
+        context_audit_status: setup.context_audit_status,
+        context_audit_failure_reason: setup.context_audit_failure_reason,
+        remem_context_audit: setup.remem_context_audit,
         score_commands,
         memory_contract,
         artifacts: RunArtifacts {
@@ -783,7 +790,6 @@ mod tests {
     fn command_output_timeout_terminates_process_group_children() -> Result<()> {
         let start = Instant::now();
         let outcome = command_output("sh", ["-c", "sleep 10 & wait"], Path::new("."), &[], 100)?;
-
         assert!(outcome.timed_out);
         assert!(
             start.elapsed() < Duration::from_secs(3),

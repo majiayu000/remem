@@ -8,7 +8,6 @@ pub const ADVERSARIAL_POLICY_SUITE: &str = "adversarial-policy";
 pub const SUPPORTED_SUITES: [&str; 2] = [DEFAULT_SUITE, ADVERSARIAL_POLICY_SUITE];
 pub const DEFAULT_PUBLIC_ROOT: &str = "eval/public";
 pub const DEFAULT_SUITE_ROOT: &str = "eval/public/memory/suites";
-pub const DEFAULT_REPORT_BENCHMARK_VERSION: &str = "v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

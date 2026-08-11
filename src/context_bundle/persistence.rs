@@ -9,12 +9,15 @@ use crate::retrieval_router::RETRIEVAL_PLAN_SCHEMA_VERSION;
 
 use super::{ContextAudit, ContextBundle, DegradedMode};
 
-const PERSISTED_PLAN_SCHEMA_V1: u32 = 1;
+pub(crate) const PERSISTED_PLAN_SCHEMA_V1: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PersistedContextBundleAudit {
     pub injection_run_id: String,
+    pub bundle_schema_version: u32,
+    pub plan_schema_version: u32,
     pub audit_hash: String,
+    pub canonical_audit_json: String,
     pub audit: ContextAudit,
     pub created_at_epoch: i64,
 }
@@ -47,7 +50,8 @@ pub(crate) fn persist_context_bundle_audit(
 ) -> Result<String> {
     validate_bundle_summary(bundle)?;
     validate_persisted_plan_schema_version(RETRIEVAL_PLAN_SCHEMA_VERSION)?;
-    let (audit_json, audit_hash) = canonical_audit(&bundle.audit, RETRIEVAL_PLAN_SCHEMA_VERSION)?;
+    let (audit_json, audit_hash) =
+        canonical_context_audit(&bundle.audit, RETRIEVAL_PLAN_SCHEMA_VERSION)?;
 
     if let Some(existing) = load_verified_context_bundle_audit(conn, injection_run_id)? {
         if existing.audit_hash == audit_hash {
@@ -157,13 +161,15 @@ pub(crate) fn load_verified_context_bundle_audit(
         );
     }
 
-    let value: Value = serde_json::from_str(&row.audit_json).with_context(|| {
-        format!(
-            "parse persisted ContextAudit for injection_run_id={}",
-            row.injection_run_id
-        )
-    })?;
-    let actual_hash = persisted_audit_hash(row.plan_schema_version, &value)?;
+    let (audit, actual_hash) =
+        decode_verified_context_audit_json(&row.audit_json, row.plan_schema_version).with_context(
+            || {
+                format!(
+                    "verify persisted ContextAudit for injection_run_id={}",
+                    row.injection_run_id
+                )
+            },
+        )?;
     if actual_hash != row.audit_hash {
         bail!(
             "context bundle audit hash mismatch for injection_run_id={}: stored={} actual={actual_hash}",
@@ -171,17 +177,14 @@ pub(crate) fn load_verified_context_bundle_audit(
             row.audit_hash
         );
     }
-    let audit = decode_persisted_audit(row.plan_schema_version, value).with_context(|| {
-        format!(
-            "decode persisted ContextAudit for injection_run_id={}",
-            row.injection_run_id
-        )
-    })?;
     verify_stored_summary(&row, &audit)?;
 
     Ok(Some(PersistedContextBundleAudit {
         injection_run_id: row.injection_run_id,
+        bundle_schema_version: row.bundle_schema_version,
+        plan_schema_version: row.plan_schema_version,
         audit_hash: row.audit_hash,
+        canonical_audit_json: row.audit_json,
         audit,
         created_at_epoch: row.created_at_epoch,
     }))
@@ -262,12 +265,32 @@ fn decode_persisted_audit(version: u32, value: Value) -> Result<ContextAudit> {
     }
 }
 
-fn canonical_audit(audit: &ContextAudit, plan_schema_version: u32) -> Result<(String, String)> {
+pub(crate) fn canonical_context_audit(
+    audit: &ContextAudit,
+    plan_schema_version: u32,
+) -> Result<(String, String)> {
+    validate_persisted_plan_schema_version(plan_schema_version)?;
     let value = serde_json::to_value(audit)?;
     let bytes = canonical_json_bytes(&value)?;
     let json = String::from_utf8(bytes.clone()).context("canonical ContextAudit is UTF-8")?;
     let hash = persisted_audit_hash(plan_schema_version, &value)?;
     Ok((json, hash))
+}
+
+pub(crate) fn decode_verified_context_audit_json(
+    audit_json: &str,
+    plan_schema_version: u32,
+) -> Result<(ContextAudit, String)> {
+    validate_persisted_plan_schema_version(plan_schema_version)?;
+    let value: Value = serde_json::from_str(audit_json).context("parse canonical ContextAudit")?;
+    let canonical = canonical_json_bytes(&value)?;
+    if canonical.as_slice() != audit_json.as_bytes() {
+        bail!("ContextAudit JSON is not canonical");
+    }
+    let hash = persisted_audit_hash(plan_schema_version, &value)?;
+    let audit = decode_persisted_audit(plan_schema_version, value)
+        .context("decode canonical ContextAudit")?;
+    Ok((audit, hash))
 }
 
 fn persisted_audit_hash(plan_schema_version: u32, audit: &Value) -> Result<String> {
@@ -480,7 +503,7 @@ mod tests {
         conn.execute(
             "UPDATE context_bundle_audits SET audit_json = ?1, token_estimate = 99
              WHERE injection_run_id = 'run-tamper'",
-            params![canonical_audit(&bundle("ignored").audit, PERSISTED_PLAN_SCHEMA_V1)?.0],
+            params![canonical_context_audit(&bundle("ignored").audit, PERSISTED_PLAN_SCHEMA_V1)?.0],
         )?;
         let error = load_verified_context_bundle_audit(&conn, "run-tamper")
             .expect_err("tampered summary must fail verification");
@@ -510,8 +533,40 @@ mod tests {
     }
 
     #[test]
+    fn verified_decode_rejects_unknown_v1_audit_fields() -> Result<()> {
+        let audit = bundle("not-persisted").audit;
+        let mut top_level = serde_json::to_value(&audit)?;
+        top_level
+            .as_object_mut()
+            .expect("ContextAudit serializes as an object")
+            .insert(
+                "task_prompt".to_string(),
+                Value::String("secret".to_string()),
+            );
+        let top_level_json = String::from_utf8(canonical_json_bytes(&top_level)?)?;
+        let error = decode_verified_context_audit_json(&top_level_json, PERSISTED_PLAN_SCHEMA_V1)
+            .expect_err("unknown top-level audit field must fail closed");
+        assert!(error.to_string().contains("decode canonical ContextAudit"));
+
+        let mut entry_level = serde_json::to_value(&audit)?;
+        entry_level["entries"][0]
+            .as_object_mut()
+            .expect("AuditEntry serializes as an object")
+            .insert(
+                "memory_text".to_string(),
+                Value::String("secret".to_string()),
+            );
+        let entry_level_json = String::from_utf8(canonical_json_bytes(&entry_level)?)?;
+        let error = decode_verified_context_audit_json(&entry_level_json, PERSISTED_PLAN_SCHEMA_V1)
+            .expect_err("unknown AuditEntry field must fail closed");
+        assert!(error.to_string().contains("decode canonical ContextAudit"));
+        Ok(())
+    }
+
+    #[test]
     fn persisted_v1_hash_envelope_is_frozen() -> Result<()> {
-        let (_, hash) = canonical_audit(&bundle("not-persisted").audit, 1)?;
+        let (_, hash) =
+            canonical_context_audit(&bundle("not-persisted").audit, PERSISTED_PLAN_SCHEMA_V1)?;
         assert_eq!(
             hash,
             "4e9818dcbb42fd97cca6e86e4975058777dd278cb329fcf7f228443a29191b06"

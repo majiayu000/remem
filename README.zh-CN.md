@@ -349,8 +349,8 @@ cargo run -- bench verify --root eval/public --json-out /tmp/remem-bench-verify.
 cargo run -- bench report --root eval/public --json-out eval/public/reports/baseline.json --markdown-out eval/public/reports/baseline.md
 ```
 
-当前 directional report 会验证 4 个 manifest、4 个 report、25 个 run
-artifact 和 125 个 artifact 文件。它包含：
+当前 directional report 会验证 5 个 manifest、5 个 report、45 个 run
+artifact 和 225 个 artifact 文件。它包含：
 
 - `remem-code-memory`：8 个 memory QA run，覆盖 temporal/as-of 回答、stale
   decision avoidance、conflict、workstream continuity、prior bug root cause、
@@ -359,8 +359,9 @@ artifact 和 125 个 artifact 文件。它包含：
   payment data、unsupported assistant claim、unapproved external source、
   roleplay、negation、same-name repo、branch divergence、stale file anchor
   和 unresolved conflict。
-- `issue385-smoke`：一个已提交的 coding-agent smoke run artifact，并为
-  `remem` run 记录 memory-contract 字段。完整 `issue385-v1` fixture pack
+- `issue385-smoke`：一个已提交且归类为历史 `remem_preloaded` 的
+  coding-agent smoke run artifact，并记录 memory-contract 字段。完整
+  `issue385-v1` fixture pack
   目前只作为 dry-run 复现输入引用，还不属于已验证的 public outcome report。
 
 该报告有意标记为 `directional_only_no_public_claim`。README 和 release
@@ -374,7 +375,9 @@ gate 通过。
 每个 condition 3 次运行的 baseline，运行器是 `codex-cli 0.142.1`，
 模型是 `gpt-5.5`：`no_memory` 解决 2/15，`remem` 解决 15/15，
 `curated_file` 解决 15/15。这是有用的工程证据，但它早于公开 16-task
-v1 fixture pack，必须重新生成后才能支持更强的产品声明。
+v1 fixture pack。其中 `remem` 使用历史的全量正文预载
+`remem_preloaded` 语义，不能与当前依赖检索的
+`remem_seeded_sessionstart` 结果比较；必须重新生成后才能支持更强的产品声明。
 
 ### LoCoMo（仅作信息参考）
 

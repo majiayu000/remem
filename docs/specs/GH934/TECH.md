@@ -113,5 +113,7 @@ follow-ups before the router can become default.
 ## Follow-ups (tracked on #934)
 
 Full per-channel execution into ContextBundle, generated-enrichment execution,
-plan hash into benchmark artifacts at execution time, per-intent golden
-fixtures, static-vs-router ablation and default-on gates.
+per-intent golden fixtures, static-vs-router ablation and default-on gates.
+SessionStart plan hashes already flow through persisted `ContextAudit` rows
+into verified coding-bench remem artifacts; that landed slice does not replace
+the pending per-intent execution and ablation work.

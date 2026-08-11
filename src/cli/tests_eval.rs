@@ -335,7 +335,7 @@ fn cli_parses_eval_coding_bench_options() {
         "--json-out",
         "eval/coding-bench/reports/baseline.json",
         "--condition",
-        "remem",
+        "remem_seeded_sessionstart",
         "--task",
         "slug-normalizer-contract",
         "--runner",
@@ -360,7 +360,7 @@ fn cli_parses_eval_coding_bench_options() {
                 args.json_out.as_deref(),
                 Some("eval/coding-bench/reports/baseline.json")
             );
-            assert_eq!(args.condition.as_deref(), Some("remem"));
+            assert_eq!(args.condition.as_deref(), Some("remem_seeded_sessionstart"));
             assert_eq!(args.task.as_deref(), Some("slug-normalizer-contract"));
             assert_eq!(args.task_set, "full");
             assert_eq!(args.runner, "codex");

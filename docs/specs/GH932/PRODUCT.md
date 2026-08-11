@@ -87,9 +87,18 @@ context bundle.
   also disables a globally configured reranker rather than applying an
   unplanned top-k cut.
 - No change to the existing SessionStart rendered output or gating.
-- No benchmark artifact consumer yet. This phase provides the durable
-  production SessionStart plan/audit contract that coding-bench will consume
-  in the next #932/#931/#934 implementation PR.
+- Coding-bench remem runs must consume the durable audit for the exact
+  SessionStart `injection_run_id` that produced their context. The run artifact
+  records the bundle/plan and policy versions, plan/audit hashes, a separate
+  injection-run binding hash, degraded mode, candidate/selection/drop counts,
+  token budget/estimate, truncation reason, and the payload-free canonical
+  audit JSON needed to recompute the hashes.
+- A remem run without a verified audit is a runtime contract failure even when
+  the coding task succeeds. `no_memory` and curated-file controls mark the
+  audit contract `not_applicable` and never carry a remem audit snapshot.
+- Report verification canonicalizes the embedded audit JSON, recomputes its
+  SHA-256, checks every denormalized field, and rejects a snapshot that differs
+  from the persisted injection run loaded during benchmark setup.
 - The doctor capability check does not expose memory payloads. Durable audit
   rows are an internal production/benchmark surface, not a new doctor payload.
 - Load-error fail-open rendering remains on the compatibility path so existing

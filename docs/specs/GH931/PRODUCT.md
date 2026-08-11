@@ -6,11 +6,13 @@ Issue: #931 (refs #384, #385, #849, #928)
 
 ## Problem
 
-The current coding-bench public evidence has two limits: the `remem` condition
-seeds fixture evidence directly and preloads full details into
-`REMEM_CONTEXT.md` (not the real capture → extraction → promotion → retrieval
-path), and `curated_file` is a near-oracle human upper bound built from gold
-evidence. Neither can support the flagship product claim.
+The committed coding-bench public evidence has two limits: its historical
+`remem` condition seeded fixture evidence directly and preloaded full details
+into `REMEM_CONTEXT.md` (not the real capture → extraction → promotion →
+retrieval path), and `curated_file` is a near-oracle human upper bound built
+from gold evidence. The current diagnostic runner no longer appends those full
+bodies, but direct seeding still prevents either condition from supporting the
+flagship product claim.
 
 ## Claim under test
 
@@ -22,13 +24,19 @@ increasing stale/irrelevant memory harm.
 ## Product decisions
 
 - Primary conditions: `no_memory`, `curated_file_budgeted`, `remem_e2e`.
-  All other conditions (including the renamed `remem_preloaded` and
-  `curated_file_expert`) are diagnostic only and never claim-bearing.
+  All other conditions (including `remem_seeded_sessionstart` and
+  `curated_file_expert`) are diagnostic only and never claim-bearing. The
+  historical `remem_preloaded` name is reserved for old full-body-preload
+  artifacts and must not label current retrieval-dependent runs.
 - The only primary outcome is `resolved_rate`; maintenance cost, token/latency
   cost, memory harm, and citation quality are mandatory secondary reports.
 - Every memory failure is attributed to exactly one of six stages (capture,
   extraction, consolidation, retrieval, context compilation, reader/use) via a
   fixed 12-enum taxonomy.
+- Every remem-backed run binds its artifact to the exact persisted production
+  SessionStart ContextAudit. Missing or hash/summary-invalid audit evidence is
+  a runtime contract failure; non-remem controls mark the contract not
+  applicable.
 - Public wording is governed by a pre-registered claim registry with an
   automatic wording gate: `PASS` / `FAIL` / `INSUFFICIENT`, allowed and
   forbidden wording, and a supporting report hash. `INSUFFICIENT` wording must
@@ -134,7 +142,7 @@ workflow gate or authorization source.
 
 | Issue acceptance item | Scaffold artifact |
 |---|---|
-| Rename `remem` → `remem_preloaded` | `eval/coding-bench/conditions.json`, README, spec supersession notes; src-side id rename is the tracked follow-up |
+| Rename `remem` → `remem_seeded_sessionstart` | Implemented in the Rust CLI/runner/report and registry with no `remem` alias; `remem_preloaded` stays historical-only |
 | Real `remem_e2e` condition | Condition definition with forbidden shortcuts and isolation rules; runner execution support is the tracked src follow-up |
 | `curated_file_budgeted` protocol | `eval/coding-bench/curated-file-budgeted-protocol.md` + curator log schema |
 | Claim registry + wording gate | `eval/claims/registry.json`, `eval/claims/claim_gate.py` |

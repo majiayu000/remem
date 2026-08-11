@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::audit_contract::{RememContextAuditSnapshot, RememContextAuditStatus};
+
 #[derive(Debug, Clone)]
 pub struct CodingBenchOptions {
     pub fixture_path: String,
@@ -121,17 +123,22 @@ impl CodingBenchTask {
 #[serde(rename_all = "snake_case")]
 pub enum BenchCondition {
     NoMemory,
-    Remem,
+    #[serde(rename = "remem_seeded_sessionstart")]
+    RememSeededSessionStart,
     CuratedFile,
 }
 
 impl BenchCondition {
-    pub const ALL: [Self; 3] = [Self::NoMemory, Self::Remem, Self::CuratedFile];
+    pub const ALL: [Self; 3] = [
+        Self::NoMemory,
+        Self::RememSeededSessionStart,
+        Self::CuratedFile,
+    ];
 
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::NoMemory => "no_memory",
-            Self::Remem => "remem",
+            Self::RememSeededSessionStart => "remem_seeded_sessionstart",
             Self::CuratedFile => "curated_file",
         }
     }
@@ -139,10 +146,33 @@ impl BenchCondition {
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "no_memory" => Some(Self::NoMemory),
-            "remem" => Some(Self::Remem),
+            "remem_seeded_sessionstart" => Some(Self::RememSeededSessionStart),
             "curated_file" => Some(Self::CuratedFile),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod condition_identity_tests {
+    use super::BenchCondition;
+
+    #[test]
+    fn seeded_sessionstart_has_distinct_nonlegacy_identity() -> serde_json::Result<()> {
+        assert_eq!(
+            BenchCondition::parse("remem_seeded_sessionstart"),
+            Some(BenchCondition::RememSeededSessionStart)
+        );
+        assert_eq!(
+            BenchCondition::RememSeededSessionStart.as_str(),
+            "remem_seeded_sessionstart"
+        );
+        assert_eq!(BenchCondition::parse("remem"), None);
+        assert_eq!(
+            serde_json::to_value(BenchCondition::RememSeededSessionStart)?,
+            "remem_seeded_sessionstart"
+        );
+        Ok(())
     }
 }
 
@@ -204,6 +234,11 @@ pub struct RunReport {
     pub unauthorized_path_changes: Vec<String>,
     pub runner_exit_code: Option<i32>,
     pub runner_timed_out: bool,
+    pub runtime_contract_failure: bool,
+    pub runtime_contract_failure_reason: Option<String>,
+    pub context_audit_status: RememContextAuditStatus,
+    pub context_audit_failure_reason: Option<String>,
+    pub remem_context_audit: Option<RememContextAuditSnapshot>,
     pub score_commands: Vec<CommandReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_contract: Option<CodingMemoryAttribution>,

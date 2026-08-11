@@ -6,13 +6,16 @@ use crate::eval::current_memory_contracts::{
     CurrentMemoryContractEvalReport, CurrentMemoryContractRateMetric,
 };
 
+use super::audit_contract::{
+    verify_context_audit_snapshot, RememContextAuditSnapshot, RememContextAuditStatus,
+};
 use super::types::{CodingBenchFailureReason, CodingMemoryAttribution};
 
 pub const CODING_AGENT_AB_SPEC_PATH: &str = "docs/specs/issue385-coding-agent-ab/TECH.md";
 pub const CURRENT_MEMORY_CONTRACT_SPEC_PATH: &str = "docs/specs/current-memory-contracts/TECH.md";
 pub const MIN_RUNS_PER_CONDITION: usize = 3;
 const REQUIRED_CONDITIONS: [CodingBenchCondition; 3] = [
-    CodingBenchCondition::Remem,
+    CodingBenchCondition::RememSeededSessionStart,
     CodingBenchCondition::NoMemory,
     CodingBenchCondition::CuratedFile,
 ];
@@ -44,6 +47,8 @@ pub struct CodingBenchRunReport {
     pub memory_contract_status: CodingBenchMemoryContractStatus,
     pub runtime_contract_failure: bool,
     pub runtime_contract_failure_reason: Option<String>,
+    pub context_audit_status: RememContextAuditStatus,
+    pub context_audit_failure_reason: Option<String>,
     pub score: CodingBenchRunScoreEvidence,
     pub metrics: CodingBenchRunMetrics,
     pub final_head_sha: Option<String>,
@@ -82,7 +87,8 @@ pub struct CodingBenchRunMetrics {
 #[serde(rename_all = "snake_case")]
 pub enum CodingBenchCondition {
     NoMemory,
-    Remem,
+    #[serde(rename = "remem_seeded_sessionstart")]
+    RememSeededSessionStart,
     CuratedFile,
 }
 
@@ -101,6 +107,7 @@ pub struct RememContractSnapshot {
     pub spec_path: &'static str,
     pub captured_at_epoch: i64,
     pub contract_health: RememContractHealth,
+    pub context_audit: Option<RememContextAuditSnapshot>,
     pub citation_precision: CurrentMemoryContractRateMetric,
     pub staleness_handling: RememStalenessHandlingSnapshot,
     pub temporal_fact_eligibility: RememTemporalFactEligibilitySnapshot,
@@ -155,6 +162,7 @@ pub struct RememUsageFeedbackCoverageSnapshot {
 pub fn build_remem_contract_snapshot(
     contract_report: CurrentMemoryContractEvalReport,
     captured_at_epoch: i64,
+    context_audit: Option<RememContextAuditSnapshot>,
 ) -> RememContractSnapshot {
     let mut warnings = Vec::new();
     let mut failing_examples = contract_report.failing_examples.clone();
@@ -179,6 +187,7 @@ pub fn build_remem_contract_snapshot(
             warning_count: warnings.len(),
             warnings,
         },
+        context_audit,
         citation_precision: contract_report.metrics.usage.citation_event_matched.clone(),
         staleness_handling: RememStalenessHandlingSnapshot {
             tracked: contract_report.metrics.staleness.tracked.clone(),
@@ -277,7 +286,7 @@ pub fn validate_contract_snapshots(report: &CodingBenchReport) -> Result<()> {
             validate_required_run_metrics(run)?;
 
             match run.condition {
-                CodingBenchCondition::Remem => validate_remem_run_contract(run)?,
+                CodingBenchCondition::RememSeededSessionStart => validate_remem_run_contract(run)?,
                 CodingBenchCondition::NoMemory | CodingBenchCondition::CuratedFile => {
                     if run.memory_contract_status != CodingBenchMemoryContractStatus::NotApplicable
                     {
@@ -300,6 +309,16 @@ pub fn validate_contract_snapshots(report: &CodingBenchReport) -> Result<()> {
                     {
                         bail!(
                             "{:?} run {}#{} must not report remem runtime contract failure",
+                            run.condition,
+                            run.task_id,
+                            run.run_index
+                        );
+                    }
+                    if run.context_audit_status != RememContextAuditStatus::NotApplicable
+                        || run.context_audit_failure_reason.is_some()
+                    {
+                        bail!(
+                            "{:?} run {}#{} must mark ContextAudit not_applicable without a failure reason",
                             run.condition,
                             run.task_id,
                             run.run_index
@@ -575,7 +594,55 @@ fn validate_remem_run_contract(run: &CodingBenchRunReport) -> Result<()> {
             run.run_index
         );
     }
-    let contract_failed = !embedded_contract_passed;
+    let context_audit_failed = match run.context_audit_status {
+        RememContextAuditStatus::Verified => {
+            if run.context_audit_failure_reason.is_some() {
+                bail!(
+                    "remem run {}#{} has verified ContextAudit with a failure reason",
+                    run.task_id,
+                    run.run_index
+                );
+            }
+            let context_audit = snapshot.context_audit.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "remem run {}#{} is missing ContextAudit snapshot",
+                    run.task_id,
+                    run.run_index
+                )
+            })?;
+            verify_context_audit_snapshot(context_audit)?;
+            false
+        }
+        RememContextAuditStatus::ContractFailure => {
+            if run
+                .context_audit_failure_reason
+                .as_deref()
+                .is_none_or(|reason| reason.trim().is_empty())
+            {
+                bail!(
+                    "remem run {}#{} has ContextAudit contract failure without reason",
+                    run.task_id,
+                    run.run_index
+                );
+            }
+            if snapshot.context_audit.is_some() {
+                bail!(
+                    "remem run {}#{} has ContextAudit contract failure with a stale snapshot",
+                    run.task_id,
+                    run.run_index
+                );
+            }
+            true
+        }
+        RememContextAuditStatus::NotApplicable => {
+            bail!(
+                "remem run {}#{} must not mark ContextAudit not_applicable",
+                run.task_id,
+                run.run_index
+            );
+        }
+    };
+    let contract_failed = !embedded_contract_passed || context_audit_failed;
     let expected_status = if contract_failed {
         CodingBenchMemoryContractStatus::Failed
     } else {

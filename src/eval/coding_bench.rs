@@ -1,4 +1,5 @@
 mod artifact;
+mod audit_contract;
 mod condition;
 mod failure;
 mod fixture;
@@ -18,6 +19,10 @@ pub use artifact::{
     RememContractWarning, RememInjectedMemoryAuditSnapshot, RememStalenessHandlingSnapshot,
     RememTemporalFactEligibilitySnapshot, RememUsageFeedbackCoverageSnapshot,
     CODING_AGENT_AB_SPEC_PATH, CURRENT_MEMORY_CONTRACT_SPEC_PATH, MIN_RUNS_PER_CONDITION,
+};
+pub(crate) use audit_contract::verify_snapshot_against_persisted_injection;
+pub use audit_contract::{
+    verify_context_audit_snapshot, RememContextAuditSnapshot, RememContextAuditStatus,
 };
 pub use runner::{dry_run_plan, run_coding_bench};
 pub use types::CodingBenchOptions;

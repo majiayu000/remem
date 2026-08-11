@@ -3,11 +3,20 @@
 ## Unreleased
 
 ### Added
-- Staged source version `0.6.67` for GH-934: MCP `search` can now compile an
+- Staged source version `0.6.68` for GH-934: MCP `search` can now compile an
   explicit task-aware `RetrievalPlan` from intent, role, risk, budget, and
   superseded-scope inputs; routed searches apply the plan's channel weights,
   graph-expansion choice, rerank bounds, and high-risk raw-fallback abstention
   while returning plan audit metadata.
+- Staged source version `0.6.67` for GH-932/GH-931/GH-934: coding-bench remem
+  runs now consume the exact persisted production SessionStart ContextAudit,
+  embed its payload-free canonical JSON plus plan/policy/hash/degraded/count/
+  budget contract, and independently recompute SHA-256 during verification.
+  Missing audit evidence is an explicit runtime contract failure, while
+  `no_memory` and curated-file controls mark the contract not applicable. The
+  retrieval-dependent diagnostic condition now uses the stable CLI/report id
+  `remem_seeded_sessionstart`; historical full-body `remem_preloaded` results
+  remain explicitly separate and incomparable.
 - Staged source version `0.6.66` for memory governance G1: schema v082 adds an
   append-only project-identity alias event ledger plus a current alias registry,
   allowing historical project paths to resolve to one canonical project without

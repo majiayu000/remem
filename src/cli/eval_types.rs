@@ -55,7 +55,7 @@ pub(in crate::cli) struct BenchCodingArgs {
     /// JSON report output path.
     #[arg(long)]
     pub(in crate::cli) json_out: String,
-    /// Restrict to one condition: no_memory, remem, or curated_file.
+    /// Restrict to one condition: no_memory, remem_seeded_sessionstart, or curated_file.
     #[arg(long)]
     pub(in crate::cli) condition: Option<String>,
     /// Restrict to one task id.
@@ -211,7 +211,7 @@ pub(in crate::cli) struct EvalCodingBenchArgs {
     /// JSON report output path. Required unless --dry-run is set.
     #[arg(long)]
     pub(in crate::cli) json_out: Option<String>,
-    /// Restrict to one condition: no_memory, remem, or curated_file.
+    /// Restrict to one condition: no_memory, remem_seeded_sessionstart, or curated_file.
     #[arg(long)]
     pub(in crate::cli) condition: Option<String>,
     /// Restrict to one task id.

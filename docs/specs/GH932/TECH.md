@@ -161,7 +161,8 @@ is the explicit rollback.
   render.
 - Verified reads validate the stored `plan_schema_version` before parsing or
   decoding `audit_json`, canonicalize and re-hash the version-bound envelope,
-  dispatch to that version's decoder, then compare every
+  dispatch to that version's closed decoder (unknown `ContextAudit` or
+  `AuditEntry` fields fail), then compare every
   denormalized contract field with the parsed audit. Supported historical
   versions remain readable after the current planner advances; unknown stored
   versions fail explicitly. A hash mismatch, malformed JSON, missing item link,
@@ -177,6 +178,41 @@ is the explicit rollback.
   a plan/audit. Any write failure is logged at error level while preserving the
   existing hook fail-open output contract; once an emission run ID has been
   generated, the error chain and diagnostic include that attempted ID.
+
+## Coding-bench Consumer
+
+- The remem condition invokes the production SessionStart render/emission path
+  against its isolated `REMEM_DATA_DIR`, then resolves the exact persisted row
+  by the returned `injection_run_id`. It does not select a project-wide latest
+  audit or synthesize a benchmark-only plan. During that render it clears
+  ambient context-budget, relevance, rerank, embedding, and retrieval-weight
+  overrides so identical benchmark inputs cannot inherit operator-shell policy.
+- `RememContextAuditSnapshot` carries `injection_run_id`, bundle/plan schema
+  versions, router and relevance-policy versions, `plan_hash`, `audit_hash`, a
+  domain-separated binding hash over the injection ID and audit hash, degraded
+  mode, candidate/selected/dropped counts, token budget/estimate, truncation
+  reason, and the canonical payload-free audit JSON.
+- Snapshot construction first calls the production verified loader. The
+  coding-bench verifier independently parses and canonicalizes the embedded
+  JSON, dispatches by the artifact's supported plan and ContextAudit bundle
+  schema versions, recomputes both SHA-256 hashes, compares every summary
+  field, derives candidate/selected/dropped counts from the audit entries, and
+  rejects a blank or renamed injection ID or a snapshot that differs from the
+  persisted row.
+- Public artifact verification additionally opens the declared read-only
+  SQLite `remem_db_snapshot`, reloads that exact persisted row and its linked
+  injection items, compares the production context fingerprint, and checks an
+  exact SHA-256 binding for the published `injected_context` bytes. An opaque,
+  placeholder, missing, or unrelated database snapshot fails closed.
+- `CodingBenchRunReport` and the executable runner report carry an explicit
+  audit-contract status: `verified`, `contract_failure`, or `not_applicable`.
+  Remem requires `verified` plus a snapshot; a missing, malformed, tampered, or
+  mismatched audit becomes `contract_failure` with a diagnostic reason.
+  `no_memory` and curated-file conditions require `not_applicable`, no failure
+  reason, and no snapshot.
+- The embedded canonical audit contains only the already-redacted
+  `ContextAudit` contract. It must not contain bundle sections, memory title or
+  body text, rendered hook output, task prompt, or gold benchmark evidence.
 
 ## Doctor Capability Check
 

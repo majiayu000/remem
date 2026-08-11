@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
-  "benchmark_version": "v1",
+  "benchmark_id": "adversarial-policy",
+  "benchmark_version": "v2",
   "layer": "memory_system_capability",
   "suite": "adversarial-policy",
   "condition": "remem_default",

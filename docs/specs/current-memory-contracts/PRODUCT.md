@@ -255,14 +255,14 @@ After this contract is implemented and verified:
   human CLI output.
 - The local app can show why a memory is trustworthy, stale, unused, cited, or
   excluded.
-- The A/B benchmark can run its `remem` condition against a deterministic,
+- The A/B benchmark can run its `remem_seeded_sessionstart` condition against a deterministic,
   auditable memory contract instead of a best-effort black box.
 
 ## Dependencies
 
 - `docs/specs/issue385-coding-agent-ab/` provides the end-to-end agent outcome
-  benchmark. This spec is a prerequisite contract for that benchmark's `remem`
-  condition, not a replacement.
+  benchmark. This spec is a prerequisite contract for that benchmark's
+  `remem_seeded_sessionstart` condition, not a replacement.
 - Existing golden, injection, extraction, eval-gates, and weight-grid evals
   remain deterministic quality gates.
 - Spec lifecycle governance applies: spec-only work uses `Refs`, while
