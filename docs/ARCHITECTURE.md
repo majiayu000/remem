@@ -80,7 +80,8 @@ be inspected from the current checkout when needed.
 
 | Area | Responsibility |
 |------|----------------|
-| `adapter/` (including `adapter/redaction.rs`), `observe/`, `cursor_hook/` | Host hook parsing, capture filtering, shared evidence sanitization/redaction for secrets, tokens, headers, URL userinfo, and malformed payloads, capture-specific spill serialization/replay, and capture-ledger writes |
+| `adapter/`, `observe/`, `cursor_hook/` | Host hook parsing, capture filtering, capture-specific spill serialization/replay, and capture-ledger writes |
+| `adapter/redaction.rs` | Cross-cutting sensitive-evidence redaction shared by observe capture, SessionRollup (including Cursor snapshots), and summarize capture; general secret, token, and URL-userinfo sanitization, plus header-key redaction and malformed-payload fallback specific to bounded hook-payload previews |
 | `identity.rs`, `project_id.rs`, `project_alias.rs` | Hook-host and capture-identity type contracts, canonical project-root resolution, and alias-governed canonical writes/alias-aware reads |
 | `spill_queue.rs` | Shared cross-process spill locking/appends, atomic replay claims, failed-record recovery, and orphan restoration |
 | `git_util.rs` | Bounded Git subprocess execution and cleanup, repository-root and commit-metadata resolution, metadata sanitization, and shared Git evidence types/parsers |
