@@ -83,13 +83,13 @@ and should be inspected from the current checkout when needed.
 | `session_rollup/`, `observation_extract.rs`, `observation_extract/` | Production session-summary generation and persistence, required side effects, and tool-event observation extraction and persistence |
 | `memory_candidate.rs`, `memory_candidate/`, `graph_candidate/` | Governed memory and graph candidate generation, source/evidence validation, review/quarantine, and promotion |
 | `user_context.rs`, `user_context/` | Governed user-context candidate and claim extraction, review/promotion, profile summaries, source-attributed recall, and retention/usage policy |
-| `ingest/`, `memory/raw_archive.rs`, `memory/raw_query.rs`, `memory/raw_reconcile.rs` | Transcript discovery and identity-ledger ingestion, archive persistence and schema-validated reads, and aggregate reconciliation |
+| `ingest/`, `memory/raw_archive.rs`, `memory/raw_query.rs`, `memory/raw_reconcile.rs` | Transcript discovery and identity-ledger ingestion, raw-archive persistence, typed/query-bounded raw reads, and aggregate reconciliation |
 | `memory/` (including `memory/preference.rs` and `memory/preference/`), `workstream/`, `truth/` | Curated memory storage, formatting/deduplication, preferences, workstream continuity, and lifecycle/current-truth projections |
-| `context/`, `context_bundle/`, `retrieval/`, `retrieval_router/` | SessionStart loading/rendering, Claude native-memory rendering/sync, bundle audit, lexical/vector search and fusion, and intent-aware retrieval planning |
+| `context/`, `context_bundle/`, `retrieval/`, `retrieval_router/` | SessionStart loading/rendering, optional Claude native-memory mirror rendering/sync, bundle audit, lexical/vector search and fusion, and intent-aware retrieval planning |
 | `timeline.rs`, `timeline/` | Aggregated project queries and structured/Markdown report generation for the `timeline_report` MCP flow |
 | `db/query/timeline.rs` | Chronological observation-neighborhood queries for the `timeline` MCP flow |
 | `dream/`, `rules/`, `eval/` | Memory consolidation, compiled preference rules, benchmark and policy evaluation gates |
-| `log.rs`, `log/` | Cross-process file/stderr logging, locked rotation with append fallback, private permissions, timing, worker-stderr preparation, and health snapshots |
+| `log.rs`, `log/` | File logging with cross-process locking/rotation and append fallback, stderr mirroring, private permissions, timing, worker-stderr preparation, and health snapshots |
 | `cli/`, `mcp/`, `api/`, `doctor/`, `install/` | User-facing commands, MCP/REST surfaces, diagnostics, and host configuration |
 
 ## Data Flow
