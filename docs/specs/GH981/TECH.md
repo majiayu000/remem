@@ -95,6 +95,11 @@ dynamic `serde_json::Value` extension points such as search explanation data
 remain unconstrained; the contract must not accidentally close data whose
 shape is owned by a separately versioned subsystem.
 
+Unconstrained extension points publish the object form `{}` rather than JSON
+Schema's equivalent boolean `true` shorthand. MCP consumers such as Glama's
+descriptor validator may accept schema objects only; object form preserves the
+same open value semantics without making `tools/list` fail validation.
+
 rmcp 0.15's schema transform emits the OpenAPI-style `nullable` keyword even
 though its schema declares JSON Schema 2020-12. `build_schema` therefore
 normalizes every generated output schema before publication: a typed nullable

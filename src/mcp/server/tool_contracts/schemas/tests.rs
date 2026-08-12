@@ -189,6 +189,27 @@ fn all_typed_output_objects_reject_undeclared_fields() -> anyhow::Result<()> {
 }
 
 #[test]
+fn dynamic_extension_points_use_object_form_schemas() -> anyhow::Result<()> {
+    let search = schema_value(OutputSchema::Search)?;
+    assert_eq!(
+        property(&search, "explain"),
+        &serde_json::json!({}),
+        "MCP consumers may reject JSON Schema's boolean true shorthand"
+    );
+
+    let recall = schema_value(OutputSchema::RecallUserContext)?;
+    let included = array_items(&recall, property(&recall, "included"))
+        .map(|items| resolve_local_ref(&recall, items))
+        .expect("recall included must declare item objects");
+    assert_eq!(
+        property(included, "source_refs"),
+        &serde_json::json!({}),
+        "dynamic source refs must remain unconstrained in object form"
+    );
+    Ok(())
+}
+
+#[test]
 fn common_optional_shapes_explicitly_accept_null() -> anyhow::Result<()> {
     let raw = schema_value(OutputSchema::SearchRaw)?;
     assert!(explicitly_allows_null(&raw, property(&raw, "project")));

@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.70` for GH-981: dynamic MCP output-schema
+  extension points now use the object-form unconstrained schema `{}` instead
+  of JSON Schema's boolean `true` shorthand, preserving the same open payload
+  contract while remaining compatible with Glama's descriptor validator.
 - Staged source version `0.6.69` for GH-931: coding-bench condition ids now
   converge on the flagship matrix names. The default dry-run plans
   `no_memory`, `curated_file_budgeted`, and `remem_e2e`; live execution fails
