@@ -12,6 +12,92 @@ pub struct SearchRequest {
     pub explain: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct SearchRoutingPolicy {
+    pub plan_hash: String,
+    pub policy_version: String,
+    pub rerank_enabled: bool,
+    pub rerank_candidate_pool: u32,
+    pub rerank_output_k: u32,
+    pub use_multi_hop: bool,
+    pub raw_fallback_enabled: bool,
+    pub weights: SearchRoutingWeights,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SearchRoutingWeights {
+    pub fts: f64,
+    pub vector: f64,
+    pub entity: f64,
+    pub graph: f64,
+    pub temporal: f64,
+    pub fact: f64,
+    pub like_fallback: f64,
+    pub usage: f64,
+}
+
+impl SearchRoutingPolicy {
+    pub fn from_retrieval_plan(plan: &crate::retrieval_router::RetrievalPlan) -> Self {
+        let weight = |channel| channel_weight(plan, channel);
+        let temporal = weight(crate::retrieval_router::RetrievalChannel::Temporal);
+        Self {
+            plan_hash: plan.plan_hash.clone(),
+            policy_version: plan.policy_version.clone(),
+            rerank_enabled: plan.rerank_policy.enabled,
+            rerank_candidate_pool: plan.rerank_policy.candidate_pool,
+            rerank_output_k: plan.rerank_policy.output_k,
+            use_multi_hop: channel_enabled(
+                plan,
+                crate::retrieval_router::RetrievalChannel::GraphExpansion,
+            ),
+            raw_fallback_enabled: plan.abstention_policy.mode
+                != crate::retrieval_router::AbstentionMode::OnLowEvidence,
+            weights: SearchRoutingWeights {
+                fts: weight(crate::retrieval_router::RetrievalChannel::CanonicalFts),
+                vector: weight(crate::retrieval_router::RetrievalChannel::CanonicalVector),
+                entity: weight(crate::retrieval_router::RetrievalChannel::EntityGraph),
+                graph: weight(crate::retrieval_router::RetrievalChannel::GraphExpansion),
+                temporal,
+                // Structured fact lookup is the production implementation of
+                // the router's temporal/fact evidence lane.
+                fact: temporal,
+                // LIKE is retained only as the canonical FTS degradation path.
+                like_fallback: if channel_enabled(
+                    plan,
+                    crate::retrieval_router::RetrievalChannel::CanonicalFts,
+                ) {
+                    0.25
+                } else {
+                    0.0
+                },
+                // Usage ranking is not a GH-934 retrieval-router channel; keep
+                // routed execution bounded to channels represented in the plan.
+                usage: 0.0,
+            },
+        }
+    }
+}
+
+fn channel_enabled(
+    plan: &crate::retrieval_router::RetrievalPlan,
+    channel: crate::retrieval_router::RetrievalChannel,
+) -> bool {
+    plan.channel_plans
+        .iter()
+        .any(|plan| plan.channel == channel && plan.enabled)
+}
+
+fn channel_weight(
+    plan: &crate::retrieval_router::RetrievalPlan,
+    channel: crate::retrieval_router::RetrievalChannel,
+) -> f64 {
+    plan.channel_plans
+        .iter()
+        .find(|plan| plan.channel == channel && plan.enabled)
+        .map(|plan| plan.weight)
+        .unwrap_or(0.0)
+}
+
 /// Canonical default for `include_stale` across every adapter (MCP, REST, CLI).
 ///
 /// Default search returns only current curated memories. Callers that need

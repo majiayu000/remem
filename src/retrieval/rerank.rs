@@ -89,6 +89,30 @@ pub(crate) fn apply_to_search(
     apply_with_config(&config, query, ordered, &verify_before_trust_ids)
 }
 
+/// Routed-search entry: the Retrieval Router decides whether the stage is
+/// requested and supplies the bounded candidate pool/output size. Ambient
+/// enablement and model inventory still gate actual execution.
+pub(crate) fn apply_to_search_with_limits(
+    conn: &Connection,
+    query: &str,
+    ordered: Vec<Memory>,
+    top_n: usize,
+    top_k: usize,
+) -> Result<(Vec<Memory>, RerankOutcome)> {
+    let mut config = resolve_rerank_config()?;
+    if !config.enabled {
+        return Ok((
+            ordered,
+            RerankOutcome::not_applied(RerankDisabledReason::Off),
+        ));
+    }
+    config.top_n = top_n.max(1);
+    config.top_k = top_k.max(1);
+    config::validate_config(&config)?;
+    let verify_before_trust_ids = verify_before_trust_ids(conn, &ordered);
+    apply_with_config(&config, query, ordered, &verify_before_trust_ids)
+}
+
 /// SessionStart entry: the caller passes its own final baseline order plus
 /// the `verify-before-trust` ids from its already loaded staleness labels.
 /// The order is only mutated on a successful `Applied` outcome; on any error

@@ -745,6 +745,11 @@ fn search_rejects_multi_hop_without_non_blank_query() -> anyhow::Result<()> {
                 branch: None,
                 multi_hop: Some(true),
                 explain: None,
+                task_intent: None,
+                role: None,
+                risk: None,
+                token_budget: None,
+                include_superseded: None,
             }))
             .expect_err("multi-hop should require a query");
         let json = assert_mcp_error(err, McpErrorCode::InvalidRequest, "search", false);

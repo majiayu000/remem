@@ -11,7 +11,10 @@ use super::super::common::{
     calibrated_vector_hits, paginate_memories, sanitize_fts_query, weighted_ranked_fuse,
     WeightedRankedHit,
 };
-use super::{suppression_filter, SearchExplain, SearchExplainDetails, SearchWeights};
+use super::{
+    suppression_filter, SearchExecutionPolicy, SearchExplain, SearchExplainDetails,
+    SearchRerankPolicy, SearchWeights,
+};
 
 mod explain_build;
 mod format;
@@ -165,32 +168,7 @@ pub(super) fn search_with_query(
     include_stale: bool,
     branch: Option<&str>,
     include_suppressed: bool,
-) -> Result<Vec<Memory>> {
-    search_with_query_weights(
-        conn,
-        query_text,
-        project,
-        memory_type,
-        limit,
-        offset,
-        include_stale,
-        branch,
-        include_suppressed,
-        SearchWeights::production(),
-    )
-}
-
-pub(super) fn search_with_query_weights(
-    conn: &Connection,
-    query_text: &str,
-    project: Option<&str>,
-    memory_type: Option<&str>,
-    limit: i64,
-    offset: i64,
-    include_stale: bool,
-    branch: Option<&str>,
-    include_suppressed: bool,
-    weights: SearchWeights,
+    execution_policy: SearchExecutionPolicy,
 ) -> Result<Vec<Memory>> {
     let mut plan = build_query_search_plan(
         conn,
@@ -202,7 +180,8 @@ pub(super) fn search_with_query_weights(
         include_stale,
         branch,
         include_suppressed,
-        weights,
+        execution_policy.weights,
+        execution_policy.disable_zero_weight_channels,
     )?;
     if plan.channels.is_empty() {
         log_search_timing(query_text, project, limit, offset, &plan);
@@ -230,13 +209,45 @@ pub(super) fn search_with_query_weights(
         "confidence_and_fact_labels",
         annotate_start,
     );
-    let (ordered, _rerank_outcome) =
-        apply_rerank_stage(conn, query_text, ordered, &mut plan.timings)?;
+    let (ordered, _rerank_outcome) = apply_rerank_stage(
+        conn,
+        query_text,
+        ordered,
+        &mut plan.timings,
+        execution_policy.rerank,
+    )?;
     let paged = time_value(&mut plan.timings, "paginate", || {
         paginate_memories(ordered, limit, offset)
     });
     log_search_timing(query_text, project, limit, offset, &plan);
     Ok(paged)
+}
+
+#[cfg(test)]
+pub(super) fn search_with_query_weights(
+    conn: &Connection,
+    query_text: &str,
+    project: Option<&str>,
+    memory_type: Option<&str>,
+    limit: i64,
+    offset: i64,
+    include_stale: bool,
+    branch: Option<&str>,
+    include_suppressed: bool,
+    weights: SearchWeights,
+) -> Result<Vec<Memory>> {
+    search_with_query(
+        conn,
+        query_text,
+        project,
+        memory_type,
+        limit,
+        offset,
+        include_stale,
+        branch,
+        include_suppressed,
+        SearchExecutionPolicy::with_weights(weights),
+    )
 }
 
 pub(super) fn search_with_query_explain(
@@ -249,6 +260,7 @@ pub(super) fn search_with_query_explain(
     include_stale: bool,
     branch: Option<&str>,
     include_suppressed: bool,
+    execution_policy: SearchExecutionPolicy,
 ) -> Result<QuerySearchWithExplain> {
     let mut plan = build_query_search_plan(
         conn,
@@ -260,7 +272,8 @@ pub(super) fn search_with_query_explain(
         include_stale,
         branch,
         include_suppressed,
-        SearchWeights::default(),
+        execution_policy.weights,
+        execution_policy.disable_zero_weight_channels,
     )?;
     if plan.channels.is_empty() {
         log_search_timing(query_text, project, limit, offset, &plan);
@@ -319,8 +332,13 @@ pub(super) fn search_with_query_explain(
         "confidence_and_fact_labels",
         annotate_start,
     );
-    let (ordered, rerank_outcome) =
-        apply_rerank_stage(conn, query_text, ordered, &mut plan.timings)?;
+    let (ordered, rerank_outcome) = apply_rerank_stage(
+        conn,
+        query_text,
+        ordered,
+        &mut plan.timings,
+        execution_policy.rerank,
+    )?;
     let paged = time_value(&mut plan.timings, "paginate", || {
         paginate_memories(ordered, limit, offset)
     });
@@ -340,7 +358,7 @@ pub(super) fn search_with_query_explain(
         fusion_scores.len().saturating_sub(gated_fused.len()),
         &paged,
     )?;
-    explain_details.explain.rerank = Some(rerank_explain(&rerank_outcome));
+    explain_details.explain.rerank = Some(rerank_explain(&rerank_outcome, execution_policy.rerank));
     push_elapsed(&mut plan.timings, "build_explain", explain_start);
     log_search_timing(query_text, project, limit, offset, &plan);
     Ok(QuerySearchWithExplain {
@@ -360,6 +378,7 @@ fn build_query_search_plan(
     branch: Option<&str>,
     include_suppressed: bool,
     weights: SearchWeights,
+    disable_zero_weight_channels: bool,
 ) -> Result<QuerySearchPlan> {
     weights.validate()?;
     let total_start = Instant::now();
@@ -398,7 +417,13 @@ fn build_query_search_plan(
     let mut temporal_range = None;
     let mut temporal_field = None;
 
-    if !long_tokens.is_empty() {
+    if disable_zero_weight_channels && weights.fts <= 0.0 {
+        channels.push(NamedChannel::disabled(
+            "fts",
+            weights.fts,
+            "fts channel weight is zero",
+        ));
+    } else if !long_tokens.is_empty() {
         let safe_query = sanitize_fts_query(&long_tokens.join(" "));
         fts_query = Some(safe_query.clone());
         let fts = time_result(&mut timings, "fts", || {
@@ -423,23 +448,37 @@ fn build_query_search_plan(
         }
     }
 
-    let entity_ids = time_result(&mut timings, "entity", || {
-        crate::retrieval::entity::search_by_entity_filtered(
-            conn,
-            query_text,
-            project,
-            memory_type,
-            branch,
-            fetch,
-            include_stale,
-        )
-    })?;
-    let entity_ids = suppression_filter::ids(conn, entity_ids, include_suppressed)?;
-    if !entity_ids.is_empty() {
-        channels.push(NamedChannel::enabled("entity", weights.entity, entity_ids));
+    if disable_zero_weight_channels && weights.entity <= 0.0 {
+        channels.push(NamedChannel::disabled(
+            "entity",
+            weights.entity,
+            "entity channel weight is zero",
+        ));
+    } else {
+        let entity_ids = time_result(&mut timings, "entity", || {
+            crate::retrieval::entity::search_by_entity_filtered(
+                conn,
+                query_text,
+                project,
+                memory_type,
+                branch,
+                fetch,
+                include_stale,
+            )
+        })?;
+        let entity_ids = suppression_filter::ids(conn, entity_ids, include_suppressed)?;
+        if !entity_ids.is_empty() {
+            channels.push(NamedChannel::enabled("entity", weights.entity, entity_ids));
+        }
     }
 
-    if weights.fact > 0.0 {
+    if disable_zero_weight_channels && weights.fact <= 0.0 {
+        channels.push(NamedChannel::disabled(
+            "fact",
+            weights.fact,
+            "fact channel weight is zero",
+        ));
+    } else if weights.fact > 0.0 {
         let fact_ids = time_result(&mut timings, "fact", || {
             crate::retrieval::temporal::search_fact_memory_ids(
                 conn,
@@ -460,7 +499,15 @@ fn build_query_search_plan(
         }
     }
 
-    if let Some(temporal_constraint) = crate::retrieval::temporal::extract_temporal(query_text) {
+    if disable_zero_weight_channels && weights.temporal <= 0.0 {
+        channels.push(NamedChannel::disabled(
+            "temporal",
+            weights.temporal,
+            "temporal channel weight is zero",
+        ));
+    } else if let Some(temporal_constraint) =
+        crate::retrieval::temporal::extract_temporal(query_text)
+    {
         temporal_range = Some((
             temporal_constraint.start_epoch,
             temporal_constraint.end_epoch,
@@ -487,51 +534,59 @@ fn build_query_search_plan(
         }
     }
 
-    let query_embedding = time_result(&mut timings, "query_embedding", || {
-        crate::retrieval::embedding::embed_query_with_execution_if_enabled(query_text)
-    })?;
-    if let Some(query_embedding) = query_embedding {
-        let crate::retrieval::embedding::QueryEmbeddingExecution {
-            embedding,
-            metadata,
-        } = query_embedding;
-        let vector_start = Instant::now();
-        let mut vector_outcome = crate::retrieval::vector::vector_search_embedding_filtered(
-            conn,
-            &embedding,
-            crate::retrieval::vector::VectorSearchFilters {
-                project,
-                memory_type,
-                branch,
-                include_stale,
-            },
-            fetch as usize,
-        )?;
-        push_elapsed(&mut timings, "vector", vector_start);
-        timings.append(&mut vector_outcome.timings);
-        let channel = if let Some(reason) = vector_outcome.disabled_reason {
-            NamedChannel::disabled("vector", weights.vector, reason)
-                .with_candidates_scanned(vector_outcome.candidates_scanned)
-        } else {
-            let candidates_scanned = vector_outcome.candidates_scanned;
-            let hits = calibrated_vector_hits(
-                vector_outcome
-                    .hits
-                    .into_iter()
-                    .map(|hit| (hit.memory_id, hit.distance)),
-                weights.max_vector_distance,
-            )?;
-            let hits = suppression_filter::weighted_hits(conn, hits, include_suppressed)?;
-            NamedChannel::enabled_with_hits("vector", weights.vector, hits)
-                .with_candidates_scanned(candidates_scanned)
-        };
-        channels.push(channel.with_embedding(metadata));
-    } else {
+    if disable_zero_weight_channels && weights.vector <= 0.0 {
         channels.push(NamedChannel::disabled(
             "vector",
             weights.vector,
-            "embedding provider is off",
+            "vector channel weight is zero",
         ));
+    } else {
+        let query_embedding = time_result(&mut timings, "query_embedding", || {
+            crate::retrieval::embedding::embed_query_with_execution_if_enabled(query_text)
+        })?;
+        if let Some(query_embedding) = query_embedding {
+            let crate::retrieval::embedding::QueryEmbeddingExecution {
+                embedding,
+                metadata,
+            } = query_embedding;
+            let vector_start = Instant::now();
+            let mut vector_outcome = crate::retrieval::vector::vector_search_embedding_filtered(
+                conn,
+                &embedding,
+                crate::retrieval::vector::VectorSearchFilters {
+                    project,
+                    memory_type,
+                    branch,
+                    include_stale,
+                },
+                fetch as usize,
+            )?;
+            push_elapsed(&mut timings, "vector", vector_start);
+            timings.append(&mut vector_outcome.timings);
+            let channel = if let Some(reason) = vector_outcome.disabled_reason {
+                NamedChannel::disabled("vector", weights.vector, reason)
+                    .with_candidates_scanned(vector_outcome.candidates_scanned)
+            } else {
+                let candidates_scanned = vector_outcome.candidates_scanned;
+                let hits = calibrated_vector_hits(
+                    vector_outcome
+                        .hits
+                        .into_iter()
+                        .map(|hit| (hit.memory_id, hit.distance)),
+                    weights.max_vector_distance,
+                )?;
+                let hits = suppression_filter::weighted_hits(conn, hits, include_suppressed)?;
+                NamedChannel::enabled_with_hits("vector", weights.vector, hits)
+                    .with_candidates_scanned(candidates_scanned)
+            };
+            channels.push(channel.with_embedding(metadata));
+        } else {
+            channels.push(NamedChannel::disabled(
+                "vector",
+                weights.vector,
+                "embedding provider is off",
+            ));
+        }
     }
 
     graph::append_graph_channel(
@@ -547,7 +602,13 @@ fn build_query_search_plan(
         weights,
     )?;
 
-    if core_refs.is_empty() {
+    if disable_zero_weight_channels && weights.like_fallback <= 0.0 {
+        channels.push(NamedChannel::disabled(
+            "like_fallback",
+            weights.like_fallback,
+            "like_fallback channel weight is zero",
+        ));
+    } else if core_refs.is_empty() {
         channels.push(NamedChannel::disabled(
             "like_fallback",
             weights.like_fallback,
@@ -641,17 +702,44 @@ fn apply_rerank_stage(
     query_text: &str,
     ordered: Vec<Memory>,
     timings: &mut Vec<PhaseTiming>,
+    policy: SearchRerankPolicy,
 ) -> Result<(Vec<Memory>, crate::retrieval::rerank::types::RerankOutcome)> {
-    let (ordered, outcome) = crate::retrieval::rerank::apply_to_search(conn, query_text, ordered)?;
+    let (ordered, outcome) = match policy {
+        SearchRerankPolicy::Ambient => {
+            crate::retrieval::rerank::apply_to_search(conn, query_text, ordered)?
+        }
+        SearchRerankPolicy::Routed { enabled: false, .. } => (
+            ordered,
+            crate::retrieval::rerank::types::RerankOutcome::not_applied(
+                crate::retrieval::rerank::RerankDisabledReason::Off,
+            ),
+        ),
+        SearchRerankPolicy::Routed {
+            enabled: true,
+            candidate_pool,
+            output_k,
+        } => crate::retrieval::rerank::apply_to_search_with_limits(
+            conn,
+            query_text,
+            ordered,
+            candidate_pool,
+            output_k,
+        )?,
+    };
     timings.extend(outcome.timings.iter().cloned());
     Ok((ordered, outcome))
 }
 
 fn rerank_explain(
     outcome: &crate::retrieval::rerank::types::RerankOutcome,
+    policy: SearchRerankPolicy,
 ) -> crate::retrieval::rerank::RerankExplain {
-    let requested =
-        outcome.disabled_reason() != Some(crate::retrieval::rerank::RerankDisabledReason::Off);
+    let requested = match policy {
+        SearchRerankPolicy::Ambient => {
+            outcome.disabled_reason() != Some(crate::retrieval::rerank::RerankDisabledReason::Off)
+        }
+        SearchRerankPolicy::Routed { enabled, .. } => enabled,
+    };
     outcome.to_explain(requested)
 }
 

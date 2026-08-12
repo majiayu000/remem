@@ -12,15 +12,17 @@
 //!   (channel plans / filters / policies / budgets, stable plan hash)
 //! ```
 //!
-//! v1 scope is plan compilation only, exposed through
-//! `remem context-plan --task ... --json`. Intent resolution is fully
-//! deterministic: explicit caller intent wins, simple keyword rules are
-//! the only fallback, and unclassifiable tasks conservatively fall back
-//! to `ExploreHistory` with the generic policy. No LLM or network call
-//! is ever made. Wiring the plan into retrieval execution, the rerank
-//! implementation (GH-851), graph expansion (GH-853), enrichment workers
-//! (GH-850/928), and golden-fixture ablation are follow-up work on
-//! GH-934.
+//! v1 started as a debug-only compiler exposed through
+//! `remem context-plan --task ... --json`. MCP `search` now has the first
+//! production wiring slice: callers may pass an explicit task intent / role /
+//! risk / budget, and the compiled plan selects search weights, graph
+//! expansion, rerank participation, and raw-fallback abstention. Intent
+//! resolution remains fully deterministic: explicit caller intent wins, simple
+//! keyword rules are the only fallback, and unclassifiable tasks conservatively
+//! fall back to `ExploreHistory` with the generic policy. No LLM or network
+//! call is ever made by the router itself. Full per-channel evidence loaders,
+//! generated-enrichment execution, default-on eval gates, and golden-fixture
+//! ablation remain follow-up work on GH-934.
 
 mod domain;
 mod intent;

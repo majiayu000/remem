@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.68` for GH-934: MCP `search` can now compile an
+  explicit task-aware `RetrievalPlan` from intent, role, risk, budget, and
+  superseded-scope inputs; routed searches apply the plan's channel weights,
+  graph-expansion choice, rerank bounds, and high-risk raw-fallback abstention
+  while returning plan audit metadata.
 - Staged source version `0.6.67` for GH-932/GH-931/GH-934: coding-bench remem
   runs now consume the exact persisted production SessionStart ContextAudit,
   embed its payload-free canonical JSON plus plan/policy/hash/degraded/count/

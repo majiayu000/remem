@@ -31,6 +31,12 @@ A deterministic, auditable Retrieval Router that compiles a
 - `remem context-plan --task ... --json` debug command printing resolved
   intent, enabled/disabled channels, filters, budgets, policy version,
   and reason codes — never memory contents;
+- MCP `search` accepts optional task-aware routing fields (`task_intent`,
+  `role`, `risk`, `token_budget`, `include_superseded`). When present, it
+  compiles the same `RetrievalPlan`, applies the plan to production search
+  weights / graph expansion / rerank participation / raw-fallback abstention,
+  and returns a compact plan audit (`plan_hash`, reason codes, selected and
+  disabled channels) alongside the legacy compact search envelope;
 - stable plan hash (canonical-JSON SHA-256, same convention as #932).
 
 No LLM or network call exists on any router path.
@@ -46,7 +52,8 @@ No LLM or network call exists on any router path.
 - #854 SessionStart budget gate is untouched; `SessionStart` is not a
   routable intent and maps to the generic policy.
 
-## Out of scope (follow-ups on #934)
+## Remaining out of scope (follow-ups on #934)
 
-Wiring plans into retrieval execution, per-intent golden fixtures,
-static-vs-router ablation, eval gates for making the router the default.
+Full per-channel evidence loaders, generated-enrichment execution,
+per-intent golden fixtures, static-vs-router ablation, and eval gates for
+making the router the default.

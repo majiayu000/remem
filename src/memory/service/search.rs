@@ -3,6 +3,7 @@ use rusqlite::Connection;
 
 use super::types::{
     MultiHopMeta, SearchRequest, SearchResultSet, SearchResultSetWithExplainDetails,
+    SearchRoutingPolicy,
 };
 
 /// Curated hits below this count trigger a raw archive fallback so the caller
@@ -19,20 +20,29 @@ pub(crate) fn search_memories_with_explain_details(
     conn: &Connection,
     req: &SearchRequest,
 ) -> Result<SearchResultSetWithExplainDetails> {
+    search_memories_with_explain_details_with_routing(conn, req, None)
+}
+
+pub(crate) fn search_memories_with_explain_details_with_routing(
+    conn: &Connection,
+    req: &SearchRequest,
+    routing: Option<&SearchRoutingPolicy>,
+) -> Result<SearchResultSetWithExplainDetails> {
     let limit = req.limit.max(1);
     let query = req.query.as_deref();
+    let effective_multi_hop = routing.is_some_and(|routing| routing.use_multi_hop) || req.multi_hop;
 
-    if req.multi_hop {
-        return multi_hop_search(conn, query, req.project.as_deref(), limit, req).map(|result| {
-            SearchResultSetWithExplainDetails {
+    if effective_multi_hop {
+        return multi_hop_search(conn, query, req.project.as_deref(), limit, req, routing).map(
+            |result| SearchResultSetWithExplainDetails {
                 result,
                 explain_details: None,
-            }
-        });
+            },
+        );
     }
 
     let (mut memories, mut explain_details) = if req.explain {
-        crate::retrieval::search::search_with_branch_explain_details_with_suppressed_policy(
+        crate::retrieval::search::search_with_branch_execution_policy_with_suppressed_policy(
             conn,
             query,
             req.project.as_deref(),
@@ -42,26 +52,27 @@ pub(crate) fn search_memories_with_explain_details(
             req.include_stale,
             req.branch.as_deref(),
             req.include_suppressed,
+            true,
+            search_execution_policy(true, routing),
         )?
     } else {
-        (
-            crate::retrieval::search::search_with_branch_with_suppressed_policy(
-                conn,
-                query,
-                req.project.as_deref(),
-                req.memory_type.as_deref(),
-                limit + 1,
-                req.offset.max(0),
-                req.include_stale,
-                req.branch.as_deref(),
-                req.include_suppressed,
-            )?,
-            None,
-        )
+        crate::retrieval::search::search_with_branch_execution_policy_with_suppressed_policy(
+            conn,
+            query,
+            req.project.as_deref(),
+            req.memory_type.as_deref(),
+            limit + 1,
+            req.offset.max(0),
+            req.include_stale,
+            req.branch.as_deref(),
+            req.include_suppressed,
+            false,
+            search_execution_policy(false, routing),
+        )?
     };
     let has_more = memories.len() as i64 > limit;
     memories.truncate(limit as usize);
-    let (raw_hits, raw_error) = maybe_fallback_raw(conn, req, memories.len());
+    let (raw_hits, raw_error) = maybe_fallback_raw(conn, req, memories.len(), routing);
     if let Some(explain) = explain_details.as_mut() {
         let result_ids: Vec<i64> = memories.iter().map(|memory| memory.id).collect();
         explain.retain_result_ids(&result_ids, has_more, limit);
@@ -88,6 +99,7 @@ fn multi_hop_search(
     project: Option<&str>,
     limit: i64,
     req: &SearchRequest,
+    routing: Option<&SearchRoutingPolicy>,
 ) -> Result<SearchResultSet> {
     if let Some(query_text) = query.filter(|query_text| !query_text.is_empty()) {
         let mut result = crate::retrieval::search_multihop::search_multi_hop(
@@ -103,7 +115,7 @@ fn multi_hop_search(
         )?;
         let has_more = result.memories.len() as i64 > limit;
         result.memories.truncate(limit as usize);
-        let (raw_hits, raw_error) = maybe_fallback_raw(conn, req, result.memories.len());
+        let (raw_hits, raw_error) = maybe_fallback_raw(conn, req, result.memories.len(), routing);
         Ok(SearchResultSet {
             memories: result.memories,
             multi_hop: Some(MultiHopMeta {
@@ -134,7 +146,11 @@ fn maybe_fallback_raw(
     conn: &Connection,
     req: &SearchRequest,
     curated_len: usize,
+    routing: Option<&SearchRoutingPolicy>,
 ) -> (Vec<crate::memory::raw_archive::RawMessage>, Option<String>) {
+    if routing.is_some_and(|routing| !routing.raw_fallback_enabled) {
+        return (vec![], None);
+    }
     if curated_len >= RAW_FALLBACK_THRESHOLD {
         return (vec![], None);
     }
@@ -175,6 +191,39 @@ fn maybe_fallback_raw(
             (vec![], Some(message))
         }
     }
+}
+
+fn search_execution_policy(
+    explain: bool,
+    routing: Option<&SearchRoutingPolicy>,
+) -> crate::retrieval::search::SearchExecutionPolicy {
+    let base = if explain {
+        crate::retrieval::search::SearchWeights::default()
+    } else {
+        crate::retrieval::search::SearchWeights::production()
+    };
+    let Some(routing) = routing else {
+        return if explain {
+            crate::retrieval::search::SearchExecutionPolicy::explain_default()
+        } else {
+            crate::retrieval::search::SearchExecutionPolicy::production()
+        };
+    };
+    let mut weights = base;
+    weights.fts = routing.weights.fts;
+    weights.vector = routing.weights.vector;
+    weights.entity = routing.weights.entity;
+    weights.graph = routing.weights.graph;
+    weights.temporal = routing.weights.temporal;
+    weights.fact = routing.weights.fact;
+    weights.like_fallback = routing.weights.like_fallback;
+    weights.usage = routing.weights.usage;
+    crate::retrieval::search::SearchExecutionPolicy::routed(
+        weights,
+        routing.rerank_enabled,
+        routing.rerank_candidate_pool,
+        routing.rerank_output_k,
+    )
 }
 
 #[cfg(test)]
