@@ -118,6 +118,13 @@ pub(super) fn required_nullable_number_schema(
     })
 }
 
+fn unconstrained_json_value_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    // JSON Schema permits the boolean `true` form for an unconstrained value,
+    // but some MCP descriptor consumers accept only object-form schemas.
+    // `{}` is semantically equivalent and keeps dynamic extension payloads open.
+    schemars::json_schema!({})
+}
+
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SearchOutput {
@@ -131,6 +138,7 @@ struct SearchOutput {
     raw_hits_error: Option<String>,
     has_more: Option<bool>,
     next_offset: Option<i64>,
+    #[schemars(schema_with = "unconstrained_json_value_schema")]
     explain: Option<Value>,
     retrieval_plan: Option<SearchRetrievalPlanOutput>,
 }
@@ -264,6 +272,7 @@ struct RecallIncludedItemOutput {
     title: Option<String>,
     text: String,
     reason_codes: Vec<String>,
+    #[schemars(schema_with = "unconstrained_json_value_schema")]
     source_refs: Option<Value>,
 }
 
