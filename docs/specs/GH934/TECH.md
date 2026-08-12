@@ -25,10 +25,11 @@ src/memory/service/search.rs      search execution-policy adapter
   `include_superseded`. The schema remains v1 because the serialized shape is
   unchanged; the policy version distinguishes plans compiled before and after
   this behavioral correction.
-- `ContextIntent` (shared with #932 in `context_bundle::domain`) gains
-  the six router variants; `SessionStart` stays the bundle-planner
-  intent and is not routable — explicit `SessionStart` falls back to
-  `explore_history` with reason `session_start_not_routable`.
+- `ContextIntent` (shared with #932 in `context_bundle::domain`) has the six
+  task-routable variants plus explicit `SessionStart` for host lifecycle
+  callers. Keyword fallback never produces `SessionStart`; an explicit
+  `SessionStart` compiles the dedicated SessionStart channel and output-section
+  plan with reason `explicit_intent`.
 - `RetrievalPlan`: schema/policy versions, intent + intent_source, role,
   risk, reason_codes, `channel_plans` (one entry per known channel,
   enabled or disabled, in `RetrievalChannel::ORDERED` order), reused
@@ -110,10 +111,10 @@ The current projection deliberately does not invent new database loaders for
 decision/session/preference-specific evidence channels; those remain explicit
 follow-ups before the router can become default.
 
-## Follow-ups (tracked on #934)
+## Future Default-On Work
 
 Full per-channel execution into ContextBundle, generated-enrichment execution,
 per-intent golden fixtures, static-vs-router ablation and default-on gates.
 SessionStart plan hashes already flow through persisted `ContextAudit` rows
 into verified coding-bench remem artifacts; that landed slice does not replace
-the pending per-intent execution and ablation work.
+the future per-intent execution and ablation work.

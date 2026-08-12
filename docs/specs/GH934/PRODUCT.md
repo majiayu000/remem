@@ -37,6 +37,9 @@ A deterministic, auditable Retrieval Router that compiles a
   weights / graph expansion / rerank participation / raw-fallback abstention,
   and returns a compact plan audit (`plan_hash`, reason codes, selected and
   disabled channels) alongside the legacy compact search envelope;
+- explicit `SessionStart` routing is reserved for host lifecycle callers and
+  Context Bundle compilation; keyword fallback never infers it from ordinary
+  task text;
 - stable plan hash (canonical-JSON SHA-256, same convention as #932).
 
 No LLM or network call exists on any router path.
@@ -49,10 +52,11 @@ No LLM or network call exists on any router path.
   participation, candidate pool / output k, and timeout fallback.
 - #853 graph expansion and #850/#928 enrichment workers stay separate;
   `generated_enrichment` is a capped, attributed, skippable signal here.
-- #854 SessionStart budget gate is untouched; `SessionStart` is not a
-  routable intent and maps to the generic policy.
+- #854 SessionStart budget gate is untouched; `SessionStart` is an explicit
+  lifecycle intent for the bundle/compiler path and is never inferred from
+  task text.
 
-## Remaining out of scope (follow-ups on #934)
+## Future Default-On Work
 
 Full per-channel evidence loaders, generated-enrichment execution,
 per-intent golden fixtures, static-vs-router ablation, and eval gates for
