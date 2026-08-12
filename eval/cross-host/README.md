@@ -1,12 +1,14 @@
-# Cross-Host Continuity Benchmark (cross-host-v1)
+# Cross-Host Continuity Benchmark (cross-host-v1, v2 compatibility dry-run)
 
 Infrastructure for issue #935: can history produced in one host (Claude Code
 or Codex) be reliably used by the other host on a new continuation task, and
 does remem beat target-host native memory or an exported handoff file?
 
 Status: `infrastructure_only_no_runs`. This directory contains the versioned
-charter, schemas, task skeletons, leak scanner, and an offline dry-run runner.
-No benchmark run has been executed and no result may be cited from here.
+charter, schemas, task skeletons, leak scanner, an offline dry-run runner, and
+a `cross-host-v2` compatibility plan mode that maps the legacy
+`remem_shared` label to `remem_shared_startup`. No benchmark run has been
+executed and no result may be cited from here.
 
 ## Layout
 
@@ -29,7 +31,9 @@ No benchmark run has been executed and no result may be cited from here.
   `~/.codex/sessions`, ...), auth/credential material, or declared
   benchmark-private roots. Isolated HOMEs under temp roots are allowed.
 - `scripts/run_dry.py`: offline dry-run. Validates charter, tasks, coverage,
-  and optional artifacts; prints the planned run matrix. Never launches a
+  and optional artifacts; prints the planned run matrix. `--suite-version
+  cross-host-v2` emits the v2 compatibility plan and keeps
+  `executable_ready: false` while tasks are still skeletons. Never launches a
   host agent.
 
 ## Directions and conditions
@@ -42,10 +46,13 @@ Claude Code -> remem -> Codex
 Codex -> remem -> Claude Code
 ```
 
-Primary conditions: `no_memory`, `target_host_native`, `exported_file`,
-`remem_shared`. Diagnostic conditions: `source_host_native_imported`,
-`remem_preloaded`, `oracle_handoff`, `full_transcript`,
-`remem_without_host_native_import`, `remem_with_host_native_import`.
+Primary v1 conditions: `no_memory`, `target_host_native`, `exported_file`,
+`remem_shared`. The v2 compatibility plan renames the remem arm to
+`remem_shared_startup` to make clear that it measures only startup selection,
+not the complete SessionStart-plus-interactive-MCP product path. Diagnostic
+conditions: `source_host_native_imported`, `remem_preloaded`,
+`oracle_handoff`, `full_transcript`, `remem_without_host_native_import`,
+`remem_with_host_native_import`.
 
 Each direction needs at least 12 tasks covering the 12 required categories,
 with at least 3 runs per task/condition.
@@ -66,6 +73,9 @@ resolved-rate gains.
 python3 eval/cross-host/scripts/schema_validate.py --self-test
 python3 eval/cross-host/scripts/scan_artifacts.py --self-test
 python3 eval/cross-host/scripts/run_dry.py
+python3 eval/cross-host/scripts/run_dry.py \
+  --suite-version cross-host-v2 \
+  --json-out /tmp/cross-host-v2-dry-run.json
 python3 eval/cross-host/scripts/schema_validate.py \
   eval/cross-host/examples/run-artifact-valid.json \
   eval/cross-host/schemas/cross-host-run.schema.json

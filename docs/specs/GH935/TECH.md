@@ -7,6 +7,11 @@ Status: Current contract; v1 infrastructure shipped, completion unimplemented; I
 - `eval/cross-host/benchmark-charter.json` is `cross-host-v1` / `infrastructure_only_no_runs`.
 - `eval/cross-host/tasks/` contains 24 `skeleton_todo` JSON tasks.
 - `cross-host-task.schema.json`, `cross-host-run.schema.json`, `schema_validate.py`, `scan_artifacts.py`, and `run_dry.py` are offline; no Rust runner/report exists.
+- `run_dry.py --suite-version cross-host-v2` now emits a compatibility plan
+  that maps the legacy `remem_shared` condition to `remem_shared_startup`,
+  reports the exact 288 primary and 144 source-native-import diagnostic tuple
+  counts, and keeps `executable_ready = false` while the task files remain
+  skeletons.
 - Production project identity is the canonical Git root from `src/project_id.rs`.
 - `ContextRequest` has no user field; startup ownership resolves through `user:default`.
 - Host-native import produces untrusted candidates, never auto-promoted memories.
@@ -15,6 +20,11 @@ Status: Current contract; v1 infrastructure shipped, completion unimplemented; I
 ## Versioning
 
 Implementation bumps `cross-host-v1` to executable `cross-host-v2`; its validating converter maps the legacy `remem_shared` condition to the narrower `remem_shared_startup` label.
+
+The current converter is offline-only. It does not authorize live host runs,
+does not advance the committed charter status beyond
+`infrastructure_only_no_runs` until every task becomes `ready`, and does not
+replace the future Rust runner/report implementation.
 
 The status lifecycle is:
 
@@ -755,6 +765,9 @@ PYTHONDONTWRITEBYTECODE=1 \
   python3 eval/cross-host/scripts/scan_artifacts.py --self-test
 PYTHONDONTWRITEBYTECODE=1 \
   python3 eval/cross-host/scripts/run_dry.py
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 eval/cross-host/scripts/run_dry.py --suite-version cross-host-v2 \
+    --json-out /tmp/cross-host-v2-dry-run.json
 ```
 
 Future executable-version focused coverage must include:
