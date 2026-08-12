@@ -340,6 +340,104 @@ async fn unresolvable_commit_evidence_does_not_drop_stop_capture() -> anyhow::Re
 }
 
 #[tokio::test]
+async fn codex_stop_capture_materializes_transcript_messages_before_session_stop(
+) -> anyhow::Result<()> {
+    let test_dir = ScopedTestDataDir::new("summary-hook-codex-message-events");
+    let conn = db::open_db()?;
+    let now = chrono::Utc::now().timestamp();
+    db::upsert_worker_heartbeat(
+        &conn,
+        "worker-daemon",
+        i64::from(std::process::id()),
+        now,
+        now,
+    )?;
+    drop(conn);
+
+    let transcript = test_dir.path.join("rollout.jsonl");
+    let user = serde_json::json!({
+        "timestamp": "2026-06-12T00:00:01Z",
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Use the bounded transcript for evidence."}]
+        }
+    });
+    let reasoning = serde_json::json!({
+        "timestamp": "2026-06-12T00:00:02Z",
+        "type": "response_item",
+        "payload": {"type": "reasoning", "summary": []}
+    });
+    let assistant = serde_json::json!({
+        "timestamp": "2026-06-12T00:00:03Z",
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Decision: materialize Codex transcript messages as captured evidence."}]
+        }
+    });
+    std::fs::write(&transcript, format!("{user}\n{reasoning}\n{assistant}\n"))?;
+    let input = serde_json::json!({
+        "session_id": "sess-codex-message-events",
+        "cwd": test_dir.path,
+        "transcript_path": transcript
+    })
+    .to_string();
+
+    summarize_input(&input, Some("codex-cli"), None).await?;
+
+    let conn = db::open_db()?;
+    let mut stmt = conn.prepare(
+        "SELECT id, event_type, role, tool_name, content_text, created_at_epoch
+         FROM captured_events
+         WHERE session_id = 'sess-codex-message-events'
+         ORDER BY id ASC",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, i64>(5)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0].1, "message");
+    assert_eq!(rows[0].2.as_deref(), Some("user"));
+    assert_eq!(rows[0].3.as_deref(), Some("codex-transcript"));
+    assert_eq!(rows[0].4, "Use the bounded transcript for evidence.");
+    assert_eq!(rows[0].5, 1_781_222_401);
+    assert_eq!(rows[1].1, "message");
+    assert_eq!(rows[1].2.as_deref(), Some("assistant"));
+    assert_eq!(rows[1].3.as_deref(), Some("codex-transcript"));
+    assert_eq!(
+        rows[1].4,
+        "Decision: materialize Codex transcript messages as captured evidence."
+    );
+    assert_eq!(rows[1].5, 1_781_222_403);
+    assert_eq!(rows[2].1, "session_stop");
+
+    assert_eq!(
+        crate::memory::poisoning::derive_source_trust_class(&conn, &[rows[0].0], "summary")?
+            .as_str(),
+        "user_prompt"
+    );
+    assert_eq!(
+        crate::memory::poisoning::derive_source_trust_class(&conn, &[rows[1].0], "summary")?
+            .as_str(),
+        "local_tool_output"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn summarize_hook_runs_stop_side_effects_without_summary_job() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("summary-hook-side-effects");
     let conn = db::open_db()?;

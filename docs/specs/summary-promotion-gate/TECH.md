@@ -111,6 +111,26 @@ Trust is derived only from the selected supporting events. This removes
 unrelated low-trust window events without laundering an externally supported
 claim through an unrelated trusted event.
 
+For Codex Stop payloads with a bounded transcript path, the hook capture batch
+first writes every usable user/assistant transcript turn as a deterministic
+`captured_events` row:
+
+- `event_type='message'`
+- `role='user'|'assistant'`
+- `tool_name='codex-transcript'`
+- `event_id=codex-transcript-message-<path-hash16>-<line-ordinal>-<role>-<content-hash16>`
+- `created_at_epoch` from the transcript timestamp when present
+
+The `session_stop` row is written in the same savepoint after those message
+rows, so the coalesced SessionRollup range includes the message identities
+before the Stop watermark. Replays converge on the same deterministic message
+ids. Trust classification remains per event: user messages classify as
+`user_prompt`, assistant transcript messages classify as local tool output via
+their `codex-transcript` tool name, and `session_stop` remains
+`external_content`. If message materialization fails, the whole Stop capture
+batch rolls back and the spill path retries instead of silently falling back to
+identity-free transcript support.
+
 Block reasons mirror the check order with summary-specific entries
 (`summary_type_not_allowlisted`, `summary_confidence_below_floor`, ...);
 the shared reasons reuse the existing vocabulary.

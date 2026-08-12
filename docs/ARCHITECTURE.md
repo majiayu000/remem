@@ -64,6 +64,13 @@ before database open/spill. Deterministic worker phases consume only the exact
 claimed event range, key links by `session_row_id`, and never infer a commit
 from an ordinary Stop event or worker-time `HEAD`.
 
+Codex Stop also materializes bounded transcript user/assistant turns as
+deterministic captured `message` events before the `session_stop` row in the
+same capture batch. Those message events give summary promotion immutable,
+role-specific evidence ids (`user_prompt` for user turns and
+`local_tool_output` for local Codex assistant turns) while the Stop row itself
+stays `external_content`.
+
 ## Module Map
 
 This ownership map is intentionally non-exhaustive. It includes primary

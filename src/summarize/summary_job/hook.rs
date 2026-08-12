@@ -16,6 +16,8 @@ use super::spill::{
 };
 use super::worker_launch::{spawn_worker_once_if_idle, WorkerSpawnDecision};
 
+const CODEX_TRANSCRIPT_MESSAGE_TOOL: &str = "codex-transcript";
+
 pub async fn summarize(host: Option<&str>, profile: Option<&str>) -> Result<()> {
     let Some(input) = read_stdin_with_timeout(SUMMARIZE_STDIN_TIMEOUT_MS)? else {
         return Ok(());
@@ -221,9 +223,10 @@ pub(super) fn enqueue_summary_payload_with_git_evidence(
     let replay_event_id = origin
         .is_replay()
         .then(|| replay_capture_event_id(&host, &project, session_id, &summary_payload));
-    if let Err(error) = record_summary_capture_event(
+    if let Err(error) = record_summary_capture_events(
         conn,
         &host,
+        &prepared_hook,
         session_id,
         &project,
         &cwd,
@@ -427,6 +430,143 @@ fn record_summary_capture_event(
         git_evidence,
     )?;
     Ok(())
+}
+
+fn record_summary_capture_events(
+    conn: &rusqlite::Connection,
+    host: &str,
+    hook: &SummarizeInput,
+    session_id: &str,
+    project: &str,
+    cwd: &str,
+    content: &str,
+    event_id: Option<&str>,
+    git_evidence: &[crate::git_util::GitCommitEvidence],
+) -> Result<()> {
+    conn.execute_batch("SAVEPOINT remem_summary_capture_events")
+        .context("start summary capture batch savepoint")?;
+    let result = (|| {
+        if host == "codex-cli" {
+            record_codex_transcript_message_events(conn, host, hook, session_id, project, cwd)
+                .context("record Codex transcript message events")?;
+        }
+        record_summary_capture_event(
+            conn,
+            host,
+            session_id,
+            project,
+            cwd,
+            content,
+            event_id,
+            git_evidence,
+        )
+    })();
+    match result {
+        Ok(()) => {
+            conn.execute_batch("RELEASE SAVEPOINT remem_summary_capture_events")
+                .context("release summary capture batch savepoint")?;
+            Ok(())
+        }
+        Err(error) => match conn.execute_batch(
+            "ROLLBACK TO SAVEPOINT remem_summary_capture_events;
+             RELEASE SAVEPOINT remem_summary_capture_events;",
+        ) {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(error.context(format!(
+                "summary capture batch rollback also failed: {rollback_error}"
+            ))),
+        },
+    }
+}
+
+fn record_codex_transcript_message_events(
+    conn: &rusqlite::Connection,
+    host: &str,
+    hook: &SummarizeInput,
+    session_id: &str,
+    project: &str,
+    cwd: &str,
+) -> Result<usize> {
+    let (Some(transcript_path), Some(byte_limit)) =
+        (hook.transcript_path.as_deref(), hook.transcript_byte_len)
+    else {
+        return Ok(0);
+    };
+    let content =
+        crate::memory::raw_transcript::read_transcript_content(transcript_path, Some(byte_limit))
+            .with_context(|| {
+            format!("read bounded Codex transcript message capture path={transcript_path}")
+        })?;
+    let mut inserted = 0_usize;
+    for (line_index, line) in content.lines().enumerate() {
+        let value = serde_json::from_str::<serde_json::Value>(line).with_context(|| {
+            format!(
+                "parse bounded Codex transcript message capture line {}",
+                line_index + 1
+            )
+        })?;
+        let Some(message) = crate::memory::raw_transcript::parse_transcript_message(&value) else {
+            continue;
+        };
+        let text = message.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let redacted = crate::adapter::common::redact_sensitive_text(text);
+        let content = redacted.trim();
+        if content.is_empty() {
+            continue;
+        }
+        let event_id =
+            codex_transcript_message_event_id(transcript_path, line_index, message.role, content);
+        db::record_captured_event_with_id_and_reference_time(
+            conn,
+            &db::CaptureEventInput {
+                host,
+                session_id,
+                project,
+                cwd: Some(cwd),
+                event_type: "message",
+                role: Some(message.role),
+                tool_name: Some(CODEX_TRANSCRIPT_MESSAGE_TOOL),
+                content,
+                task_kind: Some(db::ExtractionTaskKind::SessionRollup),
+            },
+            Some(&event_id),
+            message.created_at_epoch,
+        )?;
+        inserted += 1;
+    }
+    if inserted > 0 {
+        crate::log::info(
+            "summarize",
+            &format!("captured {inserted} Codex transcript message event(s) session={session_id}"),
+        );
+    }
+    Ok(inserted)
+}
+
+fn codex_transcript_message_event_id(
+    transcript_path: &str,
+    line_index: usize,
+    role: &str,
+    content: &str,
+) -> String {
+    format!(
+        "codex-transcript-message-{}-{line_index:08}-{role}-{}",
+        short_content_hash(transcript_path),
+        short_content_hash(content)
+    )
+}
+
+fn short_content_hash(content: &str) -> String {
+    let hash = crate::db::content_identity_hash(content.as_bytes());
+    hash.rsplit(':')
+        .next()
+        .unwrap_or(hash.as_str())
+        .chars()
+        .take(16)
+        .collect()
 }
 
 fn record_replayed_git_evidence_only(

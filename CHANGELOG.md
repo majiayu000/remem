@@ -171,6 +171,13 @@
   rather than something inferable from task text.
 
 ### Fixed
+- Staged source version `0.6.71` for GH-942: Codex Stop capture now
+  materializes bounded transcript user/assistant messages as first-class
+  captured `message` events before the `session_stop` row. Summary-derived
+  candidates can bind claims to those immutable message ids, deriving
+  `user_prompt` trust for user turns and `local_tool_output` trust for local
+  Codex assistant turns, while `session_stop` remains external and
+  identity-free transcript text stays review-gated.
 - Staged source version `0.6.53` for GH-992: hook-originated compatibility
   `events` rows now carry their canonical `captured_events.id`. Capture,
   extraction-task enqueue, Git evidence, and the compatibility projection
