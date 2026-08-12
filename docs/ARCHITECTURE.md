@@ -64,41 +64,47 @@ before database open/spill. Deterministic worker phases consume only the exact
 claimed event range, key links by `session_row_id`, and never infer a commit
 from an ordinary Stop event or worker-time `HEAD`.
 
-## Module Overview (~9000 lines Rust)
+## Module Map
 
-| Module | Lines | Responsibility |
-|--------|-------|----------------|
-| `memory.rs` | 838 | Memory CRUD, auto-promotion from summaries, FTS search |
-| `db.rs` | 728 | Data model + write ops + encryption + cleanup |
-| `db_query.rs` | 680 | Read queries: FTS search, timeline, shared status stats |
-| `observe_flush.rs` | 609 | Legacy pending-observation flush support |
-| `workstream.rs` | 581 | WorkStream tracking across sessions (auto-create + fuzzy match) |
-| `mcp/server.rs` | 565 | MCP service runtime: tools, server lifecycle, tests |
-| `summarize.rs` | 501 | 3-gate + background worker + session summary + compression |
-| `timeline.rs` | 493 | Timeline report with monthly aggregation |
-| `cli/actions.rs` | 385 | CLI command implementations and formatted output |
-| `context.rs` | 368 | Context rendering: preferences + core + index + workstreams + sessions |
-| `preference.rs` | 352 | Preference management: query, render, CLI ops |
-| `rules/` | — | Compiled-rule schema, worker compiler, artifact evaluator, overrides, and diagnostics |
-| `observe.rs` | 287 | Bash filter + capture ledger writes + type checks |
-| `db_pending.rs` | 261 | Legacy pending observations management |
-| `search.rs` | 251 | Search entry: filtered retrieval + pagination |
-| `ai.rs` | 244 | AI calls: HTTP-first + CLI fallback + model mapping |
-| `db_job.rs` | 244 | Background job queue |
-| `install.rs` | 243 | Auto-configure hooks + MCP to settings.json |
-| `claude_memory.rs` | 195 | Sync summaries to Claude Code native memory directory |
-| `dedup.rs` | 179 | Hash-based deduplication |
-| `cli/mod.rs` | 172 | CLI args + command dispatch |
-| `log.rs` | 147 | Logging: file + stderr, Timer |
-| `memory_format.rs` | 148 | XML memory format parsing |
-| `db_models.rs` | 123 | Shared data models |
-| `mcp/types.rs` | 121 | MCP parameter/result DTOs |
-| `worker.rs` | 110 | Background worker loop |
-| `vector.rs` | 80 | Vector similarity (SQLite vec extension) |
-| `lib.rs` | 47 | Module declarations |
-| `db_usage.rs` | 39 | AI usage statistics |
-| `main.rs` | 6 | Binary entry: delegate to `cli::run()` |
-| `mcp/mod.rs` | 4 | MCP public entry: export `run_mcp_server` |
+This ownership map is intentionally non-exhaustive. It includes primary
+product-domain roots, reusable root-level owners with production callers in
+at least three architectural subsystems, and owners of cross-cutting contracts
+explicitly named in the data flow. It excludes executable/module-registration
+glue, test-only helpers, and one- or two-subsystem implementation details.
+Entries are bounded routing hints, not exhaustive or exclusive ownership
+claims: a directory row describes its primary domain, while a cross-cutting
+child may be routed separately when another flow owns its contract. Do not
+hand-maintain line counts here; source sizes are enforced by
+[`scripts/ci/check_file_size.py`](../scripts/ci/check_file_size.py) and should
+be inspected from the current checkout when needed.
+
+| Area | Responsibility |
+|------|----------------|
+| `adapter/`, `observe/`, `cursor_hook/` | Host hook parsing, capture filtering, capture-specific spill serialization/replay, and capture-ledger writes |
+| `adapter/redaction.rs` | Cross-cutting sensitive-evidence redaction shared by observe capture, SessionRollup (including Cursor snapshots), and summarize capture; general secret, token, and URL-userinfo sanitization, plus header-key redaction and malformed-payload fallback specific to bounded hook-payload previews |
+| `identity.rs`, `project_id.rs`, `project_alias.rs` | Hook-host and capture-identity type contracts, canonical project-root resolution, and alias-governed canonical writes/alias-aware reads |
+| `spill_queue.rs` | Shared cross-process spill locking/appends, atomic replay claims, failed-record recovery, and orphan restoration |
+| `git_util.rs` | Bounded Git subprocess execution and cleanup, repository-root and commit-metadata resolution, metadata sanitization, and shared Git evidence types/parsers |
+| `git_evidence.rs`, `captured_git.rs`, `git_trace.rs`, `git_trace/` | Successful-commit evidence extraction, exact claimed-event-range linking, durable commit/session persistence, poisoning-gated trace exposure, and commit/session lookup |
+| `hook_integrity.rs`, `hook_integrity/` | Canonical host-hook specifications and command parsing, installed-hook integrity evaluation/removal, and executable consistency checks for context warnings, doctor, and install |
+| `atomic_file.rs` | Permission-preserving atomic file publication with unique sibling temp files, durable file/directory synchronization, final-target symlink resolution, and cross-platform replacement |
+| `build_info.rs` | Canonical package/schema version labels shared by CLI, API/MCP, doctor, migrations, and persisted procedure metadata |
+| `perf.rs` | Shared phase-timing capture and formatting for context loading, retrieval, summarization, evaluation, and CLI diagnostics |
+| `db/`, `migrate/`, `migrations/` | SQLite/SQLCipher schema and connection policy, encrypted spill payloads, migrations, read/write helpers, and job, extraction-task, and frozen-legacy state |
+| `worker.rs`, `worker/`, `extraction_worker.rs`, `maintenance/` | Background dispatch, worker singleton and heartbeats, job and extraction-task lease claims/recovery, timeout/retry transitions, task execution, idle legacy-pending migration, and lifecycle cleanup |
+| `ai.rs`, `ai/`, `runtime_config.rs`, `runtime_config/` | AI executor dispatch, provider/CLI execution and usage accounting, plus host/profile/model resolution and runtime configuration |
+| `summarize.rs`, `summarize/` | Stop-hook payload intake, capture-ledger enqueue, summary-specific spill serialization/replay, once-worker launch, active Compress processing, and compatibility-only legacy Summary parsing/finalization |
+| `session_rollup/`, `observation_extract.rs`, `observation_extract/` | Production session-summary generation and persistence, required side effects, and tool-event observation extraction and persistence |
+| `memory_candidate.rs`, `memory_candidate/`, `graph_candidate/` | Governed memory and graph candidate generation, source/evidence validation, review/quarantine, and promotion |
+| `user_context.rs`, `user_context/` | Governed user-context candidate and claim extraction, review/promotion, profile summaries, source-attributed recall, and retention/usage policy |
+| `ingest/`, `memory/raw_archive.rs`, `memory/raw_occurrence.rs`, `memory/raw_query.rs`, `memory/raw_reconcile.rs`, `memory/raw_transcript.rs` | Transcript discovery and parsing, identity-ledger and occurrence ingestion, raw-archive persistence, typed/query-bounded raw reads, and aggregate reconciliation |
+| `memory/` (including `memory/preference.rs` and `memory/preference/`), `workstream/`, `truth/` | Curated memory storage, formatting/deduplication, preferences, workstream continuity, and lifecycle/current-truth projections |
+| `context/`, `context_bundle/`, `retrieval/`, `retrieval_router/` | SessionStart loading/rendering, optional Claude native-memory mirror rendering/sync, bundle audit, lexical/vector search and fusion, and intent-aware retrieval planning |
+| `timeline.rs`, `timeline/` | Aggregated project queries and structured/Markdown report generation for the `timeline_report` MCP flow |
+| `db/query/timeline.rs` | Chronological observation-neighborhood queries for the `timeline` MCP flow |
+| `dream/`, `rules/`, `eval/` | Memory consolidation, compiled preference rules, benchmark and policy evaluation gates |
+| `log.rs`, `log/` | File logging with cross-process locking/rotation and append fallback, stderr mirroring, private permissions, timing, worker-stderr preparation, and health snapshots |
+| `cli/`, `mcp/`, `api/`, `doctor/`, `install/` | User-facing commands, MCP/REST surfaces, diagnostics, and host configuration |
 
 ## Data Flow
 
