@@ -22,11 +22,12 @@ pub(in crate::eval::bench_artifact) const CLAIM_BEARING_TASK_IDS: [&str; 16] = [
     "conflicting-endpoint-current-choice",
     "ambiguous-owner-abstention",
 ];
-const REGISTERED_RUN_INDICES: [u32; 3] = [0, 1, 2];
-const REGISTERED_BENCHMARK_ID: &str = "issue385-v1";
-const REGISTERED_BENCHMARK_VERSION: &str = "official-v1";
-const REGISTERED_RUN_PHASE: &str = "official";
-const REGISTERED_MATRIX_NAMESPACE: &str = "issue385-v1/official-v1";
+pub(in crate::eval::bench_artifact) const REGISTERED_RUN_INDICES: [u32; 3] = [0, 1, 2];
+pub(in crate::eval::bench_artifact) const REGISTERED_BENCHMARK_ID: &str = "issue385-v1";
+pub(in crate::eval::bench_artifact) const REGISTERED_BENCHMARK_VERSION: &str = "official-v1";
+pub(in crate::eval::bench_artifact) const REGISTERED_RUN_PHASE: &str = "official";
+pub(in crate::eval::bench_artifact) const REGISTERED_MATRIX_NAMESPACE: &str =
+    "issue385-v1/official-v1";
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct CodingMatrixReadiness {

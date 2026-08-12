@@ -27,6 +27,13 @@ This report separates memory-system capability evidence from coding-agent outcom
 |---|---:|---:|---:|---:|---:|---|
 | `remem_preloaded` | 1 | 1.000 | 125.000 | n/a | 1000.000 | `insufficient_runs_for_variance` |
 
+## Paired Coding Statistics
+
+| Comparison | Report | Status | Treatment rate | Control rate | Effect pp | 95% CI pp | Method |
+|---|---|---|---:|---:|---:|---:|---|
+| `remem-e2e-vs-no-memory-v1` | `n/a` | `not_evaluated_insufficient_coding_matrix` | n/a | n/a | n/a | n/a | `task_cluster_paired_bootstrap_v1` |
+| `remem-e2e-vs-curated-file-budgeted-v1` | `n/a` | `not_evaluated_insufficient_coding_matrix` | n/a | n/a | n/a | n/a | `task_cluster_paired_bootstrap_v1` |
+
 ## Coding Task Outcomes
 
 | Task | Condition | Run | Resolved | Failure reason | Tokens | Wall time ms | Memory helped | Memory hurt |

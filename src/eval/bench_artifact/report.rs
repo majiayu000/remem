@@ -14,6 +14,23 @@ use super::types::{
 
 pub(super) mod matrix;
 
+const CODING_PAIRED_BOOTSTRAP_REPLICATES: usize = 10_000;
+const CODING_PAIRED_BOOTSTRAP_SEED: u64 = 931;
+const CODING_PAIRED_BOOTSTRAP_CI_LEVEL: f64 = 0.95;
+const CODING_PAIRED_BOOTSTRAP_METHOD: &str = "task-cluster paired bootstrap";
+const CODING_PAIRED_BOOTSTRAP_ALGORITHM: &str = "task_cluster_paired_bootstrap_v1";
+const CODING_PAIRED_BOOTSTRAP_PERCENTILE_RULE: &str =
+    "sorted floor(alpha/2 * n), ceil((1 - alpha/2) * n) - 1";
+
+const CODING_PAIRED_COMPARISONS: [(&str, &str, &str); 2] = [
+    ("remem-e2e-vs-no-memory-v1", "remem_e2e", "no_memory"),
+    (
+        "remem-e2e-vs-curated-file-budgeted-v1",
+        "remem_e2e",
+        "curated_file_budgeted",
+    ),
+];
+
 #[derive(Debug, Clone)]
 pub struct BenchReportOptions {
     pub root: PathBuf,
@@ -35,6 +52,7 @@ pub struct PublicBaselineReport {
     pub memory_task_outcomes: Vec<MemoryTaskOutcome>,
     pub coding_task_outcomes: Vec<CodingTaskOutcome>,
     pub coding_condition_variance: Vec<CodingConditionVariance>,
+    pub coding_paired_statistics: Vec<CodingPairedStatistic>,
     pub failure_decomposition: FailureDecomposition,
     pub reproducibility: ReproducibilitySummary,
     pub claim_gate: ClaimGateSummary,
@@ -120,6 +138,31 @@ pub struct CodingConditionVariance {
     pub variance_status: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct CodingPairedStatistic {
+    pub comparison_id: String,
+    pub treatment: String,
+    pub control: String,
+    pub metric: String,
+    pub report_path: Option<String>,
+    pub status: String,
+    pub insufficient_reason: Option<String>,
+    pub tasks: usize,
+    pub runs_per_task: usize,
+    pub treatment_resolved_rate: Option<f64>,
+    pub control_resolved_rate: Option<f64>,
+    pub effect_pp: Option<f64>,
+    pub ci_level: f64,
+    pub ci_lower_pp: Option<f64>,
+    pub ci_upper_pp: Option<f64>,
+    pub bootstrap_replicates: usize,
+    pub bootstrap_seed: u64,
+    pub statistical_unit: String,
+    pub method: String,
+    pub algorithm: String,
+    pub percentile_rule: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct FailureDecomposition {
     pub coding_failure_counts: BTreeMap<String, usize>,
@@ -203,6 +246,7 @@ pub fn generate_public_baseline_report(root: &Path) -> Result<PublicBaselineRepo
     }
 
     let coding_condition_variance = coding_variance(&state.coding_outcomes);
+    let coding_paired_statistics = coding_paired_statistics(&state.coding_outcomes);
     let claim_gate = claim_gate(&artifact_verifier, &state);
     let memory_summary = layer_summary(
         "directional_memory_system_evidence",
@@ -245,6 +289,7 @@ pub fn generate_public_baseline_report(root: &Path) -> Result<PublicBaselineRepo
         memory_task_outcomes: state.memory_outcomes,
         coding_task_outcomes: state.coding_outcomes,
         coding_condition_variance,
+        coding_paired_statistics,
         failure_decomposition: state.failure_decomposition,
         reproducibility: ReproducibilitySummary {
             remem_commits: sorted_vec(state.remem_commits),
@@ -324,6 +369,27 @@ pub fn render_public_baseline_markdown(report: &PublicBaselineReport) -> String 
             fmt_metric(variance.tokens_total_sample_variance),
             fmt_metric(variance.wall_time_ms_mean),
             escape_md(&variance.variance_status)
+        ));
+    }
+    out.push('\n');
+
+    out.push_str("## Paired Coding Statistics\n\n");
+    out.push_str("| Comparison | Report | Status | Treatment rate | Control rate | Effect pp | 95% CI pp | Method |\n");
+    out.push_str("|---|---|---|---:|---:|---:|---:|---|\n");
+    for stat in &report.coding_paired_statistics {
+        out.push_str(&format!(
+            "| `{}` | {} | `{}` | {} | {} | {} | {} | `{}` |\n",
+            escape_md(&stat.comparison_id),
+            stat.report_path
+                .as_deref()
+                .map(|path| format!("`{}`", escape_md(path)))
+                .unwrap_or_else(|| "`n/a`".to_string()),
+            escape_md(&stat.status),
+            fmt_metric(stat.treatment_resolved_rate),
+            fmt_metric(stat.control_resolved_rate),
+            fmt_metric(stat.effect_pp),
+            fmt_ci(stat.ci_lower_pp, stat.ci_upper_pp),
+            escape_md(&stat.algorithm)
         ));
     }
     out.push('\n');
@@ -568,6 +634,250 @@ fn coding_variance(outcomes: &[CodingTaskOutcome]) -> Vec<CodingConditionVarianc
         .collect()
 }
 
+pub(in crate::eval::bench_artifact) fn coding_paired_statistics(
+    outcomes: &[CodingTaskOutcome],
+) -> Vec<CodingPairedStatistic> {
+    let mut by_report: BTreeMap<&str, Vec<&CodingTaskOutcome>> = BTreeMap::new();
+    for outcome in outcomes {
+        by_report
+            .entry(&outcome.report_path)
+            .or_default()
+            .push(outcome);
+    }
+
+    let ready_reports = by_report
+        .into_iter()
+        .filter(|(_, report_outcomes)| report_outcomes_claim_ready(report_outcomes))
+        .collect::<Vec<_>>();
+
+    if ready_reports.is_empty() {
+        return CODING_PAIRED_COMPARISONS
+            .into_iter()
+            .map(|(comparison_id, treatment, control)| {
+                insufficient_coding_paired_statistic(
+                    comparison_id,
+                    treatment,
+                    control,
+                    "not_evaluated_insufficient_coding_matrix",
+                    "requires one verified issue385-v1/official-v1 report containing no_memory, remem_e2e, and curated_file_budgeted for all 16 registered tasks with run indices 0, 1, and 2",
+                )
+            })
+            .collect();
+    }
+
+    let mut statistics = Vec::new();
+    for (report_path, report_outcomes) in ready_reports {
+        for (comparison_id, treatment, control) in CODING_PAIRED_COMPARISONS {
+            statistics.push(compute_coding_paired_statistic(
+                report_path,
+                &report_outcomes,
+                comparison_id,
+                treatment,
+                control,
+            ));
+        }
+    }
+    statistics
+}
+
+fn insufficient_coding_paired_statistic(
+    comparison_id: &str,
+    treatment: &str,
+    control: &str,
+    status: &str,
+    reason: &str,
+) -> CodingPairedStatistic {
+    CodingPairedStatistic {
+        comparison_id: comparison_id.to_string(),
+        treatment: treatment.to_string(),
+        control: control.to_string(),
+        metric: "resolved_rate".to_string(),
+        report_path: None,
+        status: status.to_string(),
+        insufficient_reason: Some(reason.to_string()),
+        tasks: 0,
+        runs_per_task: 0,
+        treatment_resolved_rate: None,
+        control_resolved_rate: None,
+        effect_pp: None,
+        ci_level: CODING_PAIRED_BOOTSTRAP_CI_LEVEL,
+        ci_lower_pp: None,
+        ci_upper_pp: None,
+        bootstrap_replicates: CODING_PAIRED_BOOTSTRAP_REPLICATES,
+        bootstrap_seed: CODING_PAIRED_BOOTSTRAP_SEED,
+        statistical_unit: "task".to_string(),
+        method: CODING_PAIRED_BOOTSTRAP_METHOD.to_string(),
+        algorithm: CODING_PAIRED_BOOTSTRAP_ALGORITHM.to_string(),
+        percentile_rule: CODING_PAIRED_BOOTSTRAP_PERCENTILE_RULE.to_string(),
+    }
+}
+
+fn compute_coding_paired_statistic(
+    report_path: &str,
+    outcomes: &[&CodingTaskOutcome],
+    comparison_id: &str,
+    treatment: &str,
+    control: &str,
+) -> CodingPairedStatistic {
+    let treatment_means = resolved_means_by_task(outcomes, treatment);
+    let control_means = resolved_means_by_task(outcomes, control);
+    let mut treatment_rates = Vec::new();
+    let mut control_rates = Vec::new();
+    let mut paired_effects = Vec::new();
+
+    for task_id in matrix::CLAIM_BEARING_TASK_IDS {
+        let treatment_rate = treatment_means[task_id];
+        let control_rate = control_means[task_id];
+        treatment_rates.push(treatment_rate);
+        control_rates.push(control_rate);
+        paired_effects.push(treatment_rate - control_rate);
+    }
+
+    let effect_pp = mean_required(&paired_effects) * 100.0;
+    let (ci_lower_pp, ci_upper_pp) = bootstrap_paired_ci(&paired_effects);
+
+    CodingPairedStatistic {
+        comparison_id: comparison_id.to_string(),
+        treatment: treatment.to_string(),
+        control: control.to_string(),
+        metric: "resolved_rate".to_string(),
+        report_path: Some(report_path.to_string()),
+        status: "computed".to_string(),
+        insufficient_reason: None,
+        tasks: matrix::CLAIM_BEARING_TASK_IDS.len(),
+        runs_per_task: matrix::REGISTERED_RUN_INDICES.len(),
+        treatment_resolved_rate: Some(mean_required(&treatment_rates)),
+        control_resolved_rate: Some(mean_required(&control_rates)),
+        effect_pp: Some(effect_pp),
+        ci_level: CODING_PAIRED_BOOTSTRAP_CI_LEVEL,
+        ci_lower_pp: Some(ci_lower_pp),
+        ci_upper_pp: Some(ci_upper_pp),
+        bootstrap_replicates: CODING_PAIRED_BOOTSTRAP_REPLICATES,
+        bootstrap_seed: CODING_PAIRED_BOOTSTRAP_SEED,
+        statistical_unit: "task".to_string(),
+        method: CODING_PAIRED_BOOTSTRAP_METHOD.to_string(),
+        algorithm: CODING_PAIRED_BOOTSTRAP_ALGORITHM.to_string(),
+        percentile_rule: CODING_PAIRED_BOOTSTRAP_PERCENTILE_RULE.to_string(),
+    }
+}
+
+fn report_outcomes_claim_ready(outcomes: &[&CodingTaskOutcome]) -> bool {
+    if outcomes.len()
+        != matrix::CLAIM_BEARING_CODING_CONDITIONS.len()
+            * matrix::CLAIM_BEARING_TASK_IDS.len()
+            * matrix::REGISTERED_RUN_INDICES.len()
+    {
+        return false;
+    }
+    if !outcomes.iter().all(|outcome| {
+        outcome.benchmark_id == matrix::REGISTERED_BENCHMARK_ID
+            && outcome.benchmark_version == matrix::REGISTERED_BENCHMARK_VERSION
+            && outcome.run_phase == matrix::REGISTERED_RUN_PHASE
+            && outcome.matrix_namespace == matrix::REGISTERED_MATRIX_NAMESPACE
+    }) {
+        return false;
+    }
+
+    let mut conditions: BTreeMap<&str, BTreeMap<&str, BTreeSet<u32>>> = BTreeMap::new();
+    for outcome in outcomes {
+        conditions
+            .entry(&outcome.condition)
+            .or_default()
+            .entry(&outcome.task_id)
+            .or_default()
+            .insert(outcome.run_index);
+    }
+    let condition_names = conditions
+        .keys()
+        .map(|condition| (*condition).to_string())
+        .collect();
+    if !matrix::has_claim_bearing_coding_conditions(&condition_names) {
+        return false;
+    }
+
+    let registered_tasks = BTreeSet::from(matrix::CLAIM_BEARING_TASK_IDS);
+    let registered_indices = BTreeSet::from(matrix::REGISTERED_RUN_INDICES);
+    matrix::CLAIM_BEARING_CODING_CONDITIONS
+        .iter()
+        .all(|condition| {
+            let task_runs = &conditions[*condition];
+            task_runs.keys().copied().collect::<BTreeSet<_>>() == registered_tasks
+                && task_runs
+                    .values()
+                    .all(|run_indices| run_indices == &registered_indices)
+        })
+}
+
+fn resolved_means_by_task<'a>(
+    outcomes: &'a [&'a CodingTaskOutcome],
+    condition: &str,
+) -> BTreeMap<&'a str, f64> {
+    let mut grouped: BTreeMap<&str, Vec<bool>> = BTreeMap::new();
+    for outcome in outcomes
+        .iter()
+        .copied()
+        .filter(|outcome| outcome.condition == condition)
+    {
+        grouped
+            .entry(&outcome.task_id)
+            .or_default()
+            .push(outcome.resolved);
+    }
+    grouped
+        .into_iter()
+        .map(|(task_id, runs)| {
+            let resolved = runs.iter().filter(|resolved| **resolved).count();
+            (task_id, resolved as f64 / runs.len() as f64)
+        })
+        .collect()
+}
+
+fn bootstrap_paired_ci(task_effects: &[f64]) -> (f64, f64) {
+    let mut rng = SplitMix64::new(CODING_PAIRED_BOOTSTRAP_SEED);
+    let task_count = task_effects.len();
+    let mut samples = Vec::with_capacity(CODING_PAIRED_BOOTSTRAP_REPLICATES);
+    for _ in 0..CODING_PAIRED_BOOTSTRAP_REPLICATES {
+        let mut sum = 0.0;
+        for _ in 0..task_count {
+            sum += task_effects[rng.next_index(task_count)];
+        }
+        samples.push(sum / task_count as f64 * 100.0);
+    }
+    samples.sort_by(f64::total_cmp);
+
+    let alpha = 1.0 - CODING_PAIRED_BOOTSTRAP_CI_LEVEL;
+    let lower_index = ((alpha / 2.0) * samples.len() as f64).floor() as usize;
+    let upper_index = ((1.0 - alpha / 2.0) * samples.len() as f64).ceil() as usize;
+    let upper_index = upper_index.saturating_sub(1).min(samples.len() - 1);
+    (samples[lower_index], samples[upper_index])
+}
+
+fn mean_required(values: &[f64]) -> f64 {
+    values.iter().sum::<f64>() / values.len() as f64
+}
+
+struct SplitMix64 {
+    state: u64,
+}
+
+impl SplitMix64 {
+    fn new(seed: u64) -> Self {
+        Self { state: seed }
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.state = self.state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut value = self.state;
+        value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        value ^ (value >> 31)
+    }
+
+    fn next_index(&mut self, len: usize) -> usize {
+        (self.next_u64() % len as u64) as usize
+    }
+}
+
 fn claim_gate(artifact_verifier: &BenchVerifyReport, state: &BuildState) -> ClaimGateSummary {
     let matrix = matrix::coding_matrix_readiness(&state.coding_outcomes);
     let coding_outcome_stop_loss_status = if matrix::has_claim_ready_coding_matrix(
@@ -774,6 +1084,13 @@ fn fmt_bool(value: Option<bool>) -> String {
     value
         .map(|value| format!("`{value}`"))
         .unwrap_or_else(|| "`n/a`".to_string())
+}
+
+fn fmt_ci(lower: Option<f64>, upper: Option<f64>) -> String {
+    match (lower, upper) {
+        (Some(lower), Some(upper)) => format!("{lower:.3} to {upper:.3}"),
+        _ => "n/a".to_string(),
+    }
 }
 
 fn append_count_map(out: &mut String, map: &BTreeMap<String, usize>) {
