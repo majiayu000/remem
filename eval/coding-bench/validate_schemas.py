@@ -59,6 +59,12 @@ def check_conditions(errors):
         errors.append("historical condition id 'remem_preloaded' must not describe current runner semantics")
     if "curated_file" in all_ids:
         errors.append("legacy condition id 'curated_file' must not appear; use curated_file_expert")
+    for cond in registry["primary_conditions"] + registry["diagnostic_conditions"]:
+        if "current_runner_id" in cond:
+            errors.append(f"condition {cond['id']}: current_runner_id aliases are forbidden")
+        if cond["id"] in {"remem_preloaded", "curated_file_expert"}:
+            if cond["runner_status"] != "implemented":
+                errors.append(f"condition {cond['id']}: renamed diagnostic id must be implemented")
 
     public_run_schema = load(REPO_ROOT / "eval" / "public" / "schemas" / "coding-run.schema.json")
     public_report_schema = load(

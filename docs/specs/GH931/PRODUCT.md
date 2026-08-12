@@ -1,7 +1,7 @@
 # GH931 Flagship E2E Public Proof — Product Spec
 
-Status: Current contract (harness scaffold landed; runner execution support and
-official runs pending)
+Status: Current contract (harness scaffold and condition-id convergence landed;
+runner execution support and official runs pending)
 Issue: #931 (refs #384, #385, #849, #928)
 
 ## Problem
@@ -142,8 +142,8 @@ workflow gate or authorization source.
 
 | Issue acceptance item | Scaffold artifact |
 |---|---|
-| Rename `remem` → `remem_seeded_sessionstart` | Implemented in the Rust CLI/runner/report and registry with no `remem` alias; `remem_preloaded` stays historical-only |
-| Real `remem_e2e` condition | Condition definition with forbidden shortcuts and isolation rules; runner execution support is the tracked src follow-up |
+| Rename `remem` → `remem_seeded_sessionstart` | Implemented in the Rust CLI/runner/report and registry with no `remem` alias; bare legacy ids are rejected and `remem_preloaded` stays historical-only |
+| Real `remem_e2e` condition | Condition definition with forbidden shortcuts, isolation rules, primary dry-run planning, and fail-closed live guard; full runner execution support is the tracked src follow-up |
 | `curated_file_budgeted` protocol | `eval/coding-bench/curated-file-budgeted-protocol.md` + curator log schema |
 | Claim registry + wording gate | `eval/claims/registry.json`, `eval/claims/claim_gate.py` |
 | Dry-run and schema validation | `python3 eval/coding-bench/validate_schemas.py`, `claim_gate.py --self-test`, `cargo run -- bench coding --suite issue385-v1 --dry-run` |

@@ -38,12 +38,15 @@ Machine-readable registry: `eval/coding-bench/conditions.json`, validated by
 - `oracle_evidence`, `remem_oracle_retrieval`, `full_history`,
   `remem_no_enrichment`, `remem_fts_only`: see `conditions.json`.
 
-Runner status: the Rust runner (`src/eval/coding_bench`) implements `no_memory`
-and `remem_seeded_sessionstart` under their stable ids, plus
-`curated_file_expert` under the legacy CLI id `curated_file`. The remaining
-curated id rename and `remem_e2e` / `curated_file_budgeted` execution support
-are tracked as src-side follow-ups of #931; `conditions.json` records
-per-condition `runner_status` so drift is visible.
+Runner status: the Rust runner (`src/eval/coding_bench`) currently implements
+the GH931 condition ids. The default `--matrix primary` dry-run plans
+`no_memory`, `curated_file_budgeted`, and `remem_e2e`; live execution fails
+closed for `curated_file_budgeted` and `remem_e2e` until their full adapters
+land. `--matrix implemented` runs the current executable set: `no_memory`,
+`remem_seeded_sessionstart`, and `curated_file_expert`. The legacy bare ids
+`remem` and `curated_file` are intentionally rejected, and the historical
+`remem_preloaded` id stays reserved for full-body-preload artifacts.
+
 
 ## Isolated Baseline (predates #931 renames)
 
@@ -210,6 +213,7 @@ Full v1 dry run:
 ```bash
 cargo run -- bench coding \
   --suite issue385-v1 \
+  --matrix primary \
   --dry-run \
   --json-out /tmp/remem-issue385-v1-dry-run.json
 ```
@@ -219,16 +223,18 @@ Smoke subset dry run:
 ```bash
 cargo run -- bench coding \
   --suite issue385-v1 \
+  --matrix primary \
   --task-set smoke \
   --dry-run \
   --json-out /tmp/remem-issue385-v1-smoke-dry-run.json
 ```
 
-Legacy direct dry run:
+Legacy implemented dry run:
 
 ```bash
 cargo run -- eval-coding-bench \
   --fixture eval/coding-bench/fixtures/tasks.json \
+  --matrix implemented \
   --runs-per-condition 3 \
   --json-out /tmp/remem-coding-bench.json \
   --dry-run
@@ -239,6 +245,7 @@ Full baseline:
 ```bash
 cargo run -- eval-coding-bench \
   --fixture eval/coding-bench/fixtures/tasks.json \
+  --matrix implemented \
   --runs-per-condition 3 \
   --runner codex \
   --model gpt-5.5 \
@@ -247,7 +254,7 @@ cargo run -- eval-coding-bench \
   --json-out eval/coding-bench/reports/baseline.json
 ```
 
-Focused smoke (legacy runner id until the src-side rename lands):
+Focused smoke (diagnostic preloaded remem):
 
 ```bash
 cargo run -- eval-coding-bench \

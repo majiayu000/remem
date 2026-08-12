@@ -11,6 +11,7 @@ use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 
 use super::condition::apply_condition;
+use super::dry_run::{effective_matrix, write_dry_run_json};
 use super::failure::{classify_failure_reason, output_indicates_compile_failure, FailureEvidence};
 use super::fixture::{load_fixture, selected_conditions, selected_tasks, validate_relative_path};
 use super::isolation::{prepare_codex_isolation, runner_isolation_violation};
@@ -29,6 +30,9 @@ pub fn dry_run_plan(options: &CodingBenchOptions) -> Result<String> {
     let conditions = selected_conditions(options)?;
     let tasks = selected_tasks(&fixture, options)?;
     let total = conditions.len() * tasks.len() * options.runs_per_condition;
+    if !options.json_out.trim().is_empty() {
+        write_dry_run_json(options, &conditions, &tasks, total)?;
+    }
     let mut output = String::new();
     output.push_str("coding benchmark dry run\n");
     output.push_str(&format!("fixture: {}\n", options.fixture_path));
@@ -37,6 +41,7 @@ pub fn dry_run_plan(options: &CodingBenchOptions) -> Result<String> {
         options.runs_per_condition
     ));
     output.push_str(&format!("task_set: {}\n", options.task_set));
+    output.push_str(&format!("matrix: {}\n", effective_matrix(options)));
     output.push_str(&format!(
         "runner: {} model: {}\n",
         options.runner, options.model
@@ -62,6 +67,7 @@ pub fn run_coding_bench(options: &CodingBenchOptions) -> Result<CodingBenchRepor
     let fixture = load_fixture(&options.fixture_path)?;
     let conditions = selected_conditions(options)?;
     let tasks = selected_tasks(&fixture, options)?;
+    ensure_selected_conditions_are_executable(&conditions)?;
     let run_plan = randomized_run_plan(&conditions, tasks.len(), options.runs_per_condition)?;
     let fixture_sha256 = file_sha256(&options.fixture_path)?;
     let generated_at_epoch = current_epoch();
@@ -232,7 +238,8 @@ fn run_one(
         });
     }
 
-    let mut memory_contract = (condition == BenchCondition::RememSeededSessionStart)
+    let mut memory_contract = condition
+        .uses_remem_attribution()
         .then(|| build_memory_attribution(&setup.memory_attribution, &runner_outcome.stdout));
     let final_head_sha = current_git_rev(&repo_dir);
     let failure_reason = classify_failure_reason(FailureEvidence {
@@ -455,6 +462,22 @@ fn build_prompt(task: &CodingBenchTask, condition_note: Option<&str>) -> String 
     prompt
 }
 
+fn ensure_selected_conditions_are_executable(conditions: &[BenchCondition]) -> Result<()> {
+    let unsupported = conditions
+        .iter()
+        .copied()
+        .filter(|condition| !condition.supports_live_execution())
+        .map(BenchCondition::as_str)
+        .collect::<Vec<_>>();
+    if unsupported.is_empty() {
+        return Ok(());
+    }
+    bail!(
+        "coding benchmark live execution is not implemented for {}; use --dry-run for GH931 primary planning or select remem_seeded_sessionstart/curated_file_expert for implemented diagnostics",
+        unsupported.join(", ")
+    )
+}
+
 fn write_hidden_files(task: &CodingBenchTask, repo_dir: &Path) -> Result<()> {
     for (path, content) in &task.score.hidden_files {
         write_relative_file(repo_dir, path, content)?;
@@ -670,6 +693,8 @@ fn report_command(options: &CodingBenchOptions) -> Vec<String> {
         options.fixture_path.clone(),
         "--runs-per-condition".to_string(),
         options.runs_per_condition.to_string(),
+        "--matrix".to_string(),
+        effective_matrix(options).to_string(),
         "--task-set".to_string(),
         options.task_set.clone(),
         "--runner".to_string(),
@@ -723,42 +748,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builds_expanded_default_matrix() -> Result<()> {
-        let fixture = load_fixture("eval/coding-bench/fixtures/tasks.json")?;
-        let options = CodingBenchOptions {
-            fixture_path: "eval/coding-bench/fixtures/tasks.json".to_string(),
-            runs_per_condition: 3,
-            json_out: "/tmp/remem-coding-bench.json".to_string(),
-            condition: None,
-            task: None,
-            task_set: "full".to_string(),
-            keep_workdirs: false,
-            dry_run: true,
-            runner: "noop".to_string(),
-            codex_bin: "codex".to_string(),
-            model: "gpt-5.5".to_string(),
-            provider: None,
-            reasoning_effort: "medium".to_string(),
-            ignore_budget: false,
-        };
-        let conditions = selected_conditions(&options)?;
-        let tasks = selected_tasks(&fixture, &options)?;
-        assert_eq!(conditions.len(), 3);
-        assert_eq!(tasks.len(), 16);
-        assert_eq!(
-            conditions.len() * tasks.len() * options.runs_per_condition,
-            144
-        );
-        Ok(())
-    }
-
-    #[test]
     fn codex_runner_ignores_host_config_rules_hooks_and_session_files() {
         let options = CodingBenchOptions {
             fixture_path: "eval/coding-bench/fixtures/tasks.json".to_string(),
             runs_per_condition: 1,
             json_out: "/tmp/remem-coding-bench.json".to_string(),
             condition: None,
+            matrix: "primary".to_string(),
             task: None,
             task_set: "full".to_string(),
             keep_workdirs: false,

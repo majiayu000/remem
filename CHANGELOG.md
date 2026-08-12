@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.69` for GH-931: coding-bench condition ids now
+  converge on the flagship matrix names. The default dry-run plans
+  `no_memory`, `curated_file_budgeted`, and `remem_e2e`; live execution fails
+  closed for pending primary adapters while `remem_seeded_sessionstart` and
+  `curated_file_expert` remain available through the implemented diagnostic
+  matrix.
 - Staged source version `0.6.68` for GH-934: MCP `search` can now compile an
   explicit task-aware `RetrievalPlan` from intent, role, risk, budget, and
   superseded-scope inputs; routed searches apply the plan's channel weights,
