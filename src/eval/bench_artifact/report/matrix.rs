@@ -35,6 +35,7 @@ pub(super) struct CodingMatrixReadiness {
     pub(super) has_required_conditions: bool,
     pub(super) has_identical_task_sets: bool,
     pub(super) has_three_runs_per_task: bool,
+    pub(super) has_aggregate_ready_attempts: bool,
     pub(super) ready: bool,
 }
 
@@ -117,7 +118,20 @@ pub(super) fn coding_matrix_readiness(outcomes: &[CodingTaskOutcome]) -> CodingM
                 .all(|run_indices| run_indices == &registered_indices)
         });
         readiness.has_three_runs_per_task |= has_three_runs;
-        readiness.ready |= has_three_runs;
+        let has_aggregate_ready_attempts =
+            has_three_runs && report_attempts_ready_for_aggregation(report_outcomes);
+        readiness.has_aggregate_ready_attempts |= has_aggregate_ready_attempts;
+        readiness.ready |= has_three_runs && has_aggregate_ready_attempts;
     }
     readiness
+}
+
+pub(super) fn report_attempts_ready_for_aggregation(outcomes: &[&CodingTaskOutcome]) -> bool {
+    let mut attempt_ids = BTreeSet::new();
+    outcomes.iter().all(|outcome| {
+        outcome.target_started == Some(true)
+            && outcome.attempt_id.as_deref().is_some_and(|attempt_id| {
+                !attempt_id.trim().is_empty() && attempt_ids.insert(attempt_id)
+            })
+    })
 }

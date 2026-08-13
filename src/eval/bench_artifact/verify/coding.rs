@@ -18,6 +18,9 @@ use crate::eval::coding_bench::{
     RememContextAuditStatus,
 };
 
+#[cfg(test)]
+mod tests;
+
 const CODING_ARTIFACT_KEYS: [&str; 3] = ["patch", "tool_log", "test_log"];
 
 const PUBLIC_CODING_CONDITIONS: [&str; 11] = [
@@ -112,6 +115,7 @@ pub(super) fn validate_coding_run_artifact(
             "coding task/condition/run_index key must be unique within a benchmark version",
         );
     }
+    validate_attempt_state(&run, &raw_run, &label, state);
     validate_environment(&run.environment, &label, state);
     if run.model.is_null() {
         state.fail(label.clone(), "coding run model must be present");
@@ -168,6 +172,64 @@ fn validate_outcome(run: &CodingRunArtifact, label: &str, state: &mut VerifyStat
                 "coding run has unknown failure_reason enum",
             );
         }
+    }
+}
+
+fn validate_attempt_state(
+    run: &CodingRunArtifact,
+    raw_run: &Value,
+    label: &str,
+    state: &mut VerifyState,
+) {
+    let official = run.run_phase == "official";
+    if official {
+        for field in ["attempt_id", "target_started"] {
+            if raw_run.get(field).is_none() {
+                state.fail(
+                    label.to_string(),
+                    format!("official coding run must include explicit {field}"),
+                );
+            }
+        }
+    }
+
+    match run.attempt_id.as_deref() {
+        Some(attempt_id) if attempt_id.trim().is_empty() => {
+            state.fail(label.to_string(), "coding run attempt_id must not be blank");
+        }
+        Some(attempt_id) if !state.coding_attempt_ids.insert(attempt_id.to_string()) => {
+            state.fail(
+                label.to_string(),
+                "coding run attempt_id must be unique across the public artifact suite",
+            );
+        }
+        Some(_) => {}
+        None if official => {
+            state.fail(
+                label.to_string(),
+                "official coding run attempt_id must be a non-blank string",
+            );
+        }
+        None => {}
+    }
+
+    if official && run.target_started.is_none() {
+        state.fail(
+            label.to_string(),
+            "official coding run target_started must be a boolean",
+        );
+    }
+    if run.resolved && run.target_started == Some(false) {
+        state.fail(
+            label.to_string(),
+            "resolved coding run cannot report target_started=false",
+        );
+    }
+    if run.attempt_id.is_some() != run.target_started.is_some() {
+        state.fail(
+            label.to_string(),
+            "coding run attempt_id and target_started must be present together",
+        );
     }
 }
 

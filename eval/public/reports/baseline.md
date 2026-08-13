@@ -29,10 +29,10 @@ This report separates memory-system capability evidence from coding-agent outcom
 
 ## Paired Coding Statistics
 
-| Comparison | Report | Status | Treatment rate | Control rate | Effect pp | 95% CI pp | Method |
-|---|---|---|---:|---:|---:|---:|---|
-| `remem-e2e-vs-no-memory-v1` | `n/a` | `not_evaluated_insufficient_coding_matrix` | n/a | n/a | n/a | n/a | `task_cluster_paired_bootstrap_v1` |
-| `remem-e2e-vs-curated-file-budgeted-v1` | `n/a` | `not_evaluated_insufficient_coding_matrix` | n/a | n/a | n/a | n/a | `task_cluster_paired_bootstrap_v1` |
+| Comparison | Report | Status | Treatment rate | Control rate | Effect pp | 95% CI pp | Method | Reason |
+|---|---|---|---:|---:|---:|---:|---|---|
+| `remem-e2e-vs-no-memory-v1` | `n/a` | `insufficient` | n/a | n/a | n/a | n/a | `task_cluster_paired_bootstrap_v1` | requires one verified issue385-v1/official-v1 report containing no_memory, remem_e2e, and curated_file_budgeted for all 16 registered tasks with run indices 0, 1, and 2 |
+| `remem-e2e-vs-curated-file-budgeted-v1` | `n/a` | `insufficient` | n/a | n/a | n/a | n/a | `task_cluster_paired_bootstrap_v1` | requires one verified issue385-v1/official-v1 report containing no_memory, remem_e2e, and curated_file_budgeted for all 16 registered tasks with run indices 0, 1, and 2 |
 
 ## Coding Task Outcomes
 
