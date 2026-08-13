@@ -28,6 +28,8 @@
     },
     "task_id": { "type": "string", "minLength": 1 },
     "run_index": { "type": "integer", "minimum": 0 },
+    "attempt_id": { "type": ["string", "null"], "minLength": 1 },
+    "target_started": { "type": ["boolean", "null"] },
     "model": { "type": "object" },
     "environment": { "type": "object" },
     "resolved": { "type": "boolean" },
@@ -221,6 +223,21 @@
           "context_audit_failure_reason": { "type": "null" },
           "remem_context_audit": { "type": "null" },
           "injected_context_sha256": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "run_phase": { "const": "official" }
+        },
+        "required": ["run_phase"]
+      },
+      "then": {
+        "required": ["attempt_id", "target_started"],
+        "properties": {
+          "attempt_id": { "type": "string", "minLength": 1 },
+          "target_started": { "type": "boolean" }
         }
       }
     }

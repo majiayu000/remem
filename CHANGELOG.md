@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.72` for the GH-931 paired-report slice: task-cluster
+  statistics are emitted only for a verifier-passing official matrix whose
+  tuples carry unique attempt identities and confirmed target-start state.
+  Integrity-invalid or pre-target tuples now keep the matrix `insufficient`
+  without publishing rates or confidence intervals.
 - Staged source version `0.6.70` for GH-981: dynamic MCP output-schema
   extension points now use the object-form unconstrained schema `{}` instead
   of JSON Schema's boolean `true` shorthand, preserving the same open payload

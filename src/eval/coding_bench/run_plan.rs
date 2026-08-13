@@ -22,7 +22,7 @@ pub fn randomized_run_plan(
     Ok(plan)
 }
 
-fn build_run_plan(
+pub(super) fn build_run_plan(
     conditions: &[BenchCondition],
     task_count: usize,
     runs_per_condition: usize,

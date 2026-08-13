@@ -286,6 +286,11 @@ fn public_baseline_report_summarizes_committed_artifacts() -> Result<()> {
         .coding_condition_variance
         .iter()
         .any(|entry| entry.variance_status == "insufficient_runs_for_variance"));
+    assert_eq!(report.coding_paired_statistics.len(), 2);
+    assert!(report
+        .coding_paired_statistics
+        .iter()
+        .all(|entry| entry.status == "insufficient"));
     Ok(())
 }
 
@@ -297,9 +302,90 @@ fn public_baseline_markdown_is_directional_and_separates_layers() -> Result<()> 
     assert!(markdown.contains("directional_only_no_public_claim"));
     assert!(markdown.contains("## Memory-System Capability"));
     assert!(markdown.contains("## Coding-Agent Outcome"));
+    assert!(markdown.contains("## Paired Coding Statistics"));
     assert!(markdown.contains("insufficient_runs_for_variance"));
+    assert!(markdown.contains("insufficient"));
+    assert!(markdown.contains("requires one verified issue385-v1/official-v1 report"));
     assert!(markdown.contains("must not be used for coding-task superiority claims"));
     Ok(())
+}
+
+#[test]
+fn paired_statistics_compute_registered_task_cluster_effects() {
+    let mut outcomes = claim_matrix(&super::report::matrix::CLAIM_BEARING_TASK_IDS);
+    let first_task = super::report::matrix::CLAIM_BEARING_TASK_IDS[0];
+    let second_task = super::report::matrix::CLAIM_BEARING_TASK_IDS[1];
+    for outcome in &mut outcomes {
+        outcome.resolved = match outcome.condition.as_str() {
+            "remem_e2e" => {
+                outcome.task_id == first_task
+                    || (outcome.task_id == second_task && outcome.run_index == 0)
+            }
+            "curated_file_budgeted" => outcome.task_id == first_task && outcome.run_index == 0,
+            "no_memory" => false,
+            other => panic!("unexpected condition {other}"),
+        };
+    }
+
+    let stats = super::report::coding_paired_statistics(&outcomes, true);
+    let no_memory = stats
+        .iter()
+        .find(|entry| entry.comparison_id == "remem-e2e-vs-no-memory-v1")
+        .unwrap();
+    assert_eq!(no_memory.status, "computed");
+    assert_eq!(no_memory.report_path.as_deref(), Some("matrix.json"));
+    assert_eq!(no_memory.tasks, 16);
+    assert_eq!(no_memory.runs_per_task, 3);
+    assert_close(no_memory.treatment_resolved_rate.unwrap(), 1.0 / 12.0);
+    assert_close(no_memory.control_resolved_rate.unwrap(), 0.0);
+    assert_close(no_memory.effect_pp.unwrap(), 100.0 / 12.0);
+    assert!(no_memory.ci_lower_pp.is_some());
+    assert!(no_memory.ci_upper_pp.is_some());
+
+    let curated = stats
+        .iter()
+        .find(|entry| entry.comparison_id == "remem-e2e-vs-curated-file-budgeted-v1")
+        .unwrap();
+    assert_close(curated.control_resolved_rate.unwrap(), 1.0 / 48.0);
+    assert_close(curated.effect_pp.unwrap(), 6.25);
+}
+
+#[test]
+fn paired_statistics_require_artifact_verification() {
+    let outcomes = claim_matrix(&super::report::matrix::CLAIM_BEARING_TASK_IDS);
+
+    let stats = super::report::coding_paired_statistics(&outcomes, false);
+
+    assert_eq!(stats.len(), 2);
+    assert!(stats.iter().all(|stat| stat.status == "insufficient"));
+    assert!(stats.iter().all(|stat| stat.effect_pp.is_none()));
+    assert!(stats.iter().all(|stat| {
+        stat.insufficient_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("artifact verifier did not pass"))
+    }));
+}
+
+#[test]
+fn paired_statistics_reject_pre_target_failures() {
+    let mut outcomes = claim_matrix(&super::report::matrix::CLAIM_BEARING_TASK_IDS);
+    outcomes[0].target_started = Some(false);
+    outcomes[0].resolved = false;
+    outcomes[0].failure_reason = Some("compile_failure".to_string());
+
+    let stats = super::report::coding_paired_statistics(&outcomes, true);
+
+    assert_eq!(stats.len(), 2);
+    assert!(stats.iter().all(|stat| stat.status == "insufficient"));
+    assert!(stats.iter().all(|stat| stat.effect_pp.is_none()));
+    assert!(stats.iter().all(|stat| {
+        stat.insufficient_reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("pre-target failures"))
+    }));
+    assert!(!super::report::matrix::has_claim_ready_coding_matrix(
+        true, &outcomes
+    ));
 }
 
 #[test]
@@ -595,7 +681,7 @@ fn verifier_rejects_private_remem_data_path() -> Result<()> {
     Ok(())
 }
 
-fn failure_text(report: &super::types::BenchVerifyReport) -> String {
+pub(super) fn failure_text(report: &super::types::BenchVerifyReport) -> String {
     report
         .failures
         .iter()
@@ -631,6 +717,8 @@ fn coding_outcome(
         condition: condition.to_string(),
         task_id: task_id.to_string(),
         run_index,
+        attempt_id: Some(format!("attempt-{condition}-{task_id}-{run_index}")),
+        target_started: Some(true),
         resolved: true,
         failure_reason: None,
         tokens_total: Some(1),
@@ -639,6 +727,13 @@ fn coding_outcome(
         memory_helped: None,
         memory_hurt: None,
     }
+}
+
+fn assert_close(actual: f64, expected: f64) {
+    assert!(
+        (actual - expected).abs() < 1e-9,
+        "expected {actual} to be close to {expected}"
+    );
 }
 
 fn set_public_coding_condition(root: &Path, condition: &str) -> Result<()> {
@@ -656,7 +751,7 @@ fn set_public_coding_condition(root: &Path, condition: &str) -> Result<()> {
     )
 }
 
-fn mutate_json(path: &Path, mutate: impl FnOnce(&mut Value)) -> Result<()> {
+pub(super) fn mutate_json(path: &Path, mutate: impl FnOnce(&mut Value)) -> Result<()> {
     let content = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let mut json: Value =
         serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))?;
@@ -666,7 +761,7 @@ fn mutate_json(path: &Path, mutate: impl FnOnce(&mut Value)) -> Result<()> {
     Ok(())
 }
 
-fn copy_public_fixture(label: &str) -> Result<PathBuf> {
+pub(super) fn copy_public_fixture(label: &str) -> Result<PathBuf> {
     let millis = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
     let root = std::env::temp_dir().join(format!("remem-bench-artifact-{label}-{millis}"));
     if root.exists() {

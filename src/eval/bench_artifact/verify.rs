@@ -652,6 +652,7 @@ struct VerifyState {
     artifact_files: BTreeSet<String>,
     run_artifact_paths: BTreeSet<String>,
     coding_run_keys: BTreeSet<String>,
+    coding_attempt_ids: BTreeSet<String>,
     failures: Vec<BenchVerifyFailure>,
 }
 
@@ -665,6 +666,7 @@ impl VerifyState {
             artifact_files: BTreeSet::new(),
             run_artifact_paths: BTreeSet::new(),
             coding_run_keys: BTreeSet::new(),
+            coding_attempt_ids: BTreeSet::new(),
             failures: Vec::new(),
         }
     }

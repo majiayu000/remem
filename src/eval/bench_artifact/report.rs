@@ -13,6 +13,11 @@ use super::types::{
 };
 
 pub(super) mod matrix;
+mod statistics;
+
+pub(in crate::eval::bench_artifact) use statistics::coding_paired_statistics;
+use statistics::coding_variance;
+pub use statistics::{CodingConditionVariance, CodingPairedStatistic};
 
 #[derive(Debug, Clone)]
 pub struct BenchReportOptions {
@@ -35,6 +40,7 @@ pub struct PublicBaselineReport {
     pub memory_task_outcomes: Vec<MemoryTaskOutcome>,
     pub coding_task_outcomes: Vec<CodingTaskOutcome>,
     pub coding_condition_variance: Vec<CodingConditionVariance>,
+    pub coding_paired_statistics: Vec<CodingPairedStatistic>,
     pub failure_decomposition: FailureDecomposition,
     pub reproducibility: ReproducibilitySummary,
     pub claim_gate: ClaimGateSummary,
@@ -99,6 +105,8 @@ pub struct CodingTaskOutcome {
     pub condition: String,
     pub task_id: String,
     pub run_index: u32,
+    pub attempt_id: Option<String>,
+    pub target_started: Option<bool>,
     pub resolved: bool,
     pub failure_reason: Option<String>,
     pub tokens_total: Option<u64>,
@@ -106,18 +114,6 @@ pub struct CodingTaskOutcome {
     pub wall_time_ms: Option<u64>,
     pub memory_helped: Option<bool>,
     pub memory_hurt: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct CodingConditionVariance {
-    pub condition: String,
-    pub runs: usize,
-    pub resolved_rate: f64,
-    pub tokens_total_mean: Option<f64>,
-    pub tokens_total_sample_variance: Option<f64>,
-    pub wall_time_ms_mean: Option<f64>,
-    pub wall_time_ms_sample_variance: Option<f64>,
-    pub variance_status: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -203,6 +199,8 @@ pub fn generate_public_baseline_report(root: &Path) -> Result<PublicBaselineRepo
     }
 
     let coding_condition_variance = coding_variance(&state.coding_outcomes);
+    let coding_paired_statistics =
+        coding_paired_statistics(&state.coding_outcomes, artifact_verifier.passed);
     let claim_gate = claim_gate(&artifact_verifier, &state);
     let memory_summary = layer_summary(
         "directional_memory_system_evidence",
@@ -245,6 +243,7 @@ pub fn generate_public_baseline_report(root: &Path) -> Result<PublicBaselineRepo
         memory_task_outcomes: state.memory_outcomes,
         coding_task_outcomes: state.coding_outcomes,
         coding_condition_variance,
+        coding_paired_statistics,
         failure_decomposition: state.failure_decomposition,
         reproducibility: ReproducibilitySummary {
             remem_commits: sorted_vec(state.remem_commits),
@@ -324,6 +323,31 @@ pub fn render_public_baseline_markdown(report: &PublicBaselineReport) -> String 
             fmt_metric(variance.tokens_total_sample_variance),
             fmt_metric(variance.wall_time_ms_mean),
             escape_md(&variance.variance_status)
+        ));
+    }
+    out.push('\n');
+
+    out.push_str("## Paired Coding Statistics\n\n");
+    out.push_str("| Comparison | Report | Status | Treatment rate | Control rate | Effect pp | 95% CI pp | Method | Reason |\n");
+    out.push_str("|---|---|---|---:|---:|---:|---:|---|---|\n");
+    for stat in &report.coding_paired_statistics {
+        out.push_str(&format!(
+            "| `{}` | {} | `{}` | {} | {} | {} | {} | `{}` | {} |\n",
+            escape_md(&stat.comparison_id),
+            stat.report_path
+                .as_deref()
+                .map(|path| format!("`{}`", escape_md(path)))
+                .unwrap_or_else(|| "`n/a`".to_string()),
+            escape_md(&stat.status),
+            fmt_metric(stat.treatment_resolved_rate),
+            fmt_metric(stat.control_resolved_rate),
+            fmt_metric(stat.effect_pp),
+            fmt_ci(stat.ci_lower_pp, stat.ci_upper_pp),
+            escape_md(&stat.algorithm),
+            stat.insufficient_reason
+                .as_deref()
+                .map(escape_md)
+                .unwrap_or_else(|| "none".to_string())
         ));
     }
     out.push('\n');
@@ -510,6 +534,8 @@ fn load_coding_runs(
             condition: run.condition,
             task_id: run.task_id,
             run_index: run.run_index,
+            attempt_id: run.attempt_id,
+            target_started: run.target_started,
             resolved: run.resolved,
             failure_reason: run.failure_reason,
             tokens_total: run.metrics.tokens_total,
@@ -526,46 +552,6 @@ fn load_coding_runs(
         });
     }
     Ok(())
-}
-
-fn coding_variance(outcomes: &[CodingTaskOutcome]) -> Vec<CodingConditionVariance> {
-    let mut grouped: BTreeMap<String, Vec<&CodingTaskOutcome>> = BTreeMap::new();
-    for outcome in outcomes {
-        grouped
-            .entry(outcome.condition.clone())
-            .or_default()
-            .push(outcome);
-    }
-    grouped
-        .into_iter()
-        .map(|(condition, runs)| {
-            let resolved = runs.iter().filter(|run| run.resolved).count();
-            let tokens = runs
-                .iter()
-                .filter_map(|run| run.tokens_total.map(|value| value as f64))
-                .collect::<Vec<_>>();
-            let wall = runs
-                .iter()
-                .filter_map(|run| run.wall_time_ms.map(|value| value as f64))
-                .collect::<Vec<_>>();
-            let variance_status = if runs.len() >= 3 {
-                "satisfied"
-            } else {
-                "insufficient_runs_for_variance"
-            }
-            .to_string();
-            CodingConditionVariance {
-                condition,
-                runs: runs.len(),
-                resolved_rate: resolved as f64 / runs.len() as f64,
-                tokens_total_mean: mean(&tokens),
-                tokens_total_sample_variance: sample_variance(&tokens),
-                wall_time_ms_mean: mean(&wall),
-                wall_time_ms_sample_variance: sample_variance(&wall),
-                variance_status,
-            }
-        })
-        .collect()
 }
 
 fn claim_gate(artifact_verifier: &BenchVerifyReport, state: &BuildState) -> ClaimGateSummary {
@@ -603,6 +589,11 @@ fn claim_gate(artifact_verifier: &BenchVerifyReport, state: &BuildState) -> Clai
     } else if !matrix.has_three_runs_per_task {
         notes.push(
             "Coding artifacts do not yet have exactly the registered run indices 0, 1, and 2 per task and condition."
+                .to_string(),
+        );
+    } else if !matrix.has_aggregate_ready_attempts {
+        notes.push(
+            "Every official tuple must carry a unique verified attempt_id and target_started=true; pre-target failures make the matrix insufficient."
                 .to_string(),
         );
     }
@@ -697,27 +688,6 @@ fn metric_path(value: &Value, path: &[&str]) -> Option<f64> {
     cursor.as_f64()
 }
 
-fn mean(values: &[f64]) -> Option<f64> {
-    (!values.is_empty()).then(|| values.iter().sum::<f64>() / values.len() as f64)
-}
-
-fn sample_variance(values: &[f64]) -> Option<f64> {
-    if values.len() < 2 {
-        return None;
-    }
-    let average = mean(values)?;
-    Some(
-        values
-            .iter()
-            .map(|value| {
-                let delta = value - average;
-                delta * delta
-            })
-            .sum::<f64>()
-            / (values.len() - 1) as f64,
-    )
-}
-
 fn increment(map: &mut BTreeMap<String, usize>, key: &str) {
     *map.entry(key.to_string()).or_default() += 1;
 }
@@ -774,6 +744,13 @@ fn fmt_bool(value: Option<bool>) -> String {
     value
         .map(|value| format!("`{value}`"))
         .unwrap_or_else(|| "`n/a`".to_string())
+}
+
+fn fmt_ci(lower: Option<f64>, upper: Option<f64>) -> String {
+    match (lower, upper) {
+        (Some(lower), Some(upper)) => format!("{lower:.3} to {upper:.3}"),
+        _ => "n/a".to_string(),
+    }
 }
 
 fn append_count_map(out: &mut String, map: &BTreeMap<String, usize>) {

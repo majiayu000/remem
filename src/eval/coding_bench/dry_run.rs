@@ -1,9 +1,10 @@
 use std::fs;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use serde::Serialize;
 
+use super::run_plan::build_run_plan;
 use super::types::{BenchCondition, CodingBenchOptions, CodingBenchTask};
 
 pub(super) fn write_dry_run_json(
@@ -12,6 +13,12 @@ pub(super) fn write_dry_run_json(
     tasks: &[&CodingBenchTask],
     planned_runs: usize,
 ) -> Result<()> {
+    let canonical_plan = build_run_plan(conditions, tasks.len(), options.runs_per_condition);
+    ensure!(
+        canonical_plan.len() == planned_runs,
+        "coding benchmark dry-run total drifted from canonical run plan: expected {planned_runs}, got {}",
+        canonical_plan.len()
+    );
     let report = DryRunReport {
         schema_version: 1,
         fixture_path: options.fixture_path.clone(),
@@ -24,16 +31,12 @@ pub(super) fn write_dry_run_json(
             .map(|condition| condition.as_str().to_string())
             .collect(),
         task_ids: tasks.iter().map(|task| task.id.clone()).collect(),
-        planned_tuples: conditions
-            .iter()
-            .flat_map(|condition| {
-                tasks.iter().flat_map(move |task| {
-                    (1..=options.runs_per_condition).map(move |run_index| DryRunTuple {
-                        condition: condition.as_str().to_string(),
-                        task_id: task.id.clone(),
-                        run_index,
-                    })
-                })
+        planned_tuples: canonical_plan
+            .into_iter()
+            .map(|entry| DryRunTuple {
+                condition: entry.condition.as_str().to_string(),
+                task_id: tasks[entry.task_index].id.clone(),
+                run_index: entry.run_index,
             })
             .collect(),
     };
@@ -137,6 +140,17 @@ mod tests {
             serde_json::json!(["no_memory", "curated_file_budgeted", "remem_e2e"])
         );
         assert_eq!(json["planned_tuples"].as_array().map(Vec::len), Some(144));
+        let tuples = json["planned_tuples"].as_array().expect("planned tuples");
+        let first_task = &json["task_ids"][0];
+        for condition in ["no_memory", "curated_file_budgeted", "remem_e2e"] {
+            let run_indices = tuples
+                .iter()
+                .filter(|tuple| tuple["condition"] == condition && tuple["task_id"] == *first_task)
+                .map(|tuple| tuple["run_index"].as_u64().expect("numeric run index"))
+                .collect::<Vec<_>>();
+            assert_eq!(run_indices, vec![0, 1, 2]);
+        }
+        assert!(tuples.iter().all(|tuple| tuple["run_index"] != 3));
         let _ = std::fs::remove_file(&json_out);
         Ok(())
     }

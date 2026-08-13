@@ -167,6 +167,10 @@ pub struct CodingRunArtifact {
     pub task_id: String,
     pub run_index: u32,
     #[serde(default)]
+    pub attempt_id: Option<String>,
+    #[serde(default)]
+    pub target_started: Option<bool>,
+    #[serde(default)]
     pub model: Value,
     pub environment: RunEnvironment,
     pub resolved: bool,

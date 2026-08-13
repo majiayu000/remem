@@ -740,6 +740,20 @@ artifacts, and 225 artifact files. It includes:
   is referenced for dry-run reproduction, but it is not yet part of the
   verified public outcome report.
 
+`remem bench report` writes paired coding statistics to the JSON
+`coding_paired_statistics` array and to the Markdown **Paired Coding
+Statistics** table. A comparison has status `computed` only when the artifact
+verifier passes and one report contains the exact 144-tuple
+`issue385-v1/official-v1` matrix (16 tasks, three primary conditions, and run
+indices 0, 1, and 2), with a unique `attempt_id` and
+`target_started=true` for every tuple. Target-started timeout, crash, or score
+failure remains a binary zero. Missing tuples, integrity-invalid evidence, a
+missing/duplicate attempt identity, or any pre-target failure instead produces
+status `insufficient`; rates, effects, and confidence bounds stay `null`/`n/a`,
+and `insufficient_reason` (also shown in Markdown) explains the failed gate.
+The currently checked-in smoke-only report is therefore `insufficient`, not a
+zero-effect official result.
+
 The report is intentionally labeled `directional_only_no_public_claim`. README
 and release wording must stay directional and avoid broad outcome or
 coding-task outcome claims until the public claim gate in
