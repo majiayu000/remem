@@ -16,8 +16,6 @@ use super::spill::{
 };
 use super::worker_launch::{spawn_worker_once_if_idle, WorkerSpawnDecision};
 
-const CODEX_TRANSCRIPT_MESSAGE_TOOL: &str = "codex-transcript";
-
 pub async fn summarize(host: Option<&str>, profile: Option<&str>) -> Result<()> {
     let Some(input) = read_stdin_with_timeout(SUMMARIZE_STDIN_TIMEOUT_MS)? else {
         return Ok(());
@@ -223,6 +221,7 @@ pub(super) fn enqueue_summary_payload_with_git_evidence(
     let replay_event_id = origin
         .is_replay()
         .then(|| replay_capture_event_id(&host, &project, session_id, &summary_payload));
+    let current_branch = db::detect_git_branch(&cwd);
     if let Err(error) = record_summary_capture_events(
         conn,
         &host,
@@ -233,6 +232,7 @@ pub(super) fn enqueue_summary_payload_with_git_evidence(
         &summary_payload,
         replay_event_id.as_deref(),
         git_evidence,
+        current_branch.as_deref(),
     ) {
         let error_text = error.to_string();
         if origin.is_replay() {
@@ -262,7 +262,6 @@ pub(super) fn enqueue_summary_payload_with_git_evidence(
         }
         anyhow::bail!(error_text);
     }
-    let current_branch = db::detect_git_branch(&cwd);
     super::side_effects::run_stop_hook_side_effects(
         conn,
         &host,
@@ -411,8 +410,9 @@ fn record_summary_capture_event(
     content: &str,
     event_id: Option<&str>,
     git_evidence: &[crate::git_util::GitCommitEvidence],
+    git_branch: Option<&str>,
 ) -> Result<()> {
-    db::record_captured_event_with_id_and_reference_time_and_git_evidence(
+    db::record_captured_event_with_precomputed_git_branch(
         conn,
         &db::CaptureEventInput {
             host,
@@ -428,6 +428,7 @@ fn record_summary_capture_event(
         event_id,
         None,
         git_evidence,
+        git_branch,
     )?;
     Ok(())
 }
@@ -442,13 +443,16 @@ fn record_summary_capture_events(
     content: &str,
     event_id: Option<&str>,
     git_evidence: &[crate::git_util::GitCommitEvidence],
+    git_branch: Option<&str>,
 ) -> Result<()> {
     conn.execute_batch("SAVEPOINT remem_summary_capture_events")
         .context("start summary capture batch savepoint")?;
     let result = (|| {
         if host == "codex-cli" {
-            record_codex_transcript_message_events(conn, host, hook, session_id, project, cwd)
-                .context("record Codex transcript message events")?;
+            record_codex_transcript_message_events(
+                conn, host, hook, session_id, project, cwd, git_branch,
+            )
+            .context("record Codex transcript message events")?;
         }
         record_summary_capture_event(
             conn,
@@ -459,6 +463,7 @@ fn record_summary_capture_events(
             content,
             event_id,
             git_evidence,
+            git_branch,
         )
     })();
     match result {
@@ -486,6 +491,7 @@ fn record_codex_transcript_message_events(
     session_id: &str,
     project: &str,
     cwd: &str,
+    git_branch: Option<&str>,
 ) -> Result<usize> {
     let (Some(transcript_path), Some(byte_limit)) =
         (hook.transcript_path.as_deref(), hook.transcript_byte_len)
@@ -499,14 +505,22 @@ fn record_codex_transcript_message_events(
         })?;
     let mut inserted = 0_usize;
     for (line_index, line) in content.lines().enumerate() {
-        let value = serde_json::from_str::<serde_json::Value>(line).with_context(|| {
-            format!(
-                "parse bounded Codex transcript message capture line {}",
-                line_index + 1
-            )
-        })?;
-        let Some(message) = crate::memory::raw_transcript::parse_transcript_message(&value) else {
-            continue;
+        use crate::memory::raw_transcript::TranscriptRecordClass;
+
+        let message = match crate::memory::raw_transcript::classify_transcript_line(line, None) {
+            TranscriptRecordClass::Conversation(message) => message,
+            TranscriptRecordClass::MalformedRecord => {
+                anyhow::bail!(
+                    "parse bounded Codex transcript message capture line {}",
+                    line_index + 1
+                );
+            }
+            TranscriptRecordClass::MetaUser(_)
+            | TranscriptRecordClass::XmlControlUser(_)
+            | TranscriptRecordClass::MissingEventTime(_)
+            | TranscriptRecordClass::EmptyText
+            | TranscriptRecordClass::UnsupportedRecord
+            | TranscriptRecordClass::OutsideWindow => continue,
         };
         let text = message.text.trim();
         if text.is_empty() {
@@ -519,7 +533,7 @@ fn record_codex_transcript_message_events(
         }
         let event_id =
             codex_transcript_message_event_id(transcript_path, line_index, message.role, content);
-        db::record_captured_event_with_id_and_reference_time(
+        db::record_captured_event_with_precomputed_git_branch(
             conn,
             &db::CaptureEventInput {
                 host,
@@ -528,12 +542,14 @@ fn record_codex_transcript_message_events(
                 cwd: Some(cwd),
                 event_type: "message",
                 role: Some(message.role),
-                tool_name: Some(CODEX_TRANSCRIPT_MESSAGE_TOOL),
+                tool_name: Some(crate::memory::raw_transcript::CODEX_TRANSCRIPT_MESSAGE_TOOL),
                 content,
                 task_kind: Some(db::ExtractionTaskKind::SessionRollup),
             },
             Some(&event_id),
             message.created_at_epoch,
+            &[],
+            git_branch,
         )?;
         inserted += 1;
     }

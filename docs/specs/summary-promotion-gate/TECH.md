@@ -112,24 +112,30 @@ unrelated low-trust window events without laundering an externally supported
 claim through an unrelated trusted event.
 
 For Codex Stop payloads with a bounded transcript path, the hook capture batch
-first writes every usable user/assistant transcript turn as a deterministic
-`captured_events` row:
+first writes each timestamped genuine user/assistant conversation turn as a
+deterministic `captured_events` row. `isMeta` and XML-leading user control
+turns, records without event time, empty text, and unsupported records do not
+receive a message identity:
 
 - `event_type='message'`
 - `role='user'|'assistant'`
 - `tool_name='codex-transcript'`
 - `event_id=codex-transcript-message-<path-hash16>-<line-ordinal>-<role>-<content-hash16>`
-- `created_at_epoch` from the transcript timestamp when present
+- `created_at_epoch` from the required transcript timestamp
 
 The `session_stop` row is written in the same savepoint after those message
 rows, so the coalesced SessionRollup range includes the message identities
 before the Stop watermark. Replays converge on the same deterministic message
-ids. Trust classification remains per event: user messages classify as
-`user_prompt`, assistant transcript messages classify as local tool output via
-their `codex-transcript` tool name, and `session_stop` remains
-`external_content`. If message materialization fails, the whole Stop capture
-batch rolls back and the spill path retries instead of silently falling back to
-identity-free transcript support.
+ids. Trust classification remains per event: genuine user messages classify as
+`user_prompt`; assistant transcript messages and `session_stop` classify as
+`external_content` because assistant text no longer carries the provenance of
+WebSearch, MCP, or other external sources. The hook resolves Git branch state
+once before opening the batch savepoint and reuses it for every message and the
+Stop row. Rollup prompt rendering recognizes these transcript-derived events
+and retains only the newest 128 messages and 64 KiB of aggregate content, with
+the existing 8 KiB per-message cap. If message materialization fails, the whole
+Stop capture batch rolls back and the spill path retries instead of silently
+falling back to identity-free transcript support.
 
 Block reasons mirror the check order with summary-specific entries
 (`summary_type_not_allowlisted`, `summary_confidence_below_floor`, ...);

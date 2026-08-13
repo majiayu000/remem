@@ -63,6 +63,41 @@ fn record_captured_event_coalesces_extraction_task_by_session() {
 }
 
 #[test]
+fn precomputed_git_branch_is_reused_without_event_level_detection() -> Result<()> {
+    let conn = setup_conn();
+    let cwd = "/definitely/missing/remem-precomputed-branch";
+    let outcome = record_captured_event_with_precomputed_git_branch(
+        &conn,
+        &CaptureEventInput {
+            host: "codex-cli",
+            session_id: "sess-precomputed-branch",
+            project: cwd,
+            cwd: Some(cwd),
+            event_type: "message",
+            role: Some("assistant"),
+            tool_name: Some(crate::memory::raw_transcript::CODEX_TRANSCRIPT_MESSAGE_TOOL),
+            content: "captured transcript message",
+            task_kind: Some(ExtractionTaskKind::SessionRollup),
+        },
+        Some("precomputed-branch-event"),
+        Some(1_700_000_000),
+        &[],
+        Some("batch-branch"),
+    )?;
+
+    let stored_branch: Option<String> = conn.query_row(
+        "SELECT w.git_branch
+         FROM captured_events e
+         JOIN workspaces w ON w.id = e.workspace_id
+         WHERE e.id = ?1",
+        params![outcome.event_row_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(stored_branch.as_deref(), Some("batch-branch"));
+    Ok(())
+}
+
+#[test]
 fn large_capture_uses_blob_and_compact_preview() -> Result<()> {
     let conn = setup_conn();
     let content = "x".repeat(DIRECT_CONTENT_BYTES + 2048);

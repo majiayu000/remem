@@ -68,13 +68,14 @@ the candidate remains review-gated with its original evidence window intact.
 Transcript-only text without a captured-event identity is not sufficient for
 automatic promotion.
 
-Codex Stop capture now materializes bounded transcript user and assistant
-messages as captured `message` events before writing the `session_stop` row.
-User turns retain `user_prompt` trust, local Codex assistant turns carry
-`local_tool_output` trust through the transcript event, and `session_stop`
-itself remains `external_content`. This gives the summary gate immutable
-message identities without lowering the trust floor or blessing the whole Stop
-payload.
+Codex Stop capture now materializes timestamped genuine user and assistant
+conversation turns as captured `message` events before writing the
+`session_stop` row. User turns retain `user_prompt` trust; assistant turns stay
+`external_content` because the flattened transcript does not preserve external
+tool provenance, and meta/XML control turns receive no trusted event identity.
+Transcript-derived prompt events share the existing 128-message/64 KiB budget.
+This gives the summary gate immutable identities without lowering the trust
+floor or blessing the whole Stop payload.
 
 ## Goals
 

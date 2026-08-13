@@ -267,6 +267,12 @@ fn event_trust_class(
     if event_type == "message" && role == Some("user") {
         return SourceTrustClass::UserPrompt;
     }
+    if tool_name == Some(super::raw_transcript::CODEX_TRANSCRIPT_MESSAGE_TOOL) {
+        // A rendered assistant turn can repeat WebSearch/MCP/external material,
+        // but the flattened transcript message no longer carries that
+        // provenance. Keep every non-user Codex transcript turn external.
+        return SourceTrustClass::ExternalContent;
+    }
     if matches!(event_type, "file_edit" | "file_write") {
         return SourceTrustClass::RepoFile;
     }
@@ -428,6 +434,32 @@ mod tests {
         );
         assert_eq!(
             derive_source_trust_class(&conn, &[1], "observation")?,
+            SourceTrustClass::ExternalContent
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn codex_transcript_assistant_is_external_content() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute(
+            "CREATE TABLE captured_events (
+                id INTEGER PRIMARY KEY,
+                event_type TEXT NOT NULL,
+                role TEXT,
+                tool_name TEXT,
+                content_text TEXT
+             )",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO captured_events (id, event_type, role, tool_name, content_text)
+             VALUES (1, 'message', 'assistant', 'codex-transcript', 'external claim')",
+            [],
+        )?;
+
+        assert_eq!(
+            derive_source_trust_class(&conn, &[1], "summary")?,
             SourceTrustClass::ExternalContent
         );
         Ok(())

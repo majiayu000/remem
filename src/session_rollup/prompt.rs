@@ -1,12 +1,23 @@
+use std::collections::BTreeMap;
+
 use serde_json::Value;
 
 use crate::db;
 use crate::memory::format::{xml_escape_attr, xml_escape_text};
 
-use super::transcript_evidence::PromptTranscriptEvidence;
+use super::transcript_evidence::{
+    PromptTranscriptEvidence, TRANSCRIPT_MESSAGE_CONTENT_LIMIT, TRANSCRIPT_MESSAGE_COUNT_LIMIT,
+    TRANSCRIPT_TOTAL_CONTENT_LIMIT,
+};
 use super::RollupRange;
 
 const EVENT_CONTENT_LIMIT: usize = 24 * 1024;
+
+#[derive(Default)]
+struct BoundedTranscriptEventContent {
+    by_event_id: BTreeMap<i64, String>,
+    truncated: bool,
+}
 
 pub(super) fn build_rollup_prompt(
     task: &db::ExtractionTask,
@@ -55,8 +66,34 @@ pub(super) fn build_rollup_prompt(
 
     append_transcript_messages(&mut prompt, transcript_evidence);
 
+    let transcript_evidence_bytes = transcript_evidence
+        .messages
+        .iter()
+        .map(|message| message.content.len())
+        .sum::<usize>();
+    let bounded_transcript_events = bounded_transcript_event_content(
+        range,
+        TRANSCRIPT_MESSAGE_COUNT_LIMIT.saturating_sub(transcript_evidence.messages.len()),
+        TRANSCRIPT_TOTAL_CONTENT_LIMIT.saturating_sub(transcript_evidence_bytes),
+    );
+    if bounded_transcript_events.truncated {
+        prompt.push_str(&format!(
+            "<captured_transcript_budget truncated=\"true\" max_messages=\"{}\" max_content_bytes=\"{}\" />\n\n",
+            TRANSCRIPT_MESSAGE_COUNT_LIMIT, TRANSCRIPT_TOTAL_CONTENT_LIMIT
+        ));
+    }
+
     let mut previous_epoch: Option<i64> = None;
     for event in &range.events {
+        let prompt_content = if is_codex_transcript_message_event(event) {
+            let Some(content) = bounded_transcript_events.by_event_id.get(&event.id) else {
+                continue;
+            };
+            content.clone()
+        } else {
+            let redacted_content = crate::adapter::common::redact_sensitive_text(&event.content);
+            db::truncate_str(&redacted_content, EVENT_CONTENT_LIMIT).to_string()
+        };
         let gap_before = previous_epoch.map(|epoch| (event.created_at_epoch - epoch).max(0));
         previous_epoch = Some(event.created_at_epoch);
         let files_touched = files_touched_for_prompt(&event.content);
@@ -87,14 +124,55 @@ pub(super) fn build_rollup_prompt(
             ));
         }
         prompt.push_str(">\n");
-        let redacted_content = crate::adapter::common::redact_sensitive_text(&event.content);
-        prompt.push_str(&xml_escape_text(db::truncate_str(
-            &redacted_content,
-            EVENT_CONTENT_LIMIT,
-        )));
+        prompt.push_str(&xml_escape_text(&prompt_content));
         prompt.push_str("\n</event>\n\n");
     }
     prompt
+}
+
+fn is_codex_transcript_message_event(event: &super::RollupEvent) -> bool {
+    event.event_type == "message"
+        && event.tool_name.as_deref()
+            == Some(crate::memory::raw_transcript::CODEX_TRANSCRIPT_MESSAGE_TOOL)
+}
+
+fn bounded_transcript_event_content(
+    range: &RollupRange,
+    message_limit: usize,
+    content_limit: usize,
+) -> BoundedTranscriptEventContent {
+    let mut bounded = BoundedTranscriptEventContent::default();
+    let mut remaining_messages = message_limit;
+    let mut remaining_bytes = content_limit;
+
+    for event in range
+        .events
+        .iter()
+        .rev()
+        .filter(|event| is_codex_transcript_message_event(event))
+    {
+        if remaining_messages == 0 || remaining_bytes == 0 {
+            bounded.truncated = true;
+            continue;
+        }
+        let redacted = crate::adapter::common::redact_sensitive_text(&event.content);
+        let redacted = redacted.trim();
+        if redacted.is_empty() {
+            continue;
+        }
+        let content_limit = TRANSCRIPT_MESSAGE_CONTENT_LIMIT.min(remaining_bytes);
+        let content = db::truncate_str(redacted, content_limit).trim_end();
+        if content.len() < redacted.len() {
+            bounded.truncated = true;
+        }
+        if content.is_empty() {
+            continue;
+        }
+        remaining_messages -= 1;
+        remaining_bytes -= content.len();
+        bounded.by_event_id.insert(event.id, content.to_string());
+    }
+    bounded
 }
 
 fn append_transcript_messages(prompt: &mut String, evidence: &PromptTranscriptEvidence) {
@@ -286,5 +364,100 @@ mod tests {
         assert!(prompt.contains("&lt;/transcript_message&gt;"));
         assert!(!prompt.contains("ghp_abcdefghijklmnopqrstuvwxyz123456"));
         assert!(prompt.len() < 400_000, "prompt length was {}", prompt.len());
+    }
+
+    #[test]
+    fn codex_transcript_events_share_an_aggregate_prompt_budget() {
+        let task = db::ExtractionTask {
+            id: 1,
+            task_kind: ExtractionTaskKind::SessionRollup,
+            host_id: 1,
+            workspace_id: 1,
+            project_id: 1,
+            session_row_id: Some(1),
+            host: "codex-cli".to_string(),
+            project: "/repo".to_string(),
+            session_id: Some("session-1".to_string()),
+            ai_profile: None,
+            priority: 0,
+            cursor_event_id: Some(0),
+            high_watermark_event_id: Some(151),
+            attempts: 0,
+            replay_range_id: None,
+        };
+        let mut events = (0..150)
+            .map(|index| super::super::RollupEvent {
+                id: index + 1,
+                event_type: "message".to_string(),
+                role: Some("assistant".to_string()),
+                tool_name: Some("codex-transcript".to_string()),
+                content: format!(
+                    "message-{index}:{}",
+                    "bounded transcript event content ".repeat(300)
+                ),
+                token_estimate: 2_300,
+                created_at_epoch: 100 + index,
+                turn_id: None,
+            })
+            .collect::<Vec<_>>();
+        events.push(super::super::RollupEvent {
+            id: 151,
+            event_type: "session_stop".to_string(),
+            role: None,
+            tool_name: None,
+            content: "stop-event-sentinel".to_string(),
+            token_estimate: 5,
+            created_at_epoch: 250,
+            turn_id: None,
+        });
+        let range = RollupRange {
+            from_event_id: 1,
+            to_event_id: 151,
+            events,
+        };
+
+        let evidence =
+            bound_prompt_transcript_evidence((0..32).map(|index| PromptTranscriptMessage {
+                source_event_id: 151,
+                role: "assistant".to_string(),
+                content: format!(
+                    "supplemental-{index}:{}",
+                    "bounded supplemental evidence ".repeat(32)
+                ),
+            }));
+        let evidence_bytes = evidence
+            .messages
+            .iter()
+            .map(|message| message.content.len())
+            .sum::<usize>();
+        let remaining_message_count =
+            TRANSCRIPT_MESSAGE_COUNT_LIMIT.saturating_sub(evidence.messages.len());
+        let remaining_content_bytes = TRANSCRIPT_TOTAL_CONTENT_LIMIT.saturating_sub(evidence_bytes);
+        let bounded_events = bounded_transcript_event_content(
+            &range,
+            remaining_message_count,
+            remaining_content_bytes,
+        );
+
+        let prompt = build_rollup_prompt(&task, &range, &evidence);
+
+        assert!(prompt.contains("<captured_transcript_budget truncated=\"true\""));
+        assert!(!prompt.contains("message-0:"));
+        assert!(prompt.contains("message-149:"));
+        assert!(prompt.contains("stop-event-sentinel"));
+        assert!(
+            prompt.matches("tool=\"codex-transcript\"").count() + evidence.messages.len()
+                <= TRANSCRIPT_MESSAGE_COUNT_LIMIT
+        );
+        assert!(
+            bounded_events
+                .by_event_id
+                .values()
+                .map(String::len)
+                .sum::<usize>()
+                + evidence_bytes
+                <= TRANSCRIPT_TOTAL_CONTENT_LIMIT
+        );
+        assert!(prompt.len() < 100_000, "prompt length was {}", prompt.len());
     }
 }

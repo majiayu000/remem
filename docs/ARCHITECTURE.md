@@ -64,12 +64,14 @@ before database open/spill. Deterministic worker phases consume only the exact
 claimed event range, key links by `session_row_id`, and never infer a commit
 from an ordinary Stop event or worker-time `HEAD`.
 
-Codex Stop also materializes bounded transcript user/assistant turns as
-deterministic captured `message` events before the `session_stop` row in the
-same capture batch. Those message events give summary promotion immutable,
-role-specific evidence ids (`user_prompt` for user turns and
-`local_tool_output` for local Codex assistant turns) while the Stop row itself
-stays `external_content`.
+Codex Stop also materializes timestamped genuine transcript conversation turns
+as deterministic captured `message` events before the `session_stop` row in
+the same capture batch. User turns retain `user_prompt` trust, while assistant
+turns and the Stop row remain `external_content` because flattened assistant
+text cannot prove local provenance; meta/XML control turns are excluded from
+trusted identities. Git branch state is resolved once before the batch, and
+transcript-derived message events share the rollup prompt's 128-message/64 KiB
+aggregate budget.
 
 ## Module Map
 
