@@ -134,7 +134,7 @@ injection mask:
 | fts, entity, temporal, fact, vector | on | current behavior |
 | like_fallback | on | current behavior (empty-channel fallback is engine-side) |
 | graph | **on** | closing the documented gap is the point of the issue |
-| usage | off | `weights.usage == 0.0` anyway; owned by #947 |
+| usage | on | preserve the shipped production weight (`0.25` by default); `REMEM_USAGE_WEIGHT=0` remains the rollback |
 
 `min_evidence_confidence` gating is applied on the injection path too. Both the
 `graph` enablement and the confidence gate are ranking-visible, so each must be
@@ -177,10 +177,10 @@ the #954 behavior change, not completion evidence for #953's shared-engine,
 channel-parity, graph, or confidence-gate stages.
 
 S1 proves that explicit `SearchWeights` values reach injection and that the
-production wrapper uses the shipped defaults. It does not consume a generated
-`eval-weight-grid` report, make that evaluator execute injection, or prove
-shared-channel parity. Those issue-level acceptance criteria remain open until
-the later engine and injection-evaluation stages.
+production wrapper uses `SearchWeights::production()`. It does not consume a
+generated `eval-weight-grid` report, make that evaluator execute injection, or
+prove shared-channel parity. Those broader convergence criteria remain
+unimplemented future work.
 
 ## Verification
 
@@ -192,8 +192,9 @@ S1 implements nine focused tests, grouped by guarantee:
    path. This proves only that explicit weights reach injection; it does not
    prove that `eval-weight-grid` executes injection or that its generated
    report is applied at runtime.
-2. `default_weights_are_the_production_path` — proves the zero-argument
-   production wrapper is equivalent to explicit `SearchWeights::default()`.
+2. `default_weights_are_the_production_path` — proves, with the production
+   override unset, that the zero-argument wrapper matches the default values;
+   the current wrapper resolves them through `SearchWeights::production()`.
 3. `hybrid_context_declares_no_private_scoring_constants` — rejects all eight
    former scoring `const` declarations in `hybrid_context.rs`.
 

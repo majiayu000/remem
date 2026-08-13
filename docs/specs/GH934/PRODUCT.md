@@ -4,12 +4,16 @@ Refs #934.
 
 ## Status
 
-Partial implementation. PR #940 landed the deterministic planner, debug
-surface, explicit SessionStart planning, and an optional routed MCP `search`
-projection onto existing production loaders. GitHub issue #934 is currently
-closed, but the normative completion packet in `specs/GH934/tasks.md` still
-leaves T3-T8 and the T11 closure audit open. The closed remote state therefore
-must not be read as proof that the acceptance contract below is complete.
+Partial implementation. PR #940 landed the deterministic task-intent planner
+and `context-plan` debug surface. PR #1006 (`d458bfeb`) subsequently unified
+Context Bundle on `RetrievalPlan` and added explicit SessionStart planning/DB
+execution. PR #1020 (`10b2d38d`, implementation commit `477ca5db`) later added
+the optional routed MCP `search` projection onto existing production loaders.
+GitHub issue #934 is currently closed, but its original acceptance still lacks
+the complete plan-controlled per-channel executor and full execution-evidence
+propagation, per-intent goldens, static-vs-router ablation/default decision,
+and a closure audit. The closed remote state therefore must not be read as
+proof that the acceptance contract below is complete.
 
 Remaining work requires either reopening #934 or a separately linked
 implementation issue before it starts. Until the registered ablation/default
@@ -17,9 +21,10 @@ gate lands and passes, static retrieval remains the product default.
 
 ## Problem
 
-remem's channels (FTS, vector, entity, temporal, graph, enrichment)
-keep growing, but every query runs the same static channel + fusion
-policy. Different tasks need different evidence: "why not async-trait"
+remem's channels (FTS, vector, entity, temporal, graph, enrichment) keep
+growing. Before the optional routed MCP projection, every query used the same
+static channel + fusion policy; legacy/default requests still do. Different
+tasks need different evidence: "why not async-trait"
 wants decisions, superseded history, and git evidence rather than pure
 semantic neighbors; a high-risk code change must not share freshness /
 trust / abstention policy with casual history browsing.
@@ -55,7 +60,8 @@ A deterministic, auditable Retrieval Router that compiles a
   task text;
 - stable plan hash (canonical-JSON SHA-256, same convention as #932).
 
-No LLM or network call exists on any router path.
+Plan compilation adds no LLM or network call. Routed MCP search preserves the
+existing search path's optional embedding and rerank provider behavior.
 
 ## Boundaries
 
@@ -71,9 +77,8 @@ No LLM or network call exists on any router path.
 
 ## Completion work not yet landed
 
-The task-intent DB-backed per-channel executor, full ContextBundle
-execution/audit integration, REST surface, generated-enrichment execution,
-per-intent golden fixtures, static-vs-router ablation, benchmark artifact
-coverage, and the default-on evaluation gate remain pending. Existing
-SessionStart planning and the bounded MCP search projection do not satisfy
-those completion items.
+The complete plan-controlled per-channel executor, propagation of its
+execution evidence through ContextBundle/ContextAudit, per-intent golden
+fixtures, static-vs-router ablation, benchmark evidence, and an explicit
+default decision remain pending. Existing SessionStart planning and the
+bounded MCP search projection do not satisfy those acceptance items.

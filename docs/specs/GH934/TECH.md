@@ -5,10 +5,12 @@ Refs #934.
 ## Status
 
 Partial implementation. The modules below describe the landed planner and
-bounded MCP search projection. They are not the DB-backed task-intent executor
-or closure proof required by `specs/GH934/tasks.md`. GitHub issue #934 is
-currently closed, while T3-T8 and T11 remain unchecked; completion needs a
-reopened or separately linked implementation issue plus fresh verification.
+bounded MCP search projection. They are not the complete plan-controlled
+per-channel executor, execution-evidence propagation, per-intent goldens,
+static-vs-router ablation/default decision, or closure audit required by the
+original #934 acceptance. GitHub issue #934 is currently closed; remaining
+work needs a reopened or separately linked implementation issue plus fresh
+verification.
 
 ## Module Layout
 
@@ -71,7 +73,7 @@ src/memory/service/search.rs      search execution-policy adapter
   adjustment appends a machine-readable reason code. Reviewer role
   force-enables the `constraints` channel.
 - `plan_hash` = SHA-256 over canonical serde JSON with the hash field
-  empty — the same convention as `ContextPlan.plan_hash` (#932).
+  empty — the unified `RetrievalPlan` / Context Bundle convention (#932).
 
 ## Intent resolution
 
@@ -121,11 +123,10 @@ follow-ups before the router can become default.
 
 ## Completion work not yet landed
 
-The task-intent DB-backed per-channel executor, full per-intent execution and
-audit integration in ContextBundle, REST surface, generated-enrichment
-execution, per-intent golden fixtures, static-vs-router ablation, benchmark
-artifact coverage, and default-on gates remain pending. SessionStart plan
-hashes already flow through persisted `ContextAudit` rows into verified
-coding-bench remem artifacts; that lifecycle-specific slice and the bounded MCP
-search projection do not replace the pending task-intent execution and
-ablation work.
+The complete plan-controlled per-channel executor, propagation of its
+execution evidence through ContextBundle/ContextAudit, per-intent golden
+fixtures, static-vs-router ablation, benchmark evidence, and an explicit
+default decision remain pending. SessionStart plan hashes already flow through
+persisted `ContextAudit` rows into verified coding-bench remem artifacts; that
+lifecycle-specific slice and the bounded MCP search projection do not replace
+the pending task-intent execution and ablation work.
