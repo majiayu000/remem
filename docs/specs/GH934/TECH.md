@@ -2,6 +2,16 @@
 
 Refs #934.
 
+## Status
+
+Partial implementation. The modules below describe the landed planner and
+bounded MCP search projection. They are not the complete plan-controlled
+per-channel executor, execution-evidence propagation, per-intent goldens,
+static-vs-router ablation/default decision, or closure audit required by the
+original #934 acceptance. GitHub issue #934 is currently closed; remaining
+work needs a reopened or separately linked implementation issue plus fresh
+verification.
+
 ## Module Layout
 
 ```
@@ -25,10 +35,11 @@ src/memory/service/search.rs      search execution-policy adapter
   `include_superseded`. The schema remains v1 because the serialized shape is
   unchanged; the policy version distinguishes plans compiled before and after
   this behavioral correction.
-- `ContextIntent` (shared with #932 in `context_bundle::domain`) gains
-  the six router variants; `SessionStart` stays the bundle-planner
-  intent and is not routable — explicit `SessionStart` falls back to
-  `explore_history` with reason `session_start_not_routable`.
+- `ContextIntent` (shared with #932 in `context_bundle::domain`) has the six
+  task-routable variants plus explicit `SessionStart` for host lifecycle
+  callers. Keyword fallback never produces `SessionStart`; an explicit
+  `SessionStart` compiles the dedicated SessionStart channel and output-section
+  plan with reason `explicit_intent`.
 - `RetrievalPlan`: schema/policy versions, intent + intent_source, role,
   risk, reason_codes, `channel_plans` (one entry per known channel,
   enabled or disabled, in `RetrievalChannel::ORDERED` order), reused
@@ -62,7 +73,7 @@ src/memory/service/search.rs      search execution-policy adapter
   adjustment appends a machine-readable reason code. Reviewer role
   force-enables the `constraints` channel.
 - `plan_hash` = SHA-256 over canonical serde JSON with the hash field
-  empty — the same convention as `ContextPlan.plan_hash` (#932).
+  empty — the unified `RetrievalPlan` / Context Bundle convention (#932).
 
 ## Intent resolution
 
@@ -110,10 +121,12 @@ The current projection deliberately does not invent new database loaders for
 decision/session/preference-specific evidence channels; those remain explicit
 follow-ups before the router can become default.
 
-## Follow-ups (tracked on #934)
+## Completion work not yet landed
 
-Full per-channel execution into ContextBundle, generated-enrichment execution,
-per-intent golden fixtures, static-vs-router ablation and default-on gates.
-SessionStart plan hashes already flow through persisted `ContextAudit` rows
-into verified coding-bench remem artifacts; that landed slice does not replace
-the pending per-intent execution and ablation work.
+The complete plan-controlled per-channel executor, propagation of its
+execution evidence through ContextBundle/ContextAudit, per-intent golden
+fixtures, static-vs-router ablation, benchmark evidence, and an explicit
+default decision remain pending. SessionStart plan hashes already flow through
+persisted `ContextAudit` rows into verified coding-bench remem artifacts; that
+lifecycle-specific slice and the bounded MCP search projection do not replace
+the pending task-intent execution and ablation work.
