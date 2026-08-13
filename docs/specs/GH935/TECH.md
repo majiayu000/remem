@@ -6,7 +6,14 @@ Status: Current contract; v1 infrastructure shipped, completion unimplemented; I
 
 - `eval/cross-host/benchmark-charter.json` is `cross-host-v1` / `infrastructure_only_no_runs`.
 - `eval/cross-host/tasks/` contains 24 `skeleton_todo` JSON tasks.
-- `cross-host-task.schema.json`, `cross-host-run.schema.json`, `schema_validate.py`, `scan_artifacts.py`, and `run_dry.py` are offline; no Rust runner/report exists.
+- `cross-host-task.schema.json`, the strictly isolated v1/v2 run schemas,
+  `schema_validate.py`, `scan_artifacts.py`, `test_run_dry.py`, and `run_dry.py`
+  are offline; no Rust runner/report exists.
+- `run_dry.py --suite-version cross-host-v2` now emits a compatibility plan
+  that maps the legacy `remem_shared` condition to `remem_shared_startup`,
+  reports the exact 288 primary and 144 source-native-import diagnostic tuple
+  counts, and keeps `executable_ready = false` unconditionally. The v2 task
+  inventory must be exactly 12 unique IDs per direction.
 - Production project identity is the canonical Git root from `src/project_id.rs`.
 - `ContextRequest` has no user field; startup ownership resolves through `user:default`.
 - Host-native import produces untrusted candidates, never auto-promoted memories.
@@ -15,6 +22,13 @@ Status: Current contract; v1 infrastructure shipped, completion unimplemented; I
 ## Versioning
 
 Implementation bumps `cross-host-v1` to executable `cross-host-v2`; its validating converter maps the legacy `remem_shared` condition to the narrower `remem_shared_startup` label.
+
+The current converter is offline plan-only. It does not authorize live host
+runs and never advances the committed charter status beyond
+`infrastructure_only_no_runs`, even if every v1 task file is manually changed
+to `ready`. The v2 run schema is a strict compatibility-validation shape, not
+the complete v2 runtime contract. Live readiness depends on the shared
+executable runner from #931 and the remaining GH935 runner/report work.
 
 The status lifecycle is:
 
@@ -746,7 +760,7 @@ Shared schema/report files have one owner at a time and transfer ownership befor
 
 ## Verification
 
-Current v1 infrastructure checks:
+Current offline infrastructure checks:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 \
@@ -754,7 +768,16 @@ PYTHONDONTWRITEBYTECODE=1 \
 PYTHONDONTWRITEBYTECODE=1 \
   python3 eval/cross-host/scripts/scan_artifacts.py --self-test
 PYTHONDONTWRITEBYTECODE=1 \
+  python3 eval/cross-host/scripts/test_run_dry.py
+PYTHONDONTWRITEBYTECODE=1 \
   python3 eval/cross-host/scripts/run_dry.py
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 eval/cross-host/scripts/run_dry.py --suite-version cross-host-v2 \
+    --json-out /tmp/cross-host-v2-dry-run.json
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 eval/cross-host/scripts/schema_validate.py \
+    eval/cross-host/examples/run-artifact-v2-plan-valid.json \
+    eval/cross-host/schemas/cross-host-run-v2.schema.json
 ```
 
 Future executable-version focused coverage must include:
