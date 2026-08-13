@@ -123,9 +123,9 @@ impl SpillQueue {
     }
 
     fn append_file_then_remove(&self, records_path: &Path) -> Result<()> {
-        let contents = std::fs::read(records_path)
-            .with_context(|| format!("read {}", records_path.display()))?;
         self.with_lock(|| {
+            let contents = std::fs::read(records_path)
+                .with_context(|| format!("read {}", records_path.display()))?;
             self.append_bytes_unlocked(&contents)?;
             remove_file_if_exists(records_path)
         })

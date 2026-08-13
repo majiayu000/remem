@@ -13,10 +13,7 @@ use super::injection_gate::{
     apply_context_gate_with_data_version_and_boundaries, compute_data_version_hint,
     pre_render_context_gate, ContextGateAction, ContextGateDecision, ContextGatePrecheck,
 };
-use super::invocation::{
-    direct_context_invocation, resolve_context_invocation, resolve_cursor_context_invocation,
-    ContextCliOptions, ContextInvocation,
-};
+use super::invocation::ContextInvocation;
 use super::policy::{ContextPolicy, SectionKind};
 use super::relevance::{build_sessionstart_relevance_plan, candidates_for_loaded, selected_inputs};
 use super::render_inputs::{load_context_render_inputs, ContextRenderInputs};
@@ -39,6 +36,11 @@ mod truncation;
 pub(in crate::context) use super::render_error::render_context_load_errors;
 pub(crate) use eval::{
     governance_eval_snapshot, session_start_benchmark_emission, session_start_eval_snapshot,
+};
+mod entry;
+pub use entry::{
+    generate_context, generate_context_from_cli, generate_cursor_context_from_bytes,
+    generate_cursor_context_from_stdin,
 };
 use finalize::{finalize_context_output, RenderedIdentityBounds};
 use helpers::{
@@ -67,60 +69,7 @@ pub(in crate::context) struct RenderedContext {
     pub(in crate::context) context_bundle: Option<crate::context_bundle::ContextBundle>,
 }
 
-pub fn generate_context(
-    cwd: &str,
-    session_id: Option<&str>,
-    use_colors: bool,
-    host_arg: Option<&str>,
-    debug: bool,
-) -> Result<()> {
-    let invocation = direct_context_invocation(cwd, session_id, use_colors, host_arg, debug);
-    generate_context_for_invocation(invocation, false)
-}
-
-pub fn generate_context_from_cli(
-    cwd: Option<String>,
-    session_id: Option<String>,
-    use_colors: bool,
-    host: Option<String>,
-    debug: bool,
-    force: bool,
-    gate_mode: Option<String>,
-) -> Result<()> {
-    let invocation = resolve_context_invocation(ContextCliOptions {
-        cwd,
-        session_id,
-        host,
-        use_colors,
-        debug,
-        force,
-        gate_mode,
-    })?;
-    generate_context_for_invocation(invocation, true)
-}
-
-/// Cursor `remem context` entrypoint (GH-823): bounded stdin read, strict
-/// exact `sessionStart` validation, then the shared render pipeline. Any
-/// parse/limit failure returns before context generation with empty stdout
-/// and no side effects (B-009); no CLI/current-cwd fallback exists.
-pub fn generate_cursor_context_from_stdin() -> Result<()> {
-    let bytes = crate::cursor_hook::input::read_bounded_hook_stdin(&mut std::io::stdin().lock())?;
-    generate_cursor_context_from_bytes(&bytes)
-}
-
-pub fn generate_cursor_context_from_bytes(bytes: &[u8]) -> Result<()> {
-    let event = crate::cursor_hook::input::parse_session_start(bytes)?;
-    let invocation = resolve_cursor_context_invocation(&event);
-    generate_context_for_invocation(invocation, true)
-}
-
-fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool) -> Result<()> {
-    let stdout = generate_context_output_for_invocation(invocation, use_gate)?;
-    print!("{stdout}");
-    Ok(())
-}
-
-fn generate_context_output_for_invocation(
+pub(super) fn generate_context_output_for_invocation(
     invocation: ContextInvocation,
     use_gate: bool,
 ) -> Result<String> {
@@ -320,7 +269,7 @@ pub(in crate::context) fn generate_context_for_test(
     invocation: ContextInvocation,
     use_gate: bool,
 ) -> Result<()> {
-    generate_context_for_invocation(invocation, use_gate)
+    entry::generate_context_for_invocation(invocation, use_gate)
 }
 
 #[cfg(test)]

@@ -46,7 +46,9 @@ pub(super) struct ContextCliOptions {
     pub gate_mode: Option<String>,
 }
 
-pub(super) fn resolve_context_invocation(options: ContextCliOptions) -> Result<ContextInvocation> {
+pub(super) fn resolve_context_invocation(
+    options: ContextCliOptions,
+) -> Result<(ContextInvocation, Option<String>)> {
     Ok(resolve_context_invocation_from_stdin_result(
         options,
         crate::hook_stdin::read_stdin_with_timeout(CONTEXT_STDIN_TIMEOUT_MS),
@@ -56,18 +58,21 @@ pub(super) fn resolve_context_invocation(options: ContextCliOptions) -> Result<C
 fn resolve_context_invocation_from_stdin_result(
     options: ContextCliOptions,
     stdin_result: Result<Option<String>>,
-) -> ContextInvocation {
-    let stdin = match stdin_result {
-        Ok(stdin) => stdin,
+) -> (ContextInvocation, Option<String>) {
+    let (stdin, stdin_warning) = match stdin_result {
+        Ok(stdin) => (stdin, None),
         Err(error) => {
-            crate::log::warn(
+            crate::log::error(
                 "context",
-                &format!("failed to read context hook stdin, ignoring: {}", error),
+                &format!("failed to read context hook stdin: {}", error),
             );
-            None
+            (None, Some(format!("## Hook stdin warning\n- {error}\n")))
         }
     };
-    resolve_context_invocation_from_parts(options, stdin.as_deref())
+    (
+        resolve_context_invocation_from_parts(options, stdin.as_deref()),
+        stdin_warning,
+    )
 }
 
 pub(super) fn direct_context_invocation(
@@ -287,8 +292,8 @@ mod tests {
     }
 
     #[test]
-    fn stdin_read_failure_falls_back_to_cli_values() {
-        let invocation = resolve_context_invocation_from_stdin_result(
+    fn stdin_read_failure_surfaces_warning_and_falls_back_to_cli_values() {
+        let (invocation, warning) = resolve_context_invocation_from_stdin_result(
             ContextCliOptions {
                 cwd: Some("/tmp/cli".to_string()),
                 host: Some("codex-cli".to_string()),
@@ -299,6 +304,9 @@ mod tests {
 
         assert_eq!(invocation.cwd, "/tmp/cli");
         assert_eq!(invocation.session_id, None);
+        let warning = warning.expect("stdin failure should surface in context");
+        assert!(warning.contains("Hook stdin warning"));
+        assert!(warning.contains("stdin read failed"));
     }
 
     #[test]
