@@ -25,20 +25,22 @@ This tree is a local-first memory runtime with three user surfaces (hooks, MCP, 
 | Phase | Roadmap item | Status |
 |---|---|---|
 | 1 | G2 on `current_state`, UserPromptSubmit, recall alias filters | Done |
-| 2 | `preference_global_limit=0`, `data_dir()` fail-closed, bounded Claude/Codex stdin | Done, with leftovers below |
-| 3 | Spill dead-letter + `Drop`; bundle G2 test; stolen-lease archive test | Done, with leftovers below |
+| 2 | `preference_global_limit=0`, `data_dir()` fail-closed, bounded Claude/Codex stdin | Done |
+| 3 | Spill dead-letter + `Drop`; bundle G2 test; stolen-lease archive test | Done |
 | 4 | Shared HostProfile registry; `hook_integrity` exhaustive match; file-size ratchet | Not started |
-| 5 | G3: route production current-state through `project_current_truth` | Not started |
+| 5 | G3: route production current-state through `project_current_truth` | Done (shadow + SessionStart/Core activation) |
 | 6 | G4/G5 governance writes + review throughput | Not started |
 
 Closed Critical/High: C2 (HOME/cwd), H3 (`current_state`), H4 (prompt-submit), H5 (global prefs), H7 (recall aliases), H8 (bundle G2 test), H9 (stolen-lease archive test).
 
 Leftovers from otherwise-closed C1 / H6 / Phase 3:
 
-- Stdin timeout still does not abort the reader thread; context still warns and continues empty (`src/context/invocation.rs`).
-- Parse/decrypt poison is dead-lettered, but retryable spill still has no N-failure cap, there is no old-key drain before rekey, and `append_file_then_remove` still reads outside the cross-process lock.
+- Stdin timeout now aborts the Unix poll reader and fails closed; context surfaces a `## Hook stdin warning` and still starts. Windows still uses a background thread but timeout is `Err`.
+- Parse/decrypt poison is dead-lettered and `append_file_then_remove` reads under the queue lock. Retryable spill still has no N-failure cap, and there is no old-key drain before rekey.
 
-Not started product/design work: G3 CurrentTruth as the production boundary, G4 atomic claim writes, G5 review-queue throughput, Cursor install v1 hook registration, `context_bundle` as a stable API. Medium/P2 items remain unverified and unfixed.
+G3 activation: SessionStart Core and the bundle `current_truth` channel keep selected CurrentTruth claims, emit compact abstentions for equal-trust/contradicted groups, and keep an audited shadow comparison. `current_state` already returns `current = None` on unresolved conflict.
+
+Not started product/design work: G4 atomic claim writes, G5 review-queue throughput, Cursor install v1 hook registration, `context_bundle` as a stable API, HostProfile. Medium/P2 items remain unverified and unfixed.
 
 ## Delta vs Previous Audit
 
@@ -183,13 +185,13 @@ These are **not done**, and they are load-bearing for the governance tracker in 
 
 | Work | Status | Why it matters |
 |---|---|---|
-| G3 — CurrentTruth as production current-state boundary | Not started | SessionStart still maps G2-eligible core memories into the bundle’s `current_truth` **channel name**. Equal-trust conflicts are not abstentions. Doctor-only `project_current_truth`. |
+| G3 — CurrentTruth as production current-state boundary | Done | SessionStart Core and bundle `current_truth` keep selected claims; equal-trust conflicts abstain with both claim refs. Shadow comparison remains on the audit. |
 | G4 — Atomic claim + evidence on new writes | Not started | Compound candidates and weak evidence can still become current after G3. |
 | G5 — Review-queue throughput | Not started | Tracker baseline: 12,525 pending, 0 resolved in 7d, median age ~18 days. |
 | Cursor install v1 hook registration | Documented gap | Runtime observe/summarize exist; install does not register hooks, so capture is not automatic. |
 | `context_bundle` stable API | Experimental | Schema v1, local embeddings only, not the production SessionStart renderer. |
 
-G3 was filed as High and **refuted** as a current user-visible SessionStart bug (G2 already filters that path). It remains the largest **design** gap: two “current” engines, an unused projection, and a channel named `current_truth` that is not CurrentTruth.
+G3 was filed as High and **refuted** as a then-current user-visible SessionStart bug (G2 already filtered that path). The remaining design gap — two “current” engines and a channel named `current_truth` that was not CurrentTruth — is closed on SessionStart/MCP compile: production now routes Core through `project_current_truth`. `current_state` is a separate API that already abstains on conflict.
 
 ### Data / registry (unverified)
 

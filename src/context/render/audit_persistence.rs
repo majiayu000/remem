@@ -168,6 +168,7 @@ mod tests {
                 token_budget: 100,
                 truncation_reason: None,
                 entries: vec![selected_audit_entry(1), selected_audit_entry(2)],
+                shadow_comparison: Vec::new(),
             },
         }
     }

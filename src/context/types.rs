@@ -64,6 +64,9 @@ pub(super) struct LoadedContext {
     /// Shared rerank stage outcome for the SessionStart implicit query
     /// (GH-851); `None` in fixtures and execution policies that disable rerank.
     pub rerank: Option<crate::retrieval::rerank::RerankExplain>,
+    /// G3: CurrentTruth projection at `render_reference_epoch` for Core
+    /// activation and the audited shadow comparison.
+    pub current_truth_projection: Option<crate::truth::CurrentTruthProjection>,
 }
 
 #[derive(Debug, Clone)]

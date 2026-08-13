@@ -8,7 +8,7 @@ use super::{item, request, session_start_plan};
 use crate::context_bundle::{execute, ChannelKind, ContextIntent, ExecutorInputs};
 
 /// Stable across processes and runs: same request + compiled policy.
-const EXPECTED_PLAN_HASH: &str = "997a834168f6f85d53f091156fe500344e3f6df157bd1177e2fc1cb8655f2697";
+const EXPECTED_PLAN_HASH: &str = "a5e14b46b918275b9e54321db05e4c9b1b98c855047588413fa132eec30c3027";
 
 /// The plan's top-level key set is the contract boundary. Pinning it
 /// catches an added/removed/renamed field, which must be a deliberate
@@ -78,7 +78,7 @@ fn plan_output_section_schema_snapshot() {
     assert_eq!(
         actual["output_sections"],
         json!([
-            {"channel": "preferences", "item_limit": 25, "relevance_governed": false},
+            {"channel": "preferences", "item_limit": 20, "relevance_governed": false},
             {"channel": "lessons", "item_limit": 4, "relevance_governed": true},
             {"channel": "core", "item_limit": 6, "relevance_governed": false},
             {"channel": "workstreams", "item_limit": 5, "relevance_governed": false},

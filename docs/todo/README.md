@@ -180,15 +180,15 @@ Acceptance:
 
 ### G3 — Make CurrentTruth the production current-state boundary
 
-Status: Not started; depends on G2
+Status: Done in `agent/legacy-unverified-governance`; depends on G2
 
-- [ ] Route current-state candidates through `remem::truth` rather than mapping
+- [x] Route current-state candidates through `remem::truth` rather than mapping
   every loaded core memory directly to a current channel.
-- [ ] Preserve immutable canonical references and populate evidence/projection
+- [x] Preserve immutable canonical references and populate evidence/projection
   references in Context Bundle items.
-- [ ] Make explicit conflicts abstain; equal-trust conflicts do not use
+- [x] Make explicit conflicts abstain; equal-trust conflicts do not use
   newest-wins.
-- [ ] Wire the compiled Context Bundle into the production SessionStart path
+- [x] Wire the compiled Context Bundle into the production SessionStart path
   behind an audited shadow comparison before activation.
 
 Acceptance:

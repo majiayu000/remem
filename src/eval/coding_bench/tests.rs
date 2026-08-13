@@ -72,6 +72,7 @@ fn context_audit_snapshot() -> Result<RememContextAuditSnapshot> {
         token_budget: 100,
         truncation_reason: None,
         entries: vec![entry],
+        shadow_comparison: Vec::new(),
     };
     let (canonical_audit_json, audit_hash) =
         crate::context_bundle::persistence::canonical_context_audit(

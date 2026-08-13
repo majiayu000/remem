@@ -260,6 +260,13 @@ fn load_context_data_with_execution_policy(
         diagnostics: memory_selection.diagnostics,
         rerank,
         load_phase_timings,
+        current_truth_projection: crate::context_bundle::try_project_for_scope(
+            conn,
+            project,
+            current_branch,
+            render_reference_epoch,
+            "context",
+        ),
     }
 }
 

@@ -524,6 +524,7 @@ mod tests {
             diagnostics: ContextDiagnostics::default(),
             load_phase_timings: Vec::new(),
             rerank: None,
+            current_truth_projection: None,
         };
         let candidates = candidates_for_loaded(&loaded, &HashSet::new());
         let plan =

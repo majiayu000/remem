@@ -5,6 +5,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 mod bundle_candidates;
 mod codex_hook_stdout;
 mod context_audit_persistence;
+mod current_truth_activation;
 mod cursor_hook;
 mod diagnostics;
 mod engine_convergence;
@@ -389,4 +390,19 @@ pub(super) fn setup_context_schema(conn: &Connection) {
     crate::memory::types::tests_helper::setup_memory_schema(conn);
     create_session_summary_schema(conn);
     create_workstream_schema(conn);
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS graph_edges (
+            id INTEGER PRIMARY KEY,
+            edge_type TEXT NOT NULL,
+            edge_trust TEXT,
+            from_node_kind TEXT,
+            from_node_id INTEGER,
+            to_node_kind TEXT,
+            to_node_id INTEGER,
+            created_at_epoch INTEGER NOT NULL,
+            valid_from_epoch INTEGER,
+            valid_to_epoch INTEGER
+        );",
+    )
+    .unwrap();
 }

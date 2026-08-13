@@ -395,6 +395,7 @@ mod tests {
             token_estimate: 2,
             token_budget: 100,
             truncation_reason: None,
+            shadow_comparison: Vec::new(),
             entries: vec![AuditEntry {
                 stable_key: "memory:7".into(),
                 channel: ChannelKind::Core,

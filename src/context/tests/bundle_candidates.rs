@@ -181,13 +181,13 @@ fn healthy_load_compiles_a_full_bundle_from_the_database() {
 
     assert_eq!(bundle.degraded_mode, DegradedMode::Full);
     assert!(bundle.audit.truncation_reason.is_none());
-    assert_eq!(
-        bundle
-            .current_truth
-            .iter()
-            .map(|item| item.stable_key.as_str())
-            .collect::<Vec<_>>(),
-        vec!["memory:1"]
+    assert_eq!(bundle.current_truth[0].stable_key, "memory:1");
+    let item = &bundle.current_truth[0];
+    assert!(
+        item.projection_ref
+            .as_deref()
+            .is_some_and(|value| value.starts_with("current_truth:v1:"))
+            || !item.evidence_refs.is_empty()
     );
     assert!(!bundle.audit.plan_hash.is_empty());
 }
@@ -222,6 +222,7 @@ fn high_risk_bundle_only_returns_user_authored_trusted_memory() {
     .expect("mark trusted");
     let mut high_risk = request();
     high_risk.risk = RiskClass::High;
+    high_risk.as_of_epoch = EPOCH + 1;
 
     let bundle =
         compile_session_start_bundle(&conn, &high_risk, "/tmp/remem-bundle-test", None, true)
@@ -746,4 +747,49 @@ fn bundle_excludes_legacy_unverified_memory_from_current_truth() {
         .expect("g2 audit entry");
     assert!(!audit.selected);
     assert_eq!(audit.reason, "legacy_unverified_provenance_missing");
+    assert!(!bundle
+        .audit
+        .shadow_comparison
+        .iter()
+        .any(|diff| { diff.verdict == "projection_only" && diff.stable_key == "memory:901" }));
+}
+
+#[test]
+fn equal_trust_conflict_shadow_abstains_without_newest_wins() {
+    let conn = conn_with_schema();
+    for (id, title, body) in [(11, "Left", "A"), (12, "Right", "B")] {
+        insert_memory(
+            &conn,
+            id,
+            PROJECT,
+            Some("tie"),
+            "decision",
+            title,
+            body,
+            EPOCH,
+        );
+    }
+    let bundle =
+        compile_session_start_bundle(&conn, &request(), "/tmp/remem-bundle-test", None, true)
+            .expect("compile");
+    assert!(bundle
+        .current_truth
+        .iter()
+        .all(|item| item.stable_key != "memory:11" && item.stable_key != "memory:12"));
+    let abstained = bundle
+        .current_truth
+        .iter()
+        .find(|item| item.stable_key == "current_truth:v1:tie")
+        .expect("emitted abstention");
+    assert!(abstained.text.contains("memory:11"));
+    assert!(abstained.text.contains("memory:12"));
+    let shadow = bundle
+        .audit
+        .shadow_comparison
+        .iter()
+        .find(|diff| diff.verdict == "abstained")
+        .expect("shadow abstention");
+    assert_eq!(shadow.reason, "unresolved_conflict");
+    assert!(shadow.claim_refs.iter().any(|r| r == "memory:11"));
+    assert!(shadow.claim_refs.iter().any(|r| r == "memory:12"));
 }

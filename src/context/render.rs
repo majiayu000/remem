@@ -492,13 +492,27 @@ pub(in crate::context) fn render_context_output_from_inputs(
     let render_limits = section_render_limits(&policy);
     let section_start = Instant::now();
     let mut core_output = String::new();
+    let core_memories = crate::context_bundle::core_render_memories(
+        &loaded.memories,
+        loaded.current_truth_projection.as_ref(),
+    );
     let core_summary = render_core_memory_with_limits_and_staleness(
         &mut core_output,
-        &loaded.memories,
+        core_memories.as_ref(),
         &render_limits,
         loaded.render_reference_epoch,
         &loaded.staleness_labels,
     );
+    if let Some(projection) = loaded.current_truth_projection.as_ref() {
+        let remaining = render_limits
+            .core_char_limit
+            .saturating_sub(char_len(&core_output));
+        crate::context_bundle::append_core_abstention_lines(
+            &mut core_output,
+            projection,
+            remaining,
+        );
+    }
     stats.core_ids = core_summary.ids.clone();
     let core_item_ends = core_summary.item_end_chars.clone();
     stats.core = SectionRenderStats {
@@ -510,6 +524,10 @@ pub(in crate::context) fn render_context_output_from_inputs(
         section_start,
     ));
     let core_ids = core_summary.ids.into_iter().collect::<HashSet<_>>();
+    let mut index_exclude = core_ids.clone();
+    if let Some(projection) = loaded.current_truth_projection.as_ref() {
+        index_exclude.extend(crate::context_bundle::abstained_memory_ids(projection));
+    }
     let mut context_bundle = None;
     let relevance_plan = if use_context_bundle && !has_load_errors {
         let (bundle, relevance_plan) = super::render_bundle::compile_for_renderer(
@@ -522,14 +540,14 @@ pub(in crate::context) fn render_context_output_from_inputs(
         context_bundle = Some(bundle);
         relevance_plan
     } else {
-        let relevance_candidates = candidates_for_loaded(&loaded, &core_ids);
+        let relevance_candidates = candidates_for_loaded(&loaded, &index_exclude);
         build_sessionstart_relevance_plan(
             loaded.relevance_query.as_deref(),
             policy.limits.sessionstart_relevance_k,
             &relevance_candidates,
         )
     };
-    let governed = selected_inputs(&loaded, &relevance_plan, &core_ids)?;
+    let governed = selected_inputs(&loaded, &relevance_plan, &index_exclude)?;
     stats.relevance.state = relevance_plan.state;
     stats.relevance.k = relevance_plan.k;
     stats.relevance.threshold = relevance_plan.threshold;
@@ -570,7 +588,7 @@ pub(in crate::context) fn render_context_output_from_inputs(
                 &mut output,
                 &governed.memories,
                 &render_limits,
-                &core_ids,
+                &index_exclude,
                 loaded.render_reference_epoch,
                 &loaded.staleness_labels,
             )
@@ -579,7 +597,7 @@ pub(in crate::context) fn render_context_output_from_inputs(
                 &mut output,
                 &governed.memories,
                 &render_limits,
-                &core_ids,
+                &index_exclude,
                 loaded.render_reference_epoch,
                 &loaded.staleness_labels,
             )

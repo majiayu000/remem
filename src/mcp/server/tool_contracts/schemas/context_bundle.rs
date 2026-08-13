@@ -65,6 +65,19 @@ struct ContextAuditOutput {
     #[schemars(schema_with = "required_nullable_string_schema", required)]
     truncation_reason: Option<String>,
     entries: Vec<AuditEntryOutput>,
+    #[serde(default)]
+    shadow_comparison: Vec<CurrentTruthShadowDiffOutput>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct CurrentTruthShadowDiffOutput {
+    stable_key: String,
+    verdict: String,
+    #[serde(default)]
+    projection_ref: Option<String>,
+    claim_refs: Vec<String>,
+    reason: String,
 }
 
 #[derive(Deserialize, JsonSchema)]

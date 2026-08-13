@@ -93,6 +93,7 @@ impl AuditBuilder {
             token_budget: plan.section_budgets.total_tokens,
             truncation_reason: self.truncation_reason,
             entries: self.entries,
+            shadow_comparison: Vec::new(),
         }
     }
 }

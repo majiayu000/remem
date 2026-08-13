@@ -86,9 +86,13 @@ pub(crate) fn load_session_start_candidates_with_limits(
     }
     let poisoning_drops = super::poisoning::drop_unacknowledged_poisoned_context(conn, &mut loaded);
     let mut discarded_core = String::new();
+    let core_memories = crate::context_bundle::core_render_memories(
+        &loaded.memories,
+        loaded.current_truth_projection.as_ref(),
+    );
     let core = super::sections::render_core_memory_with_limits_and_staleness(
         &mut discarded_core,
-        &loaded.memories,
+        core_memories.as_ref(),
         &policy.limits,
         loaded.render_reference_epoch,
         &loaded.staleness_labels,
@@ -100,6 +104,7 @@ pub(crate) fn load_session_start_candidates_with_limits(
     items.extend(preferences);
     apply_persisted_memory_trust(conn, &mut items)?;
     let mut preselection_drops = context_preselection_drops(&loaded, project);
+    preselection_drops.extend(current_truth_preselection_drops(&loaded, project));
     preselection_drops.extend(preference_preselection_drops);
     Ok(LoadedBundleCandidates {
         candidates: items,
@@ -224,6 +229,7 @@ pub(super) fn session_start_candidates_from_loaded(
         project,
     );
     let mut preselection_drops = context_preselection_drops(loaded, project);
+    preselection_drops.extend(current_truth_preselection_drops(loaded, project));
     preselection_drops.extend(preference_preselection_drops(preference_details, project));
     Ok((items, poisoning_drops, preselection_drops))
 }
@@ -308,15 +314,47 @@ fn ordered_preference_candidate(memory: &Memory, project: &str) -> ContextItem {
     item
 }
 
+fn current_truth_preselection_drops(
+    loaded: &LoadedContext,
+    project: &str,
+) -> Vec<PreselectionDrop> {
+    let Some(projection) = loaded.current_truth_projection.as_ref() else {
+        return Vec::new();
+    };
+    let abstained = crate::context_bundle::abstained_memory_ids(projection);
+    loaded
+        .memories
+        .iter()
+        .filter(|memory| abstained.contains(&memory.id))
+        .map(|memory| PreselectionDrop {
+            item: bundle_memory_item(
+                memory,
+                ChannelKind::Core,
+                loaded.staleness_labels.get(&memory.id),
+                project,
+            ),
+            reason: crate::context_bundle::abstention_reason_for_memory(projection, memory.id)
+                .unwrap_or("unresolved_conflict")
+                .to_string(),
+        })
+        .collect()
+}
+
 fn candidates_from_loaded(
     loaded: &LoadedContext,
     project: &str,
     core_ids: &HashSet<i64>,
 ) -> Vec<ContextItem> {
+    let hidden = loaded
+        .current_truth_projection
+        .as_ref()
+        .map(crate::context_bundle::abstained_memory_ids)
+        .unwrap_or_default();
     let mut items = Vec::new();
     for memory in loaded.memories.iter().filter(|memory| {
-        core_ids.contains(&memory.id)
-            || MemoryType::parse(&memory.memory_type).is_none_or(MemoryType::is_indexed)
+        !hidden.contains(&memory.id)
+            && (core_ids.contains(&memory.id)
+                || MemoryType::parse(&memory.memory_type).is_none_or(MemoryType::is_indexed))
     }) {
         let label = loaded.staleness_labels.get(&memory.id);
         items.push(bundle_memory_item(
@@ -362,7 +400,8 @@ fn workstream_item(workstream: &crate::workstream::WorkStream) -> ContextItem {
     }
 }
 
-/// Core types feed current truth; everything else lands in the index.
+/// Core types that won a CurrentTruth-selected core slot feed `current_truth`;
+/// everything else lands in the index.
 /// Preferences never appear here — they arrive through
 /// [`preference_candidates`].
 fn memory_channel(memory: &Memory, core_ids: &HashSet<i64>) -> ChannelKind {

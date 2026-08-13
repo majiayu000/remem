@@ -78,6 +78,7 @@ pub(super) fn compile_for_renderer(
         poisoning_drops,
         preselection_drops,
         true,
+        loaded.current_truth_projection.as_ref(),
     )?;
     Ok((compiled.bundle, compiled.relevance_plan))
 }
