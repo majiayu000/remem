@@ -204,7 +204,13 @@ pub(super) fn replay_spilled_capture_events(conn: &Connection) -> Result<usize> 
                     Ok(false) => {}
                     Err(error) => append_failed_spill_record(claim.failed_path(), &record, &error)?,
                 },
-                Err(error) => append_failed_spill_line(claim.failed_path(), line, &error)?,
+                Err(error) => {
+                    claim.dead_letter_line(line.as_bytes())?;
+                    crate::log::warn(
+                        "observe",
+                        &format!("capture spill poison dead-lettered: {error}"),
+                    );
+                }
             }
         }
         claim.finish()
@@ -294,12 +300,6 @@ fn replay_spill_record(
     tx.commit()
         .context("commit capture spill replay transaction")?;
     Ok(true)
-}
-
-fn append_failed_spill_line(path: &Path, line: &str, error: &anyhow::Error) -> Result<()> {
-    crate::spill_queue::SpillQueue::new(path.to_path_buf())?.append_line(line.as_bytes())?;
-    crate::log::warn("observe", &format!("capture spill replay failed: {error}"));
-    Ok(())
 }
 
 fn append_failed_spill_record(

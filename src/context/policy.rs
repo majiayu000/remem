@@ -51,7 +51,7 @@ impl Default for ContextLimits {
             session_limit: 5,
             self_diagnostic_limit: 2,
             preference_project_limit: 20,
-            preference_global_limit: 5,
+            preference_global_limit: 0,
             preference_char_limit: 1_500,
             lesson_limit: 4,
             lesson_char_limit: 1_200,
@@ -117,7 +117,7 @@ impl ContextLimits {
                 "REMEM_CONTEXT_PREFERENCE_PROJECT_LIMIT",
                 defaults.preference_project_limit,
             ),
-            preference_global_limit: read_usize(
+            preference_global_limit: read_usize_allow_zero(
                 &mut read,
                 "REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT",
                 defaults.preference_global_limit,
@@ -284,5 +284,26 @@ fn parse_usize(value: Option<String>) -> Option<usize> {
         None
     } else {
         Some(parsed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preference_global_limit_defaults_to_zero_and_allows_zero() {
+        let defaults = ContextLimits::from_env_reader(|_| None);
+        assert_eq!(defaults.preference_global_limit, 0);
+
+        let disabled = ContextLimits::from_env_reader(|key| {
+            (key == "REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT").then(|| "0".to_string())
+        });
+        assert_eq!(disabled.preference_global_limit, 0);
+
+        let overridden = ContextLimits::from_env_reader(|key| {
+            (key == "REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT").then(|| "5".to_string())
+        });
+        assert_eq!(overridden.preference_global_limit, 5);
     }
 }

@@ -55,6 +55,45 @@ fn concurrent_claimers_only_one_owns_active_spill() -> Result<()> {
 }
 
 #[test]
+fn dead_letter_lines_do_not_rejoin_live_queue() -> Result<()> {
+    let (_data_dir, queue) = queue("spill-queue-dead-letter")?;
+    queue.append_line(b"claimed-a")?;
+    let claim = queue
+        .claim(Duration::from_secs(60))?
+        .context("active queue should be claimable")?;
+    queue.append_line(b"new-b")?;
+    claim.dead_letter_line(b"poison")?;
+    SpillQueue::new(claim.failed_path().to_path_buf())?.append_line(b"retryable-a")?;
+
+    claim.finish()?;
+
+    assert_eq!(
+        std::fs::read_to_string(&queue.active_path)?,
+        "new-b\nretryable-a\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&queue.dead_letter_path())?,
+        "poison\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn drop_restores_unsettled_claim_to_live_queue() -> Result<()> {
+    let (_data_dir, queue) = queue("spill-queue-drop-restore")?;
+    queue.append_line(b"claimed-a")?;
+    {
+        let claim = queue
+            .claim(Duration::from_secs(60))?
+            .context("active queue should be claimable")?;
+        assert!(!queue.active_path.exists());
+        assert!(claim.path().exists());
+    }
+    assert_eq!(std::fs::read_to_string(&queue.active_path)?, "claimed-a\n");
+    Ok(())
+}
+
+#[test]
 fn failed_claim_records_merge_without_overwriting_new_appends() -> Result<()> {
     let (_data_dir, queue) = queue("spill-queue-failed-merge")?;
     queue.append_line(b"claimed-a")?;

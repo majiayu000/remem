@@ -80,15 +80,14 @@ pub fn read_bounded_hook_stdin(reader: &mut dyn Read) -> Result<Vec<u8>> {
 }
 
 pub fn read_bounded_hook_input(reader: &mut dyn Read, max_bytes: usize) -> Result<Vec<u8>> {
-    let mut limited = reader.take(max_bytes as u64 + 1);
-    let mut buffer = Vec::new();
-    limited
-        .read_to_end(&mut buffer)
-        .map_err(|_| size_only_error(max_bytes, "stdin read failed"))?;
-    if buffer.len() > max_bytes {
-        return Err(size_only_error(max_bytes, "stdin exceeds configured bound"));
-    }
-    Ok(buffer)
+    crate::hook_stdin::read_bounded_hook_input(reader, max_bytes).map_err(|error| {
+        let problem = if error.to_string().contains("exceeds configured bound") {
+            "stdin exceeds configured bound"
+        } else {
+            "stdin read failed"
+        };
+        size_only_error(max_bytes, problem)
+    })
 }
 
 fn size_only_error(max_bytes: usize, problem: &str) -> anyhow::Error {

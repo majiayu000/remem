@@ -271,6 +271,7 @@ fn resolve_current_state(
     } else {
         "no_current"
     };
+    let current = if conflicts.is_empty() { current } else { None };
     Ok((status.to_string(), current, conflicts))
 }
 
@@ -328,13 +329,15 @@ fn load_active_memory(conn: &Connection, id: i64, now_epoch: i64) -> Result<Opti
         memory::MEMORY_COLS,
         policy_filter = crate::memory::suppression::memory_policy_filter_sql("memories"),
     );
-    conn.query_row(
-        &sql,
-        rusqlite::params![id, now_epoch],
-        memory::map_memory_row_pub,
-    )
-    .optional()
-    .with_context(|| format!("load active current memory id={id}"))
+    let memory = conn
+        .query_row(
+            &sql,
+            rusqlite::params![id, now_epoch],
+            memory::map_memory_row_pub,
+        )
+        .optional()
+        .with_context(|| format!("load active current memory id={id}"))?;
+    Ok(memory.filter(|memory| memory_is_current_context_eligible(conn, memory.id, now_epoch)))
 }
 
 fn load_active_state_key_rivals(
@@ -377,7 +380,11 @@ fn load_active_state_key_rivals(
             ref_parts_from_edge_row(memory, row, 13)
         },
     )?;
-    crate::db::query::collect_rows(rows).context("load active current-state rivals")
+    let rivals = crate::db::query::collect_rows(rows).context("load active current-state rivals")?;
+    Ok(rivals
+        .into_iter()
+        .filter(|parts| memory_is_current_context_eligible(conn, parts.memory.id, now_epoch))
+        .collect())
 }
 
 fn load_memories_as_of(
@@ -625,6 +632,19 @@ fn parse_evidence_event_ids(raw: Option<String>, column: usize) -> rusqlite::Res
             )
         }),
         None => Ok(Vec::new()),
+    }
+}
+
+fn memory_is_current_context_eligible(conn: &Connection, memory_id: i64, as_of_epoch: i64) -> bool {
+    match crate::truth::admit_for_current_context(conn, memory_id, as_of_epoch) {
+        Ok(visibility) => visibility.current_context_eligible,
+        Err(error) => {
+            crate::log::error(
+                "current_state",
+                &format!("memory visibility classification failed for id={memory_id}: {error}"),
+            );
+            false
+        }
     }
 }
 

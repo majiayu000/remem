@@ -702,3 +702,48 @@ fn production_bundle_drops_preferences_removed_by_total_char_limit() {
     assert!(!preference_audit.selected);
     assert_eq!(preference_audit.reason, "total_char_limit");
 }
+
+#[test]
+fn bundle_excludes_legacy_unverified_memory_from_current_truth() {
+    let conn = conn_with_schema();
+    insert_memory(
+        &conn,
+        901,
+        PROJECT,
+        None,
+        "decision",
+        "legacy ordinary",
+        "legacy ordinary payload",
+        EPOCH,
+    );
+    conn.execute(
+        "UPDATE memories
+         SET source_trust_class = 'local_tool_output', source_candidate_id = NULL,
+             evidence_event_ids = NULL, confidence = NULL, valid_from_epoch = NULL,
+             state_key_id = NULL
+         WHERE id = 901",
+        [],
+    )
+    .expect("strip provenance");
+
+    let bundle =
+        compile_session_start_bundle(&conn, &request(), "/tmp/remem-bundle-test", None, true)
+            .expect("compile");
+
+    assert!(bundle
+        .current_truth
+        .iter()
+        .all(|item| item.stable_key != "memory:901"));
+    assert!(bundle
+        .memory_index
+        .iter()
+        .all(|item| item.stable_key != "memory:901"));
+    let audit = bundle
+        .audit
+        .entries
+        .iter()
+        .find(|entry| entry.stable_key == "memory:901")
+        .expect("g2 audit entry");
+    assert!(!audit.selected);
+    assert_eq!(audit.reason, "legacy_unverified_provenance_missing");
+}

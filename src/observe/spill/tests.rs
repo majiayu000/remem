@@ -570,3 +570,22 @@ fn encrypted_capture_spill_hides_payload_and_replays() -> anyhow::Result<()> {
     assert!(replayed_summary.contains("ordinary source content"));
     Ok(())
 }
+
+#[test]
+fn unparseable_spill_line_is_dead_lettered_off_live_queue() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("capture-spill-poison");
+    let path = crate::db::data_dir().join("capture-spill.jsonl");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, "{not-json}\n")?;
+    let conn = db::open_db()?;
+
+    assert_eq!(replay_spilled_capture_events(&conn)?, 0);
+
+    let live = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(!live.contains("{not-json}"));
+    let dead = std::fs::read_to_string(crate::db::data_dir().join("capture-spill.dead.jsonl"))?;
+    assert!(dead.contains("{not-json}"));
+    Ok(())
+}

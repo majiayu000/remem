@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 
 use super::normalize::{compact_line, relevant_to_request, search_query};
 use super::types::{
@@ -236,7 +236,33 @@ pub(super) fn collect_recent_sessions(
     req: &NormalizedRequest,
     state: &mut RecallState,
 ) -> Result<()> {
-    let mut stmt = conn.prepare(
+    let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    let mut idx = 1;
+    let (owner_clause, next) = crate::project_alias::push_project_value_filter(
+        conn,
+        "owner_key",
+        &req.project,
+        idx,
+        &mut params_vec,
+    )?;
+    idx = next;
+    let (target_clause, next) = crate::project_alias::push_project_value_filter(
+        conn,
+        "target_project",
+        &req.project,
+        idx,
+        &mut params_vec,
+    )?;
+    idx = next;
+    let (legacy_clause, next) = crate::project_alias::push_project_value_filter(
+        conn,
+        "project",
+        &req.project,
+        idx,
+        &mut params_vec,
+    )?;
+    idx = next;
+    let sql = format!(
         "SELECT id,
                 CASE
                   WHEN request LIKE 'Captured event range %..%' THEN
@@ -257,13 +283,16 @@ pub(super) fn collect_recent_sessions(
                 OR COALESCE(learned, '') != ''
                 OR COALESCE(next_steps, '') != ''
                 OR COALESCE(preferences, '') != '')
-           AND ((owner_scope = 'repo' AND owner_key = ?1)
-             OR (owner_scope = 'repo' AND target_project = ?1)
-             OR (owner_scope IS NULL AND project = ?1))
+           AND ((owner_scope = 'repo' AND {owner_clause})
+             OR (owner_scope = 'repo' AND {target_clause})
+             OR (owner_scope IS NULL AND {legacy_clause}))
          ORDER BY created_at_epoch DESC, id DESC
-         LIMIT ?2",
-    )?;
-    let rows = stmt.query_map(params![req.project, MAX_SESSION_SCAN], |row| {
+         LIMIT ?{idx}"
+    );
+    params_vec.push(Box::new(MAX_SESSION_SCAN));
+    let mut stmt = conn.prepare(&sql)?;
+    let refs = crate::db::to_sql_refs(&params_vec);
+    let rows = stmt.query_map(refs.as_slice(), |row| {
         Ok(SessionCandidate {
             id: row.get(0)?,
             request: row.get(1)?,
@@ -328,10 +357,18 @@ fn load_claim_candidates(
         if req.owner_scope == DEFAULT_OWNER_SCOPE && req.owner_key == DEFAULT_OWNER_KEY {
             values.push(Box::new(req.owner_scope.clone()));
             values.push(Box::new(req.owner_key.clone()));
-            values.push(Box::new(req.project.clone()));
-            idx += 3;
-            "((owner_scope = ?1 AND owner_key = ?2) OR (owner_scope = 'repo' AND owner_key = ?3))"
-                .to_string()
+            idx += 2;
+            let (repo_clause, next) = crate::project_alias::push_project_value_filter(
+                conn,
+                "owner_key",
+                &req.project,
+                idx,
+                &mut values,
+            )?;
+            idx = next;
+            format!(
+                "((owner_scope = ?1 AND owner_key = ?2) OR (owner_scope = 'repo' AND {repo_clause}))"
+            )
         } else {
             values.push(Box::new(req.owner_scope.clone()));
             values.push(Box::new(req.owner_key.clone()));

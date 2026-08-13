@@ -26,8 +26,7 @@ fn current_state_tool_returns_explicit_conflict_status() {
     let json: Value = serde_json::from_str(&response).expect("current_state response is JSON");
 
     assert_eq!(json["status"], "unresolved_conflict");
-    assert_eq!(json["current"]["id"], 2);
-    assert_eq!(json["current"]["staleness"]["source_anchor"], "untracked");
+    assert!(json["current"].is_null());
     assert_eq!(json["conflicts"][0]["id"], 3);
     assert_eq!(
         json["conflicts"][0]["staleness"]["source_anchor"],
@@ -98,10 +97,11 @@ fn seed_mcp_current_state_conflict(conn: &rusqlite::Connection) {
             "INSERT INTO memories
              (id, session_id, project, topic_key, title, content, memory_type, files,
               created_at_epoch, updated_at_epoch, status, branch, scope, source_project,
-              target_project, owner_scope, owner_key, context_class, state_key_id)
+              target_project, owner_scope, owner_key, context_class, state_key_id,
+              source_trust_class)
              VALUES (?1, NULL, '/repo', 'deploy-target', ?2, ?3, 'decision', NULL,
                      ?4, ?4, 'active', NULL, 'project', '/repo', '/repo', 'repo',
-                     '/repo', 'startup_core', 10)",
+                     '/repo', 'startup_core', 10, 'user_prompt')",
             rusqlite::params![id, title, content, 1_700_000_000_i64 + id],
         )
         .expect("memory inserted");

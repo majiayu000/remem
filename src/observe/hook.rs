@@ -9,7 +9,7 @@ use crate::{db, git_evidence};
 use anyhow::Result;
 
 pub async fn observe(host: Option<&str>) -> Result<()> {
-    let input = std::io::read_to_string(std::io::stdin())?;
+    let input = crate::hook_stdin::read_bounded_stdin_to_string()?;
     observe_input(&input, host).await
 }
 

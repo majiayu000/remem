@@ -88,7 +88,13 @@ pub(super) fn replay_spilled_summary_hook_payloads(
                     Ok(()) => replayed += 1,
                     Err(error) => append_failed_record(claim.failed_path(), &record, &error)?,
                 },
-                Err(error) => append_failed_line(claim.failed_path(), line, &error)?,
+                Err(error) => {
+                    claim.dead_letter_line(line.as_bytes())?;
+                    crate::log::warn(
+                        "summarize",
+                        &format!("summary hook spill poison dead-lettered: {error}"),
+                    );
+                }
             }
         }
         claim.finish()
@@ -139,15 +145,6 @@ fn summary_spill_input(
 fn append_record_to_spill(path: &Path, record: &SummaryHookSpillRecord) -> Result<()> {
     let line = crate::db::spill_crypto::encode_json_line(record)?;
     crate::spill_queue::SpillQueue::new(path.to_path_buf())?.append_line(line.as_bytes())
-}
-
-fn append_failed_line(path: &Path, line: &str, error: &anyhow::Error) -> Result<()> {
-    crate::spill_queue::SpillQueue::new(path.to_path_buf())?.append_line(line.as_bytes())?;
-    crate::log::warn(
-        "summarize",
-        &format!("summary hook spill replay failed: {error}"),
-    );
-    Ok(())
 }
 
 fn append_failed_record(

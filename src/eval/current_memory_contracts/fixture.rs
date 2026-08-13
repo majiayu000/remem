@@ -59,10 +59,10 @@ pub(super) fn insert_current_state_memory_at(
          (id, session_id, project, topic_key, title, content, memory_type, files,
           created_at_epoch, updated_at_epoch, status, branch, scope, source_project,
           target_project, owner_scope, owner_key, context_class, expires_at_epoch,
-          valid_from_epoch, valid_to_epoch, state_key_id)
+          valid_from_epoch, valid_to_epoch, state_key_id, source_trust_class)
          VALUES (?1, NULL, ?2, NULL, ?3, ?4, 'decision', NULL,
                  ?5, ?5, ?6, NULL, 'project', ?2, ?2, 'repo', ?2,
-                 'startup_core', NULL, ?7, ?8, ?9)",
+                 'startup_core', NULL, ?7, ?8, ?9, 'user_prompt')",
         params![
             id,
             PROJECT,
@@ -194,11 +194,11 @@ pub(super) fn seed_prompt_memory(conn: &Connection) -> Result<i64> {
     conn.execute(
         "INSERT INTO memories
          (session_id, project, topic_key, title, content, memory_type, files,
-          created_at_epoch, updated_at_epoch, status, branch, scope)
+          created_at_epoch, updated_at_epoch, status, branch, scope, source_trust_class)
          VALUES ('eval-current-contract-prompt-seed', ?1, 'sqlcipher-storage',
                  'SQLCipher storage decision',
                  'Persist private data with SQLCipher encryption at rest.',
-                 'decision', NULL, ?2, ?2, 'active', NULL, 'project')",
+                 'decision', NULL, ?2, ?2, 'active', NULL, 'project', 'user_prompt')",
         params![PROMPT_PROJECT, now],
     )?;
     Ok(conn.last_insert_rowid())

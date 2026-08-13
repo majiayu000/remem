@@ -1,6 +1,6 @@
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
@@ -19,6 +19,7 @@ pub(crate) struct SpillClaim {
     queue: SpillQueue,
     claimed_path: PathBuf,
     failed_path: PathBuf,
+    settled: AtomicBool,
 }
 
 impl SpillQueue {
@@ -61,6 +62,7 @@ impl SpillQueue {
                 queue: self.clone(),
                 failed_path: claimed_path.with_extension("failed.jsonl"),
                 claimed_path,
+                settled: AtomicBool::new(false),
             })),
             Err(error)
                 if error
@@ -115,6 +117,11 @@ impl SpillQueue {
             .with_context(|| format!("append spill queue {}", self.active_path.display()))
     }
 
+    pub(crate) fn dead_letter_path(&self) -> PathBuf {
+        self.active_path
+            .with_file_name(format!("{}.dead.jsonl", self.stem))
+    }
+
     fn append_file_then_remove(&self, records_path: &Path) -> Result<()> {
         let contents = std::fs::read(records_path)
             .with_context(|| format!("read {}", records_path.display()))?;
@@ -167,6 +174,7 @@ impl SpillQueue {
             queue: self.clone(),
             failed_path: claimed_path.with_extension("failed.jsonl"),
             claimed_path,
+            settled: AtomicBool::new(false),
         }
     }
 
@@ -189,11 +197,21 @@ impl SpillClaim {
         &self.failed_path
     }
 
+    pub(crate) fn dead_letter_path(&self) -> PathBuf {
+        self.queue.dead_letter_path()
+    }
+
+    pub(crate) fn dead_letter_line(&self, line: &[u8]) -> Result<()> {
+        SpillQueue::new(self.dead_letter_path())?.append_line(line)
+    }
+
     pub(crate) fn finish(&self) -> Result<()> {
         if self.failed_path.exists() {
             self.queue.append_file_then_remove(&self.failed_path)?;
         }
-        remove_file_if_exists(&self.claimed_path)
+        remove_file_if_exists(&self.claimed_path)?;
+        self.mark_settled();
+        Ok(())
     }
 
     pub(crate) fn restore(&self) -> Result<()> {
@@ -203,7 +221,26 @@ impl SpillClaim {
         } else if self.failed_path.exists() {
             self.queue.append_file_then_remove(&self.failed_path)?;
         }
+        self.mark_settled();
         Ok(())
+    }
+
+    fn mark_settled(&self) {
+        self.settled.store(true, Ordering::SeqCst);
+    }
+}
+
+impl Drop for SpillClaim {
+    fn drop(&mut self) {
+        if self.settled.load(Ordering::SeqCst) {
+            return;
+        }
+        if let Err(error) = self.restore() {
+            crate::log::warn(
+                "spill",
+                &format!("spill claim drop restore failed: {error}"),
+            );
+        }
     }
 }
 

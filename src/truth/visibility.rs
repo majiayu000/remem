@@ -181,6 +181,19 @@ pub fn classify_memory(
         |row| classify_row(&row, as_of_epoch),
     ))
 }
+
+/// Shared G2 gate for every current-context reader.
+///
+/// SessionStart, UserPromptSubmit, `current_state`, and recall must call this
+/// instead of treating `status='active'` as current.
+pub fn admit_for_current_context(
+    conn: &Connection,
+    memory_id: i64,
+    as_of_epoch: i64,
+) -> Result<MemoryVisibility> {
+    classify_memory(conn, memory_id, as_of_epoch)
+}
+
 fn classify_row(row: &Row, as_of: i64) -> MemoryVisibility {
     if row.status == "quarantined" {
         return MemoryVisibility::excluded(

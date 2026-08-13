@@ -81,10 +81,10 @@ pub(super) fn insert_current_state_memory_with_expiry_at(
          (id, session_id, project, topic_key, title, content, memory_type, files,
           created_at_epoch, updated_at_epoch, status, branch, scope, source_project,
           target_project, owner_scope, owner_key, context_class, expires_at_epoch, valid_from_epoch,
-          valid_to_epoch, state_key_id)
+          valid_to_epoch, state_key_id, source_trust_class)
          VALUES (?1, NULL, ?2, 'deploy-target', ?3, ?4, 'decision', NULL,
                  ?5, ?5, ?6, NULL, 'project', ?2, ?2, 'repo', ?2,
-                 'startup_core', ?7, ?8, ?9, ?10)",
+                 'startup_core', ?7, ?8, ?9, ?10, 'user_prompt')",
         params![
             id,
             project,
@@ -120,6 +120,20 @@ pub(super) fn insert_state_key_for(
 
 pub(super) fn insert_state_key(conn: &Connection) -> Result<()> {
     insert_state_key_for(conn, 10, "/repo", None)
+}
+
+pub(super) fn mark_memory_legacy_unverified(conn: &Connection, memory_id: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE memories
+         SET source_trust_class = 'local_tool_output',
+             source_candidate_id = NULL,
+             evidence_event_ids = NULL,
+             confidence = NULL,
+             valid_from_epoch = NULL
+         WHERE id = ?1",
+        [memory_id],
+    )?;
+    Ok(())
 }
 
 pub(super) fn set_current_memory(conn: &Connection, current_memory_id: i64) -> Result<()> {

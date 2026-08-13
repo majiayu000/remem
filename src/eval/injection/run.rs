@@ -149,7 +149,7 @@ const FIXTURE_MEMORIES: &[FixtureMemory] = &[
 pub fn run_sandbox_eval(options: InjectionEvalOptions) -> Result<InjectionEvalReport> {
     let temp_data_dir = TempDataDir::new()?;
     let data_dir = temp_data_dir.path.clone();
-    let result = crate::db::core::with_data_dir(&data_dir, || {
+    let result = crate::db::with_data_dir(&data_dir, || {
         crate::log::with_log_dir(&data_dir, || run_sandbox_eval_inner(options, &data_dir))
     });
     cleanup_data_dir_after_eval(temp_data_dir, options.keep_data_dir, result)
@@ -678,7 +678,7 @@ impl TempDataDir {
         let path = unique_temp_data_dir();
         std::fs::create_dir_all(&path)
             .with_context(|| format!("create injection eval data dir {}", path.display()))?;
-        crate::db::core::with_data_dir(&path, crate::db::generate_cipher_key)
+        crate::db::with_data_dir(&path, crate::db::generate_cipher_key)
             .context("create injection eval database key")?;
         Ok(Self {
             path,

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 
 use super::{WorkStream, WorkStreamStatus};
 
@@ -8,19 +8,49 @@ const SELECT_FIELDS: &str =
                                     created_at_epoch, updated_at_epoch, completed_at_epoch
                              FROM workstreams";
 
+fn workstream_owner_filter(
+    conn: &Connection,
+    project: &str,
+    mut idx: usize,
+    params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+) -> Result<(String, usize)> {
+    let (owner_clause, next) =
+        crate::project_alias::push_project_value_filter(conn, "owner_key", project, idx, params)?;
+    idx = next;
+    let (target_clause, next) = crate::project_alias::push_project_value_filter(
+        conn,
+        "target_project",
+        project,
+        idx,
+        params,
+    )?;
+    idx = next;
+    let (legacy_clause, next) =
+        crate::project_alias::push_project_value_filter(conn, "project", project, idx, params)?;
+    idx = next;
+    Ok((
+        format!(
+            "((owner_scope = 'repo' AND {owner_clause})
+               OR (owner_scope = 'repo' AND {target_clause})
+               OR (owner_scope = 'workstream' AND {target_clause})
+               OR (owner_scope IS NULL AND {legacy_clause}))"
+        ),
+        idx,
+    ))
+}
+
 pub fn query_active_workstreams(conn: &Connection, project: &str) -> Result<Vec<WorkStream>> {
+    let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    let (owner_filter, _) = workstream_owner_filter(conn, project, 1, &mut params_vec)?;
     let sql = format!(
-        "{} WHERE status = 'active'
+        "{SELECT_FIELDS} WHERE status = 'active'
               AND merged_into_workstream_id IS NULL
-              AND ((owner_scope = 'repo' AND owner_key = ?1)
-                   OR (owner_scope = 'repo' AND target_project = ?1)
-                   OR (owner_scope = 'workstream' AND target_project = ?1)
-                   OR (owner_scope IS NULL AND project = ?1))
-              ORDER BY updated_at_epoch DESC, id ASC",
-        SELECT_FIELDS
+              AND {owner_filter}
+              ORDER BY updated_at_epoch DESC, id ASC"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params![project], map_workstream_row)?;
+    let refs = crate::db::to_sql_refs(&params_vec);
+    let rows = stmt.query_map(refs.as_slice(), map_workstream_row)?;
     crate::db::query::collect_rows(rows)
 }
 
@@ -29,41 +59,27 @@ pub fn query_workstreams(
     project: &str,
     status_filter: Option<&str>,
 ) -> Result<Vec<WorkStream>> {
-    let (sql, filter_val) = if let Some(status) = status_filter {
-        (
-            format!(
-                "{} WHERE status = ?2
-                      AND merged_into_workstream_id IS NULL
-                      AND ((owner_scope = 'repo' AND owner_key = ?1)
-                           OR (owner_scope = 'repo' AND target_project = ?1)
-                           OR (owner_scope = 'workstream' AND target_project = ?1)
-                           OR (owner_scope IS NULL AND project = ?1))
-                      ORDER BY updated_at_epoch DESC, id ASC",
-                SELECT_FIELDS
-            ),
-            Some(status.to_string()),
+    let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    let (owner_filter, idx) = workstream_owner_filter(conn, project, 1, &mut params_vec)?;
+    let sql = if let Some(status) = status_filter {
+        params_vec.push(Box::new(status.to_string()));
+        format!(
+            "{SELECT_FIELDS} WHERE status = ?{idx}
+                  AND merged_into_workstream_id IS NULL
+                  AND {owner_filter}
+                  ORDER BY updated_at_epoch DESC, id ASC"
         )
     } else {
-        (
-            format!(
-                "{} WHERE merged_into_workstream_id IS NULL
-                      AND ((owner_scope = 'repo' AND owner_key = ?1)
-                           OR (owner_scope = 'repo' AND target_project = ?1)
-                           OR (owner_scope = 'workstream' AND target_project = ?1)
-                           OR (owner_scope IS NULL AND project = ?1))
-                      ORDER BY updated_at_epoch DESC, id ASC",
-                SELECT_FIELDS
-            ),
-            None,
+        format!(
+            "{SELECT_FIELDS} WHERE merged_into_workstream_id IS NULL
+                  AND {owner_filter}
+                  ORDER BY updated_at_epoch DESC, id ASC"
         )
     };
 
     let mut stmt = conn.prepare(&sql)?;
-    let rows = if let Some(ref status) = filter_val {
-        stmt.query_map(params![project, status], map_workstream_row)?
-    } else {
-        stmt.query_map(params![project], map_workstream_row)?
-    };
+    let refs = crate::db::to_sql_refs(&params_vec);
+    let rows = stmt.query_map(refs.as_slice(), map_workstream_row)?;
     crate::db::query::collect_rows(rows)
 }
 

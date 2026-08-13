@@ -18,7 +18,7 @@ use super::types::{
 pub fn run_sandbox_eval(options: GovernanceEvalOptions) -> Result<GovernanceEvalReport> {
     let temp_data_dir = TempDataDir::new()?;
     let data_dir = temp_data_dir.path.clone();
-    crate::db::core::with_data_dir(&data_dir, || {
+    crate::db::with_data_dir(&data_dir, || {
         crate::log::with_log_dir(&data_dir, || {
             let result = run_sandbox_eval_inner(options, &data_dir);
             temp_data_dir.cleanup_result(result)

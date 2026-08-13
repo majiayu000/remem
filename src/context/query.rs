@@ -263,7 +263,7 @@ fn load_context_data_with_execution_policy(
     }
 }
 
-fn exclude_non_current_context_memories(
+pub(super) fn exclude_non_current_context_memories(
     conn: &Connection,
     memories: &mut Vec<Memory>,
     drops: &mut Vec<ContextPreselectionDrop>,
@@ -272,7 +272,7 @@ fn exclude_non_current_context_memories(
 ) {
     let mut retained = Vec::with_capacity(memories.len());
     for memory in memories.drain(..) {
-        match crate::truth::classify_memory(conn, memory.id, as_of_epoch) {
+        match crate::truth::admit_for_current_context(conn, memory.id, as_of_epoch) {
             Ok(classification) if classification.current_context_eligible => retained.push(memory),
             Ok(classification) => drops.push(ContextPreselectionDrop {
                 item: super::types::ContextPreselectionItem::Memory(memory),
