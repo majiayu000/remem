@@ -31,13 +31,28 @@ class RunDryTests(unittest.TestCase):
             run_dry.SUITE_ROOT / "examples" / "run-artifact-v2-plan-valid.json"
         )
 
-    def _validate_artifact(self, artifact: object, suite: str) -> list[str]:
+    def _validate_artifact_json(self, artifact_json: str, suite: str) -> list[str]:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "artifact.json"
-            path.write_text(json.dumps(artifact), encoding="utf-8")
+            path.write_text(artifact_json, encoding="utf-8")
             errors: list[str] = []
-            self.assertEqual(run_dry.validate_artifacts(Path(tmp), errors, suite), 1)
+            task_errors: list[str] = []
+            tasks = run_dry.validate_tasks(self.charter, task_errors, suite)
+            self.assertEqual(task_errors, [])
+            self.assertEqual(
+                run_dry.validate_artifacts(
+                    Path(tmp),
+                    errors,
+                    suite,
+                    tasks,
+                    self.charter["task_requirements"]["runs_per_task_condition"],
+                ),
+                1,
+            )
             return errors
+
+    def _validate_artifact(self, artifact: object, suite: str) -> list[str]:
+        return self._validate_artifact_json(json.dumps(artifact), suite)
 
     def _isolated_task_dirs(self, root: Path) -> dict[str, Path]:
         mapping = {
@@ -81,6 +96,60 @@ class RunDryTests(unittest.TestCase):
         )
         errors = self._validate_artifact(artifact, run_dry.SUITE_V2)
         self.assertTrue(any("$.condition" in e and "enum" in e for e in errors))
+
+    def test_v2_artifact_must_match_registered_task_tuple(self) -> None:
+        unknown = {**self.v2_artifact, "task_id": "not-registered"}
+        errors = self._validate_artifact(unknown, run_dry.SUITE_V2)
+        self.assertTrue(any("is not registered in the task matrix" in error for error in errors))
+
+        wrong_tuple = {
+            **self.v2_artifact,
+            "direction": "codex_to_claude",
+            "source_host": "codex",
+            "target_host": "claude_code",
+        }
+        errors = self._validate_artifact(wrong_tuple, run_dry.SUITE_V2)
+        for field in ("direction", "source_host", "target_host"):
+            self.assertTrue(any(f"artifact {field}" in error for error in errors))
+
+        outside_run_range = {**self.v2_artifact, "run_index": 3}
+        errors = self._validate_artifact(outside_run_range, run_dry.SUITE_V2)
+        self.assertTrue(any("registered range 0..2" in error for error in errors))
+
+    def test_artifact_json_rejects_duplicate_keys_and_non_finite_numbers(self) -> None:
+        valid_json = json.dumps(self.v2_artifact)
+        duplicate_suite = valid_json.replace(
+            '"suite": "cross-host-v2"',
+            '"suite": "cross-host-v1", "suite": "cross-host-v2"',
+            1,
+        )
+        errors = self._validate_artifact_json(duplicate_suite, run_dry.SUITE_V2)
+        self.assertTrue(any("duplicate object key 'suite'" in error for error in errors))
+
+        non_finite = copy.deepcopy(self.v2_artifact)
+        non_finite["metrics"]["handoff_fact_recall"] = float("nan")
+        errors = self._validate_artifact_json(json.dumps(non_finite), run_dry.SUITE_V2)
+        self.assertTrue(any("non-finite number 'NaN'" in error for error in errors))
+
+        overflowing_float = valid_json.replace(
+            '"artifacts": {',
+            '"artifacts": {"overflow": 1e400, ',
+            1,
+        )
+        errors = self._validate_artifact_json(overflowing_float, run_dry.SUITE_V2)
+        self.assertTrue(any("non-finite number '1e400'" in error for error in errors))
+
+    def test_v2_isolation_false_constant_requires_a_boolean(self) -> None:
+        artifact = copy.deepcopy(self.v2_artifact)
+        artifact["handoff_isolation"]["source_session_store_readable_by_target"] = 0
+        errors = self._validate_artifact(artifact, run_dry.SUITE_V2)
+        self.assertTrue(
+            any(
+                "source_session_store_readable_by_target" in error
+                and "expected type ['boolean']" in error
+                for error in errors
+            )
+        )
 
     def test_missing_task_id_keeps_schema_diagnostics_and_plan(self) -> None:
         with tempfile.TemporaryDirectory(dir=run_dry.SUITE_ROOT) as tmp:

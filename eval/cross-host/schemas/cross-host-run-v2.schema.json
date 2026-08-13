@@ -92,7 +92,7 @@
       "properties": {
         "source_home_isolated": { "type": "boolean" },
         "target_home_isolated": { "type": "boolean" },
-        "source_session_store_readable_by_target": { "const": false },
+        "source_session_store_readable_by_target": { "type": "boolean", "const": false },
         "leak_scan_passed": { "type": "boolean" }
       }
     },

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -50,8 +51,36 @@ HOST_BY_DIRECTION = {
 }
 
 
+def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate object key {key!r}")
+        value[key] = item
+    return value
+
+
+def reject_non_finite_number(value: str) -> object:
+    raise ValueError(f"non-finite number {value!r}")
+
+
+def parse_finite_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"non-finite number {value!r}")
+    return parsed
+
+
 def load_json(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=reject_non_finite_number,
+            parse_float=parse_finite_float,
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ValueError(f"{path}: invalid JSON: {exc}") from exc
 
 
 def normalize_condition(condition: object, suite_version: str) -> object:
@@ -140,12 +169,28 @@ def validate_tasks(
     return tasks_by_direction
 
 
-def validate_artifacts(artifact_dir: Path, errors: list[str], suite_version: str) -> int:
+def validate_artifacts(
+    artifact_dir: Path,
+    errors: list[str],
+    suite_version: str,
+    tasks_by_direction: dict[str, list[dict]],
+    runs_per_task_condition: int,
+) -> int:
     run_schema = load_json(RUN_SCHEMAS[suite_version])
+    tasks_by_id = {
+        task["id"]: task
+        for tasks in tasks_by_direction.values()
+        for task in tasks
+        if isinstance(task.get("id"), str) and task.get("id")
+    }
     count = 0
     for path in sorted(artifact_dir.rglob("*.json")):
         count += 1
-        artifact = load_json(path)
+        try:
+            artifact = load_json(path)
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
         for err in validate(artifact, run_schema):
             errors.append(f"{path}: {err}")
         if not isinstance(artifact, dict):
@@ -156,6 +201,28 @@ def validate_artifacts(artifact_dir: Path, errors: list[str], suite_version: str
                 f"{path}: artifact suite {artifact_suite!r} does not match "
                 f"requested suite {suite_version!r}"
             )
+        if suite_version == SUITE_V2:
+            task_id = artifact.get("task_id")
+            task = tasks_by_id.get(task_id) if isinstance(task_id, str) else None
+            if task is None:
+                errors.append(f"{path}: task_id {task_id!r} is not registered in the task matrix")
+            else:
+                for field in ("direction", "source_host", "target_host"):
+                    if artifact.get(field) != task.get(field):
+                        errors.append(
+                            f"{path}: artifact {field} {artifact.get(field)!r} does not match "
+                            f"task {task_id!r} value {task.get(field)!r}"
+                        )
+            run_index = artifact.get("run_index")
+            if (
+                isinstance(run_index, int)
+                and not isinstance(run_index, bool)
+                and not 0 <= run_index < runs_per_task_condition
+            ):
+                errors.append(
+                    f"{path}: run_index {run_index} is outside the registered range "
+                    f"0..{runs_per_task_condition - 1}"
+                )
         condition = artifact.get("condition")
         attribution_value = artifact.get("attribution", {})
         attribution = attribution_value if isinstance(attribution_value, dict) else {}
@@ -265,7 +332,13 @@ def main(argv: list[str]) -> int:
 
     artifact_count = 0
     if args.artifacts:
-        artifact_count = validate_artifacts(args.artifacts, errors, args.suite_version)
+        artifact_count = validate_artifacts(
+            args.artifacts,
+            errors,
+            args.suite_version,
+            tasks_by_direction,
+            charter["task_requirements"]["runs_per_task_condition"],
+        )
 
     executable_ready = False
     task_definitions_ready = all(
