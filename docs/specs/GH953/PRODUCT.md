@@ -16,28 +16,32 @@ completed work and is not an unfulfilled acceptance checklist for the closed
 #953 slice. Continuing it requires a separately tracked implementation issue
 and fresh evaluation evidence.
 
-## Problem
+## Historical problem (before S1 and the #947 rollout)
 
-Remem answers the same question — "which memories matter for this query?" — with
-two independently maintained implementations:
+Before S1, Remem answered the same question — "which memories matter for this
+query?" — with two independently maintained implementations:
 
 - `src/context/hybrid_context.rs`, used by SessionStart injection, which is what
   users actually receive.
 - `src/retrieval/search/memory/`, used by `remem search` and the retrieval
   search/weight-grid evaluation harnesses.
 
-They have drifted. The search engine scores seven channels; injection scores
-five. Injection never sees the `graph` channel (weight 0.75) or the `usage`
-channel, and never applies `min_evidence_confidence`. The tuning constants
-`RRF_K`, `MAX_VECTOR_DISTANCE`, and the six channel weights exist twice, as
-private `const` items in `hybrid_context.rs` and as fields of `SearchWeights`.
+Those paths had drifted. The search engine scored additional channels while
+injection did not see `graph` or `usage` and did not apply
+`min_evidence_confidence`. The tuning constants `RRF_K`,
+`MAX_VECTOR_DISTANCE`, and the channel weights also existed twice, as private
+`const` items in `hybrid_context.rs` and as fields of `SearchWeights`.
 
-The consequence is that `eval-weight-grid` tunes `SearchWeights`, injection does
-not read `SearchWeights`, and so **the evaluation harness optimizes a path users
-do not take**. Every reported retrieval gain is unproven for the product's
-primary surface, and any future weight change silently applies to one path only.
+The consequence was that `eval-weight-grid` tuned `SearchWeights` while
+injection did not read it, so **the evaluation harness optimized a path users
+did not take**. S1 removed that weight-source duplication: injection now takes
+an explicit `SearchWeights`, and its production caller uses
+`SearchWeights::production()`. The later #947 rollout also added the usage
+channel to injection with a calibrated default weight of `0.25` and
+`REMEM_USAGE_WEIGHT=0` as the rollback. Shared channel assembly, graph parity,
+and the evidence-confidence gate remain future convergence work.
 
-## Goals
+## Future convergence goals
 
 1. One engine computes candidate sets for both surfaces.
 2. One source of truth for channel weights and fusion constants.
@@ -49,8 +53,10 @@ primary surface, and any future weight change silently applies to one path only.
 - Changing default retrieval quality. This change is behavior-preserving for
   injection except where the issue explicitly calls for the missing channels;
   any ranking delta must be justified by evaluation, not by the refactor.
-- Enabling the `usage` channel by default. That is #947 and stays gated at
-  `usage = 0.0` here.
+- Enabling the `usage` channel was outside S1 and belonged to #947. #947 later
+  shipped it separately at the calibrated `0.25` default with an operator
+  rollback to `0`; this historical staging boundary is not a statement of the
+  current runtime default.
 - Re-tuning weights. Producing new tuned values is downstream work.
 
 Issue #954 is a narrow correctness follow-up rather than a #953 convergence
