@@ -86,13 +86,10 @@ pub fn data_dir() -> PathBuf {
     if let Some(path) = DATA_DIR_OVERRIDE.with(|slot| slot.borrow().clone()) {
         return path;
     }
-    std::env::var("REMEM_DATA_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join(".remem")
-        })
+    super::data_dir::resolve(
+        std::env::var_os("REMEM_DATA_DIR").map(PathBuf::from),
+        dirs::home_dir(),
+    )
 }
 
 pub fn absolute_data_dir() -> Result<PathBuf> {
