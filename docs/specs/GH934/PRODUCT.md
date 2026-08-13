@@ -2,6 +2,19 @@
 
 Refs #934.
 
+## Status
+
+Partial implementation. PR #940 landed the deterministic planner, debug
+surface, explicit SessionStart planning, and an optional routed MCP `search`
+projection onto existing production loaders. GitHub issue #934 is currently
+closed, but the normative completion packet in `specs/GH934/tasks.md` still
+leaves T3-T8 and the T11 closure audit open. The closed remote state therefore
+must not be read as proof that the acceptance contract below is complete.
+
+Remaining work requires either reopening #934 or a separately linked
+implementation issue before it starts. Until the registered ablation/default
+gate lands and passes, static retrieval remains the product default.
+
 ## Problem
 
 remem's channels (FTS, vector, entity, temporal, graph, enrichment)
@@ -11,7 +24,7 @@ wants decisions, superseded history, and git evidence rather than pure
 semantic neighbors; a high-risk code change must not share freshness /
 trust / abstention policy with casual history browsing.
 
-## What v1 ships
+## Landed Phase A slice
 
 A deterministic, auditable Retrieval Router that compiles a
 `ContextRequest` plus an optional explicit intent into a versioned
@@ -56,8 +69,11 @@ No LLM or network call exists on any router path.
   lifecycle intent for the bundle/compiler path and is never inferred from
   task text.
 
-## Future Default-On Work
+## Completion work not yet landed
 
-Full per-channel evidence loaders, generated-enrichment execution,
-per-intent golden fixtures, static-vs-router ablation, and eval gates for
-making the router the default.
+The task-intent DB-backed per-channel executor, full ContextBundle
+execution/audit integration, REST surface, generated-enrichment execution,
+per-intent golden fixtures, static-vs-router ablation, benchmark artifact
+coverage, and the default-on evaluation gate remain pending. Existing
+SessionStart planning and the bounded MCP search projection do not satisfy
+those completion items.
