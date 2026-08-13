@@ -15,15 +15,19 @@ executed and no result may be cited from here.
 - `benchmark-charter.json`: versioned charter — directions, conditions,
   handoff protocol, metrics, stop-loss thresholds, and the public claim gate.
 - `schemas/cross-host-task.schema.json`: task definition contract.
-- `schemas/cross-host-run.schema.json`: per-run artifact contract, including
-  the attribution block (source/target host, session/event/memory/context
-  refs, per-ref origin classification, scope and validity at target time).
+- `schemas/cross-host-run.schema.json`: strict `cross-host-v1` run artifact
+  shape. `schemas/cross-host-run-v2.schema.json` is the separately versioned
+  `cross-host-v2` compatibility shape. Neither schema is an executable runner.
+  Both include the attribution block (source/target host,
+  session/event/memory/context refs, per-ref origin classification, scope and
+  validity at target time), but their suite/version/condition labels do not
+  cross-validate.
 - `tasks/claude-to-codex/`, `tasks/codex-to-claude/`: 12 task skeletons per
   direction, one per required category. All are `status: "skeleton_todo"`
   with explicit `todo` lists; text fields describe design intent, not
   fixture data. Hidden tests and deterministic fixtures are follow-up work.
-- `examples/`: one valid and one invalid run artifact used to exercise the
-  run schema. Schema examples only, not benchmark results.
+- `examples/`: v1 and v2 compatibility schema fixtures, including invalid
+  inputs used to exercise diagnostics. Fixtures only, not benchmark results.
 - `scripts/schema_validate.py`: stdlib-only validator for the JSON Schema
   subset these schemas use.
 - `scripts/scan_artifacts.py`: leak scanner. Fails artifacts that reference
@@ -32,9 +36,10 @@ executed and no result may be cited from here.
   benchmark-private roots. Isolated HOMEs under temp roots are allowed.
 - `scripts/run_dry.py`: offline dry-run. Validates charter, tasks, coverage,
   and optional artifacts; prints the planned run matrix. `--suite-version
-  cross-host-v2` emits the v2 compatibility plan and keeps
-  `executable_ready: false` while tasks are still skeletons. Never launches a
-  host agent.
+  cross-host-v2` emits the v2 compatibility plan. `executable_ready` is always
+  `false`, including if every task is manually marked ready, because the full
+  v2 runtime contract and the shared executable runner from #931 are not
+  implemented here. Never launches a host agent.
 
 ## Directions and conditions
 
@@ -54,8 +59,9 @@ conditions: `source_host_native_imported`, `remem_preloaded`,
 `oracle_handoff`, `full_transcript`, `remem_without_host_native_import`,
 `remem_with_host_native_import`.
 
-Each direction needs at least 12 tasks covering the 12 required categories,
-with at least 3 runs per task/condition.
+V1 requires at least 12 tasks per direction. The v2 compatibility plan
+requires exactly 12 unique task IDs per direction, covering the 12 required
+categories, with 3 planned runs per task/condition.
 
 ## Handoff isolation
 
@@ -72,6 +78,7 @@ resolved-rate gains.
 ```bash
 python3 eval/cross-host/scripts/schema_validate.py --self-test
 python3 eval/cross-host/scripts/scan_artifacts.py --self-test
+python3 eval/cross-host/scripts/test_run_dry.py
 python3 eval/cross-host/scripts/run_dry.py
 python3 eval/cross-host/scripts/run_dry.py \
   --suite-version cross-host-v2 \
@@ -79,6 +86,9 @@ python3 eval/cross-host/scripts/run_dry.py \
 python3 eval/cross-host/scripts/schema_validate.py \
   eval/cross-host/examples/run-artifact-valid.json \
   eval/cross-host/schemas/cross-host-run.schema.json
+python3 eval/cross-host/scripts/schema_validate.py \
+  eval/cross-host/examples/run-artifact-v2-plan-valid.json \
+  eval/cross-host/schemas/cross-host-run-v2.schema.json
 python3 eval/cross-host/scripts/scan_artifacts.py <artifact-dir> \
   --private-root <benchmark-private-home>
 ```
@@ -86,6 +96,7 @@ python3 eval/cross-host/scripts/scan_artifacts.py <artifact-dir> \
 ## Follow-up (not in this directory yet)
 
 - Deterministic fixture repositories and hidden tests per task.
-- Real host execution harness reusing the `eval/coding-bench` isolation
-  policy (temporary HOME, stripped env, host-read sandbox).
+- Shared executable runner from #931, followed by the GH935-specific real-host
+  harness using the `eval/coding-bench` isolation policy (temporary HOME,
+  stripped env, host-read sandbox).
 - Paired bootstrap analysis and claim-gate wiring into `bench report`.
