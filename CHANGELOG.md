@@ -3,7 +3,6 @@
 ## Unreleased
 
 ### Added
-<<<<<<< HEAD
 - Staged source version `0.6.72` for the GH-931 paired-report slice: task-cluster
   statistics are emitted only for a verifier-passing official matrix whose
   tuples carry unique attempt identities and confirmed target-start state.
@@ -13,19 +12,16 @@
   extension points now use the object-form unconstrained schema `{}` instead
   of JSON Schema's boolean `true` shorthand, preserving the same open payload
   contract while remaining compatible with Glama's descriptor validator.
-=======
-- Staged source version `0.6.70` for #1017: a deterministic read-only
-  trust/visibility projection excludes legacy-unverified memories from current
-  context and explains explicit historical recovery with stable reason codes.
-  Copied-production-database validation used an earlier staging of this change
-  (source/runtime `0.6.67`) on an encrypted copy migrated from logical schema
-  81 to 82 at fixed `as_of_epoch=1786372000`; two complete inventories were
-  byte-identical with 80,828 memories (`current=41`, `expired=152`,
-  `inactive=50`, `legacy_unverified=80,585`) and digest
+- Deterministic read-only trust/visibility projection excludes
+  legacy-unverified memories from current context and explains explicit
+  historical recovery with stable reason codes. Copied-production-database
+  validation used an earlier staging of this change (source/runtime `0.6.67`)
+  on an encrypted copy migrated from logical schema 81 to 82 at fixed
+  `as_of_epoch=1786372000`; two complete inventories were byte-identical with
+  80,828 memories (`current=41`, `expired=152`, `inactive=50`,
+  `legacy_unverified=80,585`) and digest
   `e8207ae4287bf08e2cac7138c41499afd163773152ae16f6bcf2d75c6f0bcfd6`.
-  The live installed runtime/database were not mutated. This remains a Draft
-  pending review and is not merged or deployed.
->>>>>>> bb53d084 (feat: quarantine legacy unverified context)
+  The live installed runtime/database were not mutated.
 - Staged source version `0.6.69` for GH-931: coding-bench condition ids now
   converge on the flagship matrix names. The default dry-run plans
   `no_memory`, `curated_file_budgeted`, and `remem_e2e`; live execution fails
