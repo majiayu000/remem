@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Added
-- Staged source version `0.6.71` for the GH-931 paired-report slice: task-cluster
+- Staged source version `0.6.72` for the GH-931 paired-report slice: task-cluster
   statistics are emitted only for a verifier-passing official matrix whose
   tuples carry unique attempt identities and confirmed target-start state.
   Integrity-invalid or pre-target tuples now keep the matrix `insufficient`
