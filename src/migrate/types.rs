@@ -415,6 +415,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "project_identity_aliases",
         sql: include_str!("../migrations/v082_project_identity_aliases.sql"),
     },
+    Migration {
+        version: 83,
+        name: "retrieval_enrichment_budget",
+        sql: include_str!("../migrations/v083_retrieval_enrichment_budget.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

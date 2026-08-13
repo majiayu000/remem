@@ -25,6 +25,96 @@ const EMBEDDING_BACKFILL_IDLE_BATCH_SIZE: i64 = 128;
 const RULE_COMPILATION_SWEEP_INTERVAL_SECS: u64 = 60;
 const LEGACY_PENDING_MIGRATION_BATCH: i64 = 25;
 const LEGACY_PENDING_MIGRATION_INTERVAL: Duration = Duration::from_secs(60);
+const RETRIEVAL_ENRICHMENT_INTERVAL: Duration = Duration::from_secs(60);
+const ONCE_WORKER_MAX_WORK_ITEMS: usize = 4;
+const ONCE_WORKER_MAX_ELAPSED: Duration = Duration::from_secs(180);
+
+struct WorkerRunBudget {
+    once: bool,
+    started_at: Instant,
+    work_items: usize,
+}
+
+impl WorkerRunBudget {
+    fn new(once: bool, started_at: Instant) -> Self {
+        Self {
+            once,
+            started_at,
+            work_items: 0,
+        }
+    }
+
+    fn remaining_work_items(&self, now: Instant) -> usize {
+        if !self.once {
+            return usize::MAX;
+        }
+        if now.duration_since(self.started_at) >= ONCE_WORKER_MAX_ELAPSED {
+            return 0;
+        }
+        ONCE_WORKER_MAX_WORK_ITEMS.saturating_sub(self.work_items)
+    }
+
+    fn record_work_items(&mut self, count: usize) {
+        self.work_items = self.work_items.saturating_add(count);
+    }
+
+    fn exhaustion_reason(&self, now: Instant) -> Option<&'static str> {
+        if !self.once {
+            None
+        } else if self.work_items >= ONCE_WORKER_MAX_WORK_ITEMS {
+            Some("work_item_limit")
+        } else if now.duration_since(self.started_at) >= ONCE_WORKER_MAX_ELAPSED {
+            Some("elapsed_limit")
+        } else {
+            None
+        }
+    }
+}
+
+fn stop_for_exhausted_once_budget(run_budget: &WorkerRunBudget, now: Instant) -> bool {
+    let Some(reason) = run_budget.exhaustion_reason(now) else {
+        return false;
+    };
+    crate::log::info(
+        "worker",
+        &format!(
+            "once budget exhausted reason={reason} work_items={} max_work_items={} max_elapsed_secs={}",
+            run_budget.work_items,
+            ONCE_WORKER_MAX_WORK_ITEMS,
+            ONCE_WORKER_MAX_ELAPSED.as_secs(),
+        ),
+    );
+    true
+}
+
+struct RetrievalEnrichmentSchedule {
+    once: bool,
+    attempted_once: bool,
+    next_daemon_attempt_at: Instant,
+}
+
+impl RetrievalEnrichmentSchedule {
+    fn new(once: bool, now: Instant) -> Self {
+        Self {
+            once,
+            attempted_once: false,
+            next_daemon_attempt_at: now,
+        }
+    }
+
+    fn is_due(&self, now: Instant) -> bool {
+        if self.once {
+            !self.attempted_once
+        } else {
+            now >= self.next_daemon_attempt_at
+        }
+    }
+
+    fn record_attempt(&mut self, now: Instant) {
+        self.attempted_once = true;
+        self.next_daemon_attempt_at = now + RETRIEVAL_ENRICHMENT_INTERVAL;
+    }
+}
 
 struct LegacyPendingMigrationSchedule {
     once: bool,
@@ -331,6 +421,8 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
 
     let mut legacy_pending_migration_schedule =
         LegacyPendingMigrationSchedule::new(once, Instant::now());
+    let mut retrieval_enrichment_schedule = RetrievalEnrichmentSchedule::new(once, Instant::now());
+    let mut run_budget = WorkerRunBudget::new(once, Instant::now());
     let mut cleanup_probe_schedule = cleanup::CleanupProbeSchedule::new(once, Instant::now());
     let mut next_rule_compilation_sweep_at = Instant::now();
     loop {
@@ -460,6 +552,12 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
                 }
             }
         }
+        // Local maintenance above may itself take time. Recheck immediately
+        // before every queue that can enter a provider-backed task so the
+        // 180-second rule is an admission deadline, not merely a loop hint.
+        if stop_for_exhausted_once_budget(&run_budget, Instant::now()) {
+            break;
+        }
         if crate::extraction_worker::run_next(
             &lease_owner,
             JOB_LEASE_SECS,
@@ -467,9 +565,13 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
         )
         .await?
         {
+            run_budget.record_work_items(1);
             continue;
         }
 
+        if stop_for_exhausted_once_budget(&run_budget, Instant::now()) {
+            break;
+        }
         if let Some(job) = db::claim_next_job(&mut conn, &lease_owner, JOB_LEASE_SECS)? {
             crate::log::info(
                 "worker",
@@ -520,11 +622,24 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
                     )?;
                 }
             }
+            if matches!(job.job_type, db::JobType::Compress | db::JobType::Dream) {
+                run_budget.record_work_items(1);
+            }
             continue;
         }
 
-        if crate::memory::retrieval_enrichment::run_idle_retrieval_enrichment(&lease_owner).await? {
-            continue;
+        let enrichment_now = Instant::now();
+        if retrieval_enrichment_schedule.is_due(enrichment_now) {
+            let outcome = crate::memory::retrieval_enrichment::run_idle_retrieval_enrichment(
+                &lease_owner,
+                run_budget.remaining_work_items(enrichment_now),
+            )
+            .await?;
+            retrieval_enrichment_schedule.record_attempt(Instant::now());
+            run_budget.record_work_items(outcome.attempted);
+            if outcome.attempted > 0 {
+                continue;
+            }
         }
 
         if run_idle_embedding_backfill(&conn)? {
@@ -552,5 +667,9 @@ mod cleanup_tests;
 mod exact_tests;
 #[cfg(test)]
 mod legacy_pending_schedule_tests;
+#[cfg(test)]
+mod retrieval_enrichment_schedule_tests;
+#[cfg(test)]
+mod run_budget_tests;
 #[cfg(all(test, unix))]
 mod tests;

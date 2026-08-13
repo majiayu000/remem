@@ -4,14 +4,14 @@
   "evidence_fingerprint": {
     "algorithm": "sha256-length-prefixed-v1",
     "dataset_sha256": "0af0538c28347f52a8a2bee2a57d85ce07442eb03b2f8eec48c47c0f50b232f8",
-    "implementation_sha256": "c01d32c9b897dd3b83c6dc9b4522cff74620b9c6b7b6ee1d014feba23ab04407",
-    "combined_sha256": "dca72cc2f5be1218e782d2891cbba9aa72c2cb8873fc79851adaca4273fabc73",
+    "implementation_sha256": "265766d61bad5694b4804028c01fa7d06dd2e68d73920bb2fda7e5784571e1c6",
+    "combined_sha256": "ffe19cb0b424ffc009389ccc48005d4d395007770307b33df59e80d70af66cac",
     "inputs": [
       {
         "path": "crate::migrate::MIGRATIONS",
         "role": "implementation",
-        "byte_len": 226821,
-        "sha256": "f49f30dccdae818c66c5176ac1f255b308e623e641ea170ae3afb5898a035138"
+        "byte_len": 231082,
+        "sha256": "2e043ad212544fffc97947c966cb1033b0bccf5011d4d7526063157ea588dd20"
       },
       {
         "path": "eval/golden.json",
@@ -100,8 +100,8 @@
       {
         "path": "src/memory/retrieval_enrichment.rs",
         "role": "implementation",
-        "byte_len": 16528,
-        "sha256": "7ccfd77e3746b5cc02b3847b1fe3efce3ba1e64e27bacc46f76937301cdfe8f8"
+        "byte_len": 16640,
+        "sha256": "9648297a4877979ff4ee4dfe4fd6dbc182fd802642d9a96c023a39193f19600a"
       },
       {
         "path": "src/memory/search_context.rs",
@@ -160,8 +160,8 @@
       {
         "path": "src/memory/store/write.rs",
         "role": "implementation",
-        "byte_len": 17107,
-        "sha256": "0b66bb6cc235c457f2c8912a0bd3a7cda2801b61b1b6a0fbfb64f425c31362ae"
+        "byte_len": 17163,
+        "sha256": "9e0b49a5ca2aa9d174b86b0198f5106b3d2e42c8d1b1a7bc3cf008c8ac4793c6"
       },
       {
         "path": "src/memory/suppression.rs",
@@ -172,8 +172,8 @@
       {
         "path": "src/memory/types.rs",
         "role": "implementation",
-        "byte_len": 24454,
-        "sha256": "f6699f7fd2a6b8e48a6a67eb062504c08dd946d67c89511104b1d7aeb5064d06"
+        "byte_len": 24917,
+        "sha256": "8d04db4dead12174c4287c6a3c73bd6ff256a6fb2c79c583dd2400a6aee2f5a7"
       },
       {
         "path": "src/migrate.rs",
@@ -196,8 +196,8 @@
       {
         "path": "src/migrate/schema_drift.rs",
         "role": "implementation",
-        "byte_len": 8226,
-        "sha256": "f011cda1b31490317b69589f8c30f33aa63802a515406a48a04f5f92f4e8297c"
+        "byte_len": 8289,
+        "sha256": "caaa66be43c8bf06889cd5360c8ed03ea3384a643e46cdeea2ae0d8cc5e59c04"
       },
       {
         "path": "src/migrate/schema_drift/exists.rs",
@@ -208,8 +208,8 @@
       {
         "path": "src/migrate/schema_drift/invariants.rs",
         "role": "implementation",
-        "byte_len": 24512,
-        "sha256": "c388e0c1b746f9d0e58947faa6d0bbe7f5db43d5bedf886b3b9ee43f20fd5af9"
+        "byte_len": 24579,
+        "sha256": "78d6593530538cc935c7c0ef6a5a9b1cad02675b7604dd1a05fdb356b51e10a1"
       },
       {
         "path": "src/migrate/schema_drift/invariants/v068.rs",
@@ -292,8 +292,8 @@
       {
         "path": "src/migrate/types.rs",
         "role": "implementation",
-        "byte_len": 13534,
-        "sha256": "6899acbdee2481a89ea985ff8726045b07f678788869e72797c3b5286e734b39"
+        "byte_len": 13704,
+        "sha256": "3ae0025e9ee49b294bcb24b101c1e0e4de8f5ea4cd52395d2d5457040b1a9551"
       },
       {
         "path": "src/project_id.rs",

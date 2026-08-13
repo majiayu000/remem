@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.73` for the retrieval-enrichment P0: schema v083
+  defers incomplete upgrade-time history instead of scheduling an AI backfill,
+  one-shot workers admit only four potential AI work items across queues and
+  stop admitting after 180 seconds, daemon enrichment batches are spaced by 60
+  seconds, rows exhaust after three failures, doctor separates
+  deferred and exhausted state, and GPT-5.6 Codex credit models no longer use
+  the generic GPT-5 static USD estimate.
 - Staged source version `0.6.72` for the GH-931 paired-report slice: task-cluster
   statistics are emitted only for a verifier-passing official matrix whose
   tuples carry unique attempt identities and confirmed target-start state.
