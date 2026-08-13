@@ -176,6 +176,14 @@
   rather than something inferable from task text.
 
 ### Fixed
+- Staged source version `0.6.71` for GH-942: Codex Stop capture now
+  materializes timestamped conversation turns as first-class captured
+  `message` events before the `session_stop` row. Genuine user turns retain
+  `user_prompt` trust; assistant turns remain `external_content` because the
+  flattened transcript cannot prove local provenance, and meta/XML control
+  turns receive no trusted identity. The batch resolves Git branch state once,
+  and transcript-derived prompt events share the existing 128-message/64 KiB
+  aggregate budget.
 - Staged source version `0.6.53` for GH-992: hook-originated compatibility
   `events` rows now carry their canonical `captured_events.id`. Capture,
   extraction-task enqueue, Git evidence, and the compatibility projection

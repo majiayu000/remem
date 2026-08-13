@@ -4,6 +4,8 @@ use serde_json::Value;
 
 use super::raw_archive::{ROLE_ASSISTANT, ROLE_USER};
 
+pub(crate) const CODEX_TRANSCRIPT_MESSAGE_TOOL: &str = "codex-transcript";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ParsedTranscriptMessage {
     pub role: &'static str,

@@ -72,8 +72,14 @@ async fn current_stop_payload_wins_over_same_session_spill_replay() -> anyhow::R
     )?;
     let old_transcript = test_dir.path.join("old-transcript.jsonl");
     let current_transcript = test_dir.path.join("current-transcript.jsonl");
-    std::fs::write(&old_transcript, "old transcript\n")?;
-    std::fs::write(&current_transcript, "current transcript\n")?;
+    std::fs::write(
+        &old_transcript,
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"old transcript"}]}}"#,
+    )?;
+    std::fs::write(
+        &current_transcript,
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"current transcript"}]}}"#,
+    )?;
     let old_input = serde_json::json!({
         "session_id": "sess-summary-current-wins",
         "cwd": "/tmp/remem",

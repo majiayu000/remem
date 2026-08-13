@@ -1,7 +1,7 @@
 # Retrieval Engine Convergence — Tech Spec
 
 Issue: #953 (parent #942)
-Status: Current contract (stage S1 implemented; issue remains open)
+Status: Current contract (#953 closed after stage S1; S2-S5 remain future design)
 
 ## Pre-S1 state
 
@@ -32,7 +32,7 @@ Two channel-assembly implementations exist.
 The injection path was therefore missing `graph`, `usage`, and the evidence
 confidence gate, and could not observe any `SearchWeights` change. S1 replaces
 only the private scoring constants with an explicit `SearchWeights` input; the
-remaining differences stay open below.
+remaining differences are retained as future design below.
 
 ### The duplication is deeper than the constants
 
@@ -61,7 +61,11 @@ injection — three ranking-visible changes that have never run on that path.
 
 This is why the work is staged below rather than landed as one change.
 
-## Target design
+## Future target design
+
+The design in this section was not completed by the narrowed #953 slice.
+Continuing it requires a separately tracked implementation issue and fresh
+byte-equivalence and ranking evidence.
 
 ### `RetrievalProfile`
 
@@ -130,14 +134,14 @@ injection mask:
 | fts, entity, temporal, fact, vector | on | current behavior |
 | like_fallback | on | current behavior (empty-channel fallback is engine-side) |
 | graph | **on** | closing the documented gap is the point of the issue |
-| usage | off | `weights.usage == 0.0` anyway; owned by #947 |
+| usage | on | preserve the shipped production weight (`0.25` by default); `REMEM_USAGE_WEIGHT=0` remains the rollback |
 
 `min_evidence_confidence` gating is applied on the injection path too. Both the
 `graph` enablement and the confidence gate are ranking-visible, so each must be
 justified by the evaluation run below, and each is independently revertible by
 flipping one mask field.
 
-## Staging
+## Future staging
 
 Each stage is a separate PR with its own evaluation evidence. A stage that
 shows an unexplained ranking delta stops the sequence.
@@ -173,10 +177,10 @@ the #954 behavior change, not completion evidence for #953's shared-engine,
 channel-parity, graph, or confidence-gate stages.
 
 S1 proves that explicit `SearchWeights` values reach injection and that the
-production wrapper uses the shipped defaults. It does not consume a generated
-`eval-weight-grid` report, make that evaluator execute injection, or prove
-shared-channel parity. Those issue-level acceptance criteria remain open until
-the later engine and injection-evaluation stages.
+production wrapper uses `SearchWeights::production()`. It does not consume a
+generated `eval-weight-grid` report, make that evaluator execute injection, or
+prove shared-channel parity. Those broader convergence criteria remain
+unimplemented future work.
 
 ## Verification
 
@@ -188,12 +192,13 @@ S1 implements nine focused tests, grouped by guarantee:
    path. This proves only that explicit weights reach injection; it does not
    prove that `eval-weight-grid` executes injection or that its generated
    report is applied at runtime.
-2. `default_weights_are_the_production_path` — proves the zero-argument
-   production wrapper is equivalent to explicit `SearchWeights::default()`.
+2. `default_weights_are_the_production_path` — proves, with the production
+   override unset, that the zero-argument wrapper matches the default values;
+   the current wrapper resolves them through `SearchWeights::production()`.
 3. `hybrid_context_declares_no_private_scoring_constants` — rejects all eight
    former scoring `const` declarations in `hybrid_context.rs`.
 
-The issue-level completion verification remains:
+Future convergence work should retain the following verification:
 
 1. `channel_sources_are_shared` — assert the channel name/weight pairs produced
    under `injection()` and `search()` come from one engine/profile definition.

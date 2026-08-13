@@ -11,6 +11,7 @@ mod native_memory;
 mod poisoning;
 mod range_side_effects;
 mod side_effects;
+mod summary_evidence;
 
 fn setup_conn() -> Connection {
     let conn = Connection::open_in_memory().expect("in-memory db should open");
