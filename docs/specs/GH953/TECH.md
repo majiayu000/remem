@@ -1,7 +1,7 @@
 # Retrieval Engine Convergence — Tech Spec
 
 Issue: #953 (parent #942)
-Status: Current contract (stage S1 implemented; issue remains open)
+Status: Current contract (#953 closed after stage S1; S2-S5 remain future design)
 
 ## Pre-S1 state
 
@@ -32,7 +32,7 @@ Two channel-assembly implementations exist.
 The injection path was therefore missing `graph`, `usage`, and the evidence
 confidence gate, and could not observe any `SearchWeights` change. S1 replaces
 only the private scoring constants with an explicit `SearchWeights` input; the
-remaining differences stay open below.
+remaining differences are retained as future design below.
 
 ### The duplication is deeper than the constants
 
@@ -61,7 +61,11 @@ injection — three ranking-visible changes that have never run on that path.
 
 This is why the work is staged below rather than landed as one change.
 
-## Target design
+## Future target design
+
+The design in this section was not completed by the narrowed #953 slice.
+Continuing it requires a separately tracked implementation issue and fresh
+byte-equivalence and ranking evidence.
 
 ### `RetrievalProfile`
 
@@ -137,7 +141,7 @@ injection mask:
 justified by the evaluation run below, and each is independently revertible by
 flipping one mask field.
 
-## Staging
+## Future staging
 
 Each stage is a separate PR with its own evaluation evidence. A stage that
 shows an unexplained ranking delta stops the sequence.
@@ -193,7 +197,7 @@ S1 implements nine focused tests, grouped by guarantee:
 3. `hybrid_context_declares_no_private_scoring_constants` — rejects all eight
    former scoring `const` declarations in `hybrid_context.rs`.
 
-The issue-level completion verification remains:
+Future convergence work should retain the following verification:
 
 1. `channel_sources_are_shared` — assert the channel name/weight pairs produced
    under `injection()` and `search()` come from one engine/profile definition.

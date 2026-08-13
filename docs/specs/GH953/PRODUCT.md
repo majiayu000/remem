@@ -1,7 +1,20 @@
 # Retrieval Engine Convergence — Product Spec
 
 Issue: #953 (parent #942)
-Status: Current contract (stage S1 implemented; issue remains open)
+Status: Current contract (#953 closed after stage S1; deeper convergence remains future work)
+
+## Closure status (2026-08-07)
+
+#953 closed after the shared `SearchWeights` source and weighted fusion path
+landed, and after the usage channel received its separately calibrated rollout.
+The remaining graph-expansion delta was explicitly kept out of the
+latency-sensitive SessionStart path until retrieval-side evidence justifies
+enabling it there.
+
+The broader convergence design below is retained as future guidance. It is not
+completed work and is not an unfulfilled acceptance checklist for the closed
+#953 slice. Continuing it requires a separately tracked implementation issue
+and fresh evaluation evidence.
 
 ## Problem
 
@@ -60,5 +73,6 @@ remaining #953 stages.
 
 S1 establishes only the shared weight-source prerequisite. It does not make the
 search evaluator execute the injection path, apply a generated weight-grid
-report at runtime, or satisfy the shared-channel and injection-evaluation
-criteria. Those remain required before #953 can close.
+report at runtime, or satisfy the broader shared-channel and injection-evaluation
+criteria. Those remain future convergence work rather than closure blockers for
+the narrowed #953 slice.
