@@ -137,15 +137,36 @@ pub(crate) fn record_captured_event_with_id_and_created_at_and_precomputed_git_b
     created_at_epoch: i64,
     git_branch: Option<&str>,
 ) -> Result<CaptureEventOutcome> {
+    record_captured_event_with_precomputed_git_branch(
+        conn,
+        input,
+        event_id_override,
+        Some(created_at_epoch),
+        &[],
+        git_branch,
+    )
+}
+
+/// Records one event while reusing Git state resolved before a multi-event
+/// capture batch. This keeps branch probing outside the transaction/savepoint.
+pub(crate) fn record_captured_event_with_precomputed_git_branch(
+    conn: &Connection,
+    input: &CaptureEventInput<'_>,
+    event_id_override: Option<&str>,
+    reference_time_epoch: Option<i64>,
+    git_evidence: &[crate::git_util::GitCommitEvidence],
+    git_branch: Option<&str>,
+) -> Result<CaptureEventOutcome> {
     let now = chrono::Utc::now().timestamp();
+    let created_at_epoch = reference_time_epoch.unwrap_or(now);
     record_captured_event_inner(
         conn,
         input,
         event_id_override,
         created_at_epoch,
         now,
-        Some(created_at_epoch),
-        None,
+        reference_time_epoch,
+        Some(git_evidence),
         CaptureGitBranch::Precomputed(git_branch),
     )
 }
