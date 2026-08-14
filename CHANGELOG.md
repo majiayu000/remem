@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.73` for two 2026-08-13 audit criticals: Claude and
+  Codex hook stdin now reuses the Cursor 1 MiB bounded reader and fails closed
+  on oversized or non-UTF-8 payloads instead of reading unbounded input, and
+  the data directory no longer falls back to the process cwd when the home
+  directory is unavailable — resolving it without `REMEM_DATA_DIR` or a home
+  directory is now an explicit fail-closed error instead of silently placing
+  the database and SQLCipher key next to an arbitrary cwd.
 - Staged source version `0.6.72` for the GH-931 paired-report slice: task-cluster
   statistics are emitted only for a verifier-passing official matrix whose
   tuples carry unique attempt identities and confirmed target-start state.
