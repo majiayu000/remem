@@ -13,6 +13,7 @@ import json
 import math
 import re
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 IGNORED_KEYWORDS = {"$schema", "$id", "title", "description"}
@@ -58,9 +59,17 @@ def reject_non_finite_number(value: str) -> object:
 
 
 def parse_finite_float(value: str) -> float:
+    """Parse a JSON float literal, rejecting the two silent binary64 edges.
+
+    Overflow already surfaces as an infinity, but underflow does not: a literal
+    like ``1e-400`` converts to ``0.0``, which would turn a nonzero measurement
+    into a zero that passes every finiteness check downstream.
+    """
     parsed = float(value)
     if not math.isfinite(parsed):
         raise ValueError(f"non-finite number {value!r}")
+    if parsed == 0.0 and Decimal(value) != 0:
+        raise ValueError(f"number {value!r} underflows to zero")
     return parsed
 
 

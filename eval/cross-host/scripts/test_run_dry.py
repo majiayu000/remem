@@ -140,6 +140,32 @@ class RunDryTests(unittest.TestCase):
         errors = self._validate_artifact_json(overflowing_float, run_dry.SUITE_V2)
         self.assertTrue(any("non-finite number '1e400'" in error for error in errors))
 
+    def test_artifact_json_rejects_floats_that_underflow_to_zero(self) -> None:
+        valid_json = json.dumps(self.v2_artifact)
+        underflowing = valid_json.replace(
+            '"handoff_fact_recall":',
+            '"handoff_fact_recall": 1e-400, "unused":',
+            1,
+        )
+        errors = self._validate_artifact_json(underflowing, run_dry.SUITE_V2)
+        self.assertTrue(any("underflows to zero" in error for error in errors))
+
+        genuine_zero = valid_json.replace(
+            '"artifacts": {',
+            '"artifacts": {"zero": -0.000, "exponent_zero": 0e10, ',
+            1,
+        )
+        errors = self._validate_artifact_json(genuine_zero, run_dry.SUITE_V2)
+        self.assertFalse(any("underflows" in error for error in errors))
+
+        subnormal = valid_json.replace(
+            '"artifacts": {',
+            '"artifacts": {"smallest": 5e-324, ',
+            1,
+        )
+        errors = self._validate_artifact_json(subnormal, run_dry.SUITE_V2)
+        self.assertFalse(any("underflows" in error for error in errors))
+
     def test_artifact_json_rejects_unpaired_surrogates(self) -> None:
         lone_surrogate = json.dumps(self.v2_artifact).replace(
             '"artifacts": {',
