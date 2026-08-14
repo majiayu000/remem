@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.74` for the retrieval-enrichment P0: schema v083
+  defers incomplete upgrade-time history instead of scheduling an AI backfill,
+  one-shot workers admit only four potential AI work items across queues and
+  stop admitting after 180 seconds, daemon enrichment batches are spaced by 60
+  seconds, rows exhaust after three failures, doctor separates
+  deferred and exhausted state, and GPT-5.6 Codex credit models no longer use
+  the generic GPT-5 static USD estimate.
 - Staged source version `0.6.73` for two 2026-08-13 audit criticals: Claude and
   Codex hook stdin now reuses the Cursor 1 MiB bounded reader and fails closed
   on oversized or non-UTF-8 payloads instead of reading unbounded input, and

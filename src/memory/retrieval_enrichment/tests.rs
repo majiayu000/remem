@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection};
 
-use super::sweep::{claim_row, commit_success, record_failure, RowOutcome};
+use super::sweep::{claim_row, commit_success, record_failure, select_due_candidates, RowOutcome};
 use super::*;
 
 fn migrated_conn() -> Connection {
@@ -297,6 +297,14 @@ fn success_cas_after_source_update_affects_zero_rows() {
         "stale success must not overwrite fallback"
     );
     assert_eq!(version, 0);
+    let state: String = conn
+        .query_row(
+            "SELECT search_context_enrichment_state FROM memories WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(state, "pending");
 }
 
 #[test]
@@ -355,6 +363,72 @@ fn failure_cas_sets_backoff_and_late_failure_after_takeover_is_noop() {
     assert_eq!(new_claim.attempt, 2);
 }
 
+#[test]
+fn third_failure_exhausts_row_and_removes_it_from_automatic_selection() {
+    let mut conn = migrated_conn();
+    insert_raw_memory(&conn, 1, "cache timeout drift");
+
+    for expected_failure in 1..=MAX_RETRIEVAL_ENRICHMENT_FAILURES {
+        let claimed = claim_row(&mut conn, "owner-a", 1)
+            .unwrap()
+            .expect("pending row should claim before exhaustion");
+        let outcome = record_failure(
+            &mut conn,
+            "owner-a",
+            &claimed,
+            EnrichmentErrorCode::AiCallFailed,
+            None,
+        )
+        .unwrap();
+        if expected_failure < MAX_RETRIEVAL_ENRICHMENT_FAILURES {
+            assert_eq!(outcome, RowOutcome::Failed);
+            conn.execute(
+                "UPDATE memories SET search_context_next_retry_at_epoch = NULL WHERE id = 1",
+                [],
+            )
+            .unwrap();
+        } else {
+            assert_eq!(outcome, RowOutcome::Exhausted);
+        }
+    }
+
+    let (state, failures, retry_at): (String, i64, Option<i64>) = conn
+        .query_row(
+            "SELECT search_context_enrichment_state, search_context_failure_count,
+                    search_context_next_retry_at_epoch
+             FROM memories WHERE id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(state, "exhausted");
+    assert_eq!(failures, MAX_RETRIEVAL_ENRICHMENT_FAILURES);
+    assert!(retry_at.is_none());
+    assert!(claim_row(&mut conn, "owner-b", 1).unwrap().is_none());
+    assert!(select_due_candidates(&conn, 10).unwrap().is_empty());
+}
+
+#[test]
+fn deferred_rows_are_not_candidates_but_canonical_changes_reactivate_them() {
+    let mut conn = migrated_conn();
+    insert_raw_memory(&conn, 1, "cache timeout drift");
+    conn.execute(
+        "UPDATE memories SET search_context_enrichment_state = 'deferred' WHERE id = 1",
+        [],
+    )
+    .unwrap();
+
+    assert!(select_due_candidates(&conn, 10).unwrap().is_empty());
+    assert!(claim_row(&mut conn, "owner-a", 1).unwrap().is_none());
+
+    conn.execute(
+        "UPDATE memories SET content = 'changed canonical content' WHERE id = 1",
+        [],
+    )
+    .unwrap();
+    assert_eq!(select_due_candidates(&conn, 10).unwrap(), vec![1]);
+}
+
 struct CountingGenerator {
     output: String,
     calls: std::cell::Cell<usize>,
@@ -386,7 +460,9 @@ async fn idle_sweep_enriches_pending_rows_and_is_idempotent() -> anyhow::Result<
         output: r#"{"context":"Recovers the cache timeout bugfix for reworded queries.","keywords":["zephyrsynonym","expiry"]}"#.to_string(),
         calls: std::cell::Cell::new(0),
     };
-    assert!(super::sweep::run_idle_sweep(&generator, "owner-test", 16).await?);
+    let first = super::sweep::run_idle_sweep(&generator, "owner-test", 16).await?;
+    assert_eq!(first.attempted, 1);
+    assert_eq!(first.ready, 1);
     assert_eq!(generator.calls.get(), 1);
 
     let conn = crate::db::open_db()?;
@@ -425,7 +501,8 @@ async fn idle_sweep_enriches_pending_rows_and_is_idempotent() -> anyhow::Result<
 
     // Ready rows are not re-selected: the second sweep reports no work and
     // performs zero AI calls.
-    assert!(!super::sweep::run_idle_sweep(&generator, "owner-test", 16).await?);
+    let second = super::sweep::run_idle_sweep(&generator, "owner-test", 16).await?;
+    assert_eq!(second.attempted, 0);
     assert_eq!(generator.calls.get(), 1);
     Ok(())
 }
@@ -437,7 +514,9 @@ async fn idle_sweep_failure_keeps_original_retrieval_and_reports_no_work() -> an
     insert_raw_memory(&conn, 1, "cache timeout drift");
     drop(conn);
 
-    assert!(!super::sweep::run_idle_sweep(&FailingGenerator, "owner-test", 16).await?);
+    let outcome = super::sweep::run_idle_sweep(&FailingGenerator, "owner-test", 16).await?;
+    assert_eq!(outcome.attempted, 1);
+    assert_eq!(outcome.failed, 1);
 
     let conn = crate::db::open_db()?;
     let (failures, error_code): (i64, Option<String>) = conn.query_row(
@@ -461,6 +540,35 @@ async fn idle_sweep_failure_keeps_original_retrieval_and_reports_no_work() -> an
         None,
     )?;
     assert_eq!(hits.len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn idle_sweep_never_exceeds_the_production_batch_budget() -> anyhow::Result<()> {
+    let _data_dir = crate::db::test_support::ScopedTestDataDir::new("enrichment-batch-budget");
+    let conn = crate::db::open_db()?;
+    for id in 1..=IDLE_ENRICHMENT_BATCH_SIZE + 3 {
+        insert_raw_memory(&conn, id, &format!("cache timeout drift {id}"));
+    }
+    drop(conn);
+
+    let generator = CountingGenerator {
+        output: r#"{"context":"Recovers a bounded cache timeout memory.","keywords":["budget","expiry"]}"#.to_string(),
+        calls: std::cell::Cell::new(0),
+    };
+    let outcome =
+        super::sweep::run_idle_sweep(&generator, "owner-test", IDLE_ENRICHMENT_BATCH_SIZE).await?;
+
+    assert_eq!(outcome.attempted as i64, IDLE_ENRICHMENT_BATCH_SIZE);
+    assert_eq!(outcome.ready as i64, IDLE_ENRICHMENT_BATCH_SIZE);
+    assert_eq!(generator.calls.get() as i64, IDLE_ENRICHMENT_BATCH_SIZE);
+
+    let conn = crate::db::open_db()?;
+    assert_eq!(
+        select_due_candidates(&conn, 100)?.len() as i64,
+        3,
+        "remaining rows must wait for a later worker admission"
+    );
     Ok(())
 }
 

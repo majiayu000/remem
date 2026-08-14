@@ -398,6 +398,7 @@ fn update_existing_memory(
          owner_key = COALESCE(owner_key, ?18), \
          context_class = COALESCE(context_class, ?19), \
          search_context_fallback_source_hash = ?21, \
+         search_context_enrichment_state = 'pending', \
          search_context_enrichment_version = 0, \
          search_context_security_policy_version = 0, \
          search_context_source_hash = NULL, \

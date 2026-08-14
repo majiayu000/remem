@@ -13,7 +13,8 @@ use super::{
     load_snapshot, parse_enrichment_output, sanitize_enrichment, EnrichmentErrorCode,
     EnrichmentSnapshot, DUE_PREDICATE_SQL, ELIGIBLE_STATUS_SQL, ENRICHMENT_HARD_TIMEOUT_SECS,
     ENRICHMENT_LEASE_SECS, ENRICHMENT_SYSTEM_PROMPT, IDLE_ENRICHMENT_BATCH_SIZE,
-    RETRIEVAL_ENRICHMENT_SECURITY_POLICY_VERSION, RETRIEVAL_ENRICHMENT_VERSION,
+    MAX_RETRIEVAL_ENRICHMENT_FAILURES, RETRIEVAL_ENRICHMENT_SECURITY_POLICY_VERSION,
+    RETRIEVAL_ENRICHMENT_VERSION,
 };
 
 /// One generation executor. Production uses the existing memory AI profile via
@@ -49,53 +50,90 @@ impl EnrichmentGenerator for AiEnrichmentGenerator {
 pub(crate) enum RowOutcome {
     Ready,
     Failed,
+    Exhausted,
     Stale,
     NotClaimed,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct EnrichmentSweepOutcome {
+    pub(crate) attempted: usize,
+    pub(crate) ready: usize,
+    pub(crate) failed: usize,
+    pub(crate) exhausted: usize,
+    pub(crate) stale: usize,
+    pub(crate) not_claimed: usize,
+}
+
 /// Idle sweep entry used by the worker after extraction tasks and the durable
-/// job queue, before the embedding backfill. Returns true only when at least
-/// one row became ready, so failure-only sweeps report no-work and `once`
-/// mode cannot tight-loop.
-pub(crate) async fn run_idle_retrieval_enrichment(owner: &str) -> Result<bool> {
-    run_idle_sweep(&AiEnrichmentGenerator, owner, IDLE_ENRICHMENT_BATCH_SIZE).await
+/// job queue, before the embedding backfill. The structured outcome lets the
+/// worker consume one admission even when every attempted row fails.
+pub(crate) async fn run_idle_retrieval_enrichment(
+    owner: &str,
+    remaining_work_items: usize,
+) -> Result<EnrichmentSweepOutcome> {
+    let batch_size = IDLE_ENRICHMENT_BATCH_SIZE.min(
+        i64::try_from(remaining_work_items)
+            .unwrap_or(i64::MAX)
+            .max(0),
+    );
+    if batch_size == 0 {
+        return Ok(EnrichmentSweepOutcome::default());
+    }
+    run_idle_sweep(&AiEnrichmentGenerator, owner, batch_size).await
 }
 
 pub(crate) async fn run_idle_sweep<G: EnrichmentGenerator>(
     generator: &G,
     owner: &str,
     batch_size: i64,
-) -> Result<bool> {
+) -> Result<EnrichmentSweepOutcome> {
     let mut conn = crate::db::open_db()?;
     if let Err(error) = ensure_retrieval_open(&conn) {
         crate::log::error(
             "enrichment",
             &format!("idle enrichment sweep blocked: {error}"),
         );
-        return Ok(false);
+        return Ok(EnrichmentSweepOutcome::default());
     }
     let candidates = select_due_candidates(&conn, batch_size)?;
     if candidates.is_empty() {
-        return Ok(false);
+        return Ok(EnrichmentSweepOutcome::default());
     }
-    let mut ready = 0usize;
+    let mut outcome = EnrichmentSweepOutcome::default();
     for memory_id in candidates {
         match process_one(&mut conn, generator, owner, memory_id).await? {
-            RowOutcome::Ready => ready += 1,
-            RowOutcome::Failed | RowOutcome::Stale | RowOutcome::NotClaimed => {}
+            RowOutcome::Ready => {
+                outcome.attempted += 1;
+                outcome.ready += 1;
+            }
+            RowOutcome::Failed => {
+                outcome.attempted += 1;
+                outcome.failed += 1;
+            }
+            RowOutcome::Exhausted => {
+                outcome.attempted += 1;
+                outcome.exhausted += 1;
+            }
+            RowOutcome::Stale => {
+                outcome.attempted += 1;
+                outcome.stale += 1;
+            }
+            RowOutcome::NotClaimed => outcome.not_claimed += 1,
         }
     }
-    if ready > 0 {
+    if outcome.attempted > 0 {
         crate::log::info(
             "enrichment",
             &format!(
-                "idle sweep enriched {ready} memory row(s) \
+                "idle sweep attempted={} ready={} failed={} exhausted={} stale={} \
                  (generator=v{RETRIEVAL_ENRICHMENT_VERSION} \
-                 policy=v{RETRIEVAL_ENRICHMENT_SECURITY_POLICY_VERSION})"
+                 policy=v{RETRIEVAL_ENRICHMENT_SECURITY_POLICY_VERSION})",
+                outcome.attempted, outcome.ready, outcome.failed, outcome.exhausted, outcome.stale,
             ),
         );
     }
-    Ok(ready > 0)
+    Ok(outcome)
 }
 
 pub(crate) fn select_due_candidates(conn: &Connection, batch_size: i64) -> Result<Vec<i64>> {
@@ -329,6 +367,7 @@ pub(crate) fn commit_success(
         &format!(
             "UPDATE memories SET
                 search_context = ?7,
+                search_context_enrichment_state = 'ready',
                 search_context_enrichment_version = ?5,
                 search_context_security_policy_version = ?6,
                 search_context_source_hash = ?4,
@@ -387,8 +426,9 @@ pub(crate) fn commit_success(
 
 /// Failure commit through the exact same identity CAS. Only the owner of the
 /// still-live claim may increase the failure count and set exponential
-/// backoff (capped at 15 minutes); a late failure after takeover or ready
-/// affects zero rows.
+/// backoff (capped at 15 minutes). The third failure is exhausted instead of
+/// becoming automatically retryable forever; a late failure after takeover or
+/// ready affects zero rows.
 pub(crate) fn record_failure(
     conn: &mut Connection,
     owner: &str,
@@ -424,8 +464,13 @@ pub(crate) fn record_failure(
         &format!(
             "UPDATE memories SET
                 search_context_failure_count = search_context_failure_count + 1,
-                search_context_next_retry_at_epoch =
-                    ?7 + MIN(900, 30 * (1 << MIN(search_context_failure_count, 5))),
+                search_context_enrichment_state = CASE
+                    WHEN search_context_failure_count + 1 >= ?9
+                    THEN 'exhausted' ELSE 'pending' END,
+                search_context_next_retry_at_epoch = CASE
+                    WHEN search_context_failure_count + 1 >= ?9 THEN NULL
+                    ELSE ?7 + MIN(900, 30 * (1 << MIN(search_context_failure_count, 5)))
+                END,
                 search_context_last_error_code = ?8,
                 search_context_lease_owner = NULL,
                 search_context_lease_expires_at_epoch = NULL,
@@ -443,15 +488,29 @@ pub(crate) fn record_failure(
             RETRIEVAL_ENRICHMENT_SECURITY_POLICY_VERSION,
             chrono::Utc::now().timestamp(),
             code.as_str(),
+            MAX_RETRIEVAL_ENRICHMENT_FAILURES,
         ],
     )?;
+    let exhausted = if updated == 0 {
+        false
+    } else {
+        tx.query_row(
+            "SELECT search_context_enrichment_state FROM memories WHERE id = ?1",
+            [claimed.snapshot.id],
+            |row| row.get::<_, String>(0),
+        )? == "exhausted"
+    };
     tx.commit()
         .context("retrieval enrichment failure-state transaction failed")?;
     if updated == 0 {
         log_stale(claimed, "failure");
         return Ok(RowOutcome::Stale);
     }
-    Ok(RowOutcome::Failed)
+    if exhausted {
+        Ok(RowOutcome::Exhausted)
+    } else {
+        Ok(RowOutcome::Failed)
+    }
 }
 
 fn log_stale(claimed: &ClaimedRow, stage: &str) {

@@ -480,6 +480,12 @@ pub mod tests_helper {
                 created_at_epoch INTEGER NOT NULL,
                 UNIQUE(host, project, session_id, source, message_hash, memory_id)
             );
+            CREATE TABLE ai_usage_events (
+                id INTEGER PRIMARY KEY,
+                model TEXT,
+                estimated_cost_usd REAL NOT NULL DEFAULT 0.0,
+                pricing_source TEXT NOT NULL DEFAULT 'remem_static'
+            );
             CREATE TABLE memory_operation_log (
                 id INTEGER PRIMARY KEY,
                 operation TEXT NOT NULL,
@@ -621,11 +627,16 @@ pub mod tests_helper {
         .unwrap();
         conn.execute_batch(include_str!("../migrations/v020_memory_fts_all_status.sql"))
             .unwrap();
-        // v072 owns the enrichment columns, the compatibility singleton, and
-        // the canonical memories_au trigger; running the real migration keeps
+        // v072 owns the enrichment identity columns and compatibility
+        // singleton. v083 adds the bounded-work state machine and replaces the
+        // canonical memories_au trigger. Running both real migrations keeps
         // this fixture byte-identical to the migrated schema for those objects.
         conn.execute_batch(include_str!(
             "../migrations/v072_memory_retrieval_enrichment.sql"
+        ))
+        .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/v083_retrieval_enrichment_budget.sql"
         ))
         .unwrap();
     }
