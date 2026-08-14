@@ -10,6 +10,7 @@ silently ignored so the schemas cannot drift ahead of the validator.
 from __future__ import annotations
 
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -40,6 +41,51 @@ TYPE_CHECKS = {
     "boolean": lambda v: isinstance(v, bool),
     "null": lambda v: v is None,
 }
+JSON_SAFE_INTEGER_MAX = (1 << 53) - 1
+
+
+def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate object key {key!r}")
+        value[key] = item
+    return value
+
+
+def reject_non_finite_number(value: str) -> object:
+    raise ValueError(f"non-finite number {value!r}")
+
+
+def parse_finite_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"non-finite number {value!r}")
+    return parsed
+
+
+def parse_safe_integer(value: str) -> int:
+    parsed = int(value)
+    if not -JSON_SAFE_INTEGER_MAX <= parsed <= JSON_SAFE_INTEGER_MAX:
+        raise ValueError(f"integer {value!r} is outside the safe JSON range")
+    return parsed
+
+
+def parse_json(value: str) -> object:
+    return json.loads(
+        value,
+        object_pairs_hook=reject_duplicate_keys,
+        parse_constant=reject_non_finite_number,
+        parse_float=parse_finite_float,
+        parse_int=parse_safe_integer,
+    )
+
+
+def load_json(path: Path) -> object:
+    try:
+        return parse_json(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeError, ValueError) as exc:
+        raise ValueError(f"{path}: invalid JSON: {exc}") from exc
 
 
 def _check_type(value: object, expected: object, path: str, errors: list[str]) -> None:
@@ -103,8 +149,10 @@ def validate(value: object, schema: dict, path: str = "$") -> list[str]:
 
 
 def validate_file(data_path: Path, schema_path: Path) -> list[str]:
-    schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    data = json.loads(data_path.read_text(encoding="utf-8"))
+    schema = load_json(schema_path)
+    data = load_json(data_path)
+    if not isinstance(schema, dict):
+        raise ValueError(f"{schema_path}: schema must be a JSON object")
     return validate(data, schema)
 
 

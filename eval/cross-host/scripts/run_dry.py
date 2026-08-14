@@ -16,12 +16,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from schema_validate import validate  # noqa: E402
+from schema_validate import load_json, validate  # noqa: E402
 
 SUITE_ROOT = Path(__file__).resolve().parent.parent
 TASK_SCHEMA = SUITE_ROOT / "schemas" / "cross-host-task.schema.json"
@@ -49,38 +48,6 @@ HOST_BY_DIRECTION = {
     "claude_to_codex": ("claude_code", "codex"),
     "codex_to_claude": ("codex", "claude_code"),
 }
-
-
-def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
-    value = {}
-    for key, item in pairs:
-        if key in value:
-            raise ValueError(f"duplicate object key {key!r}")
-        value[key] = item
-    return value
-
-
-def reject_non_finite_number(value: str) -> object:
-    raise ValueError(f"non-finite number {value!r}")
-
-
-def parse_finite_float(value: str) -> float:
-    parsed = float(value)
-    if not math.isfinite(parsed):
-        raise ValueError(f"non-finite number {value!r}")
-    return parsed
-
-
-def load_json(path: Path) -> dict:
-    try:
-        return json.loads(
-            path.read_text(encoding="utf-8"),
-            object_pairs_hook=reject_duplicate_keys,
-            parse_constant=reject_non_finite_number,
-            parse_float=parse_finite_float,
-        )
-    except (json.JSONDecodeError, ValueError) as exc:
-        raise ValueError(f"{path}: invalid JSON: {exc}") from exc
 
 
 def normalize_condition(condition: object, suite_version: str) -> object:
@@ -183,6 +150,7 @@ def validate_artifacts(
         for task in tasks
         if isinstance(task.get("id"), str) and task.get("id")
     }
+    seen_v2_tuples: dict[tuple[object, object, object, object], Path] = {}
     count = 0
     for path in sorted(artifact_dir.rglob("*.json")):
         count += 1
@@ -202,6 +170,26 @@ def validate_artifacts(
                 f"requested suite {suite_version!r}"
             )
         if suite_version == SUITE_V2:
+            direction = artifact.get("direction")
+            task_id = artifact.get("task_id")
+            condition = artifact.get("condition")
+            run_index = artifact.get("run_index")
+            if (
+                isinstance(direction, str)
+                and isinstance(task_id, str)
+                and isinstance(condition, str)
+                and isinstance(run_index, int)
+                and not isinstance(run_index, bool)
+            ):
+                identity = (direction, task_id, condition, run_index)
+                previous_path = seen_v2_tuples.get(identity)
+                if previous_path is not None:
+                    errors.append(
+                        f"{path}: duplicate artifact tuple {identity!r}; "
+                        f"first seen in {previous_path}"
+                    )
+                else:
+                    seen_v2_tuples[identity] = path
             task_id = artifact.get("task_id")
             task = tasks_by_id.get(task_id) if isinstance(task_id, str) else None
             if task is None:

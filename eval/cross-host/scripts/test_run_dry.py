@@ -18,6 +18,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import run_dry  # noqa: E402
+import schema_validate  # noqa: E402
 from schema_validate import validate  # noqa: E402
 
 
@@ -138,6 +139,59 @@ class RunDryTests(unittest.TestCase):
         )
         errors = self._validate_artifact_json(overflowing_float, run_dry.SUITE_V2)
         self.assertTrue(any("non-finite number '1e400'" in error for error in errors))
+
+    def test_standalone_validator_uses_the_same_strict_json_loader(self) -> None:
+        valid_json = json.dumps(self.v2_artifact)
+        duplicate_suite = valid_json.replace(
+            '"suite": "cross-host-v2"',
+            '"suite": "cross-host-v1", "suite": "cross-host-v2"',
+            1,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_path = Path(tmp) / "artifact.json"
+            artifact_path.write_text(duplicate_suite, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "duplicate object key 'suite'"):
+                schema_validate.validate_file(
+                    artifact_path,
+                    run_dry.RUN_SCHEMAS[run_dry.SUITE_V2],
+                )
+
+    def test_artifact_json_rejects_unsafe_integer_values(self) -> None:
+        safe_boundary = copy.deepcopy(self.v2_artifact)
+        safe_boundary["metrics"]["tokens_total"] = (1 << 53) - 1
+        self.assertEqual(self._validate_artifact(safe_boundary, run_dry.SUITE_V2), [])
+
+        unsafe_integer = json.dumps(self.v2_artifact).replace(
+            '"tokens_total": 0',
+            '"tokens_total": 9007199254740992',
+            1,
+        )
+        errors = self._validate_artifact_json(unsafe_integer, run_dry.SUITE_V2)
+        self.assertTrue(any("outside the safe JSON range" in error for error in errors))
+
+    def test_v2_rejects_duplicate_artifact_tuple_identities(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp)
+            for name in ("first.json", "copied.json"):
+                (artifact_dir / name).write_text(
+                    json.dumps(self.v2_artifact),
+                    encoding="utf-8",
+                )
+            task_errors: list[str] = []
+            tasks = run_dry.validate_tasks(self.charter, task_errors, run_dry.SUITE_V2)
+            self.assertEqual(task_errors, [])
+            errors: list[str] = []
+            self.assertEqual(
+                run_dry.validate_artifacts(
+                    artifact_dir,
+                    errors,
+                    run_dry.SUITE_V2,
+                    tasks,
+                    self.charter["task_requirements"]["runs_per_task_condition"],
+                ),
+                2,
+            )
+        self.assertEqual(sum("duplicate artifact tuple" in error for error in errors), 1)
 
     def test_v2_isolation_false_constant_requires_a_boolean(self) -> None:
         artifact = copy.deepcopy(self.v2_artifact)
