@@ -2,6 +2,7 @@ pub mod capture;
 pub mod capture_drop;
 pub mod core;
 pub mod crypto;
+mod data_dir;
 mod extraction;
 pub(crate) mod extraction_replay;
 mod extraction_task_kind;
