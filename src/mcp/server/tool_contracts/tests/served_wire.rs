@@ -313,10 +313,14 @@ fn seed_wire_fixture() -> anyhow::Result<WireFixture> {
          WHERE id = ?2",
         rusqlite::params![memory_id, state_key_id],
     )?;
+    // source_trust_class must be set: this route asserts a real non-empty
+    // current_state, and the G2 gate only admits a row with explicit writer
+    // proof. A directly user-authored row is the spec's compatibility arm, so
+    // the fixture does not need synthetic candidate or evidence rows.
     conn.execute(
         "UPDATE memories
          SET state_key_id = ?1, owner_scope = 'repo', owner_key = '/repo',
-             context_class = 'startup_core'
+             context_class = 'startup_core', source_trust_class = 'user_prompt'
          WHERE id = ?2",
         rusqlite::params![state_key_id, memory_id],
     )?;
