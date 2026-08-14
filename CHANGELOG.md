@@ -3,6 +3,29 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.75` for GH-1029: the G2 current-context gate now
+  applies to live readers instead of running shadow-only. SessionStart,
+  `current_state`, UserPromptSubmit, alias-aware recall, and context-bundle
+  candidate trust all admit memories through `admit_for_current_context`, so a
+  row lacking provenance, confidence, validity start, or mutable-state identity
+  is no longer presented as current truth. Rows stay `status='active'` and
+  search/detail still recover them with a specific reason code. `current_state`
+  returns `current = None` while conflicts remain, and equal-trust CurrentTruth
+  contradictions abstain with both claim references instead of newest-wins.
+
+  This changes which memories reach live context, and on databases with a large
+  pre-provenance history it can exclude most of the active set. Set
+  `REMEM_CURRENT_CONTEXT_GATE=shadow` to keep classifying and reporting while
+  still admitting rows excluded only for `legacy_unverified` reasons, which
+  makes the injection delta measurable before and after enforcement and gives
+  operators a way back without a downgrade. Shadow mode never relaxes the
+  quarantined, expired, superseded, not-yet-valid, or inactive exclusions,
+  because those are pre-existing security and correctness boundaries rather than
+  part of this rollout. Any unset or unrecognized value enforces.
+
+  Context loads classify candidates in one batched statement per 900 ids instead
+  of one statement per memory, with a per-id fail-closed fallback if the batch
+  query fails.
 - Staged source version `0.6.72` for the GH-931 paired-report slice: task-cluster
   statistics are emitted only for a verifier-passing official matrix whose
   tuples carry unique attempt identities and confirmed target-start state.
