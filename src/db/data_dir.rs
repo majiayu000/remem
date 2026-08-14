@@ -24,6 +24,12 @@ pub fn try_data_dir() -> Result<PathBuf> {
     )
 }
 
+/// Resolves the remem data directory from an explicit override,
+/// `REMEM_DATA_DIR`, or the home directory. The database and SQLCipher key live
+/// under this directory, so a cwd fallback would silently place key material in
+/// an unexpected location and split the store from `~/.remem`. A missing home
+/// directory without an explicit override is an unrecoverable misconfiguration:
+/// fail closed.
 pub(crate) fn resolve_data_dir(
     override_path: Option<PathBuf>,
     remem_data_dir: Option<String>,
@@ -87,6 +93,22 @@ mod tests {
         );
         assert_eq!(
             resolve_data_dir(None, None, Some(PathBuf::from("/home/user"))).unwrap(),
+            PathBuf::from("/home/user/.remem")
+        );
+    }
+
+    #[test]
+    fn resolve_data_dir_uses_env_even_without_home() {
+        assert_eq!(
+            resolve_data_dir(None, Some("/tmp/env".into()), None).unwrap(),
+            PathBuf::from("/tmp/env")
+        );
+    }
+
+    #[test]
+    fn resolve_data_dir_ignores_empty_env_and_falls_back_to_home() {
+        assert_eq!(
+            resolve_data_dir(None, Some(String::new()), Some(PathBuf::from("/home/user"))).unwrap(),
             PathBuf::from("/home/user/.remem")
         );
     }
