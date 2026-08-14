@@ -20,8 +20,7 @@ pub(super) fn run_in_eval_sandbox<T>(run: impl FnOnce() -> Result<T>) -> Result<
     // Keep it zero-download so GH-716 owns the local-vs-feature-hash comparison.
     let _embedding_restore = EnvRestore::set("REMEM_EMBEDDINGS_PROVIDER", "feature-hash");
 
-    let result =
-        crate::db::with_data_dir(&data_dir, || crate::log::with_log_dir(&data_dir, run));
+    let result = crate::db::with_data_dir(&data_dir, || crate::log::with_log_dir(&data_dir, run));
     cleanup_data_dir_after_eval(&data_dir, result)
 }
 

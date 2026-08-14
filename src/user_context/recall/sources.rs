@@ -367,7 +367,8 @@ fn load_claim_candidates(
             )?;
             idx = next;
             format!(
-                "((owner_scope = ?1 AND owner_key = ?2) OR (owner_scope = 'repo' AND {repo_clause}))"
+                "((owner_scope = ?1 AND owner_key = ?2) \
+             OR (owner_scope = 'repo' AND {repo_clause}))"
             )
         } else {
             values.push(Box::new(req.owner_scope.clone()));

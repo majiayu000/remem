@@ -72,7 +72,7 @@ fn dead_letter_lines_do_not_rejoin_live_queue() -> Result<()> {
         "new-b\nretryable-a\n"
     );
     assert_eq!(
-        std::fs::read_to_string(&queue.dead_letter_path())?,
+        std::fs::read_to_string(queue.dead_letter_path())?,
         "poison\n"
     );
     Ok(())

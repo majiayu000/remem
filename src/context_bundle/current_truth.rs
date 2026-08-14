@@ -343,8 +343,8 @@ fn abstained_claim_key_set(projection: &CurrentTruthProjection) -> HashSet<Strin
         .collect()
 }
 
-fn abstention_reason_for_claim<'a>(
-    projection: &'a CurrentTruthProjection,
+fn abstention_reason_for_claim(
+    projection: &CurrentTruthProjection,
     claim_ref: &str,
 ) -> Option<&'static str> {
     projection.truths.iter().find_map(|truth| {

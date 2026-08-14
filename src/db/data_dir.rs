@@ -77,8 +77,12 @@ mod tests {
             override_path
         );
         assert_eq!(
-            resolve_data_dir(None, Some("/tmp/env".into()), Some(PathBuf::from("/home/user")))
-                .unwrap(),
+            resolve_data_dir(
+                None,
+                Some("/tmp/env".into()),
+                Some(PathBuf::from("/home/user"))
+            )
+            .unwrap(),
             PathBuf::from("/tmp/env")
         );
         assert_eq!(

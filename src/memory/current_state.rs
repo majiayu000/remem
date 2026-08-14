@@ -380,7 +380,8 @@ fn load_active_state_key_rivals(
             ref_parts_from_edge_row(memory, row, 13)
         },
     )?;
-    let rivals = crate::db::query::collect_rows(rows).context("load active current-state rivals")?;
+    let rivals =
+        crate::db::query::collect_rows(rows).context("load active current-state rivals")?;
     Ok(rivals
         .into_iter()
         .filter(|parts| memory_is_current_context_eligible(conn, parts.memory.id, now_epoch))

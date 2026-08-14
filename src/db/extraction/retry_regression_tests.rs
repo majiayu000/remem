@@ -435,10 +435,9 @@ fn archive_claimed_exact_replay_does_not_clobber_stolen_lease() {
     let range_id = exhaust_task_into_replay_range(&mut conn, "sess-stolen-lease");
     let owner_a = exact_replay_worker_owner(1, 1_000);
     let owner_b = exact_replay_worker_owner(2, 2_000);
-    let claimed = retry_and_claim_extraction_replay_range(
-        &mut conn, range_id, false, false, &owner_a, 60,
-    )
-    .expect("owner a should claim exact replay task");
+    let claimed =
+        retry_and_claim_extraction_replay_range(&mut conn, range_id, false, false, &owner_a, 60)
+            .expect("owner a should claim exact replay task");
 
     conn.execute(
         "UPDATE extraction_tasks SET lease_owner = ?1 WHERE id = ?2",
