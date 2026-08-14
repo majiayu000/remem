@@ -140,6 +140,65 @@ class RunDryTests(unittest.TestCase):
         errors = self._validate_artifact_json(overflowing_float, run_dry.SUITE_V2)
         self.assertTrue(any("non-finite number '1e400'" in error for error in errors))
 
+    def test_artifact_json_rejects_unpaired_surrogates(self) -> None:
+        lone_surrogate = json.dumps(self.v2_artifact).replace(
+            '"artifacts": {',
+            '"artifacts": {"lone": "\\ud800", ',
+            1,
+        )
+        errors = self._validate_artifact_json(lone_surrogate, run_dry.SUITE_V2)
+        self.assertTrue(any("unpaired surrogate" in error for error in errors))
+
+        surrogate_key = json.dumps(self.v2_artifact).replace(
+            '"artifacts": {',
+            '"artifacts": {"\\udfff": "x", ',
+            1,
+        )
+        errors = self._validate_artifact_json(surrogate_key, run_dry.SUITE_V2)
+        self.assertTrue(any("object key" in error and "surrogate" in error for error in errors))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_path = Path(tmp) / "artifact.json"
+            artifact_path.write_text(lone_surrogate, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unpaired surrogate"):
+                schema_validate.validate_file(
+                    artifact_path,
+                    run_dry.RUN_SCHEMAS[run_dry.SUITE_V2],
+                )
+
+    def test_charter_strict_load_failure_reports_instead_of_aborting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()):
+            charter_path = Path(tmp) / "benchmark-charter.json"
+            charter_path.write_text(
+                '{"charter_version": "cross-host-v1", "charter_version": "cross-host-v1"}',
+                encoding="utf-8",
+            )
+            report_path = Path(tmp) / "report.json"
+            with mock.patch.object(run_dry, "CHARTER", charter_path):
+                exit_code = run_dry.main(["run_dry.py", "--json-out", str(report_path)])
+            report = run_dry.load_json(report_path)
+
+        self.assertEqual(exit_code, 1)
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["plan"], {})
+        self.assertTrue(
+            any("duplicate object key 'charter_version'" in e for e in report["schema_errors"])
+        )
+
+    def test_task_strict_load_failure_is_recorded_per_file(self) -> None:
+        with tempfile.TemporaryDirectory(dir=run_dry.SUITE_ROOT) as tmp:
+            task_dirs = self._isolated_task_dirs(Path(tmp))
+            task_path = next(task_dirs["claude_to_codex"].glob("*.json"))
+            task_path.write_text('{"id": "dup", "id": "dup"}', encoding="utf-8")
+
+            errors: list[str] = []
+            with mock.patch.object(run_dry, "TASK_DIRS", task_dirs):
+                tasks = run_dry.validate_tasks(self.charter, errors, run_dry.SUITE_V2)
+
+        self.assertTrue(any("duplicate object key 'id'" in error for error in errors))
+        self.assertEqual(len(tasks["claude_to_codex"]), run_dry.V2_TASKS_PER_DIRECTION - 1)
+        self.assertEqual(len(tasks["codex_to_claude"]), run_dry.V2_TASKS_PER_DIRECTION)
+
     def test_standalone_validator_uses_the_same_strict_json_loader(self) -> None:
         valid_json = json.dumps(self.v2_artifact)
         duplicate_suite = valid_json.replace(

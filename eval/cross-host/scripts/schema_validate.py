@@ -71,14 +71,41 @@ def parse_safe_integer(value: str) -> int:
     return parsed
 
 
+def reject_unpaired_surrogates(value: object, path: str = "$") -> None:
+    """Reject decoded strings that are not valid Unicode scalar sequences.
+
+    ``json.loads`` accepts escaped lone surrogates such as ``"\\ud800"``, which
+    later make UTF-8 encoding and RFC 8785 canonicalization fail or disagree.
+    """
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ValueError(f"{path}: string contains an unpaired surrogate") from exc
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            reject_unpaired_surrogates(item, f"{path}[{index}]")
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            try:
+                key.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise ValueError(
+                    f"{path}: object key {key!a} contains an unpaired surrogate"
+                ) from exc
+            reject_unpaired_surrogates(item, f"{path}.{key}")
+
+
 def parse_json(value: str) -> object:
-    return json.loads(
+    parsed = json.loads(
         value,
         object_pairs_hook=reject_duplicate_keys,
         parse_constant=reject_non_finite_number,
         parse_float=parse_finite_float,
         parse_int=parse_safe_integer,
     )
+    reject_unpaired_surrogates(parsed)
+    return parsed
 
 
 def load_json(path: Path) -> object:
