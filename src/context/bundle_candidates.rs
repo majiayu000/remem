@@ -132,7 +132,9 @@ fn apply_persisted_memory_trust(conn: &Connection, items: &mut [ContextItem]) ->
         else {
             continue;
         };
-        if !crate::truth::classify_memory(conn, memory_id, as_of_epoch)?.current_context_eligible {
+        if !crate::truth::admit_for_current_context(conn, memory_id, as_of_epoch)?
+            .current_context_eligible
+        {
             item.trust = TrustClass::Quarantined;
             continue;
         }

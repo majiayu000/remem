@@ -35,6 +35,7 @@ pub use types::{
     TRUTH_PROJECTION_VERSION,
 };
 pub use visibility::{
-    admit_for_current_context, classify_memory, MemoryVisibility, MemoryVisibilityClass,
+    admit_for_current_context, admit_many_for_current_context, classify_memories, classify_memory,
+    current_context_gate_mode, CurrentContextGateMode, MemoryVisibility, MemoryVisibilityClass,
     MemoryVisibilityReason, CURRENT_CONFIDENCE_FLOOR,
 };

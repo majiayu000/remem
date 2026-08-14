@@ -278,8 +278,29 @@ pub(super) fn exclude_non_current_context_memories(
     errors: &mut Vec<ContextLoadError>,
 ) {
     let mut retained = Vec::with_capacity(memories.len());
+    let ids = memories.iter().map(|memory| memory.id).collect::<Vec<_>>();
+    // One batched classification per context load instead of one statement per
+    // memory. A batch failure falls back to per-id classification so the gate
+    // still fails closed for individual rows.
+    let classifications =
+        match crate::truth::admit_many_for_current_context(conn, &ids, as_of_epoch) {
+            Ok(classifications) => Some(classifications),
+            Err(error) => {
+                let message = format!("batch memory visibility classification failed: {error}");
+                crate::log::error("context", &message);
+                errors.push(ContextLoadError::new("memory_visibility", message));
+                None
+            }
+        };
     for memory in memories.drain(..) {
-        match crate::truth::admit_for_current_context(conn, memory.id, as_of_epoch) {
+        let classification = classifications
+            .as_ref()
+            .and_then(|classifications| classifications.get(&memory.id).copied())
+            .map(Ok)
+            .unwrap_or_else(|| {
+                crate::truth::admit_for_current_context(conn, memory.id, as_of_epoch)
+            });
+        match classification {
             Ok(classification) if classification.current_context_eligible => retained.push(memory),
             Ok(classification) => drops.push(ContextPreselectionDrop {
                 item: super::types::ContextPreselectionItem::Memory(memory),

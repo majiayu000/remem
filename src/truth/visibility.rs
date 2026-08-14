@@ -1,8 +1,12 @@
 //! Deterministic read-only trust/visibility classification for memories.
 use anyhow::{Context, Result};
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{params_from_iter, Connection, Row as SqlRow};
 use serde::Serialize;
+use std::collections::{BTreeSet, HashMap};
 pub const CURRENT_CONFIDENCE_FLOOR: f64 = 0.80;
+/// SQLite caps bound parameters per statement; stay well under it so a large
+/// context load still classifies in a handful of statements.
+const VISIBILITY_BATCH_CHUNK_SIZE: usize = 900;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryVisibilityClass {
@@ -77,6 +81,61 @@ impl MemoryVisibility {
             current_context_eligible: false,
         }
     }
+
+    /// True when a row the classifier excluded was admitted anyway because the
+    /// gate is running in shadow mode. Consumers use this to report what
+    /// enforcement *would* have dropped.
+    pub fn admitted_by_shadow_mode(&self) -> bool {
+        self.current_context_eligible && self.classification != MemoryVisibilityClass::Current
+    }
+}
+
+/// Rollout control for the G2 current-context gate.
+///
+/// Enforcement changes which memories reach live context, and on databases with
+/// a large pre-provenance history it can exclude nearly the whole active set. An
+/// operator needs a way to measure that before and after flipping it, and a way
+/// back if injection collapses in production.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CurrentContextGateMode {
+    /// Classify and exclude non-current rows. Default.
+    Enforce,
+    /// Classify and report, but still admit rows that are only excluded for
+    /// `legacy_unverified` reasons.
+    ///
+    /// Lifecycle exclusions (quarantined, expired, superseded, not-yet-valid,
+    /// inactive) are pre-existing security and correctness boundaries, not part
+    /// of this rollout, so shadow mode never relaxes them.
+    Shadow,
+}
+
+pub const CURRENT_CONTEXT_GATE_ENV: &str = "REMEM_CURRENT_CONTEXT_GATE";
+
+/// Read the gate mode from [`CURRENT_CONTEXT_GATE_ENV`].
+///
+/// Unset or unrecognized values fail closed to [`CurrentContextGateMode::Enforce`].
+pub fn current_context_gate_mode() -> CurrentContextGateMode {
+    match std::env::var(CURRENT_CONTEXT_GATE_ENV)
+        .ok()
+        .as_deref()
+        .map(str::trim)
+    {
+        Some("shadow") => CurrentContextGateMode::Shadow,
+        _ => CurrentContextGateMode::Enforce,
+    }
+}
+
+fn apply_gate_mode(visibility: MemoryVisibility) -> MemoryVisibility {
+    if visibility.current_context_eligible
+        || visibility.classification != MemoryVisibilityClass::LegacyUnverified
+        || current_context_gate_mode() != CurrentContextGateMode::Shadow
+    {
+        return visibility;
+    }
+    MemoryVisibility {
+        current_context_eligible: true,
+        ..visibility
+    }
 }
 struct Row {
     status: String,
@@ -95,14 +154,8 @@ struct Row {
     direct_evidence_resolves: bool,
     state_key_resolves: bool,
 }
-pub fn classify_memory(
-    conn: &Connection,
-    memory_id: i64,
-    as_of_epoch: i64,
-) -> Result<MemoryVisibility> {
-    let row = conn
-        .query_row(
-            "SELECT status, memory_type, topic_key, source_candidate_id, evidence_event_ids,
+const VISIBILITY_PROJECTION_SQL: &str =
+    "SELECT id, status, memory_type, topic_key, source_candidate_id, evidence_event_ids,
                 source_trust_class,
                 COALESCE(confidence, (
                     SELECT candidate.confidence FROM memory_candidates candidate
@@ -147,51 +200,117 @@ pub fn classify_memory(
                 END,
                 EXISTS(SELECT 1 FROM memory_state_keys state_key
                        WHERE state_key.id = memories.state_key_id)
-         FROM memories WHERE id = ?1",
-            [memory_id],
-            |r| {
-                Ok(Row {
-                    status: r.get(0)?,
-                    memory_type: r.get(1)?,
-                    topic_key: r.get(2)?,
-                    source_candidate_id: r.get(3)?,
-                    evidence_event_ids: r.get(4)?,
-                    source_trust_class: r.get(5)?,
-                    confidence: r.get(6)?,
-                    valid_from_epoch: r.get(7)?,
-                    valid_to_epoch: r.get(8)?,
-                    expires_at_epoch: r.get(9)?,
-                    state_key_id: r.get(10)?,
-                    lesson_has_proof: r.get(11)?,
-                    candidate_has_proof: r.get(12)?,
-                    direct_evidence_resolves: r.get(13)?,
-                    state_key_resolves: r.get(14)?,
-                })
-            },
-        )
-        .optional()
-        .context("classify memory trust and visibility")?;
-    Ok(row.map_or_else(
-        || {
-            MemoryVisibility::excluded(
-                MemoryVisibilityClass::LegacyUnverified,
-                MemoryVisibilityReason::RowMissing,
-            )
-        },
-        |row| classify_row(&row, as_of_epoch),
-    ))
+         FROM memories WHERE id IN";
+
+fn read_visibility_row(row: &SqlRow<'_>) -> rusqlite::Result<Row> {
+    Ok(Row {
+        status: row.get(1)?,
+        memory_type: row.get(2)?,
+        topic_key: row.get(3)?,
+        source_candidate_id: row.get(4)?,
+        evidence_event_ids: row.get(5)?,
+        source_trust_class: row.get(6)?,
+        confidence: row.get(7)?,
+        valid_from_epoch: row.get(8)?,
+        valid_to_epoch: row.get(9)?,
+        expires_at_epoch: row.get(10)?,
+        state_key_id: row.get(11)?,
+        lesson_has_proof: row.get(12)?,
+        candidate_has_proof: row.get(13)?,
+        direct_evidence_resolves: row.get(14)?,
+        state_key_resolves: row.get(15)?,
+    })
+}
+
+fn missing_row_visibility() -> MemoryVisibility {
+    MemoryVisibility::excluded(
+        MemoryVisibilityClass::LegacyUnverified,
+        MemoryVisibilityReason::RowMissing,
+    )
+}
+
+/// Classify many memories in chunked statements.
+///
+/// Every requested id is present in the result. Ids with no `memories` row stay
+/// at the fail-closed `RowMissing` default rather than being omitted, so callers
+/// cannot mistake an absent key for an admitted memory.
+pub fn classify_memories(
+    conn: &Connection,
+    memory_ids: &[i64],
+    as_of_epoch: i64,
+) -> Result<HashMap<i64, MemoryVisibility>> {
+    let ids = memory_ids.iter().copied().collect::<BTreeSet<_>>();
+    let mut classifications = ids
+        .iter()
+        .map(|id| (*id, missing_row_visibility()))
+        .collect::<HashMap<_, _>>();
+    for chunk in ids
+        .iter()
+        .copied()
+        .collect::<Vec<_>>()
+        .chunks(VISIBILITY_BATCH_CHUNK_SIZE)
+    {
+        let placeholders = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!("{VISIBILITY_PROJECTION_SQL} ({placeholders})");
+        let mut statement = conn
+            .prepare(&sql)
+            .context("prepare batch memory trust and visibility classification")?;
+        let rows = statement
+            .query_map(params_from_iter(chunk.iter()), |row| {
+                Ok((row.get::<_, i64>(0)?, read_visibility_row(row)?))
+            })
+            .context("query batch memory trust and visibility classification")?;
+        for row in rows {
+            let (id, visibility_row) =
+                row.context("read batch memory trust and visibility classification row")?;
+            classifications.insert(id, classify_row(&visibility_row, as_of_epoch));
+        }
+    }
+    Ok(classifications)
+}
+
+pub fn classify_memory(
+    conn: &Connection,
+    memory_id: i64,
+    as_of_epoch: i64,
+) -> Result<MemoryVisibility> {
+    Ok(classify_memories(conn, &[memory_id], as_of_epoch)?
+        .remove(&memory_id)
+        .unwrap_or_else(missing_row_visibility))
 }
 
 /// Shared G2 gate for every current-context reader.
 ///
 /// SessionStart, UserPromptSubmit, `current_state`, and recall must call this
 /// instead of treating `status='active'` as current.
+/// Honors [`current_context_gate_mode`]; `classify_memory` keeps reporting the
+/// unmodified classification for search, detail, inventory, and doctor.
 pub fn admit_for_current_context(
     conn: &Connection,
     memory_id: i64,
     as_of_epoch: i64,
 ) -> Result<MemoryVisibility> {
-    classify_memory(conn, memory_id, as_of_epoch)
+    Ok(apply_gate_mode(classify_memory(
+        conn,
+        memory_id,
+        as_of_epoch,
+    )?))
+}
+
+/// Batched form of [`admit_for_current_context`] for readers that gate a whole
+/// candidate set, so a context load costs a few statements instead of one per
+/// memory.
+pub fn admit_many_for_current_context(
+    conn: &Connection,
+    memory_ids: &[i64],
+    as_of_epoch: i64,
+) -> Result<HashMap<i64, MemoryVisibility>> {
+    Ok(classify_memories(conn, memory_ids, as_of_epoch)?
+        .into_iter()
+        .map(|(id, visibility)| (id, apply_gate_mode(visibility)))
+        .collect())
 }
 
 fn classify_row(row: &Row, as_of: i64) -> MemoryVisibility {
@@ -300,6 +419,41 @@ fn classify_row(row: &Row, as_of: i64) -> MemoryVisibility {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Holds the shared process env lock while overriding the gate mode, so
+    /// these tests cannot race other env-sensitive tests in the same binary.
+    struct GateModeEnv {
+        _lock: crate::runtime_config::TestEnvGuard,
+        previous: Option<String>,
+    }
+
+    impl GateModeEnv {
+        fn set(value: Option<&str>) -> Self {
+            let lock = crate::runtime_config::ENV_LOCK
+                .lock()
+                .expect("env lock should acquire");
+            let previous = std::env::var(CURRENT_CONTEXT_GATE_ENV).ok();
+            apply(value);
+            Self {
+                _lock: lock,
+                previous,
+            }
+        }
+    }
+
+    impl Drop for GateModeEnv {
+        fn drop(&mut self) {
+            apply(self.previous.take().as_deref());
+        }
+    }
+
+    fn apply(value: Option<&str>) {
+        match value {
+            Some(value) => unsafe { std::env::set_var(CURRENT_CONTEXT_GATE_ENV, value) },
+            None => unsafe { std::env::remove_var(CURRENT_CONTEXT_GATE_ENV) },
+        }
+    }
+
     fn row() -> Row {
         Row {
             status: "active".into(),
@@ -384,6 +538,119 @@ mod tests {
         value.confidence = None;
         value.valid_from_epoch = None;
         assert!(classify_row(&value, 20).current_context_eligible);
+    }
+
+    #[test]
+    fn shadow_mode_admits_legacy_unverified_but_never_relaxes_lifecycle() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        // id=1 is excluded only for missing provenance; id=2 is quarantined.
+        conn.execute(
+            "INSERT INTO memories
+             (id, project, title, content, memory_type, created_at_epoch,
+              updated_at_epoch, status, source_trust_class)
+             VALUES (1, '/repo', 'legacy', 'body', 'bugfix',
+                     1, 1, 'active', 'local_tool_output')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO memories
+             (id, project, title, content, memory_type, created_at_epoch,
+              updated_at_epoch, status, source_trust_class)
+             VALUES (2, '/repo', 'poisoned', 'body', 'bugfix',
+                     1, 1, 'quarantined', 'user_prompt')",
+            [],
+        )?;
+
+        let _guard = GateModeEnv::set(Some("shadow"));
+
+        let legacy = admit_for_current_context(&conn, 1, 2)?;
+        assert!(
+            legacy.current_context_eligible,
+            "shadow mode must admit legacy-unverified rows so injection can be measured"
+        );
+        assert_eq!(
+            legacy.classification,
+            MemoryVisibilityClass::LegacyUnverified,
+            "shadow mode must preserve the real classification for reporting"
+        );
+        assert!(legacy.admitted_by_shadow_mode());
+
+        let quarantined = admit_for_current_context(&conn, 2, 2)?;
+        assert!(
+            !quarantined.current_context_eligible,
+            "shadow mode must not relax the quarantine security boundary"
+        );
+        assert!(!quarantined.admitted_by_shadow_mode());
+
+        // classify_* reports the unmodified truth regardless of gate mode.
+        assert!(!classify_memory(&conn, 1, 2)?.current_context_eligible);
+
+        let batched = admit_many_for_current_context(&conn, &[1, 2], 2)?;
+        assert!(batched[&1].current_context_eligible);
+        assert!(!batched[&2].current_context_eligible);
+        Ok(())
+    }
+
+    #[test]
+    fn gate_mode_defaults_to_enforce_for_unset_and_unknown_values() {
+        for value in [None, Some("yes-please-disable"), Some("off"), Some("")] {
+            let _guard = GateModeEnv::set(value);
+            assert_eq!(
+                current_context_gate_mode(),
+                CurrentContextGateMode::Enforce,
+                "only the documented 'shadow' value may relax the gate, got {value:?}"
+            );
+        }
+        let _shadow = GateModeEnv::set(Some(" shadow "));
+        assert_eq!(
+            current_context_gate_mode(),
+            CurrentContextGateMode::Shadow,
+            "surrounding whitespace should not defeat the documented value"
+        );
+    }
+
+    #[test]
+    fn batch_classification_matches_single_rows_and_marks_missing() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        conn.execute(
+            "INSERT INTO memories
+             (id, project, title, content, memory_type, created_at_epoch,
+              updated_at_epoch, status, source_trust_class)
+             VALUES (1, '/repo', 'direct user', 'body', 'bugfix',
+                     1, 1, 'active', 'user_prompt')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO memories
+             (id, project, title, content, memory_type, created_at_epoch,
+              updated_at_epoch, status, source_trust_class)
+             VALUES (2, '/repo', 'legacy', 'body', 'bugfix',
+                     1, 1, 'active', 'local_tool_output')",
+            [],
+        )?;
+
+        let classifications = classify_memories(&conn, &[1, 2, 99, 1], 2)?;
+
+        assert_eq!(classifications.len(), 3);
+        assert_eq!(classifications[&1], classify_memory(&conn, 1, 2)?);
+        assert!(classifications[&1].current_context_eligible);
+        assert_eq!(
+            classifications[&2],
+            classify_memory(&conn, 2, 2)?,
+            "batch and single-row paths must agree on excluded rows"
+        );
+        assert_eq!(
+            classifications[&2].reason,
+            MemoryVisibilityReason::ProvenanceMissing
+        );
+        assert_eq!(
+            classifications[&99].reason,
+            MemoryVisibilityReason::RowMissing
+        );
+        assert!(!classifications[&99].current_context_eligible);
+        Ok(())
     }
 
     #[test]
