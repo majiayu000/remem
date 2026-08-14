@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Added
-- Staged source version `0.6.73` for the retrieval-enrichment P0: schema v083
+- Staged source version `0.6.74` for the retrieval-enrichment P0: schema v083
   defers incomplete upgrade-time history instead of scheduling an AI backfill,
   one-shot workers admit only four potential AI work items across queues and
   stop admitting after 180 seconds, daemon enrichment batches are spaced by 60
