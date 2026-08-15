@@ -7,7 +7,7 @@ pub(in crate::cli) enum BenchAction {
     /// Run a deterministic public memory capability suite.
     Memory(BenchMemoryArgs),
     /// Run or dry-run the public coding-agent benchmark suite.
-    Coding(BenchCodingArgs),
+    Coding(Box<BenchCodingArgs>),
     /// Generate the directional public benchmark baseline report from committed artifacts.
     Report(BenchReportArgs),
 }
@@ -91,6 +91,12 @@ pub(in crate::cli) struct BenchCodingArgs {
     /// Record that the caller intentionally ignored budget gates for this manual run.
     #[arg(long)]
     pub(in crate::cli) ignore_budget: bool,
+    /// Root containing target-blind `<task-id>/MEMORY.md` and `curator-log.json` inputs.
+    #[arg(long)]
+    pub(in crate::cli) curator_root: Option<String>,
+    /// Explicit remem memory-AI config used by `remem_e2e` extraction.
+    #[arg(long)]
+    pub(in crate::cli) memory_config: Option<String>,
 }
 
 #[derive(Args)]
@@ -250,4 +256,10 @@ pub(in crate::cli) struct EvalCodingBenchArgs {
     /// Record that the caller intentionally ignored budget gates for this manual run.
     #[arg(long)]
     pub(in crate::cli) ignore_budget: bool,
+    /// Root containing target-blind `<task-id>/MEMORY.md` and `curator-log.json` inputs.
+    #[arg(long)]
+    pub(in crate::cli) curator_root: Option<String>,
+    /// Explicit remem memory-AI config used by `remem_e2e` extraction.
+    #[arg(long)]
+    pub(in crate::cli) memory_config: Option<String>,
 }

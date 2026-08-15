@@ -12,6 +12,7 @@ Usage: python3 eval/coding-bench/validate_schemas.py
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -36,6 +37,17 @@ EXPECTED_FAILURE_ENUMS = {
     "memory_misapplied",
 }
 EXPECTED_PRIMARY = ["no_memory", "curated_file_budgeted", "remem_e2e"]
+RAW_EVENT_KEYS = {
+    "event_id",
+    "timestamp_epoch",
+    "role",
+    "sanitized_content",
+    "tool_name",
+    "sanitized_tool_input",
+    "sanitized_tool_output",
+    "host_boundary",
+}
+OPAQUE_EVENT_ID = re.compile(r"^evt-[0-9a-f]{32}$")
 
 
 def load(path):
@@ -168,17 +180,71 @@ def check_curator_log(errors):
         errors.append("totals.conflict_resolution_count does not match session sum")
 
 
+def check_fixture_raw_events(errors):
+    fixture = load(BENCH_DIR / "fixtures" / "tasks.json")
+    for task in fixture.get("tasks", []):
+        task_id = task.get("id", "<missing>")
+        flattened = []
+        for episode in task.get("history_episodes", []):
+            events = episode.get("raw_events", [])
+            if not events:
+                errors.append(f"task {task_id}: history episode has no raw_events")
+                continue
+            flattened.extend(events)
+            for memory in episode.get("memories", []):
+                text = memory.get("text")
+                if not text or not any(text in event.get("sanitized_content", "") for event in events):
+                    errors.append(
+                        f"task {task_id}: memory evidence exists only in gold fields, not raw_events"
+                    )
+        ids = [event.get("event_id") for event in flattened]
+        if len(ids) != len(set(ids)):
+            errors.append(f"task {task_id}: duplicate raw event id")
+        previous_timestamp = None
+        for event in flattened:
+            if set(event) != RAW_EVENT_KEYS:
+                errors.append(f"task {task_id}: raw event fields are not the closed v1 set")
+                continue
+            event_id = event["event_id"]
+            if not isinstance(event_id, str) or not OPAQUE_EVENT_ID.fullmatch(event_id):
+                errors.append(f"task {task_id}: invalid opaque raw event id")
+            timestamp = event["timestamp_epoch"]
+            if not isinstance(timestamp, int) or timestamp <= 0:
+                errors.append(f"task {task_id}: invalid raw event timestamp")
+            elif previous_timestamp is not None and timestamp < previous_timestamp:
+                errors.append(f"task {task_id}: raw event timestamps decrease in source order")
+            previous_timestamp = timestamp
+            boundary = event["host_boundary"]
+            role = event["role"]
+            content = event["sanitized_content"]
+            tool_name = event["tool_name"]
+            tool_input = event["sanitized_tool_input"]
+            tool_output = event["sanitized_tool_output"]
+            valid = {
+                "user_message": role == "user" and bool(content) and tool_name is None and tool_input is None and tool_output is None,
+                "assistant_message": role == "assistant" and bool(content) and tool_name is None and tool_input is None and tool_output is None,
+                "tool_call": role == "assistant" and bool(tool_name) and bool(tool_input) and tool_output is None,
+                "tool_result": role == "tool" and bool(tool_name) and bool(tool_output) and tool_input is None,
+            }.get(boundary, False)
+            if not valid:
+                errors.append(f"task {task_id}: invalid raw event role/tool/boundary shape")
+        supporting = task.get("gold_memory", {}).get("supporting_event_ids", [])
+        if not set(supporting).issubset(set(ids)):
+            errors.append(f"task {task_id}: gold supporting event is absent from raw_events")
+
+
 def main():
     errors = []
     check_conditions(errors)
     check_curator_log(errors)
+    check_fixture_raw_events(errors)
     claim_errors = claim_gate.check(REPO_ROOT / "eval" / "claims" / "registry.json")
     errors.extend(f"claim gate: {e}" for e in claim_errors)
     if errors:
         for error in errors:
             print(f"FAIL {error}")
         return 1
-    print("OK conditions.json, curator-log example, and claims registry validate")
+    print("OK conditions, raw-event fixture, curator log, and claims registry validate")
     return 0
 
 

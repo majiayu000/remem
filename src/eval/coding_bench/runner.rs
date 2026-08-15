@@ -1,11 +1,7 @@
-use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
@@ -15,6 +11,7 @@ use super::dry_run::{effective_matrix, write_dry_run_json};
 use super::failure::{classify_failure_reason, output_indicates_compile_failure, FailureEvidence};
 use super::fixture::{load_fixture, selected_conditions, selected_tasks, validate_relative_path};
 use super::isolation::{prepare_codex_isolation, runner_isolation_violation};
+use super::process::{command_output, ensure_success, CommandOutcome};
 use super::run_plan::randomized_run_plan;
 use super::score::{
     build_memory_attribution, parse_changed_paths, parse_codex_jsonl_usage, patch_pattern_failures,
@@ -60,7 +57,7 @@ pub fn dry_run_plan(options: &CodingBenchOptions) -> Result<String> {
     Ok(output)
 }
 
-pub fn run_coding_bench(options: &CodingBenchOptions) -> Result<CodingBenchReport> {
+pub async fn run_coding_bench(options: &CodingBenchOptions) -> Result<CodingBenchReport> {
     if options.runs_per_condition == 0 {
         bail!("--runs-per-condition must be greater than zero");
     }
@@ -68,6 +65,7 @@ pub fn run_coding_bench(options: &CodingBenchOptions) -> Result<CodingBenchRepor
     let conditions = selected_conditions(options)?;
     let tasks = selected_tasks(&fixture, options)?;
     ensure_selected_conditions_are_executable(&conditions)?;
+    super::preflight::validate_condition_inputs(options, &conditions, &tasks)?;
     let run_plan = randomized_run_plan(&conditions, tasks.len(), options.runs_per_condition)?;
     let fixture_sha256 = file_sha256(&options.fixture_path)?;
     let generated_at_epoch = current_epoch();
@@ -89,7 +87,8 @@ pub fn run_coding_bench(options: &CodingBenchOptions) -> Result<CodingBenchRepor
             task,
             entry.run_index,
             &artifact_root,
-        )?;
+        )
+        .await?;
         super::audit_contract::validate_run_context_audit(&run)?;
         eprintln!(
             "[coding-bench] {} {} run {}: resolved={} tokens={}",
@@ -146,7 +145,7 @@ pub fn run_coding_bench(options: &CodingBenchOptions) -> Result<CodingBenchRepor
     })
 }
 
-fn run_one(
+async fn run_one(
     options: &CodingBenchOptions,
     fixture: &CodingBenchFixture,
     condition: BenchCondition,
@@ -163,7 +162,20 @@ fn run_one(
     fs::create_dir_all(&artifact_dir)
         .with_context(|| format!("create artifact dir {}", artifact_dir.display()))?;
     prepare_repo(fixture, &repo_dir)?;
-    let setup = apply_condition(condition, fixture, task, &repo_dir, &data_dir)?;
+    let condition_input_root = match condition {
+        BenchCondition::CuratedFileBudgeted => options.curator_root.as_deref(),
+        BenchCondition::RememE2e => options.memory_config.as_deref(),
+        _ => None,
+    };
+    let setup = apply_condition(
+        condition,
+        fixture,
+        task,
+        &repo_dir,
+        &data_dir,
+        condition_input_root.map(Path::new),
+    )
+    .await?;
     commit_condition_inputs(&repo_dir)?;
     let prompt = build_prompt(task, setup.prompt_note.as_deref());
 
@@ -287,6 +299,8 @@ fn run_one(
         context_audit_status: setup.context_audit_status,
         context_audit_failure_reason: setup.context_audit_failure_reason,
         remem_context_audit: setup.remem_context_audit,
+        curator_log: setup.curator_log,
+        e2e_pipeline: setup.e2e_pipeline,
         score_commands,
         memory_contract,
         artifacts: RunArtifacts {
@@ -495,123 +509,6 @@ fn write_relative_file(root: &Path, relative: &str, content: &str) -> Result<()>
     fs::write(&path, content).with_context(|| format!("write {}", path.display()))
 }
 
-fn command_output<I, S>(
-    program: &str,
-    args: I,
-    cwd: &Path,
-    env: &[(String, String)],
-    timeout_ms: u64,
-) -> Result<CommandOutcome>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    let mut command = Command::new(program);
-    command
-        .args(args)
-        .current_dir(cwd)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .env_remove("REMEM_DATA_DIR")
-        .env_remove("REMEM_CIPHER_KEY")
-        .env_remove("REMEM_DISABLE_HOOKS")
-        .env_remove("REMEM_ALLOW_PLAINTEXT_DB")
-        .env_remove("CODEX_HOME")
-        .env_remove("CODEX_THREAD_ID")
-        .env_remove("VIRTUAL_ENV")
-        .env_remove("PYTHONHOME")
-        .env_remove("PYTHONPATH")
-        .env_remove("CONDA_PREFIX")
-        .env_remove("CONDA_DEFAULT_ENV")
-        .env_remove("PIPENV_ACTIVE")
-        .env_remove("POETRY_ACTIVE")
-        .env_remove("PYENV_VERSION");
-    for (key, value) in env {
-        command.env(key, value);
-    }
-    #[cfg(unix)]
-    {
-        command.process_group(0);
-    }
-    let mut child = command
-        .spawn()
-        .with_context(|| format!("spawn command {program}"))?;
-    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
-    let mut timed_out = false;
-    loop {
-        if child.try_wait()?.is_some() {
-            break;
-        }
-        if Instant::now() >= deadline {
-            timed_out = true;
-            terminate_command(&mut child);
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    let output = child
-        .wait_with_output()
-        .with_context(|| format!("wait for command {program}"))?;
-    Ok(CommandOutcome {
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-        exit_code: output.status.code(),
-        timed_out,
-    })
-}
-
-fn terminate_command(child: &mut Child) {
-    #[cfg(unix)]
-    {
-        let process_group = -(child.id() as libc::pid_t);
-        terminate_unix_process_group("TERM", libc::SIGTERM, process_group);
-        std::thread::sleep(Duration::from_millis(200));
-        match child.try_wait() {
-            Ok(Some(_)) => {}
-            Ok(None) => terminate_unix_process_group("KILL", libc::SIGKILL, process_group),
-            Err(err) => eprintln!(
-                "[coding-bench] failed to poll timed-out runner process {}: {err}",
-                child.id()
-            ),
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        if let Err(err) = child.kill() {
-            eprintln!(
-                "[coding-bench] failed to kill timed-out runner process {}: {err}",
-                child.id()
-            );
-        }
-    }
-}
-
-#[cfg(unix)]
-fn terminate_unix_process_group(
-    signal_name: &str,
-    signal: libc::c_int,
-    process_group: libc::pid_t,
-) {
-    if unsafe { libc::kill(process_group, signal) } != 0 {
-        let err = std::io::Error::last_os_error();
-        eprintln!(
-            "[coding-bench] failed to send {signal_name} to process group {process_group}: {err}"
-        );
-    }
-}
-
-fn ensure_success(label: &str, outcome: &CommandOutcome) -> Result<()> {
-    if outcome.exit_code == Some(0) && !outcome.timed_out {
-        return Ok(());
-    }
-    bail!(
-        "{label} failed with exit={:?} timed_out={} stderr={}",
-        outcome.exit_code,
-        outcome.timed_out,
-        outcome.stderr
-    )
-}
-
 fn write_artifact(dir: &Path, name: &str, content: &str) -> Result<String> {
     let path = dir.join(name);
     let mut file =
@@ -735,17 +632,10 @@ fn toml_escape(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-#[derive(Debug)]
-struct CommandOutcome {
-    stdout: String,
-    stderr: String,
-    exit_code: Option<i32>,
-    timed_out: bool,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn codex_runner_ignores_host_config_rules_hooks_and_session_files() {
@@ -765,6 +655,8 @@ mod tests {
             provider: Some("codexapi".to_string()),
             reasoning_effort: "medium".to_string(),
             ignore_budget: true,
+            curator_root: None,
+            memory_config: None,
         };
         let args = build_codex_exec_args(&options, Path::new("/tmp/remem-bench-repo"), "prompt");
 

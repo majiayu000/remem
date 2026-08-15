@@ -769,6 +769,14 @@ and `insufficient_reason` (also shown in Markdown) explains the failed gate.
 The currently checked-in smoke-only report is therefore `insufficient`, not a
 zero-effect official result.
 
+The source runner now implements directional local adapters for
+`curated_file_budgeted` and `remem_e2e`. The E2E adapter consumes only
+closed-schema fixture `raw_events`, verifies an insert-only production capture
+transaction, drains extraction/candidate/graph work, and binds the exact
+production SessionStart ContextAudit. This is implementation evidence, not an
+official outcome: the governed shared runner, independent scorer, authority,
+ledger/transparency receipts, and 144 sealed runs are still pending.
+
 The report is intentionally labeled `directional_only_no_public_claim`. README
 and release wording must stay directional and avoid broad outcome or
 coding-task outcome claims until the public claim gate in

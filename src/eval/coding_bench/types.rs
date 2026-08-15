@@ -21,6 +21,8 @@ pub struct CodingBenchOptions {
     pub provider: Option<String>,
     pub reasoning_effort: String,
     pub ignore_budget: bool,
+    pub curator_root: Option<String>,
+    pub memory_config: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -86,6 +88,20 @@ pub struct HistoryEpisode {
     pub expected_memory_facts: Vec<String>,
     #[serde(default)]
     pub memories: Vec<SeedMemory>,
+    pub raw_events: Vec<RawHistoryEvent>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RawHistoryEvent {
+    pub event_id: String,
+    pub timestamp_epoch: i64,
+    pub role: String,
+    pub sanitized_content: String,
+    pub tool_name: Option<String>,
+    pub sanitized_tool_input: Option<String>,
+    pub sanitized_tool_output: Option<String>,
+    pub host_boundary: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -147,8 +163,10 @@ impl BenchCondition {
         Self::RememNoEnrichment,
         Self::RememFtsOnly,
     ];
-    pub const IMPLEMENTED: [Self; 3] = [
+    pub const IMPLEMENTED: [Self; 5] = [
         Self::NoMemory,
+        Self::CuratedFileBudgeted,
+        Self::RememE2e,
         Self::RememSeededSessionStart,
         Self::CuratedFileExpert,
     ];
@@ -199,12 +217,16 @@ impl BenchCondition {
     pub const fn supports_live_execution(self) -> bool {
         matches!(
             self,
-            Self::NoMemory | Self::RememSeededSessionStart | Self::CuratedFileExpert
+            Self::NoMemory
+                | Self::CuratedFileBudgeted
+                | Self::RememE2e
+                | Self::RememSeededSessionStart
+                | Self::CuratedFileExpert
         )
     }
 
     pub const fn uses_remem_attribution(self) -> bool {
-        matches!(self, Self::RememSeededSessionStart)
+        matches!(self, Self::RememE2e | Self::RememSeededSessionStart)
     }
 }
 
@@ -274,6 +296,7 @@ pub struct ConditionSummary {
     pub wall_time_ms_p95: f64,
     pub failure_counts: BTreeMap<CodingBenchFailureReason, usize>,
     pub memory_failure_counts: BTreeMap<CodingBenchFailureReason, usize>,
+    pub human_maintenance_minutes_per_100_sessions: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -296,6 +319,10 @@ pub struct RunReport {
     pub context_audit_status: RememContextAuditStatus,
     pub context_audit_failure_reason: Option<String>,
     pub remem_context_audit: Option<RememContextAuditSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub curator_log: Option<CuratorLogAttachment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub e2e_pipeline: Option<super::e2e::E2ePipelineTrace>,
     pub score_commands: Vec<CommandReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_contract: Option<CodingMemoryAttribution>,
@@ -378,6 +405,21 @@ pub struct RunArtifacts {
     pub runner_stdout: String,
     pub runner_stderr: String,
     pub final_diff: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct CuratorLogAttachment {
+    pub schema_version: u32,
+    pub task_id: String,
+    pub target_blind: bool,
+    pub memory_sha256: String,
+    pub curator_log_sha256: String,
+    pub final_char_count: usize,
+    pub history_session_count: usize,
+    pub maintenance_minutes: f64,
+    pub update_count: u64,
+    pub deletion_count: u64,
+    pub conflict_resolution_count: u64,
 }
 
 fn default_timeout_ms() -> u64 {

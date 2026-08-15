@@ -190,6 +190,26 @@ fn validate_fixture(fixture: &CodingBenchFixture) -> Result<()> {
                     episode.episode_id
                 );
             }
+            if episode.raw_events.is_empty() {
+                bail!(
+                    "task {} episode {} must contain answer-bearing raw_events",
+                    task.id,
+                    episode.episode_id
+                );
+            }
+            for memory in &episode.memories {
+                if !episode
+                    .raw_events
+                    .iter()
+                    .any(|event| event.sanitized_content.contains(&memory.text))
+                {
+                    bail!(
+                        "task {} episode {} has a gold-only memory absent from raw_events",
+                        task.id,
+                        episode.episode_id
+                    );
+                }
+            }
             for memory in &episode.memories {
                 validate_memory(&task.id, memory)?;
             }
@@ -211,6 +231,21 @@ fn validate_fixture(fixture: &CodingBenchFixture) -> Result<()> {
                 "task {} gold_memory.supporting_event_ids must not be empty",
                 task.id
             );
+        }
+        let raw_event_ids = task
+            .history_episodes
+            .iter()
+            .flat_map(|episode| episode.raw_events.iter())
+            .map(|event| event.event_id.as_str())
+            .collect::<BTreeSet<_>>();
+        for supporting_event_id in &task.gold_memory.supporting_event_ids {
+            if !raw_event_ids.contains(supporting_event_id.as_str()) {
+                bail!(
+                    "task {} gold supporting event {} is absent from history raw_events",
+                    task.id,
+                    supporting_event_id
+                );
+            }
         }
         for fact in task
             .gold_memory

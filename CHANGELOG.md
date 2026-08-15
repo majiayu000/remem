@@ -3,6 +3,17 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.76` for the first executable GH-931 benchmark
+  tranche: fixtures now carry a closed, validated raw-event projection;
+  `remem_e2e` replays that projection through production capture, extraction,
+  candidate/promotion, and SessionStart context paths; and
+  `curated_file_budgeted` consumes target-blind curator artifacts with
+  machine-verifiable time and character budgets. Live primary runs fail before
+  any runner invocation when required curator or memory configuration inputs
+  are absent. This is a directional local adapter, not authorization to publish
+  official benchmark claims; the independent signed executor, approval
+  supervisor, scorer, and cost-ledger authority remain required by the GH-931
+  protocol.
 - Staged source version `0.6.75` for GH-1029: the G2 current-context gate now
   applies to live readers instead of running shadow-only. SessionStart,
   `current_state`, UserPromptSubmit, alias-aware recall, and context-bundle

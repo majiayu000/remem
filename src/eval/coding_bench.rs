@@ -1,10 +1,15 @@
 mod artifact;
 mod audit_contract;
+mod capture_projection;
 mod condition;
+mod curator;
 mod dry_run;
+mod e2e;
 mod failure;
 mod fixture;
 mod isolation;
+mod preflight;
+mod process;
 mod run_plan;
 mod runner;
 mod score;

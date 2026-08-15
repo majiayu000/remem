@@ -6,11 +6,12 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 
 use super::types::{
-    BenchCondition, CodingBenchFixture, CodingBenchTask, CodingMemoryAttributionInput, SeedMemory,
+    BenchCondition, CodingBenchFixture, CodingBenchTask, CodingMemoryAttributionInput,
+    CuratorLogAttachment, SeedMemory,
 };
 use super::{RememContextAuditSnapshot, RememContextAuditStatus};
 
-const BENCHMARK_CONTEXT_ENV_OVERRIDES: &[&str] = &[
+pub(super) const BENCHMARK_CONTEXT_ENV_OVERRIDES: &[&str] = &[
     "REMEM_CIPHER_KEY",
     "REMEM_CONFIG",
     "REMEM_CONTEXT_CANDIDATE_FETCH_LIMIT",
@@ -63,14 +64,17 @@ pub struct ConditionSetup {
     pub context_audit_status: RememContextAuditStatus,
     pub context_audit_failure_reason: Option<String>,
     pub remem_context_audit: Option<RememContextAuditSnapshot>,
+    pub curator_log: Option<CuratorLogAttachment>,
+    pub e2e_pipeline: Option<super::e2e::E2ePipelineTrace>,
 }
 
-pub fn apply_condition(
+pub async fn apply_condition(
     condition: BenchCondition,
     fixture: &CodingBenchFixture,
     task: &CodingBenchTask,
     repo_dir: &Path,
     data_dir: &Path,
+    curator_root: Option<&Path>,
 ) -> Result<ConditionSetup> {
     match condition {
         BenchCondition::NoMemory => Ok(ConditionSetup {
@@ -80,7 +84,29 @@ pub fn apply_condition(
             context_audit_status: RememContextAuditStatus::NotApplicable,
             context_audit_failure_reason: None,
             remem_context_audit: None,
+            curator_log: None,
+            e2e_pipeline: None,
         }),
+        BenchCondition::CuratedFileBudgeted => {
+            let curator_root = curator_root.context(
+                "curated_file_budgeted requires --curator-root with verified task inputs",
+            )?;
+            let curator_log =
+                super::curator::install_budgeted_memory(curator_root, task, repo_dir)?;
+            Ok(ConditionSetup {
+                env: vec![("REMEM_DISABLE_HOOKS".to_string(), "1".to_string())],
+                prompt_note: Some(
+                    "A target-blind, budgeted MEMORY.md file is available in the repo. Read it before editing."
+                        .to_string(),
+                ),
+                memory_attribution: CodingMemoryAttributionInput::default(),
+                context_audit_status: RememContextAuditStatus::NotApplicable,
+                context_audit_failure_reason: None,
+                remem_context_audit: None,
+                curator_log: Some(curator_log),
+                e2e_pipeline: None,
+            })
+        }
         BenchCondition::CuratedFileExpert => {
             let content = task
                 .curated_context
@@ -100,6 +126,8 @@ pub fn apply_condition(
                 context_audit_status: RememContextAuditStatus::NotApplicable,
                 context_audit_failure_reason: None,
                 remem_context_audit: None,
+                curator_log: None,
+                e2e_pipeline: None,
             })
         }
         BenchCondition::RememSeededSessionStart => {
@@ -123,11 +151,40 @@ pub fn apply_condition(
                 context_audit_status: audit_contract.status,
                 context_audit_failure_reason: audit_contract.failure_reason,
                 remem_context_audit: audit_contract.snapshot,
+                curator_log: None,
+                e2e_pipeline: None,
             })
         }
-        BenchCondition::CuratedFileBudgeted
-        | BenchCondition::RememE2e
-        | BenchCondition::OracleEvidence
+        BenchCondition::RememE2e => {
+            let memory_config = curator_root
+                .context("internal remem_e2e setup requires an explicit memory config path")?;
+            let prepared = super::e2e::prepare_remem_e2e(data_dir, task, memory_config).await?;
+            fs::write(
+                repo_dir.join("REMEM_CONTEXT.md"),
+                &prepared.rendered_context,
+            )
+            .context("write production-derived remem_e2e SessionStart context")?;
+            Ok(ConditionSetup {
+                env: vec![
+                    (
+                        "REMEM_DATA_DIR".to_string(),
+                        data_dir.to_string_lossy().to_string(),
+                    ),
+                    ("REMEM_ALLOW_PLAINTEXT_DB".to_string(), "1".to_string()),
+                ],
+                prompt_note: Some(
+                    "The exact audited remem_e2e SessionStart context is available at REMEM_CONTEXT.md. Read it before editing."
+                        .to_string(),
+                ),
+                memory_attribution: prepared.memory_attribution,
+                context_audit_status: RememContextAuditStatus::Verified,
+                context_audit_failure_reason: None,
+                remem_context_audit: Some(prepared.context_audit),
+                curator_log: None,
+                e2e_pipeline: Some(prepared.trace),
+            })
+        }
+        BenchCondition::OracleEvidence
         | BenchCondition::RememOracleRetrieval
         | BenchCondition::FullHistory
         | BenchCondition::RememNoEnrichment
@@ -350,12 +407,12 @@ fn query_injected_memory_ids(
     Ok(ids)
 }
 
-struct ScopedEnvVars {
+pub(super) struct ScopedEnvVars {
     previous: Vec<(&'static str, Option<OsString>)>,
 }
 
 impl ScopedEnvVars {
-    fn set_many<const N: usize>(values: [(&'static str, OsString); N]) -> Self {
+    pub(super) fn set_many<const N: usize>(values: [(&'static str, OsString); N]) -> Self {
         let previous = values
             .iter()
             .map(|(key, _)| (*key, std::env::var_os(key)))
@@ -366,7 +423,7 @@ impl ScopedEnvVars {
         Self { previous }
     }
 
-    fn remove_many(keys: &[&'static str]) -> Self {
+    pub(super) fn remove_many(keys: &[&'static str]) -> Self {
         let previous = keys
             .iter()
             .map(|key| (*key, std::env::var_os(key)))
@@ -394,8 +451,8 @@ impl Drop for ScopedEnvVars {
 mod tests {
     use super::*;
 
-    #[test]
-    fn control_conditions_mark_context_audit_not_applicable() -> Result<()> {
+    #[tokio::test]
+    async fn control_conditions_mark_context_audit_not_applicable() -> Result<()> {
         let fixture = super::super::fixture::load_fixture("eval/coding-bench/fixtures/tasks.json")?;
         let task = fixture.tasks.first().context("missing coding-bench task")?;
         let root = crate::db::test_support::ScopedTestDataDir::new("coding-bench-controls");
@@ -404,7 +461,8 @@ mod tests {
         fs::create_dir_all(&repo_dir)?;
 
         for condition in [BenchCondition::NoMemory, BenchCondition::CuratedFileExpert] {
-            let setup = apply_condition(condition, &fixture, task, &repo_dir, &data_dir)?;
+            let setup =
+                apply_condition(condition, &fixture, task, &repo_dir, &data_dir, None).await?;
             assert_eq!(
                 setup.context_audit_status,
                 RememContextAuditStatus::NotApplicable

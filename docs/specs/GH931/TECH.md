@@ -1,6 +1,6 @@
 # GH931 Flagship E2E Public Proof — Tech Spec
 
-Status: Current contract (harness scaffold plus condition-id convergence)
+Status: Current contract (primary local adapters landed; governed execution pending)
 Issue: #931
 
 ## Harness artifacts (this PR)
@@ -29,15 +29,16 @@ All validators are Python 3 stdlib only and run offline. The JSON-schema
 subset validator lives in `claim_gate.py`; `validate_schemas.py` imports it
 instead of duplicating it.
 
-## remem_e2e execution contract (src follow-up, not this PR)
+## remem_e2e local adapter (implemented)
 
 The Rust runner (`src/eval/coding_bench`) now parses the GH931 condition ids
 directly: `remem_seeded_sessionstart` and `curated_file_expert` replace the
 legacy `remem` and `curated_file` CLI ids with no compatibility aliases, the
 `remem_preloaded` id remains reserved for historical full-body-preload
 artifacts and cannot be reused for the current retrieval-dependent path, and
-`--matrix primary` dry-runs the 144-key claim-bearing matrix. The remaining
-runner work needs:
+`--matrix primary` dry-runs the 144-key claim-bearing matrix. The local runner
+implements the following directional adapter contract; it does not authorize
+or produce official evidence without the remaining governed boundaries below:
 
 1. New `remem_e2e` condition: feed fixture history episodes through real
    capture (`captured_events`) → extraction_tasks → observations/candidates →
@@ -108,18 +109,22 @@ runner work needs:
    session, and order; call-plan index and inserted `captured_events.id` must
    both increase strictly with ordinal. A duplicate/gapped/shuffled ordinal,
    decreasing timestamp, event-ID sort, or call/row inversion rolls back before
-   commit. Worker drain starts only after commit. The independent
-   verifier rebuilds projection/call-plan bytes and compares both hashes and
-   all rows. Missing raw events, cardinality/order drift, hash mismatch, or a
+   commit. Worker drain starts only after commit. The local runtime verifier
+   rebuilds projection/call-plan bytes and compares both hashes and all rows;
+   the independently signed offline verifier remains part of governed
+   completion. Missing raw events, cardinality/order drift, hash mismatch, or a
    forbidden field reaching the plan fails before the first write. No
    summary/gold or partial-event fallback exists.
-2. `remem_e2e` requires a configured remem LLM provider key at execution time;
-   `--dry-run` must not require it.
-3. `curated_file_budgeted` run support: inject a curator-produced `MEMORY.md`,
-   verify its SHA-256 against the curator log artifact, and attach the log to
-   the run artifact.
-4. Report additions: failure `stage` attribution (6-stage enum), curator
-   maintenance metrics, and paired task-cluster bootstrap statistics.
+2. `remem_e2e` requires an explicit parseable `--memory-config`; the selected
+   production memory-AI executor must have its provider credential available
+   at execution time. `--dry-run` does not read it.
+3. `curated_file_budgeted` injects a curator-produced `MEMORY.md`, verifies its
+   SHA-256, character count, chronological episode order, per-session budget,
+   totals, and curator-log digest before any selected run starts, and attaches
+   the verified aggregate to each run.
+4. Runner reports include the pipeline counts/hashes and curator maintenance
+   minutes per 100 unique history sessions. Public report pairing/bootstrap is
+   implemented independently; sealed official inputs remain pending.
 
 The ContextAudit binding slice is implemented independently of the remaining
 flagship runner work: remem-backed runs execute the production SessionStart
@@ -127,7 +132,7 @@ emission path, resolve its persisted `injection_run_id`, embed the payload-free
 canonical audit plus version/hash/count/budget summary, and recompute both the
 audit hash and injection-run binding during verification. Missing evidence is a
 runtime contract failure; control conditions are explicitly not applicable.
-The same contract is required when `remem_e2e` execution support lands.
+The same contract is enforced by the landed `remem_e2e` adapter.
 
 ## Completion implementation contract (pending)
 

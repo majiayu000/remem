@@ -45,6 +45,7 @@
       "history_episodes": [{
         "episode_id": "ticket-convention-episode",
         "reference_time_epoch": 1760000000,
+        "raw_events": [{"event_id":"evt-dbb7770a52beff83011bf5cb4669847f","timestamp_epoch":1760000000,"role":"user","sanitized_content":"Ticket keys normalize to uppercase PREFIX-digits. Inputs may contain spaces, underscores, hyphens, or a leading #. If the input contains only digits, use default prefix MEM.","tool_name":null,"sanitized_tool_input":null,"sanitized_tool_output":null,"host_boundary":"user_message"}],
         "summary": "The team settled the ticket key normalization convention for benchmark fixtures.",
         "expected_memory_facts": ["fact:ticket_key_convention"],
         "memories": [{
@@ -58,7 +59,7 @@
       "gold_memory": {
         "required_facts": ["fact:ticket_key_convention"],
         "forbidden_facts": [],
-        "supporting_event_ids": ["ticket-convention-episode:e1"]
+        "supporting_event_ids": ["evt-dbb7770a52beff83011bf5cb4669847f"]
       }
     },
     {
@@ -79,6 +80,7 @@
       "history_episodes": [{
         "episode_id": "retention-policy-episode",
         "reference_time_epoch": 1760000100,
+        "raw_events": [{"event_id":"evt-9d1fb534eae96eed8f353d2e066a1f65","timestamp_epoch":1760000100,"role":"user","sanitized_content":"Retention policy names map to days: default or unknown = 30, audit_log = 365, ephemeral = 7, disabled = 0.","tool_name":null,"sanitized_tool_input":null,"sanitized_tool_output":null,"host_boundary":"user_message"}],
         "summary": "The retention policy windows were chosen after a governance review.",
         "expected_memory_facts": ["fact:retention_policy_windows"],
         "memories": [{
@@ -92,7 +94,7 @@
       "gold_memory": {
         "required_facts": ["fact:retention_policy_windows"],
         "forbidden_facts": [],
-        "supporting_event_ids": ["retention-policy-episode:e1"]
+        "supporting_event_ids": ["evt-9d1fb534eae96eed8f353d2e066a1f65"]
       }
     },
     {
@@ -114,6 +116,7 @@
       "history_episodes": [{
         "episode_id": "slug-bug-episode",
         "reference_time_epoch": 1760000200,
+        "raw_events": [{"event_id":"evt-73896937d045bfb8fc8e2e1508ceedd6","timestamp_epoch":1760000200,"role":"user","sanitized_content":"Slug normalization previously returned blank strings and sometimes left a trailing hyphen after truncation. Return `untitled` when the cleaned slug is empty, limit output to 32 characters, and strip any trailing hyphen after truncation.","tool_name":null,"sanitized_tool_input":null,"sanitized_tool_output":null,"host_boundary":"user_message"}],
         "summary": "A prior bug showed empty slugs and trailing hyphen truncation were easy to regress.",
         "expected_memory_facts": ["fact:slug_empty_and_truncation_bug"],
         "memories": [{
@@ -127,7 +130,7 @@
       "gold_memory": {
         "required_facts": ["fact:slug_empty_and_truncation_bug"],
         "forbidden_facts": [],
-        "supporting_event_ids": ["slug-bug-episode:e1"]
+        "supporting_event_ids": ["evt-73896937d045bfb8fc8e2e1508ceedd6"]
       }
     },
     {
@@ -148,6 +151,7 @@
       "history_episodes": [{
         "episode_id": "duration-bug-episode",
         "reference_time_epoch": 1760000300,
+        "raw_events": [{"event_id":"evt-a99a35efe63118bc523a16b1f337dfef","timestamp_epoch":1760000300,"role":"user","sanitized_content":"The duration parser must convert `ms`, `s`, and `m` suffixes to milliseconds. `ms` is already milliseconds, `s` multiplies by 1000, `m` multiplies by 60000, and blank or None input returns 0.","tool_name":null,"sanitized_tool_input":null,"sanitized_tool_output":null,"host_boundary":"user_message"}],
         "summary": "The duration parser bug was traced to unit suffixes being interpreted as raw integer text.",
         "expected_memory_facts": ["fact:duration_suffix_root_cause"],
         "memories": [{
@@ -161,7 +165,7 @@
       "gold_memory": {
         "required_facts": ["fact:duration_suffix_root_cause"],
         "forbidden_facts": ["fact:duration_raw_int_only"],
-        "supporting_event_ids": ["duration-bug-episode:e1"]
+        "supporting_event_ids": ["evt-a99a35efe63118bc523a16b1f337dfef"]
       }
     },
     {
@@ -182,6 +186,7 @@
       "history_episodes": [{
         "episode_id": "api-v2-episode",
         "reference_time_epoch": 1760000400,
+        "raw_events": [{"event_id":"evt-61d6b7df5c8daf973d21437718257dd9","timestamp_epoch":1760000400,"role":"user","sanitized_content":"The current API endpoint is `/api/v2`. `/api/v1` is stale compatibility information and must not be restored for new helpers.","tool_name":null,"sanitized_tool_input":null,"sanitized_tool_output":null,"host_boundary":"user_message"}],
         "summary": "The v1 endpoint was invalidated by the v2 rollout decision.",
         "expected_memory_facts": ["fact:api_v2_current"],
         "memories": [{
@@ -195,7 +200,7 @@
       "gold_memory": {
         "required_facts": ["fact:api_v2_current"],
         "forbidden_facts": ["fact:api_v1_current"],
-        "supporting_event_ids": ["api-v2-episode:e1"]
+        "supporting_event_ids": ["evt-61d6b7df5c8daf973d21437718257dd9"]
       }
     },
     {
@@ -216,6 +221,7 @@
       "history_episodes": [{
         "episode_id": "storage-driver-episode",
         "reference_time_epoch": 1760000500,
+        "raw_events": [{"event_id":"evt-41d7ead22074951cf678c66aa31a0688","timestamp_epoch":1760000500,"role":"user","sanitized_content":"Default storage driver is `sqlcipher`; the older SQLite-only default is stale and should not be used by new helpers.","tool_name":null,"sanitized_tool_input":null,"sanitized_tool_output":null,"host_boundary":"user_message"}],
         "summary": "The storage default moved from SQLite-only to SQLCipher.",
         "expected_memory_facts": ["fact:storage_driver_sqlcipher_current"],
         "memories": [{
@@ -229,7 +235,7 @@
       "gold_memory": {
         "required_facts": ["fact:storage_driver_sqlcipher_current"],
         "forbidden_facts": ["fact:storage_driver_sqlite_current"],
-        "supporting_event_ids": ["storage-driver-episode:e1"]
+        "supporting_event_ids": ["evt-41d7ead22074951cf678c66aa31a0688"]
       }
     },
     {
@@ -250,6 +256,7 @@
       "history_episodes": [{
         "episode_id": "session-footer-episode",
         "reference_time_epoch": 1760000600,
+        "raw_events": [{"event_id":"evt-9b386c07e5fab8fd65e6b1e7790d0d59","timestamp_epoch":1760000600,"role":"user","sanitized_content":"SessionStart budget footer must render as `Budget: <label>` only when a nonblank budget label exists. Do not render tree glyphs such as `\\u2514\\u2500` in the budget line.","tool_name":null,"sanitized_tool_input":null,"sanitized_tool_output":null,"host_boundary":"user_message"}],
         "summary": "The SessionStart footer contract explicitly forbids tree glyphs in compact budget lines.",
         "expected_memory_facts": ["fact:session_budget_footer_negative_constraint"],
         "memories": [{
@@ -263,7 +270,7 @@
       "gold_memory": {
         "required_facts": ["fact:session_budget_footer_negative_constraint"],
         "forbidden_facts": ["fact:session_footer_tree_glyph"],
-        "supporting_event_ids": ["session-footer-episode:e1"]
+        "supporting_event_ids": ["evt-9b386c07e5fab8fd65e6b1e7790d0d59"]
       }
     },
     {
@@ -284,6 +291,7 @@
       "history_episodes": [{
         "episode_id": "markdown-constraint-episode",
         "reference_time_epoch": 1760000700,
+        "raw_events": [{"event_id":"evt-8dd59ef2e1fbaf852c438fb0f6d2af32","timestamp_epoch":1760000700,"role":"user","sanitized_content":"Markdown table cells escape pipes with a backslash and render newlines as `<br>`. Do not use HTML escaping for this helper; angle brackets remain unchanged.","tool_name":null,"sanitized_tool_input":null,"sanitized_tool_output":null,"host_boundary":"user_message"}],
         "summary": "Markdown table cells use Markdown-specific escaping and intentionally do not HTML-escape angle brackets.",
         "expected_memory_facts": ["fact:markdown_cell_negative_constraint"],
         "memories": [{
@@ -297,7 +305,7 @@
       "gold_memory": {
         "required_facts": ["fact:markdown_cell_negative_constraint"],
         "forbidden_facts": ["fact:markdown_cell_html_escape"],
-        "supporting_event_ids": ["markdown-constraint-episode:e1"]
+        "supporting_event_ids": ["evt-8dd59ef2e1fbaf852c438fb0f6d2af32"]
       }
     },
     {
@@ -319,6 +327,7 @@
       "history_episodes": [{
         "episode_id": "workstream-title-episode",
         "reference_time_epoch": 1760000800,
+        "raw_events": [{"event_id":"evt-649736ca45d92660d0be89b69b1c8cef","timestamp_epoch":1760000800,"role":"user","sanitized_content":"Workstream titles for current-memory-contracts should canonicalize to `current-memory-contracts` across spaces, underscores, hyphens, and follow-up or cleanup suffixes.","tool_name":null,"sanitized_tool_input":null,"sanitized_tool_output":null,"host_boundary":"user_message"}],
         "summary": "Current-memory-contracts follow-up titles should preserve one canonical workstream identity.",
         "expected_memory_facts": ["fact:workstream_current_memory_contracts_alias"],
         "memories": [{
@@ -332,7 +341,7 @@
       "gold_memory": {
         "required_facts": ["fact:workstream_current_memory_contracts_alias"],
         "forbidden_facts": [],
-        "supporting_event_ids": ["workstream-title-episode:e1"]
+        "supporting_event_ids": ["evt-649736ca45d92660d0be89b69b1c8cef"]
       }
     },
     {
@@ -353,6 +362,7 @@
       "history_episodes": [{
         "episode_id": "workstream-status-episode",
         "reference_time_epoch": 1760000900,
+        "raw_events": [{"event_id":"evt-9c4ea823b8ec73e7abb8cab27d9a0a3f","timestamp_epoch":1760000900,"role":"user","sanitized_content":"Workstream status continues from the latest nonblank signal. A latest `active` or `blocked` signal supersedes an older `paused` row; if no latest signal exists, keep the current status.","tool_name":null,"sanitized_tool_input":null,"sanitized_tool_output":null,"host_boundary":"user_message"}],
         "summary": "Latest workstream status evidence supersedes older paused status rows.",
         "expected_memory_facts": ["fact:workstream_latest_status_signal"],
         "memories": [{
@@ -366,7 +376,7 @@
       "gold_memory": {
         "required_facts": ["fact:workstream_latest_status_signal"],
         "forbidden_facts": ["fact:workstream_old_paused_wins"],
-        "supporting_event_ids": ["workstream-status-episode:e1"]
+        "supporting_event_ids": ["evt-9c4ea823b8ec73e7abb8cab27d9a0a3f"]
       }
     },
     {
@@ -387,6 +397,7 @@
       "history_episodes": [{
         "episode_id": "feature-owner-episode",
         "reference_time_epoch": 1760001000,
+        "raw_events": [{"event_id":"evt-b355284ff44fc1b6c1f2e868d3ac5c98","timestamp_epoch":1760001000,"role":"user","sanitized_content":"Feature flag `retention-v2` belongs to team `memory-runtime`.","tool_name":null,"sanitized_tool_input":null,"sanitized_tool_output":null,"host_boundary":"user_message"},{"event_id":"evt-24b3977aebf11f1683bb3c1c9a5aac82","timestamp_epoch":1760001000,"role":"user","sanitized_content":"Team `memory-runtime` uses pager `pager-memory`.","tool_name":null,"sanitized_tool_input":null,"sanitized_tool_output":null,"host_boundary":"user_message"}],
         "summary": "Feature ownership was recorded separately from team pager routing.",
         "expected_memory_facts": ["fact:retention_v2_owner", "fact:memory_runtime_pager"],
         "memories": [{
@@ -406,7 +417,7 @@
       "gold_memory": {
         "required_facts": ["fact:retention_v2_owner", "fact:memory_runtime_pager"],
         "forbidden_facts": ["fact:retention_v2_platform_pager"],
-        "supporting_event_ids": ["feature-owner-episode:e1", "feature-owner-episode:e2"]
+        "supporting_event_ids": ["evt-b355284ff44fc1b6c1f2e868d3ac5c98", "evt-24b3977aebf11f1683bb3c1c9a5aac82"]
       }
     },
     {
@@ -427,6 +438,7 @@
       "history_episodes": [{
         "episode_id": "notification-channel-episode",
         "reference_time_epoch": 1760001100,
+        "raw_events": [{"event_id":"evt-e4ce3aebd58bd6c1c23c50e7c90b544c","timestamp_epoch":1760001100,"role":"user","sanitized_content":"Project `codex-plugin` is part of remem plugin operations and uses remem-specific notification channels.","tool_name":null,"sanitized_tool_input":null,"sanitized_tool_output":null,"host_boundary":"user_message"},{"event_id":"evt-8181525f36a57f0bc2b6fa4ace5178b6","timestamp_epoch":1760001100,"role":"user","sanitized_content":"For project `codex-plugin`, release notifications go to `#remem-release` and incidents go to `#remem-incident`.","tool_name":null,"sanitized_tool_input":null,"sanitized_tool_output":null,"host_boundary":"user_message"}],
         "summary": "Codex plugin notifications have project-specific release and incident channels.",
         "expected_memory_facts": ["fact:codex_plugin_project", "fact:codex_plugin_channels"],
         "memories": [{
@@ -446,7 +458,7 @@
       "gold_memory": {
         "required_facts": ["fact:codex_plugin_project", "fact:codex_plugin_channels"],
         "forbidden_facts": ["fact:codex_plugin_general_channel"],
-        "supporting_event_ids": ["notification-channel-episode:e1", "notification-channel-episode:e2"]
+        "supporting_event_ids": ["evt-e4ce3aebd58bd6c1c23c50e7c90b544c", "evt-8181525f36a57f0bc2b6fa4ace5178b6"]
       }
     },
     {
@@ -467,6 +479,7 @@
       "history_episodes": [{
         "episode_id": "user-date-preference-episode",
         "reference_time_epoch": 1760001200,
+        "raw_events": [{"event_id":"evt-1bf41d0bf2b357a0ab9530fae69911e1","timestamp_epoch":1760001200,"role":"user","sanitized_content":"The user prefers due dates in day/month/year format, such as `25/06/2026`, not ISO year-month-day format.","tool_name":null,"sanitized_tool_input":null,"sanitized_tool_output":null,"host_boundary":"user_message"}],
         "summary": "The user stated a preference for day/month/year dates in benchmark-facing summaries.",
         "expected_memory_facts": ["fact:user_prefers_dmy_dates"],
         "memories": [{
@@ -480,7 +493,7 @@
       "gold_memory": {
         "required_facts": ["fact:user_prefers_dmy_dates"],
         "forbidden_facts": ["fact:user_prefers_iso_dates"],
-        "supporting_event_ids": ["user-date-preference-episode:e1"]
+        "supporting_event_ids": ["evt-1bf41d0bf2b357a0ab9530fae69911e1"]
       }
     },
     {
@@ -501,6 +514,7 @@
       "history_episodes": [{
         "episode_id": "user-status-preference-episode",
         "reference_time_epoch": 1760001300,
+        "raw_events": [{"event_id":"evt-385c5970c953cad6403a73eb7c121ff5","timestamp_epoch":1760001300,"role":"user","sanitized_content":"The user prefers compact status lines as `<subject>: <state>` and does not want extra detail appended in benchmark status summaries.","tool_name":null,"sanitized_tool_input":null,"sanitized_tool_output":null,"host_boundary":"user_message"}],
         "summary": "The user prefers compact status lines and does not want extra explanation appended.",
         "expected_memory_facts": ["fact:user_prefers_compact_status_lines"],
         "memories": [{
@@ -514,7 +528,7 @@
       "gold_memory": {
         "required_facts": ["fact:user_prefers_compact_status_lines"],
         "forbidden_facts": ["fact:user_prefers_verbose_status_lines"],
-        "supporting_event_ids": ["user-status-preference-episode:e1"]
+        "supporting_event_ids": ["evt-385c5970c953cad6403a73eb7c121ff5"]
       }
     },
     {
@@ -535,6 +549,7 @@
       "history_episodes": [{
         "episode_id": "conflicting-endpoint-episode",
         "reference_time_epoch": 1760001400,
+        "raw_events": [{"event_id":"evt-cc98416e91d8191e5772287e89969683","timestamp_epoch":1760001400,"role":"user","sanitized_content":"When endpoint candidates conflict, select the active non-stale candidate with the newest `event_time`. Ignore stale candidates and inactive experimental candidates.","tool_name":null,"sanitized_tool_input":null,"sanitized_tool_output":null,"host_boundary":"user_message"}],
         "summary": "Endpoint candidates can conflict; only active non-stale candidates should be eligible.",
         "expected_memory_facts": ["fact:conflict_active_non_stale_newest"],
         "memories": [{
@@ -548,7 +563,7 @@
       "gold_memory": {
         "required_facts": ["fact:conflict_active_non_stale_newest"],
         "forbidden_facts": ["fact:conflict_latest_any_candidate"],
-        "supporting_event_ids": ["conflicting-endpoint-episode:e1"]
+        "supporting_event_ids": ["evt-cc98416e91d8191e5772287e89969683"]
       }
     },
     {
@@ -569,6 +584,7 @@
       "history_episodes": [{
         "episode_id": "ambiguous-owner-episode",
         "reference_time_epoch": 1760001500,
+        "raw_events": [{"event_id":"evt-b30fcab05223169eaa214709aab3aca2","timestamp_epoch":1760001500,"role":"user","sanitized_content":"When owner candidates contain multiple distinct active owners, return None instead of guessing. Return the owner only when all nonblank candidates agree.","tool_name":null,"sanitized_tool_input":null,"sanitized_tool_output":null,"host_boundary":"user_message"}],
         "summary": "Owner resolution should abstain instead of guessing when active owner evidence conflicts.",
         "expected_memory_facts": ["fact:ambiguous_owner_abstain"],
         "memories": [{
@@ -582,7 +598,7 @@
       "gold_memory": {
         "required_facts": ["fact:ambiguous_owner_abstain"],
         "forbidden_facts": ["fact:ambiguous_owner_first_candidate"],
-        "supporting_event_ids": ["ambiguous-owner-episode:e1"]
+        "supporting_event_ids": ["evt-b30fcab05223169eaa214709aab3aca2"]
       }
     }
   ]

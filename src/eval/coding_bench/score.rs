@@ -25,6 +25,20 @@ pub fn summarize_runs(runs: &[RunReport]) -> ConditionSummary {
         .iter()
         .map(|run| run.wall_time_ms as f64)
         .collect::<Vec<_>>();
+    let mut curator_logs = BTreeMap::new();
+    for run in runs {
+        if let Some(log) = &run.curator_log {
+            curator_logs.entry(log.task_id.as_str()).or_insert(log);
+        }
+    }
+    let curator_sessions = curator_logs
+        .values()
+        .map(|log| log.history_session_count)
+        .sum::<usize>();
+    let curator_minutes = curator_logs
+        .values()
+        .map(|log| log.maintenance_minutes)
+        .sum::<f64>();
     ConditionSummary {
         resolution_rate: resolved / n,
         tokens_total_mean: mean(&tokens),
@@ -34,6 +48,8 @@ pub fn summarize_runs(runs: &[RunReport]) -> ConditionSummary {
         wall_time_ms_p95: percentile(&wall, 0.95),
         failure_counts: failure_counts(runs, false),
         memory_failure_counts: failure_counts(runs, true),
+        human_maintenance_minutes_per_100_sessions: (curator_sessions > 0)
+            .then(|| curator_minutes * 100.0 / curator_sessions as f64),
     }
 }
 

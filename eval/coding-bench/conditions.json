@@ -19,7 +19,7 @@
       "id": "curated_file_budgeted",
       "summary": "Target-blind, time-budgeted human-curated MEMORY.md. Curator sees history episodes in chronological order only, finishes before the target task is revealed, under a fixed per-session time budget and file character cap. Every run must attach a curator log artifact.",
       "memory_path": "repo-local MEMORY.md only",
-      "runner_status": "artifact_schema_only",
+      "runner_status": "implemented",
       "protocol": "eval/coding-bench/curated-file-budgeted-protocol.md",
       "artifact_schema": "eval/coding-bench/schemas/curator-log.schema.json",
       "isolation": [
@@ -33,7 +33,7 @@
       "id": "remem_e2e",
       "summary": "Real product path: raw session/tool evidence -> captured_events -> extraction_tasks -> observations/candidates -> review/promotion policy -> memories/projections -> SessionStart/MCP retrieval -> coding agent. Direct gold-memory seeding and full-evidence REMEM_CONTEXT.md preloading are forbidden.",
       "memory_path": "capture -> extraction -> promotion -> retrieval",
-      "runner_status": "pending_src_support",
+      "runner_status": "implemented",
       "forbidden_shortcuts": [
         "seeding fixture evidence directly into the remem database as memories",
         "appending full gold evidence details to REMEM_CONTEXT.md or any preload file"

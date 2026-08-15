@@ -38,12 +38,16 @@ Machine-readable registry: `eval/coding-bench/conditions.json`, validated by
 - `oracle_evidence`, `remem_oracle_retrieval`, `full_history`,
   `remem_no_enrichment`, `remem_fts_only`: see `conditions.json`.
 
-Runner status: the Rust runner (`src/eval/coding_bench`) currently implements
-the GH931 condition ids. The default `--matrix primary` dry-run plans
-`no_memory`, `curated_file_budgeted`, and `remem_e2e`; live execution fails
-closed for `curated_file_budgeted` and `remem_e2e` until their full adapters
-land. `--matrix implemented` runs the current executable set: `no_memory`,
-`remem_seeded_sessionstart`, and `curated_file_expert`. The legacy bare ids
+Runner status: the Rust runner (`src/eval/coding_bench`) implements all three
+primary adapters. `curated_file_budgeted` preflights every selected task's
+`<task-id>/MEMORY.md` and `curator-log.json` before any run starts, while
+`remem_e2e` requires an explicit `--memory-config`, projects only registered
+`raw_events`, performs insert-only production capture in one transaction,
+drains the production extraction/candidate/graph chain, and binds the exact
+production SessionStart output to its persisted ContextAudit. The default
+`--matrix primary` plans 144 runs; `--matrix implemented` also includes the two
+implemented diagnostic conditions. These local runs remain directional and do
+not satisfy the governed official-run authority contract. The legacy bare ids
 `remem` and `curated_file` are intentionally rejected, and the historical
 `remem_preloaded` id stays reserved for full-body-preload artifacts.
 
@@ -270,6 +274,20 @@ cargo run -- eval-coding-bench \
   --json-out /tmp/remem-coding-bench-smoke.json
 ```
 
+Local adapter checks (directional only; not official evidence):
+
+```bash
+cargo run -- bench coding --suite issue385-v1 \
+  --condition curated_file_budgeted --task slug-normalizer-contract \
+  --runs-per-condition 1 --curator-root /approved/curator-inputs \
+  --json-out /tmp/gh931-curated.json
+
+cargo run -- bench coding --suite issue385-v1 \
+  --condition remem_e2e --task workstream-title-continuity \
+  --runs-per-condition 1 --memory-config /approved/remem-memory-ai.toml \
+  --json-out /tmp/gh931-remem-e2e.json
+```
+
 ## Current Caveat
 
 Codex non-interactive MCP calls can be cancelled by the host. The
@@ -281,6 +299,14 @@ is still diagnostic-only under #931 because it directly seeds gold-derived
 memories instead of exercising capture, extraction, and promotion. It is not
 comparable with the historical `remem_preloaded` 15/15 result. MCP availability
 issues in `remem_e2e` count as real failures with a stage attribution.
+
+The `remem_e2e` adapter never reads episode summaries, expected-memory facts,
+seed memories, target prompts, hidden tests, or scorer metadata when building
+capture input. It flattens `history_episodes[].raw_events` in literal order,
+derives the contiguous source ordinal, seals projection/call-plan hashes,
+requires byte-stable production redaction, and verifies the call-plan/new-row
+bijection before committing. The resulting `REMEM_CONTEXT.md` is the exact
+audited production SessionStart output, not a gold-evidence preload.
 
 The Codex runner uses `--ignore-user-config`, `--ignore-rules`, `--ephemeral`,
 and `--disable hooks` so benchmark agents do not inherit the host's MCP servers,
@@ -301,7 +327,8 @@ virtualenvs, and benchmark-private Codex homes must not appear.
 records:
 
 - category and smoke/full membership;
-- history episodes with expected memory facts;
+- history episodes with expected memory facts plus answer-bearing, closed-schema
+  `raw_events` used exclusively by `remem_e2e` capture;
 - target prompt, allowed paths, and forbidden paths;
 - deterministic oracle commands and hidden test files;
 - required and forbidden patch patterns checked on added diff lines;

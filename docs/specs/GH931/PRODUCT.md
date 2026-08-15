@@ -1,7 +1,7 @@
 # GH931 Flagship E2E Public Proof — Product Spec
 
-Status: Current contract (harness scaffold and condition-id convergence landed;
-runner execution support and official runs pending)
+Status: Current contract (primary local adapters landed; governed execution and
+official runs pending)
 Issue: #931 (refs #384, #385, #849, #928)
 
 ## Problem
@@ -42,7 +42,7 @@ increasing stale/irrelevant memory harm.
   forbidden wording, and a supporting report hash. `INSUFFICIENT` wording must
   be explicitly directional. Thresholds lock before the first official run.
 
-## Completion contract (implementation pending)
+## Completion contract (governed execution pending)
 
 This current contract owns the completion requirements. The longer
 `specs/GH931/` packet is supporting historical planning evidence, not a
@@ -143,8 +143,8 @@ workflow gate or authorization source.
 | Issue acceptance item | Scaffold artifact |
 |---|---|
 | Rename `remem` → `remem_seeded_sessionstart` | Implemented in the Rust CLI/runner/report and registry with no `remem` alias; bare legacy ids are rejected and `remem_preloaded` stays historical-only |
-| Real `remem_e2e` condition | Condition definition with forbidden shortcuts, isolation rules, primary dry-run planning, and fail-closed live guard; full runner execution support is the tracked src follow-up |
-| `curated_file_budgeted` protocol | `eval/coding-bench/curated-file-budgeted-protocol.md` + curator log schema |
+| Real `remem_e2e` condition | Closed `raw_events` projection, projection/call-plan hashes, one-transaction insert-only production capture, bounded production worker drain, pipeline trace, and exact production SessionStart/ContextAudit binding; governed supervisor/MCP/clock execution remains pending |
+| `curated_file_budgeted` protocol | Protocol + schema + pre-run input/hash/order/budget verification + run attachment and maintenance-minutes-per-100-sessions aggregation |
 | Claim registry + wording gate | `eval/claims/registry.json`, `eval/claims/claim_gate.py` |
 | Dry-run and schema validation | `python3 eval/coding-bench/validate_schemas.py`, `claim_gate.py --self-test`, `cargo run -- bench coding --suite issue385-v1 --dry-run` |
 | Directional vs publishable distinction | `Directional evidence:` prefix rule enforced by the gate |

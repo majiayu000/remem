@@ -369,6 +369,13 @@ artifact 和 225 个 artifact 文件。它包含：
 [`docs/release-lifecycle.md`](docs/release-lifecycle.md) 中的 public claim
 gate 通过。
 
+源码 runner 现已实现 `curated_file_budgeted` 与 `remem_e2e` 的方向性本地
+adapter。E2E adapter 只消费 closed-schema fixture `raw_events`，验证
+insert-only 生产 capture 事务，排空 extraction/candidate/graph 工作，并绑定
+精确的生产 SessionStart ContextAudit。这是实现证据，不是正式 outcome：受治理
+的 shared runner、独立 scorer、审批 authority、ledger/transparency receipt
+以及 144 个 sealed run 仍未完成。
+
 ### 隔离 coding-agent baseline（内部证据，不是公开 claim）
 
 `eval/coding-bench/reports/baseline.json` 包含一个隔离的 5-task、

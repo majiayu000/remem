@@ -363,7 +363,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             args.simulate_golden_regression,
             args.simulate_capacity_regression,
         )?,
-        Commands::EvalCodingBench(args) => run_eval_coding_bench(args)?,
+        Commands::EvalCodingBench(args) => run_eval_coding_bench(args).await?,
         Commands::EvalLocal => run_eval_local()?,
         Commands::BackfillEntities => run_backfill_entities()?,
         Commands::BackfillEmbeddings { limit, batch_size } => {

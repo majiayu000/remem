@@ -187,6 +187,8 @@ mod tests {
             provider: None,
             reasoning_effort: "medium".to_string(),
             ignore_budget: false,
+            curator_root: None,
+            memory_config: None,
         }
     }
 }
