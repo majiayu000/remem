@@ -35,7 +35,7 @@ pub(crate) fn log_path() -> Option<PathBuf> {
     if let Some(path) = LOG_DIR_OVERRIDE.with(|slot| slot.borrow().clone()) {
         return Some(path.join("remem.log"));
     }
-    Some(crate::db::data_dir().join("remem.log"))
+    Some(crate::db::try_data_dir().ok()?.join("remem.log"))
 }
 
 pub(crate) fn log_policy() -> Option<LogPolicy> {

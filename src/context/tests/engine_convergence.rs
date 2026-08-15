@@ -401,6 +401,7 @@ fn default_weights_are_the_production_path() {
 fn hybrid_context_declares_no_private_scoring_constants() {
     let source = concat!(
         include_str!("../hybrid_context.rs"),
+        include_str!("../hybrid_context/query.rs"),
         include_str!("../hybrid_context/rank.rs")
     );
     for forbidden in [

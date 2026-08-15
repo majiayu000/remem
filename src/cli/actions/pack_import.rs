@@ -12,7 +12,7 @@ mod active_import;
 pub(in crate::cli) fn run_import_pack(pack: &Path, project: &str, dry_run: bool) -> Result<()> {
     let loaded = load_pack(pack)?;
     if dry_run {
-        let db_path = crate::db::db_path();
+        let db_path = crate::db::try_db_path()?;
         let conn = if db_path.exists() {
             Some(crate::db::open_db_read_only().with_context(|| {
                 format!("open read-only runtime database {}", db_path.display())

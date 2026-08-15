@@ -110,8 +110,8 @@ pub(crate) fn is_codex_rollout_summary_filename(name: &str) -> bool {
         .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_' || *byte == b'-')
 }
 
-pub(in crate::install) fn remem_data_dir() -> PathBuf {
-    crate::db::data_dir()
+pub(in crate::install) fn remem_data_dir() -> Result<PathBuf> {
+    crate::db::try_data_dir()
 }
 
 pub(in crate::install) fn binary_path() -> Result<String> {

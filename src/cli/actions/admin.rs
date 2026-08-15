@@ -12,14 +12,17 @@ pub(in crate::cli) fn run_admin(action: AdminAction) -> Result<()> {
 }
 
 fn run_backup(output: Option<PathBuf>) -> Result<()> {
-    let src_path = crate::db::db_path();
+    let src_path = crate::db::try_db_path()?;
     if !src_path.exists() {
         anyhow::bail!(
             "remem database not found at {}. Nothing to back up.",
             src_path.display()
         );
     }
-    let dst_path = output.unwrap_or_else(|| default_backup_path(Local::now()));
+    let dst_path = match output {
+        Some(path) => path,
+        None => default_backup_path(Local::now())?,
+    };
     backup_db(&src_path, &dst_path)?;
     println!("Backed up remem database to: {}", dst_path.display());
     Ok(())
@@ -27,9 +30,13 @@ fn run_backup(output: Option<PathBuf>) -> Result<()> {
 
 /// `<data_dir>/backups/remem-backup-YYYYMMDD-HHMMSS.sqlite` for the given moment.
 /// Pure path construction — no IO — so tests can pin the timestamp.
-pub fn default_backup_path(now: DateTime<Local>) -> PathBuf {
+pub fn default_backup_path(now: DateTime<Local>) -> Result<PathBuf> {
+    Ok(default_backup_path_in(&crate::db::try_data_dir()?, now))
+}
+
+fn default_backup_path_in(data_dir: &Path, now: DateTime<Local>) -> PathBuf {
     let timestamp = now.format("%Y%m%d-%H%M%S").to_string();
-    crate::db::data_dir()
+    data_dir
         .join("backups")
         .join(format!("remem-backup-{timestamp}.sqlite"))
 }
@@ -129,7 +136,7 @@ mod tests {
     #[test]
     fn default_backup_path_uses_timestamp() {
         let dt = Local.with_ymd_and_hms(2026, 5, 8, 14, 30, 45).unwrap();
-        let path = default_backup_path(dt);
+        let path = default_backup_path(dt).unwrap();
         let s = path.to_string_lossy();
         assert!(s.contains("backups"), "got {s}");
         assert!(s.contains("remem-backup-20260508-143045.sqlite"), "got {s}");

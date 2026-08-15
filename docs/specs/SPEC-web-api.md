@@ -212,6 +212,12 @@ For a non-zero fusion score they satisfy
 `final_score = fusion_score * post_fusion_score_factor`; the factor is `null`
 when no stable ratio can be derived. These fields expose post-fusion demotion
 without changing the existing result fields.
+Since source version `0.6.67`, search, memory browse, and direct memory detail
+items add `classification`, `classification_reason`, and
+`current_context_eligible`. Search and detail remain explicit recovery
+surfaces for `legacy_unverified` rows; these labels explain why a recovered row
+is excluded from CurrentTruth and default SessionStart context. Classification
+failures return a structured 5xx response rather than an unlabeled row.
 Default search, memory browse, graph, and direct memory detail reads exclude
 policy-suppressed memories. Search also disables raw-archive fallback when
 active suppressions are present, so raw text cannot bypass a "do not mention/use

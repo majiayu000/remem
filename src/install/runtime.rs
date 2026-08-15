@@ -75,16 +75,17 @@ pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool, repair: b
         }
         eprintln!(
             "  config -> {} (memory_ai host/profile defaults)",
-            crate::runtime_config::config_path().display()
+            crate::runtime_config::config_path()?.display()
         );
-        eprintln!("  data   -> {}", remem_data_dir().display());
+        let data_dir = remem_data_dir()?;
+        eprintln!("  data   -> {}", data_dir.display());
         eprintln!(
             "  key    -> {} (create if missing)",
-            remem_data_dir().join(".key").display()
+            data_dir.join(".key").display()
         );
         eprintln!(
             "  db     -> {} (initialize or migrate encrypted database if needed)",
-            crate::db::db_path().display()
+            crate::db::try_db_path()?.display()
         );
         print_install_path_warnings(&bin);
         return Ok(());
@@ -162,7 +163,7 @@ pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool, repair: b
         );
     }
 
-    let data_dir = remem_data_dir();
+    let data_dir = remem_data_dir()?;
     std::fs::create_dir_all(&data_dir)?;
     eprintln!("  data   -> {}", data_dir.display());
     let api_token_path = crate::api::ensure_api_token()?;
@@ -260,9 +261,9 @@ fn repair_install(
 }
 
 pub(in crate::install) fn ensure_runtime_store_ready() -> Result<RuntimeStoreReady> {
-    let data_dir = crate::db::data_dir();
+    let data_dir = crate::db::try_data_dir()?;
     let key_path = data_dir.join(".key");
-    let db_path = crate::db::db_path();
+    let db_path = crate::db::try_db_path()?;
 
     if key_path.exists() {
         ensure_env_key_matches_persisted_key_if_set(&key_path)?;
@@ -542,7 +543,7 @@ pub fn uninstall(target: InstallTarget, dry_run: bool) -> Result<()> {
     }
 
     eprintln!("remem uninstall 完成");
-    eprintln!("  数据目录 {} 保留不动", remem_data_dir().display());
+    eprintln!("  数据目录 {} 保留不动", remem_data_dir()?.display());
 
     Ok(())
 }

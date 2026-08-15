@@ -83,6 +83,9 @@ pub(super) struct MemoryItem {
     pub project: String,
     pub scope: String,
     pub status: String,
+    pub classification: crate::truth::MemoryVisibilityClass,
+    pub current_context_eligible: bool,
+    pub classification_reason: String,
     pub staleness: crate::memory::MemoryStalenessLabel,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub topic_key: Option<String>,

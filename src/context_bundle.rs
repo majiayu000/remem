@@ -22,6 +22,7 @@
 
 mod audit;
 mod compile;
+mod current_truth;
 mod domain;
 mod executor;
 pub(crate) mod persistence;
@@ -33,10 +34,15 @@ pub use compile::compile_session_start_bundle;
 pub(crate) use compile::{
     compile_session_start_for_renderer, reseal_after_emission_gate, seal_session_start_bundle,
 };
+pub(crate) use current_truth::{
+    abstained_memory_ids, abstention_reason_for_memory, append_core_abstention_lines,
+    core_render_memories, project_for_scope,
+};
 pub use domain::{
     AgentRole, AuditEntry, ChannelKind, ContextAudit, ContextBundle, ContextFilters, ContextIntent,
-    ContextItem, ContextRequest, DegradedMode, ItemValidity, PlannedChannel, ProjectRef, RiskClass,
-    SectionBudgets, SourceKind, TrustClass, CONTEXT_BUNDLE_SCHEMA_VERSION,
+    ContextItem, ContextRequest, CurrentTruthShadowDiff, DegradedMode, ItemValidity,
+    PlannedChannel, ProjectRef, RiskClass, SectionBudgets, SourceKind, TrustClass,
+    CONTEXT_BUNDLE_SCHEMA_VERSION,
 };
 pub use executor::{blocked_before_load, execute, ExecutorInputs, PreselectionDrop};
 pub(crate) use persistence::{cleanup_persisted_audits_before, persist_context_bundle_audit};

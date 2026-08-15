@@ -12,8 +12,8 @@ use super::helpers::error_response;
 const API_TOKEN_FILE: &str = ".api-token";
 const API_TOKEN_BYTES: usize = 32;
 
-pub(crate) fn api_token_path() -> PathBuf {
-    crate::db::data_dir().join(API_TOKEN_FILE)
+pub(crate) fn api_token_path() -> Result<PathBuf> {
+    Ok(crate::db::try_data_dir()?.join(API_TOKEN_FILE))
 }
 
 /// Ensure the REST API bearer token exists and return its path.
@@ -21,7 +21,7 @@ pub(crate) fn api_token_path() -> PathBuf {
 /// Call this before using [`crate::api::build_router`] directly. The
 /// `remem api` command calls it automatically.
 pub fn ensure_api_token() -> Result<PathBuf> {
-    let path = api_token_path();
+    let path = api_token_path()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create API token parent {}", parent.display()))?;
@@ -47,7 +47,7 @@ pub fn ensure_api_token() -> Result<PathBuf> {
 
 /// Load the REST API bearer token from the remem data directory.
 pub fn load_api_token() -> Result<String> {
-    let path = api_token_path();
+    let path = api_token_path()?;
     let token = std::fs::read_to_string(&path)
         .with_context(|| format!("read API token from {}", path.display()))?;
     let token = token.trim().to_string();

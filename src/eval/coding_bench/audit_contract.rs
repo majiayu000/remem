@@ -532,6 +532,7 @@ mod tests {
         }
     }
 
+    #[rustfmt::skip]
     fn snapshot() -> Result<RememContextAuditSnapshot> {
         let audit = ContextAudit {
             schema_version: CONTEXT_BUNDLE_SCHEMA_VERSION,
@@ -545,10 +546,8 @@ mod tests {
             token_estimate: 7,
             token_budget: 100,
             truncation_reason: Some("section_budget".to_string()),
-            entries: vec![
-                audit_entry("memory:1", true),
-                audit_entry("memory:2", false),
-            ],
+            entries: vec![audit_entry("memory:1", true), audit_entry("memory:2", false)],
+            shadow_comparison: Vec::new(),
         };
         let (canonical_audit_json, audit_hash) =
             crate::context_bundle::persistence::canonical_context_audit(

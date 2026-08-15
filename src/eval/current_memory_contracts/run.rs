@@ -310,6 +310,47 @@ fn seed_current_state_fixture(conn: &Connection) -> Result<()> {
     )?;
     set_current_memory(conn, 70, 701)?;
 
+    insert_state_key(
+        conn,
+        71,
+        "repo",
+        PROJECT,
+        "staleness-tracked",
+        "active",
+        None,
+    )?;
+    insert_current_state_memory_at(
+        conn,
+        710,
+        71,
+        "Historical tracked memory",
+        "Previous tracked source anchor remains auditable in history.",
+        "stale",
+        690,
+        None,
+        None,
+    )?;
+    insert_current_state_memory_at(
+        conn,
+        711,
+        71,
+        "Tracked current memory",
+        "Tracked source anchor stays trusted.",
+        "active",
+        700,
+        None,
+        None,
+    )?;
+    set_memory_source(conn, 710, "eval-history-session", &["src/history.rs"])?;
+    set_memory_source(conn, 711, "eval-tracked-session", &["src/tracked.rs"])?;
+    conn.execute(
+        "INSERT INTO memory_edges
+         (edge_type, from_memory_id, to_memory_id, state_key_id, reason, created_at_epoch)
+         VALUES ('supersedes', 710, 711, 71, 'tracked history replacement', 705)",
+        [],
+    )?;
+    set_current_memory(conn, 71, 711)?;
+
     insert_state_key(conn, 80, "repo", PROJECT, "staleness-error", "active", None)?;
     insert_current_state_memory_at(
         conn,
@@ -378,9 +419,10 @@ fn evaluate_current_state_statuses(
         cases,
         "current_state",
         "unresolved_conflict",
-        "status=unresolved_conflict with conflict relation evidence",
+        "status=unresolved_conflict with conflict relation evidence and no current pointer",
         format!("status={} {conflict_actual}", conflict.status),
         conflict.status == "unresolved_conflict"
+            && conflict.current.is_none()
             && conflict_ref.is_some_and(|memory| {
                 memory.id == 302
                     && memory.relation.as_deref() == Some("conflicts")
@@ -482,8 +524,8 @@ fn evaluate_staleness_labels(
         untracked_label == "untracked",
     );
 
-    let staleness = current_state_result(conn, "staleness-conflict", None)?;
-    let tracked_label = staleness
+    let tracked = current_state_result(conn, "staleness-tracked", None)?;
+    let tracked_label = tracked
         .current
         .as_ref()
         .map(|memory| memory.staleness.source_anchor.clone())
@@ -496,7 +538,7 @@ fn evaluate_staleness_labels(
         tracked_label.clone(),
         tracked_label == "tracked",
     );
-    let history = staleness.history.first();
+    let history = tracked.history.first();
     let history_actual = history
         .map(|memory| {
             format!(
@@ -512,11 +554,12 @@ fn evaluate_staleness_labels(
         "history relation=supersedes and source_anchor=tracked",
         history_actual,
         history.is_some_and(|memory| {
-            memory.id == 700
+            memory.id == 710
                 && memory.relation.as_deref() == Some("supersedes")
                 && memory.staleness.source_anchor == "tracked"
         }),
     );
+    let staleness = current_state_result(conn, "staleness-conflict", None)?;
     let verify_label = staleness
         .conflicts
         .first()

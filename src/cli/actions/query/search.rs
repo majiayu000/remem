@@ -39,6 +39,7 @@ pub(in crate::cli) fn run_search(
     );
     let detailed = crate::memory::service::search_memories_with_explain_details(&conn, &request)?;
     let results = &detailed.result;
+    let visibility = classify_search_results(&conn, &results.memories)?;
     if json {
         let output = build_search_json(
             query,
@@ -54,19 +55,88 @@ pub(in crate::cli) fn run_search(
             results,
             detailed.explain_details.as_ref(),
         );
+        let mut output = serde_json::to_value(output)?;
+        annotate_search_json(&mut output, &visibility);
         println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
     }
-    print!(
-        "{}",
-        render_search_results_with_details(
-            results,
-            detailed.explain_details.as_ref(),
-            offset,
-            limit.max(1),
-        )
+    let mut output = render_search_results_with_details(
+        results,
+        detailed.explain_details.as_ref(),
+        offset,
+        limit.max(1),
     );
+    append_visibility_labels(&mut output, &visibility);
+    print!("{output}");
     Ok(())
+}
+
+fn classify_search_results(
+    conn: &rusqlite::Connection,
+    memories: &[Memory],
+) -> Result<std::collections::BTreeMap<i64, crate::truth::MemoryVisibility>> {
+    let as_of_epoch = chrono::Utc::now().timestamp();
+    memories
+        .iter()
+        .map(|memory| {
+            Ok((
+                memory.id,
+                crate::truth::classify_memory(conn, memory.id, as_of_epoch)?,
+            ))
+        })
+        .collect()
+}
+
+fn annotate_search_json(
+    output: &mut serde_json::Value,
+    visibility: &std::collections::BTreeMap<i64, crate::truth::MemoryVisibility>,
+) {
+    let Some(results) = output
+        .get_mut("results")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    for result in results {
+        let Some(id) = result.get("id").and_then(serde_json::Value::as_i64) else {
+            continue;
+        };
+        let Some(classification) = visibility.get(&id) else {
+            continue;
+        };
+        if let Some(object) = result.as_object_mut() {
+            object.insert(
+                "classification".into(),
+                serde_json::json!(classification.classification),
+            );
+            object.insert(
+                "classification_reason".into(),
+                serde_json::Value::String(classification.reason.as_str().to_string()),
+            );
+            object.insert(
+                "current_context_eligible".into(),
+                classification.current_context_eligible.into(),
+            );
+        }
+    }
+}
+
+fn append_visibility_labels(
+    output: &mut String,
+    visibility: &std::collections::BTreeMap<i64, crate::truth::MemoryVisibility>,
+) {
+    if visibility.is_empty() {
+        return;
+    }
+    output.push_str("\nClassification:\n");
+    for (id, item) in visibility {
+        output.push_str(&format!(
+            "  [{id}] classification={} reason={} current_context_eligible={}\n",
+            item.classification.as_str(),
+            item.reason.as_str(),
+            item.current_context_eligible
+        ));
+    }
 }
 
 pub(super) fn build_search_request(

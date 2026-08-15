@@ -92,6 +92,8 @@ The CI lifecycle guard enforces the highest-risk parts of this flow. See
 | `user-memory-policy-refinements/` | Current contract | Product and technical contract for profile Markdown snapshots, natural usage policy, and automatic extraction non-retention rules. Refs #617-#620. |
 | `workstream-identity-continuity/` | Current contract | Product and technical contract for preserving canonical workstream identity across title drift, aliases, and rename chains. Refs #603. |
 
+| `legacy-unverified-context/` | Current contract | Read-only trust/visibility projection, recovery labels, and CurrentTruth/SessionStart quarantine boundary. Refs #1017. |
+
 ## Top-Level Specs
 
 | File | Status | Notes |

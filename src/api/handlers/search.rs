@@ -201,6 +201,15 @@ mod tests {
         let default_json: Value = serde_json::from_slice(&default_body)?;
         assert!(default_json.get("explain").is_none());
         assert_eq!(default_json["data"][0]["id"], memory_id);
+        assert_eq!(
+            default_json["data"][0]["classification"],
+            "legacy_unverified"
+        );
+        assert_eq!(
+            default_json["data"][0]["classification_reason"],
+            "legacy_unverified_provenance_missing"
+        );
+        assert_eq!(default_json["data"][0]["current_context_eligible"], false);
         assert_eq!(default_json["data"][0]["staleness"]["status"], "active");
         assert_eq!(
             default_json["data"][0]["staleness"]["source_anchor"],

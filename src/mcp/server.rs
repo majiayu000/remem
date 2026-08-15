@@ -3,6 +3,7 @@ mod context_tools;
 mod errors;
 mod raw_tools;
 mod runtime;
+mod search_routing;
 mod search_tools;
 #[cfg(test)]
 mod tests;

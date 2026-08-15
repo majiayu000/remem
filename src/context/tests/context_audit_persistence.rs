@@ -130,6 +130,7 @@ fn bundle_audit_failure_rolls_back_item_rows_atomically() -> anyhow::Result<()> 
             token_budget: 0,
             truncation_reason: None,
             entries: Vec::new(),
+            shadow_comparison: Vec::new(),
         },
     };
     let invocation = ContextInvocation {

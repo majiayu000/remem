@@ -230,7 +230,16 @@ struct SharedDoctorDb {
 
 impl SharedDoctorDb {
     fn open() -> Self {
-        if !crate::db::db_path().exists() {
+        let db_path = match crate::db::try_db_path() {
+            Ok(path) => path,
+            Err(error) => {
+                return Self {
+                    conn: None,
+                    open_error: Some(error.to_string()),
+                };
+            }
+        };
+        if !db_path.exists() {
             return Self {
                 conn: None,
                 open_error: None,
@@ -364,7 +373,16 @@ fn write_json<W: Write>(
 
 fn build_observability_report() -> crate::db::ObservabilityReport {
     let generated_at_epoch = chrono::Utc::now().timestamp();
-    if !crate::db::db_path().exists() {
+    let db_path = match crate::db::try_db_path() {
+        Ok(path) => path,
+        Err(error) => {
+            return crate::db::ObservabilityReport::unavailable(
+                generated_at_epoch,
+                error.to_string(),
+            );
+        }
+    };
+    if !db_path.exists() {
         return crate::db::ObservabilityReport::unavailable(
             generated_at_epoch,
             "remem database does not exist",

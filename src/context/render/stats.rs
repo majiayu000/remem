@@ -187,6 +187,7 @@ mod tests {
                 elapsed_ms: 5,
             }],
             rerank: None,
+            current_truth_projection: None,
         };
 
         let stats = empty_stats_with_load(

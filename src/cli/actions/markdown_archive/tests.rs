@@ -494,10 +494,6 @@ fn markdown_round_trip_preserves_extended_memory_metadata() -> Result<()> {
     let project = "/tmp/remem-markdown-metadata";
     let source = Connection::open_in_memory()?;
     setup_memory_schema(&source);
-    source.execute_batch(
-        "ALTER TABLE memories ADD COLUMN evidence_event_ids TEXT;
-         ALTER TABLE memories ADD COLUMN source_candidate_id INTEGER;",
-    )?;
     source.execute("INSERT INTO memory_candidates(id) VALUES (42)", [])?;
     source.execute(
         "INSERT INTO memories
@@ -535,10 +531,6 @@ fn markdown_round_trip_preserves_extended_memory_metadata() -> Result<()> {
 
     let target = Connection::open_in_memory()?;
     setup_memory_schema(&target);
-    target.execute_batch(
-        "ALTER TABLE memories ADD COLUMN evidence_event_ids TEXT;
-         ALTER TABLE memories ADD COLUMN source_candidate_id INTEGER;",
-    )?;
     target.execute("INSERT INTO memory_candidates(id) VALUES (42)", [])?;
     let stats = import_markdown_archive(&target, &export_dir, false)?;
     assert_eq!(stats.imported, 1);

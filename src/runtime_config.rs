@@ -81,13 +81,16 @@ pub struct LegacyClaudeGateMigration {
     pub dry_run: bool,
 }
 
-pub fn config_path() -> PathBuf {
-    std::env::var("REMEM_CONFIG")
+pub fn config_path() -> Result<PathBuf> {
+    if let Some(path) = std::env::var("REMEM_CONFIG")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| crate::db::data_dir().join("config.toml"))
+    {
+        return Ok(path);
+    }
+    Ok(crate::db::try_data_dir()?.join("config.toml"))
 }
 
 pub fn default_config_text() -> String {
@@ -104,7 +107,7 @@ pub fn show_config_text() -> Result<String> {
 }
 
 pub fn init_config() -> Result<PathBuf> {
-    let path = config_path();
+    let path = config_path()?;
     let mut doc = read_config_doc_or_default()?;
     ensure_config_defaults(&mut doc, &[CLAUDE_HOST, CODEX_HOST])?;
     write_config_doc(&path, &doc)?;
@@ -112,7 +115,7 @@ pub fn init_config() -> Result<PathBuf> {
 }
 
 pub fn ensure_config_for_hosts(hosts: &[&str]) -> Result<PathBuf> {
-    let path = config_path();
+    let path = config_path()?;
     let mut doc = read_config_doc_or_default()?;
     ensure_config_defaults(&mut doc, hosts)?;
     write_config_doc(&path, &doc)?;
@@ -120,7 +123,7 @@ pub fn ensure_config_for_hosts(hosts: &[&str]) -> Result<PathBuf> {
 }
 
 pub fn set_config_value(key: &str, raw_value: &str) -> Result<PathBuf> {
-    let path = config_path();
+    let path = config_path()?;
     let mut doc = read_config_doc_or_default()?;
     ensure_config_defaults(&mut doc, &[CLAUDE_HOST, CODEX_HOST])?;
 
@@ -144,7 +147,7 @@ pub fn set_config_value(key: &str, raw_value: &str) -> Result<PathBuf> {
 }
 
 pub fn migrate_legacy_claude_context_gate(dry_run: bool) -> Result<LegacyClaudeGateMigration> {
-    let path = config_path();
+    let path = config_path()?;
     let mut doc = read_config_doc_or_default()?;
     ensure_config_defaults(&mut doc, &[CLAUDE_HOST, CODEX_HOST])?;
 
@@ -237,7 +240,7 @@ pub fn resolve_memory_ai_profile(
 }
 
 fn read_config_doc_or_default() -> Result<DocumentMut> {
-    let path = config_path();
+    let path = config_path()?;
     if !path.exists() {
         return Ok(DocumentMut::new());
     }
@@ -391,13 +394,13 @@ fn host_runtime_config_from_doc(doc: &DocumentMut, host: &str) -> Result<HostRun
         .and_then(|table| table.get("hosts"))
         .and_then(Item::as_table)
     else {
-        bail!("missing [memory_ai.hosts] in {}", config_path().display());
+        bail!("missing [memory_ai.hosts] in {}", config_path()?.display());
     };
     let Some(table) = hosts.get(host).and_then(Item::as_table) else {
         bail!(
             "missing [memory_ai.hosts.\"{}\"] in {}",
             host,
-            config_path().display()
+            config_path()?.display()
         );
     };
     let memory_profile = required_str(table, "memory_profile")?.to_string();
@@ -427,14 +430,14 @@ fn profile_from_doc(doc: &DocumentMut, profile_name: &str) -> Result<ResolvedMem
     else {
         bail!(
             "missing [memory_ai.profiles] in {}",
-            config_path().display()
+            config_path()?.display()
         );
     };
     let Some(table) = profiles.get(profile_name).and_then(Item::as_table) else {
         bail!(
             "missing [memory_ai.profiles.{}] in {}",
             profile_name,
-            config_path().display()
+            config_path()?.display()
         );
     };
     let executor = parse_executor(required_str(table, "executor")?)?;

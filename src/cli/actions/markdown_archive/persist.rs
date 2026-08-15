@@ -59,6 +59,12 @@ pub(super) fn update_optional_memory_provenance(
             rusqlite::params![Option::<i64>::None, memory_id],
         )?;
     }
+    if column_exists(conn, "memories", "source_trust_class")? {
+        conn.execute(
+            "UPDATE memories SET source_trust_class = 'user_prompt' WHERE id = ?1",
+            [memory_id],
+        )?;
+    }
     Ok(())
 }
 

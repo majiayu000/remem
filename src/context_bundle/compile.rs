@@ -18,10 +18,14 @@ use crate::retrieval_router::{
     plan_context_bundle_with_limits, plan_session_start_with_limits, RetrievalPlan,
 };
 
+use super::current_truth::{
+    activate_current_truth_channel, annotate_current_truth_items, attach_shadow_comparison,
+};
 use super::domain::{ContextBundle, ContextItem, ContextRequest};
 use super::executor::{
     blocked_before_load, execute, execute_with_trace, BudgetEnforcement, ExecutorInputs,
 };
+use crate::truth::CurrentTruthProjection;
 
 pub(crate) struct SessionStartCompile {
     pub bundle: ContextBundle,
@@ -67,18 +71,37 @@ fn bundle_for_plan(
 ) -> ContextBundle {
     match load_session_start_candidates_with_limits(conn, project, cwd, current_branch, limits) {
         Ok(LoadedBundleCandidates {
-            candidates,
+            mut candidates,
             poisoning_drops,
             preselection_drops,
-        }) => execute(
-            compiled,
-            &ExecutorInputs {
-                candidates,
-                poisoning_drops,
-                preselection_drops,
-                enrichment_available,
-            },
-        ),
+            current_truth_projection,
+        }) => {
+            let Some(projection) = current_truth_projection else {
+                return blocked_before_load(compiled, "CurrentTruth projection unavailable");
+            };
+            annotate_current_truth_items(&mut candidates, &projection);
+            let mut bundle = execute(
+                compiled,
+                &ExecutorInputs {
+                    candidates,
+                    poisoning_drops,
+                    preselection_drops,
+                    enrichment_available,
+                },
+            );
+            attach_shadow_comparison(&mut bundle, &projection);
+            activate_current_truth_channel(
+                &mut bundle,
+                &projection,
+                Some(&compiled.section_budgets),
+                compiled
+                    .output_sections
+                    .iter()
+                    .find(|section| section.channel == super::domain::ChannelKind::Core)
+                    .map(|section| section.item_limit),
+            );
+            bundle
+        }
         Err(error) => blocked_before_load(compiled, &error.to_string()),
     }
 }
@@ -93,13 +116,17 @@ fn bundle_for_plan(
 pub(crate) fn compile_session_start_for_renderer(
     request: &ContextRequest,
     limits: &ContextLimits,
-    candidates: Vec<ContextItem>,
+    mut candidates: Vec<ContextItem>,
     poisoning_drops: Vec<ContextItem>,
     preselection_drops: Vec<super::executor::PreselectionDrop>,
     enrichment_available: bool,
+    current_truth: Option<&CurrentTruthProjection>,
 ) -> Result<SessionStartCompile> {
+    if let Some(projection) = current_truth {
+        annotate_current_truth_items(&mut candidates, projection);
+    }
     let compiled = plan_session_start_with_limits(request, limits)?;
-    let trace = execute_with_trace(
+    let mut trace = execute_with_trace(
         &compiled,
         &ExecutorInputs {
             candidates,
@@ -109,6 +136,10 @@ pub(crate) fn compile_session_start_for_renderer(
         },
         BudgetEnforcement::DeferToRenderer,
     );
+    if let Some(projection) = current_truth {
+        attach_shadow_comparison(&mut trace.bundle, projection);
+        activate_current_truth_channel(&mut trace.bundle, projection, None, None);
+    }
     Ok(SessionStartCompile {
         bundle: trace.bundle,
         relevance_plan: trace.relevance_plan,

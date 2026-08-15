@@ -1,6 +1,5 @@
 #[cfg(test)]
 use std::cell::Cell;
-use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -8,10 +7,6 @@ use rusqlite::{Connection, OpenFlags};
 use sha2::{Digest, Sha256};
 
 use super::pragma::{ConnectionMode, ConnectionPragmas};
-
-thread_local! {
-    static DATA_DIR_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
-}
 
 #[cfg(test)]
 thread_local! {
@@ -31,11 +26,6 @@ pub(crate) fn configured_connection_open_count() -> usize {
 #[cfg(test)]
 fn record_configured_connection_open() {
     CONFIGURED_CONNECTION_OPENS.with(|count| count.set(count.get() + 1));
-}
-
-pub(crate) fn with_data_dir<T>(dir: &Path, f: impl FnOnce() -> T) -> T {
-    let _guard = DataDirOverrideGuard::set(dir.to_path_buf());
-    f()
 }
 
 pub fn deterministic_hash(data: &[u8]) -> u64 {
@@ -82,18 +72,8 @@ pub fn project_from_cwd(cwd: &str) -> String {
     crate::project_id::project_from_cwd(cwd)
 }
 
-pub fn data_dir() -> PathBuf {
-    if let Some(path) = DATA_DIR_OVERRIDE.with(|slot| slot.borrow().clone()) {
-        return path;
-    }
-    super::data_dir::resolve(
-        std::env::var_os("REMEM_DATA_DIR").map(PathBuf::from),
-        dirs::home_dir(),
-    )
-}
-
 pub fn absolute_data_dir() -> Result<PathBuf> {
-    let path = data_dir();
+    let path = super::data_dir::try_data_dir()?;
     if path.is_absolute() {
         return Ok(path);
     }
@@ -102,12 +82,17 @@ pub fn absolute_data_dir() -> Result<PathBuf> {
         .join(path))
 }
 
+#[cfg(test)]
 pub fn db_path() -> PathBuf {
-    data_dir().join("remem.db")
+    super::data_dir::data_dir().join("remem.db")
+}
+
+pub fn try_db_path() -> Result<PathBuf> {
+    Ok(super::data_dir::try_data_dir()?.join("remem.db"))
 }
 
 pub fn open_db() -> Result<Connection> {
-    let path = db_path();
+    let path = try_db_path()?;
     let key = super::crypto::require_cipher_key_or_plaintext_override()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -143,7 +128,7 @@ fn advance_vec_index(conn: &Connection) {
 }
 
 pub fn open_db_no_migrate() -> Result<Connection> {
-    let path = db_path();
+    let path = try_db_path()?;
     let key = super::crypto::require_cipher_key_or_plaintext_override()?;
     if !path.exists() {
         anyhow::bail!("database not found: {}", path.display());
@@ -165,7 +150,7 @@ pub fn open_db_for_hook() -> Result<Connection> {
 }
 
 pub fn open_db_read_only() -> Result<Connection> {
-    let path = db_path();
+    let path = try_db_path()?;
     let key = super::crypto::require_cipher_key_or_plaintext_override()?;
     if !path.exists() {
         anyhow::bail!("database not found: {}", path.display());
@@ -246,26 +231,6 @@ pub fn detect_git_branch(cwd: &str) -> Option<String> {
         None
     } else {
         Some(branch)
-    }
-}
-
-struct DataDirOverrideGuard {
-    previous: Option<PathBuf>,
-}
-
-impl DataDirOverrideGuard {
-    fn set(path: PathBuf) -> Self {
-        let previous = DATA_DIR_OVERRIDE.with(|slot| slot.replace(Some(path)));
-        Self { previous }
-    }
-}
-
-impl Drop for DataDirOverrideGuard {
-    fn drop(&mut self) {
-        let previous = self.previous.take();
-        DATA_DIR_OVERRIDE.with(|slot| {
-            slot.replace(previous);
-        });
     }
 }
 

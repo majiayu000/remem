@@ -1,17 +1,22 @@
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension};
 
-use crate::memory::{self, Memory};
+use crate::memory;
 use crate::retrieval::search::common::{
-    calibrated_vector_hits, sanitize_fts_query, weighted_ranked_fuse, WeightedRankedChannel,
-    WeightedRankedHit,
+    calibrated_vector_hits, sanitize_fts_query, WeightedRankedHit,
 };
 use crate::retrieval::search::SearchWeights;
 
 use super::filters::{push_excluded_type_filter, push_owner_included_filter};
 
+mod query;
 mod rank;
 mod usage;
+
+pub(crate) use query::query_hybrid_context_memories_with_rank_signal_mode;
+#[cfg(test)]
+pub(super) use query::query_owner_included_memories_by_ids;
+pub(super) use query::{query_hybrid_context_memories, query_hybrid_context_memories_with_weights};
 
 use rank::{fts_ranked_hits, rank_ordered_hits};
 
@@ -28,236 +33,6 @@ struct ContextChannel {
 pub(crate) enum InjectionRankSignalMode {
     PureRrf,
     LegacyRankPseudoScore,
-}
-
-pub(super) fn query_hybrid_context_memories(
-    conn: &Connection,
-    project: &str,
-    query: &str,
-    current_branch: Option<&str>,
-    excluded_types: &[&str],
-    limit: i64,
-    allow_remote_embedding: bool,
-) -> Result<Vec<Memory>> {
-    query_hybrid_context_memories_with_weights(
-        conn,
-        project,
-        query,
-        current_branch,
-        excluded_types,
-        limit,
-        SearchWeights::production(),
-        allow_remote_embedding,
-    )
-}
-
-/// Injection retrieval against explicit weights. `query_hybrid_context_memories`
-/// is the production caller and passes `SearchWeights::production()` (the
-/// calibrated defaults plus the GH-947 `REMEM_USAGE_WEIGHT` operator
-/// override); taking the
-/// weights as a parameter is what lets a test prove that an explicit
-/// `SearchWeights` value reaches this path. Applying a generated
-/// `eval-weight-grid` result remains later staged work (GH953).
-pub(super) fn query_hybrid_context_memories_with_weights(
-    conn: &Connection,
-    project: &str,
-    query: &str,
-    current_branch: Option<&str>,
-    excluded_types: &[&str],
-    limit: i64,
-    weights: SearchWeights,
-    allow_remote_embedding: bool,
-) -> Result<Vec<Memory>> {
-    query_hybrid_context_memories_with_rank_signal_mode(
-        conn,
-        project,
-        query,
-        current_branch,
-        excluded_types,
-        limit,
-        weights,
-        InjectionRankSignalMode::PureRrf,
-        allow_remote_embedding,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn query_hybrid_context_memories_with_rank_signal_mode(
-    conn: &Connection,
-    project: &str,
-    query: &str,
-    current_branch: Option<&str>,
-    excluded_types: &[&str],
-    limit: i64,
-    weights: SearchWeights,
-    rank_signal_mode: InjectionRankSignalMode,
-    allow_remote_embedding: bool,
-) -> Result<Vec<Memory>> {
-    weights.validate()?;
-    if limit <= 0 || query.trim().is_empty() {
-        return Ok(vec![]);
-    }
-
-    let fetch_limit = limit.saturating_mul(3).max(MIN_HYBRID_FETCH_LIMIT);
-    let mut channels = Vec::new();
-    push_channel(
-        &mut channels,
-        weights.fts,
-        query_local_fts_channel(
-            conn,
-            project,
-            query,
-            current_branch,
-            excluded_types,
-            fetch_limit,
-        )?,
-    );
-    push_channel(
-        &mut channels,
-        weights.entity,
-        query_local_entity_channel(
-            conn,
-            project,
-            query,
-            current_branch,
-            excluded_types,
-            fetch_limit,
-        )?,
-    );
-    push_channel(
-        &mut channels,
-        weights.temporal,
-        query_local_temporal_channel(
-            conn,
-            project,
-            query,
-            current_branch,
-            excluded_types,
-            fetch_limit,
-        )?,
-    );
-    push_channel(
-        &mut channels,
-        weights.fact,
-        query_local_fact_channel(
-            conn,
-            project,
-            query,
-            current_branch,
-            excluded_types,
-            fetch_limit,
-        )?,
-    );
-    push_channel(
-        &mut channels,
-        weights.vector,
-        query_local_vector_channel(
-            conn,
-            project,
-            query,
-            current_branch,
-            excluded_types,
-            weights.max_vector_distance,
-            allow_remote_embedding,
-        )?,
-    );
-
-    if channels.is_empty() {
-        push_channel(
-            &mut channels,
-            weights.like_fallback,
-            query_local_like_channel(
-                conn,
-                project,
-                query,
-                current_branch,
-                excluded_types,
-                fetch_limit,
-            )?,
-        );
-    }
-    if channels.is_empty() {
-        return Ok(vec![]);
-    }
-
-    usage::push_usage_channel(conn, &mut channels, weights)?;
-
-    if rank_signal_mode == InjectionRankSignalMode::LegacyRankPseudoScore {
-        for channel in &mut channels {
-            for (rank, hit) in channel.hits.iter_mut().enumerate() {
-                if hit.normalized_score.is_none() {
-                    hit.normalized_score = Some(1.0 / (rank as f64 + 1.0));
-                }
-            }
-        }
-    }
-
-    let channel_inputs = channels
-        .iter()
-        .map(|channel| WeightedRankedChannel {
-            weight: channel.weight,
-            hits: &channel.hits,
-        })
-        .collect::<Vec<_>>();
-    let ids = weighted_ranked_fuse(&channel_inputs, weights.rrf_k)?
-        .into_iter()
-        .take(limit as usize)
-        .map(|(id, _)| id)
-        .collect::<Vec<_>>();
-    query_owner_included_memories_by_ids(conn, project, &ids, current_branch, excluded_types)
-}
-
-fn push_channel(channels: &mut Vec<ContextChannel>, weight: f64, hits: Vec<WeightedRankedHit>) {
-    if !hits.is_empty() {
-        channels.push(ContextChannel { weight, hits });
-    }
-}
-
-fn query_owner_included_memories_by_ids(
-    conn: &Connection,
-    project: &str,
-    ids: &[i64],
-    current_branch: Option<&str>,
-    excluded_types: &[&str],
-) -> Result<Vec<Memory>> {
-    if ids.is_empty() {
-        return Ok(vec![]);
-    }
-
-    let placeholders = (1..=ids.len())
-        .map(|idx| format!("?{idx}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let mut conditions = vec![format!("id IN ({placeholders})")];
-    let mut params = ids
-        .iter()
-        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
-        .collect::<Vec<_>>();
-    let mut idx = ids.len() + 1;
-    push_context_memory_filters(
-        conn,
-        project,
-        current_branch,
-        excluded_types,
-        "",
-        &mut idx,
-        &mut conditions,
-        &mut params,
-    )?;
-
-    let sql = format!(
-        "SELECT {} FROM memories WHERE {}",
-        memory::MEMORY_COLS,
-        conditions.join(" AND ")
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let refs = crate::db::to_sql_refs(&params);
-    let rows = stmt.query_map(refs.as_slice(), memory::map_memory_row_pub)?;
-    let mut rows_by_id = crate::db::query::collect_rows(rows)?
-        .into_iter()
-        .map(|memory| (memory.id, memory))
-        .collect::<std::collections::HashMap<_, _>>();
-    Ok(ids.iter().filter_map(|id| rows_by_id.remove(id)).collect())
 }
 
 fn query_local_fts_channel(
@@ -665,7 +440,9 @@ fn push_context_memory_filters(
         &expires_col,
         false,
     ));
-    conditions.push(crate::memory::memory_state_key_current_filter_sql(alias));
+    conditions.push(crate::memory::memory_state_key_current_filter_sql(
+        table_ref(alias),
+    ));
     conditions.push(crate::memory::suppression::memory_policy_filter_sql(
         table_ref(alias),
     ));
@@ -782,3 +559,6 @@ fn sqlite_column_available(conn: &Connection, table: &str, column: &str) -> Resu
 fn quote_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
+
+#[cfg(test)]
+mod tests;

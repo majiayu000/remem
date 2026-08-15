@@ -1,12 +1,12 @@
 use std::collections::HashSet;
 
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 
 use super::normalize::{compact_line, relevant_to_request, search_query};
 use super::types::{
     ClaimCandidate, NormalizedRequest, RecallCandidate, RecallState, UserRecallDroppedItem,
-    MAX_CLAIM_SCAN, MAX_SESSION_SCAN,
+    MAX_CLAIM_SCAN, MAX_MEMORY_SCAN, MAX_SESSION_SCAN,
 };
 use crate::user_context::claims::{self, DEFAULT_OWNER_KEY, DEFAULT_OWNER_SCOPE};
 
@@ -100,23 +100,75 @@ pub(super) fn collect_memories(
     req: &NormalizedRequest,
     state: &mut RecallState,
 ) -> Result<()> {
-    let result = crate::memory::service::search_memories(
-        conn,
-        &crate::memory::service::SearchRequest {
-            query: Some(search_query(req)),
-            project: Some(req.project.clone()),
-            memory_type: None,
-            limit: 5,
-            offset: 0,
-            include_stale: false,
-            include_suppressed: req.include_suppressed,
-            branch: None,
-            multi_hop: false,
-            explain: false,
-        },
-    )?;
-    state.counts.memories += result.memories.len();
-    for memory in result.memories {
+    let query = search_query(req);
+    let mut offset = 0_i64;
+    let mut scanned = Vec::new();
+    let mut visibility = std::collections::HashMap::new();
+    let mut explicitly_suppressed = HashSet::new();
+    let page_size = 100_i64;
+    let max_pages = MAX_MEMORY_SCAN / page_size;
+    for page_index in 0..max_pages {
+        let result = crate::memory::service::search_memories(
+            conn,
+            &crate::memory::service::SearchRequest {
+                query: Some(query.clone()),
+                project: Some(req.project.clone()),
+                memory_type: None,
+                limit: page_size,
+                offset,
+                include_stale: false,
+                include_suppressed: req.include_suppressed,
+                branch: None,
+                multi_hop: false,
+                explain: false,
+            },
+        )?;
+        let page_len = result.memories.len();
+        let has_more = result.has_more;
+        let ids = result
+            .memories
+            .iter()
+            .map(|memory| memory.id)
+            .collect::<Vec<_>>();
+        if req.include_suppressed {
+            explicitly_suppressed.extend(crate::memory::suppression::active_suppressed_memory_ids(
+                conn, &ids,
+            )?);
+        }
+        visibility.extend(crate::truth::admit_many_for_current_context(
+            conn,
+            &ids,
+            chrono::Utc::now().timestamp(),
+        )?);
+        scanned.extend(result.memories);
+        let mut eligible = 0usize;
+        for memory in &scanned {
+            if (visibility
+                .get(&memory.id)
+                .is_some_and(|row| row.current_context_eligible)
+                || explicitly_suppressed.contains(&memory.id))
+                && !claims::active_preference_backfill_covers_user_preference_memory(
+                    conn, memory.id,
+                )?
+            {
+                eligible += 1;
+            }
+        }
+        if eligible >= 5 || !has_more || page_len < page_size as usize {
+            break;
+        }
+        if page_index + 1 == max_pages {
+            anyhow::bail!(
+                "user-context memory G2 scan budget exhausted after {MAX_MEMORY_SCAN} rows"
+            );
+        }
+        offset = offset
+            .checked_add(page_size)
+            .ok_or_else(|| anyhow::anyhow!("recall G2 offset overflow"))?;
+    }
+    state.counts.memories += scanned.len();
+    let mut admitted = 0usize;
+    for memory in scanned {
         if claims::active_preference_backfill_covers_user_preference_memory(conn, memory.id)? {
             state.dropped.push(UserRecallDroppedItem {
                 source_type: "memory".to_string(),
@@ -126,16 +178,37 @@ pub(super) fn collect_memories(
             });
             continue;
         }
+        let classification = visibility.get(&memory.id).copied().ok_or_else(|| {
+            anyhow::anyhow!("missing visibility for recalled memory {}", memory.id)
+        })?;
+        let suppression_override =
+            req.include_suppressed && explicitly_suppressed.contains(&memory.id);
+        if !classification.current_context_eligible && !suppression_override {
+            state.dropped.push(UserRecallDroppedItem {
+                source_type: "memory".to_string(),
+                source_id: Some(memory.id),
+                label: Some(memory.title),
+                reason_code: classification.reason.as_str().to_string(),
+            });
+            continue;
+        }
+        if admitted == 5 {
+            break;
+        }
+        let mut reason_codes = vec![
+            "repo_memory_match".to_string(),
+            "search_result".to_string(),
+            format!("type:{}", memory.memory_type),
+        ];
+        if suppression_override {
+            reason_codes.push("explicit_suppression_override".to_string());
+        }
         state.candidates.push(RecallCandidate {
             source_type: "memory".to_string(),
             source_id: Some(memory.id),
             title: Some(memory.title),
             text: compact_line(&memory.text, 650),
-            reason_codes: vec![
-                "repo_memory_match".to_string(),
-                "search_result".to_string(),
-                format!("type:{}", memory.memory_type),
-            ],
+            reason_codes,
             source_refs: Some(serde_json::json!({
                 "topic_key": memory.topic_key,
                 "project": memory.project,
@@ -143,6 +216,7 @@ pub(super) fn collect_memories(
             })),
             priority: 70,
         });
+        admitted += 1;
     }
     Ok(())
 }
@@ -236,7 +310,33 @@ pub(super) fn collect_recent_sessions(
     req: &NormalizedRequest,
     state: &mut RecallState,
 ) -> Result<()> {
-    let mut stmt = conn.prepare(
+    let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    let mut idx = 1;
+    let (owner_clause, next) = crate::project_alias::push_project_value_filter(
+        conn,
+        "owner_key",
+        &req.project,
+        idx,
+        &mut params_vec,
+    )?;
+    idx = next;
+    let (target_clause, next) = crate::project_alias::push_project_value_filter(
+        conn,
+        "target_project",
+        &req.project,
+        idx,
+        &mut params_vec,
+    )?;
+    idx = next;
+    let (legacy_clause, next) = crate::project_alias::push_project_value_filter(
+        conn,
+        "project",
+        &req.project,
+        idx,
+        &mut params_vec,
+    )?;
+    idx = next;
+    let sql = format!(
         "SELECT id,
                 CASE
                   WHEN request LIKE 'Captured event range %..%' THEN
@@ -257,13 +357,16 @@ pub(super) fn collect_recent_sessions(
                 OR COALESCE(learned, '') != ''
                 OR COALESCE(next_steps, '') != ''
                 OR COALESCE(preferences, '') != '')
-           AND ((owner_scope = 'repo' AND owner_key = ?1)
-             OR (owner_scope = 'repo' AND target_project = ?1)
-             OR (owner_scope IS NULL AND project = ?1))
+           AND ((owner_scope = 'repo' AND {owner_clause})
+             OR (owner_scope = 'repo' AND {target_clause})
+             OR (owner_scope IS NULL AND {legacy_clause}))
          ORDER BY created_at_epoch DESC, id DESC
-         LIMIT ?2",
-    )?;
-    let rows = stmt.query_map(params![req.project, MAX_SESSION_SCAN], |row| {
+         LIMIT ?{idx}"
+    );
+    params_vec.push(Box::new(MAX_SESSION_SCAN));
+    let mut stmt = conn.prepare(&sql)?;
+    let refs = crate::db::to_sql_refs(&params_vec);
+    let rows = stmt.query_map(refs.as_slice(), |row| {
         Ok(SessionCandidate {
             id: row.get(0)?,
             request: row.get(1)?,
@@ -328,10 +431,19 @@ fn load_claim_candidates(
         if req.owner_scope == DEFAULT_OWNER_SCOPE && req.owner_key == DEFAULT_OWNER_KEY {
             values.push(Box::new(req.owner_scope.clone()));
             values.push(Box::new(req.owner_key.clone()));
-            values.push(Box::new(req.project.clone()));
-            idx += 3;
-            "((owner_scope = ?1 AND owner_key = ?2) OR (owner_scope = 'repo' AND owner_key = ?3))"
-                .to_string()
+            idx += 2;
+            let (repo_clause, next) = crate::project_alias::push_project_value_filter(
+                conn,
+                "owner_key",
+                &req.project,
+                idx,
+                &mut values,
+            )?;
+            idx = next;
+            format!(
+                "((owner_scope = ?1 AND owner_key = ?2) \
+             OR (owner_scope = 'repo' AND {repo_clause}))"
+            )
         } else {
             values.push(Box::new(req.owner_scope.clone()));
             values.push(Box::new(req.owner_key.clone()));

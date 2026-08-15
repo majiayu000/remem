@@ -56,6 +56,10 @@ external database.
   titles, memory bodies, or rendered hook output.
 - Current-memory contracts expose staleness, temporal/as-of truth, citation
   usage, and injection audit state instead of treating recall as a black box.
+- Active memories without sufficient provenance, confidence, validity, or
+  mutable-state identity are classified as legacy_unverified. They remain
+  recoverable through labeled search/detail, but are excluded from
+  CurrentTruth and default SessionStart context with stable audit reasons.
 - User-context controls keep personal claims, profile summaries, suppression
   feedback, and Markdown export explicit and reviewable.
 - One Rust binary; no hosted database or separate memory service.

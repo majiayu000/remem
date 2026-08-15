@@ -159,15 +159,17 @@ Acceptance:
 
 ### G2 — Quarantine legacy-unverified data from current context
 
-Status: Not started; depends on G1
+Status: Implemented in source; copied-production-database validation complete; Draft pending review because this is a large-rollout-impact change. Not merged or deployed.
 
-- [ ] Define an explicit legacy trust/visibility classification without adding
+- [x] Define an explicit legacy trust/visibility classification without adding
   a second durable memory store.
-- [ ] Identify active rows missing required provenance, confidence, validity,
+- [x] Identify active rows missing required provenance, confidence, validity,
   or mutable-state identity.
-- [ ] Keep those rows searchable with visible labels, but exclude them from
+- [x] Keep those rows searchable with visible labels, but exclude them from
   CurrentTruth and default SessionStart injection.
-- [ ] Add injection audit reasons for every exclusion.
+- [x] Add injection audit reasons for every exclusion.
+- [x] Validate the content-free inventory on one consistent encrypted copy with
+  a fixed as-of epoch; live remem/runtime state was not mutated.
 
 Acceptance:
 
@@ -178,15 +180,15 @@ Acceptance:
 
 ### G3 — Make CurrentTruth the production current-state boundary
 
-Status: Not started; depends on G2
+Status: Done in `agent/legacy-unverified-governance`; depends on G2
 
-- [ ] Route current-state candidates through `remem::truth` rather than mapping
+- [x] Route current-state candidates through `remem::truth` rather than mapping
   every loaded core memory directly to a current channel.
-- [ ] Preserve immutable canonical references and populate evidence/projection
+- [x] Preserve immutable canonical references and populate evidence/projection
   references in Context Bundle items.
-- [ ] Make explicit conflicts abstain; equal-trust conflicts do not use
+- [x] Make explicit conflicts abstain; equal-trust conflicts do not use
   newest-wins.
-- [ ] Wire the compiled Context Bundle into the production SessionStart path
+- [x] Wire the compiled Context Bundle into the production SessionStart path
   behind an audited shadow comparison before activation.
 
 Acceptance:
@@ -289,7 +291,7 @@ Acceptance:
 
 ## Next action
 
-Begin G2 by defining the `legacy_unverified` trust/visibility projection and a
-content-free inventory of rows that cannot qualify for CurrentTruth. Keep this
-stage read-only: no live lifecycle mutation until the projection, exclusion
-reasons, and copied-database retrieval diff are deterministic.
+Keep the PR Draft pending review. The rollout impact is large; review should
+confirm the copied-database inventory, search/detail recovery labels, and the
+quality-first default SessionStart/CurrentTruth exclusion before merge or
+deployment.

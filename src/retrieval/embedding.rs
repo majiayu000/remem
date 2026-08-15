@@ -365,7 +365,7 @@ pub(crate) fn configured_local_embedding_model_id(config: &EmbeddingConfig) -> R
 
 pub(crate) fn configured_local_embedding_model_root(
     config: &EmbeddingConfig,
-) -> std::path::PathBuf {
+) -> Result<std::path::PathBuf> {
     local_semantic::model_root(config)
 }
 

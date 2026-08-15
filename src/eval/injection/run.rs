@@ -149,7 +149,7 @@ const FIXTURE_MEMORIES: &[FixtureMemory] = &[
 pub fn run_sandbox_eval(options: InjectionEvalOptions) -> Result<InjectionEvalReport> {
     let temp_data_dir = TempDataDir::new()?;
     let data_dir = temp_data_dir.path.clone();
-    let result = crate::db::core::with_data_dir(&data_dir, || {
+    let result = crate::db::with_data_dir(&data_dir, || {
         crate::log::with_log_dir(&data_dir, || run_sandbox_eval_inner(options, &data_dir))
     });
     cleanup_data_dir_after_eval(temp_data_dir, options.keep_data_dir, result)
@@ -181,7 +181,6 @@ fn run_sandbox_eval_inner(
     )
     .context("render UserPromptSubmit abstention additionalContext")?;
     drop(conn);
-
     let snapshot =
         crate::context::session_start_eval_snapshot(PROJECT, PROJECT, Some(CURRENT_BRANCH), HOST)
             .context("render SessionStart injection context")?;
@@ -476,6 +475,9 @@ fn seed_fixture(conn: &mut Connection) -> Result<()> {
         params![ABSTENTION_PROJECT, now],
     )?;
     tx.commit()?;
+    for memory in FIXTURE_MEMORIES {
+        crate::truth::test_support::seed_current_memory_proof(conn, memory.id)?;
+    }
     Ok(())
 }
 
@@ -642,11 +644,12 @@ fn insert_one_added_memory(conn: &Connection) -> Result<()> {
         "INSERT INTO memories
          (id, session_id, project, topic_key, title, content, memory_type, files,
           created_at_epoch, updated_at_epoch, status, branch, scope)
-         VALUES (1001, 'eval-one-added-session', ?1, 'renderer-churn-added',
+        VALUES (1001, 'eval-one-added-session', ?1, 'renderer-churn-added',
                  ?2, 'Added memory used by the one-added context churn eval.',
                  'decision', NULL, ?3, ?3, 'active', NULL, 'project')",
         params![PROJECT, ONE_ADDED_TITLE, now],
     )?;
+    crate::truth::test_support::seed_current_memory_proof(conn, 1001)?;
     Ok(())
 }
 
@@ -672,7 +675,7 @@ impl TempDataDir {
         let path = unique_temp_data_dir();
         std::fs::create_dir_all(&path)
             .with_context(|| format!("create injection eval data dir {}", path.display()))?;
-        crate::db::core::with_data_dir(&path, crate::db::generate_cipher_key)
+        crate::db::with_data_dir(&path, crate::db::generate_cipher_key)
             .context("create injection eval database key")?;
         Ok(Self {
             path,

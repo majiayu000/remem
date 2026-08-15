@@ -11,7 +11,6 @@ use super::audit::{
 use super::fact_labels::annotate_memories_with_temporal_facts_for_query;
 use super::format::{char_len, format_epoch_short, truncate_chars_with_ellipsis};
 use super::host::resolve_host_kind;
-use super::hybrid_context::query_hybrid_context_memories;
 use super::injection_gate::{injection_key_for_audit, ContextGateAction, ContextGateDecision};
 use super::invocation::ContextInvocation;
 use super::policy::{ContextLimits, ContextPolicy, SectionKind};
@@ -54,14 +53,15 @@ pub(crate) fn prompt_submit_additional_context(
         .map(|section| section.exclude_types.as_slice())
         .unwrap_or(&[]);
     let current_branch = crate::db::detect_git_branch(cwd);
-    let mut retrieved = query_hybrid_context_memories(
+    let as_of_epoch = chrono::Utc::now().timestamp();
+    let mut retrieved = super::prompt_submit_retrieval::retrieve(
         conn,
         project,
         prompt,
         current_branch.as_deref(),
         excluded_types,
         PROMPT_SUBMIT_MEMORY_LIMIT,
-        true,
+        as_of_epoch,
     )?;
     annotate_memories_with_temporal_facts_for_query(
         conn,
@@ -69,9 +69,30 @@ pub(crate) fn prompt_submit_additional_context(
         Some(prompt),
         Some(project),
     )?;
+    let mut g2_drops = Vec::new();
+    let mut g2_errors = Vec::new();
+    super::query::exclude_non_current_context_memories(
+        conn,
+        &mut retrieved,
+        &mut g2_drops,
+        as_of_epoch,
+        &mut g2_errors,
+    );
+    if let Some(error) = g2_errors.first() {
+        anyhow::bail!("prompt-submit memory visibility classification failed: {error:?}");
+    }
     let already_injected = query_previously_injected_memory_ids(conn, &invocation)?;
     let mut rendered = Vec::new();
     let mut audit_items = Vec::new();
+    for drop in g2_drops {
+        if let super::types::ContextPreselectionItem::Memory(memory) = drop.item {
+            audit_items.push(ContextAuditItem::dropped_memory(
+                &memory,
+                "prompt_submit",
+                drop.reason,
+            ));
+        }
+    }
     for memory in retrieved {
         if already_injected.contains(&memory.id) {
             audit_items.push(ContextAuditItem::dropped_memory(
@@ -85,8 +106,14 @@ pub(crate) fn prompt_submit_additional_context(
                 "prompt_submit",
                 "below_prompt_relevance_threshold",
             ));
-        } else {
+        } else if rendered.len() < PROMPT_SUBMIT_MEMORY_LIMIT as usize {
             rendered.push(memory);
+        } else {
+            audit_items.push(ContextAuditItem::dropped_memory(
+                &memory,
+                "prompt_submit",
+                "prompt_submit_memory_limit",
+            ));
         }
     }
 
@@ -291,7 +318,7 @@ mod tests {
         title: &str,
         content: &str,
     ) -> Result<i64> {
-        crate::memory::insert_memory(
+        let id = crate::memory::insert_memory(
             conn,
             Some("seed-session"),
             project,
@@ -300,7 +327,12 @@ mod tests {
             content,
             "decision",
             None,
-        )
+        )?;
+        conn.execute(
+            "UPDATE memories SET source_trust_class = 'user_prompt' WHERE id = ?1",
+            [id],
+        )?;
+        Ok(id)
     }
 
     #[test]
@@ -693,6 +725,53 @@ mod tests {
             p95 <= PROMPT_SUBMIT_LATENCY_BUDGET_MS,
             "p95 {p95}ms exceeded {PROMPT_SUBMIT_LATENCY_BUDGET_MS}ms"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn prompt_submit_does_not_inject_legacy_unverified_memory() -> Result<()> {
+        let conn = setup_prompt_submit_conn()?;
+        let project = "/tmp/remem-prompt-submit-g2";
+        let memory_id = crate::memory::insert_memory(
+            &conn,
+            Some("seed-session"),
+            project,
+            None,
+            "SQLCipher storage decision",
+            "Persist private data with SQLCipher encryption at rest.",
+            "decision",
+            None,
+        )?;
+        conn.execute(
+            "UPDATE memories
+             SET source_trust_class = 'local_tool_output',
+                 source_candidate_id = NULL,
+                 evidence_event_ids = NULL,
+                 confidence = NULL,
+                 valid_from_epoch = NULL
+             WHERE id = ?1",
+            [memory_id],
+        )?;
+
+        let output = prompt_submit_additional_context(
+            &conn,
+            project,
+            project,
+            "sess-prompt-g2",
+            "How should we protect private persisted data with SQLCipher?",
+            Some("claude-code"),
+        )?;
+        assert!(output.is_none());
+        let drop_reason: String = conn.query_row(
+            "SELECT drop_reason
+             FROM context_injection_items
+             WHERE session_id = 'sess-prompt-g2'
+             ORDER BY id DESC
+             LIMIT 1",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(drop_reason, "legacy_unverified_provenance_missing");
         Ok(())
     }
 

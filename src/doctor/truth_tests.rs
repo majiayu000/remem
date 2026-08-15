@@ -13,12 +13,56 @@ fn insert_memory(
     status: &str,
     updated_at: i64,
 ) -> Result<()> {
+    let event_id = 8_100_000 + id;
+    let candidate_id = 7_100_000 + id;
+    let state_key_id = 6_100_000 + id;
+    conn.execute_batch(
+        "INSERT OR IGNORE INTO hosts (id, name, created_at_epoch)
+         VALUES (8100000, 'doctor-truth-fixture-host', 0);
+         INSERT OR IGNORE INTO workspaces (id, root_path, created_at_epoch, updated_at_epoch)
+         VALUES (8100000, '/doctor-truth-fixture', 0, 0);
+         INSERT OR IGNORE INTO projects
+         (id, workspace_id, project_path, project_key, created_at_epoch, updated_at_epoch)
+         VALUES (8100000, 8100000, '/repo', 'doctor-truth-fixture', 0, 0);
+         INSERT OR IGNORE INTO sessions
+         (id, host_id, workspace_id, project_id, session_id, last_seen_at_epoch, status)
+         VALUES (8100000, 8100000, 8100000, 8100000,
+                 'doctor-truth-fixture-session', 0, 'active');",
+    )?;
+    conn.execute(
+        "INSERT INTO captured_events
+         (id, host_id, workspace_id, project_id, session_row_id, session_id, event_id,
+          event_type, content_hash, retention_class, created_at_epoch, inserted_at_epoch)
+         VALUES (?1, 8100000, 8100000, 8100000, 8100000,
+                 'doctor-truth-fixture-session', ?2, 'message', ?3, 'normal', ?4, ?4)",
+        params![
+            event_id,
+            format!("doctor-proof-{id}"),
+            format!("doctor-hash-{id}"),
+            updated_at
+        ],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_candidates
+         (id, project_id, scope, memory_type, topic_key, text, evidence_event_ids,
+          confidence, risk_class, review_status, created_at_epoch, updated_at_epoch)
+         VALUES (?1, 8100000, 'project', 'decision', ?2, ?2, ?3,
+                 0.9, 'low', 'approved', ?4, ?4)",
+        params![candidate_id, topic, format!("[{event_id}]"), updated_at],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_state_keys
+         (id, owner_scope, owner_key, memory_type, state_key, created_at_epoch, updated_at_epoch)
+         VALUES (?1, 'project', '/repo', 'decision', ?2, ?3, ?3)",
+        params![state_key_id, format!("doctor-fixture-{id}"), updated_at],
+    )?;
     conn.execute(
         "INSERT INTO memories
          (id, project, topic_key, title, content, memory_type,
-          created_at_epoch, updated_at_epoch, status)
-         VALUES (?1, '/repo', ?2, 'Decision', ?2, 'decision', 1, ?3, ?4)",
-        params![id, topic, updated_at, status],
+          created_at_epoch, updated_at_epoch, status, source_candidate_id, state_key_id)
+         VALUES (?1, '/repo', ?2, 'Decision', ?2, 'decision', 1, ?3, ?4,
+                 ?5, ?6)",
+        params![id, topic, updated_at, status, candidate_id, state_key_id],
     )?;
     Ok(())
 }

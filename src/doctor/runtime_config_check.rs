@@ -1,7 +1,10 @@
 use super::types::{Check, Status};
 
 pub(super) fn check_runtime_config() -> Check {
-    let path = crate::runtime_config::config_path();
+    let path = match crate::runtime_config::config_path() {
+        Ok(path) => path,
+        Err(error) => return Check::new("Runtime config", Status::Fail, error.to_string()),
+    };
     if !path.exists() {
         return Check::new(
             "Runtime config",

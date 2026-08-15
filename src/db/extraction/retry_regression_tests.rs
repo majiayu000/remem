@@ -1,5 +1,6 @@
 use crate::db::{
-    count_retryable_extraction_replay_ranges, ensure_extraction_replay_range_retryable,
+    archive_claimed_exact_replay_task, count_retryable_extraction_replay_ranges,
+    ensure_extraction_replay_range_retryable, exact_replay_worker_owner,
     get_extraction_replay_range_evidence, list_extraction_replay_ranges,
     mark_replay_range_replayed_if_done, quarantine_extraction_replay_range, record_captured_event,
     retry_and_claim_extraction_replay_range, retry_extraction_replay_range,
@@ -426,4 +427,40 @@ fn exact_extraction_task_claim_preserves_retry_readiness() {
         .expect("target should be claimed");
     assert_eq!(claimed.id, target_id);
     assert_eq!(task_status(&conn, sibling_id).0, "pending");
+}
+
+#[test]
+fn archive_claimed_exact_replay_does_not_clobber_stolen_lease() {
+    let mut conn = setup_conn();
+    let range_id = exhaust_task_into_replay_range(&mut conn, "sess-stolen-lease");
+    let owner_a = exact_replay_worker_owner(1, 1_000);
+    let owner_b = exact_replay_worker_owner(2, 2_000);
+    let claimed =
+        retry_and_claim_extraction_replay_range(&mut conn, range_id, false, false, &owner_a, 60)
+            .expect("owner a should claim exact replay task");
+
+    conn.execute(
+        "UPDATE extraction_tasks SET lease_owner = ?1 WHERE id = ?2",
+        params![owner_b, claimed.id],
+    )
+    .expect("lease should be stolen");
+
+    let archived = archive_claimed_exact_replay_task(
+        &conn,
+        claimed.id,
+        &owner_a,
+        "owner-a archive after steal",
+    );
+    assert!(archived.is_err());
+
+    let (status, archived_at, lease_owner): (String, Option<i64>, Option<String>) = conn
+        .query_row(
+            "SELECT status, archived_at_epoch, lease_owner FROM extraction_tasks WHERE id = ?1",
+            params![claimed.id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("task state should query");
+    assert_eq!(status, "processing");
+    assert!(archived_at.is_none());
+    assert_eq!(lease_owner.as_deref(), Some(owner_b.as_str()));
 }

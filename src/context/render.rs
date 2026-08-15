@@ -13,10 +13,7 @@ use super::injection_gate::{
     apply_context_gate_with_data_version_and_boundaries, compute_data_version_hint,
     pre_render_context_gate, ContextGateAction, ContextGateDecision, ContextGatePrecheck,
 };
-use super::invocation::{
-    direct_context_invocation, resolve_context_invocation, resolve_cursor_context_invocation,
-    ContextCliOptions, ContextInvocation,
-};
+use super::invocation::ContextInvocation;
 use super::policy::{ContextPolicy, SectionKind};
 use super::relevance::{build_sessionstart_relevance_plan, candidates_for_loaded, selected_inputs};
 use super::render_inputs::{load_context_render_inputs, ContextRenderInputs};
@@ -39,6 +36,11 @@ mod truncation;
 pub(in crate::context) use super::render_error::render_context_load_errors;
 pub(crate) use eval::{
     governance_eval_snapshot, session_start_benchmark_emission, session_start_eval_snapshot,
+};
+mod entry;
+pub use entry::{
+    generate_context, generate_context_from_cli, generate_cursor_context_from_bytes,
+    generate_cursor_context_from_stdin,
 };
 use finalize::{finalize_context_output, RenderedIdentityBounds};
 use helpers::{
@@ -67,60 +69,7 @@ pub(in crate::context) struct RenderedContext {
     pub(in crate::context) context_bundle: Option<crate::context_bundle::ContextBundle>,
 }
 
-pub fn generate_context(
-    cwd: &str,
-    session_id: Option<&str>,
-    use_colors: bool,
-    host_arg: Option<&str>,
-    debug: bool,
-) -> Result<()> {
-    let invocation = direct_context_invocation(cwd, session_id, use_colors, host_arg, debug);
-    generate_context_for_invocation(invocation, false)
-}
-
-pub fn generate_context_from_cli(
-    cwd: Option<String>,
-    session_id: Option<String>,
-    use_colors: bool,
-    host: Option<String>,
-    debug: bool,
-    force: bool,
-    gate_mode: Option<String>,
-) -> Result<()> {
-    let invocation = resolve_context_invocation(ContextCliOptions {
-        cwd,
-        session_id,
-        host,
-        use_colors,
-        debug,
-        force,
-        gate_mode,
-    })?;
-    generate_context_for_invocation(invocation, true)
-}
-
-/// Cursor `remem context` entrypoint (GH-823): bounded stdin read, strict
-/// exact `sessionStart` validation, then the shared render pipeline. Any
-/// parse/limit failure returns before context generation with empty stdout
-/// and no side effects (B-009); no CLI/current-cwd fallback exists.
-pub fn generate_cursor_context_from_stdin() -> Result<()> {
-    let bytes = crate::cursor_hook::input::read_bounded_hook_stdin(&mut std::io::stdin().lock())?;
-    generate_cursor_context_from_bytes(&bytes)
-}
-
-pub fn generate_cursor_context_from_bytes(bytes: &[u8]) -> Result<()> {
-    let event = crate::cursor_hook::input::parse_session_start(bytes)?;
-    let invocation = resolve_cursor_context_invocation(&event);
-    generate_context_for_invocation(invocation, true)
-}
-
-fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool) -> Result<()> {
-    let stdout = generate_context_output_for_invocation(invocation, use_gate)?;
-    print!("{stdout}");
-    Ok(())
-}
-
-fn generate_context_output_for_invocation(
+pub(super) fn generate_context_output_for_invocation(
     invocation: ContextInvocation,
     use_gate: bool,
 ) -> Result<String> {
@@ -320,7 +269,7 @@ pub(in crate::context) fn generate_context_for_test(
     invocation: ContextInvocation,
     use_gate: bool,
 ) -> Result<()> {
-    generate_context_for_invocation(invocation, use_gate)
+    entry::generate_context_for_invocation(invocation, use_gate)
 }
 
 #[cfg(test)]
@@ -543,13 +492,27 @@ pub(in crate::context) fn render_context_output_from_inputs(
     let render_limits = section_render_limits(&policy);
     let section_start = Instant::now();
     let mut core_output = String::new();
+    let core_memories = crate::context_bundle::core_render_memories(
+        &loaded.memories,
+        loaded.current_truth_projection.as_ref(),
+    );
     let core_summary = render_core_memory_with_limits_and_staleness(
         &mut core_output,
-        &loaded.memories,
+        core_memories.as_ref(),
         &render_limits,
         loaded.render_reference_epoch,
         &loaded.staleness_labels,
     );
+    if let Some(projection) = loaded.current_truth_projection.as_ref() {
+        let remaining = render_limits
+            .core_char_limit
+            .saturating_sub(char_len(&core_output));
+        crate::context_bundle::append_core_abstention_lines(
+            &mut core_output,
+            projection,
+            remaining,
+        );
+    }
     stats.core_ids = core_summary.ids.clone();
     let core_item_ends = core_summary.item_end_chars.clone();
     stats.core = SectionRenderStats {
@@ -561,6 +524,16 @@ pub(in crate::context) fn render_context_output_from_inputs(
         section_start,
     ));
     let core_ids = core_summary.ids.into_iter().collect::<HashSet<_>>();
+    let mut index_exclude = core_ids.clone();
+    if let Some(projection) = loaded.current_truth_projection.as_ref() {
+        index_exclude.extend(crate::context_bundle::abstained_memory_ids(projection));
+    } else {
+        index_exclude.extend(loaded.memories.iter().filter_map(|memory| {
+            crate::memory::MemoryType::parse(&memory.memory_type)
+                .is_some_and(crate::memory::MemoryType::is_core)
+                .then_some(memory.id)
+        }));
+    }
     let mut context_bundle = None;
     let relevance_plan = if use_context_bundle && !has_load_errors {
         let (bundle, relevance_plan) = super::render_bundle::compile_for_renderer(
@@ -573,14 +546,14 @@ pub(in crate::context) fn render_context_output_from_inputs(
         context_bundle = Some(bundle);
         relevance_plan
     } else {
-        let relevance_candidates = candidates_for_loaded(&loaded, &core_ids);
+        let relevance_candidates = candidates_for_loaded(&loaded, &index_exclude);
         build_sessionstart_relevance_plan(
             loaded.relevance_query.as_deref(),
             policy.limits.sessionstart_relevance_k,
             &relevance_candidates,
         )
     };
-    let governed = selected_inputs(&loaded, &relevance_plan, &core_ids)?;
+    let governed = selected_inputs(&loaded, &relevance_plan, &index_exclude)?;
     stats.relevance.state = relevance_plan.state;
     stats.relevance.k = relevance_plan.k;
     stats.relevance.threshold = relevance_plan.threshold;
@@ -621,7 +594,7 @@ pub(in crate::context) fn render_context_output_from_inputs(
                 &mut output,
                 &governed.memories,
                 &render_limits,
-                &core_ids,
+                &index_exclude,
                 loaded.render_reference_epoch,
                 &loaded.staleness_labels,
             )
@@ -630,7 +603,7 @@ pub(in crate::context) fn render_context_output_from_inputs(
                 &mut output,
                 &governed.memories,
                 &render_limits,
-                &core_ids,
+                &index_exclude,
                 loaded.render_reference_epoch,
                 &loaded.staleness_labels,
             )

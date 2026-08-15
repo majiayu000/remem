@@ -294,13 +294,11 @@ pub fn push_project_value_filter(
     params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
 ) -> Result<(String, usize)> {
     let values = project_filter_values(conn, requested_path)?;
-    let mut placeholders = Vec::with_capacity(values.len());
-    for value in values {
-        placeholders.push(format!("?{idx}"));
-        params.push(Box::new(value));
-        idx += 1;
-    }
-    Ok((format!("{column} IN ({})", placeholders.join(", ")), idx))
+    let values_json = serde_json::to_string(&values)?;
+    params.push(Box::new(values_json));
+    let predicate = format!("{column} IN (SELECT value FROM json_each(?{idx}))");
+    idx += 1;
+    Ok((predicate, idx))
 }
 
 /// Resolve a project-bearing value before a new row is written. Historical
@@ -553,9 +551,9 @@ mod tests {
         let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
         let (clause, next) =
             push_project_value_filter(&conn, "project", "/new/repo", 1, &mut values)?;
-        assert_eq!(clause, "project IN (?1, ?2)");
-        assert_eq!(next, 3);
-        assert_eq!(values.len(), 2);
+        assert_eq!(clause, "project IN (SELECT value FROM json_each(?1))");
+        assert_eq!(next, 2);
+        assert_eq!(values.len(), 1);
         Ok(())
     }
 

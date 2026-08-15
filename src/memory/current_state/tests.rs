@@ -4,6 +4,7 @@ use rusqlite::params;
 use super::{current_state, CurrentStateRequest};
 use support::*;
 
+mod g2;
 mod review_regressions;
 mod support;
 
@@ -274,7 +275,7 @@ fn unresolved_active_conflict_does_not_silently_choose_current_pointer() -> Resu
     let result = current_state(&conn, &request())?;
 
     assert_eq!(result.status, "unresolved_conflict");
-    assert_eq!(result.current.as_ref().map(|memory| memory.id), Some(2));
+    assert!(result.current.is_none());
     assert_eq!(result.conflicts.len(), 1);
     assert_eq!(result.conflicts[0].id, 3);
     assert_eq!(result.conflicts[0].staleness.source_anchor, "untracked");
@@ -329,13 +330,7 @@ fn staleness_labels_cover_tracked_current_and_verify_before_trust_conflict() -> 
     let result = current_state(&conn, &request())?;
 
     assert_eq!(result.status, "unresolved_conflict");
-    assert_eq!(
-        result
-            .current
-            .as_ref()
-            .map(|memory| memory.staleness.source_anchor.as_str()),
-        Some("tracked")
-    );
+    assert!(result.current.is_none());
     assert_eq!(result.conflicts.len(), 1);
     assert_eq!(
         result.conflicts[0].staleness.source_anchor,

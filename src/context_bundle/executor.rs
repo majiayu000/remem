@@ -371,6 +371,7 @@ fn empty_bundle(plan: &RetrievalPlan, degraded_mode: DegradedMode) -> ContextBun
             token_budget: plan.section_budgets.total_tokens,
             truncation_reason: None,
             entries: Vec::new(),
+            shadow_comparison: Vec::new(),
         },
     }
 }

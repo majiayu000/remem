@@ -36,7 +36,7 @@ pub(super) fn spill_summary_hook_payload_with_git_evidence(
     git_evidence: &[crate::git_util::GitCommitEvidence],
     db_error: &anyhow::Error,
 ) -> Result<PathBuf> {
-    let path = summary_spill_path();
+    let path = try_summary_spill_path()?;
     let record = SummaryHookSpillRecord {
         version: 2,
         input: summary_spill_input(input, resolved_cwd, profile)?,
@@ -65,7 +65,7 @@ pub(super) fn replay_spilled_summary_hook_payloads(
     conn: &Connection,
     mut replay: impl FnMut(&Connection, &SummaryHookSpillRecord) -> Result<()>,
 ) -> Result<usize> {
-    let path = summary_spill_path();
+    let path = try_summary_spill_path()?;
     let queue = crate::spill_queue::SpillQueue::new(path)?;
     let Some(claim) = queue.claim(Duration::from_secs(
         ORPHANED_SUMMARY_SPILL_CLAIM_MIN_AGE_SECS,
@@ -88,7 +88,16 @@ pub(super) fn replay_spilled_summary_hook_payloads(
                     Ok(()) => replayed += 1,
                     Err(error) => append_failed_record(claim.failed_path(), &record, &error)?,
                 },
-                Err(error) => append_failed_line(claim.failed_path(), line, &error)?,
+                Err(error) => {
+                    claim.dead_letter_line(line.as_bytes())?;
+                    crate::log::error(
+                        "summarize",
+                        &format!(
+                            "summary hook spill poison dead-lettered at {}: {error}",
+                            claim.dead_letter_path().display()
+                        ),
+                    );
+                }
             }
         }
         claim.finish()
@@ -141,15 +150,6 @@ fn append_record_to_spill(path: &Path, record: &SummaryHookSpillRecord) -> Resul
     crate::spill_queue::SpillQueue::new(path.to_path_buf())?.append_line(line.as_bytes())
 }
 
-fn append_failed_line(path: &Path, line: &str, error: &anyhow::Error) -> Result<()> {
-    crate::spill_queue::SpillQueue::new(path.to_path_buf())?.append_line(line.as_bytes())?;
-    crate::log::warn(
-        "summarize",
-        &format!("summary hook spill replay failed: {error}"),
-    );
-    Ok(())
-}
-
 fn append_failed_record(
     path: &Path,
     record: &SummaryHookSpillRecord,
@@ -163,8 +163,13 @@ fn append_failed_record(
     Ok(())
 }
 
+#[cfg(test)]
 pub(super) fn summary_spill_path() -> PathBuf {
     crate::db::data_dir().join("summary-hook-spill.jsonl")
+}
+
+fn try_summary_spill_path() -> Result<PathBuf> {
+    Ok(crate::db::try_data_dir()?.join("summary-hook-spill.jsonl"))
 }
 
 #[cfg(test)]

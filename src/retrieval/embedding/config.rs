@@ -37,7 +37,7 @@ pub(super) fn lock_test_env() -> crate::runtime_config::TestEnvGuard {
 }
 
 fn config_from_file() -> Result<Option<EmbeddingConfig>> {
-    let path = crate::runtime_config::config_path();
+    let path = crate::runtime_config::config_path()?;
     if !path.exists() {
         return Ok(None);
     }

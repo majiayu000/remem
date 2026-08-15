@@ -10,7 +10,7 @@ struct UserPromptSubmitInput {
 }
 
 pub async fn session_init(host: Option<&str>) -> Result<()> {
-    let input = std::io::read_to_string(std::io::stdin())?;
+    let input = crate::hook_stdin::read_bounded_stdin_to_string()?;
     if let Some(output) = session_init_input(&input, host).await? {
         print!("{output}");
     }

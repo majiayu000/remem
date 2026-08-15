@@ -1,13 +1,17 @@
 //! Read-only adapter mapping existing canonical tables into the CurrentTruth
 //! read DTOs (GH933 Phase A). SELECT-only: no writes, no migrations.
 
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 use rusqlite::Connection;
+
+mod context;
 
 use super::lifecycle::{memory_lifecycle, user_claim_lifecycle};
 use super::types::{
     ClaimRelationKind, ClaimSource, ClaimView, EvidenceKind, EvidenceTrust, EvidenceView,
-    RelationView, TruthQuery,
+    RelationView, TruthQuery, Visibility,
 };
 
 pub(crate) fn memory_ref(id: i64) -> String {
@@ -22,32 +26,68 @@ pub(crate) fn user_claim_ref(id: i64) -> String {
 ///
 /// Branch semantics: `Some(branch)` returns branch-neutral rows and rows
 /// tagged with exactly that branch; `None` returns all rows (branch-agnostic
-/// view). Scope isolation is exact-project match, so other projects never
-/// leak into the result.
+/// view). Scope isolation follows the audited canonical-project alias set and
+/// repo ownership, so other projects never leak into the result.
 pub fn load_memory_claim_groups(
     conn: &Connection,
     query: &TruthQuery,
 ) -> Result<(Vec<ClaimView>, Vec<RelationView>)> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, topic_key, title, content, project, branch, status,
-                    valid_from_epoch, valid_to_epoch, expires_at_epoch,
-                    created_at_epoch, updated_at_epoch,
-                    evidence_event_ids, source_trust_class
-             FROM memories
-             WHERE project = ?1
-               AND (?2 IS NULL OR branch IS NULL OR branch = ?2)
-             ORDER BY updated_at_epoch ASC, id ASC",
-        )
-        .context("prepare memories truth query")?;
+    load_memory_claim_groups_at(conn, query, reference_epoch(query))
+}
+
+pub(crate) fn load_memory_claim_groups_at(
+    conn: &Connection,
+    query: &TruthQuery,
+    reference_epoch: i64,
+) -> Result<(Vec<ClaimView>, Vec<RelationView>)> {
+    load_memory_claim_groups_diagnostic(conn, query, reference_epoch)
+}
+
+pub(crate) fn load_memory_claim_groups_for_context_at(
+    conn: &Connection,
+    query: &TruthQuery,
+    reference_epoch: i64,
+    relevant_memory_ids: &[i64],
+) -> Result<(Vec<ClaimView>, Vec<RelationView>)> {
+    context::load(conn, query, reference_epoch, relevant_memory_ids)
+}
+
+fn load_memory_claim_groups_diagnostic(
+    conn: &Connection,
+    query: &TruthQuery,
+    reference_epoch: i64,
+) -> Result<(Vec<ClaimView>, Vec<RelationView>)> {
+    let (canonical_scope, projects) = diagnostic_project_scope(conn, &query.project)?;
+    let projects_json = serde_json::to_string(&projects)?;
+    let sql = "SELECT memories.id, memories.topic_key, memories.title, memories.content,
+                memories.project, memories.branch, memories.status,
+                memories.valid_from_epoch, memories.valid_to_epoch, memories.expires_at_epoch,
+                memories.created_at_epoch, memories.updated_at_epoch,
+                memories.evidence_event_ids, memories.source_trust_class,
+                memories.memory_type, memories.state_key_id,
+                COALESCE(memories.owner_scope, 'repo'),
+                COALESCE(memories.owner_key, memories.target_project, memories.project),
+                state_key.state_key, memories.owner_scope IS NOT NULL
+         FROM memories
+         LEFT JOIN memory_state_keys state_key ON state_key.id = memories.state_key_id
+         WHERE ((memories.owner_scope = 'repo'
+                   AND memories.owner_key IN (SELECT value FROM json_each(?1)))
+                OR (memories.owner_scope = 'repo'
+                   AND memories.target_project IN (SELECT value FROM json_each(?1)))
+                OR (memories.owner_scope IS NULL
+                   AND memories.project IN (SELECT value FROM json_each(?1))
+                   AND COALESCE(memories.scope, 'project') != 'global'))
+           AND (?2 IS NULL OR memories.branch IS NULL OR memories.branch = ?2)
+         ORDER BY memories.updated_at_epoch ASC, memories.id ASC";
+    let mut stmt = conn.prepare(sql).context("prepare memories truth query")?;
     let rows = stmt
-        .query_map(rusqlite::params![query.project, query.branch], |row| {
+        .query_map(rusqlite::params![projects_json, query.branch], |row| {
             Ok(MemoryRow {
                 id: row.get(0)?,
                 topic_key: row.get(1)?,
                 title: row.get(2)?,
                 content: row.get(3)?,
-                project: row.get(4)?,
+                _project: row.get(4)?,
                 branch: row.get(5)?,
                 status: row.get(6)?,
                 valid_from_epoch: row.get(7)?,
@@ -57,6 +97,11 @@ pub fn load_memory_claim_groups(
                 updated_at_epoch: row.get(11)?,
                 evidence_event_ids: row.get(12)?,
                 source_trust_class: row.get(13)?,
+                memory_type: row.get(14)?,
+                owner_scope: row.get(16)?,
+                owner_key: row.get(17)?,
+                state_key: row.get(18)?,
+                owner_explicit: row.get(19)?,
             })
         })
         .context("query memories for truth projection")?
@@ -64,21 +109,63 @@ pub fn load_memory_claim_groups(
         .context("read memory truth rows")?;
 
     let mut claims = Vec::with_capacity(rows.len());
-    let mut ids = Vec::with_capacity(rows.len());
+    let ids = rows.iter().map(|row| row.id).collect::<Vec<_>>();
+    let visibility = super::visibility::classify_memories(conn, &ids, reference_epoch)?;
+    let canonical_owners = canonical_owner_keys(conn, &rows)?;
     for row in rows {
-        ids.push(row.id);
-        claims.push(memory_claim_view(conn, row)?);
+        let row_visibility = visibility
+            .get(&row.id)
+            .copied()
+            .context("missing memory visibility projection row")?;
+        let mut claim = memory_claim_view(conn, row, &canonical_scope, &canonical_owners)?;
+        if !row_visibility.current_context_eligible {
+            claim.lifecycle.visibility = Visibility::Suppressed;
+        }
+        claims.push(claim);
     }
-    let relations = load_memory_relations(conn, &ids)?;
+    let relations = load_memory_relations(conn, &ids, false)?;
     Ok((claims, relations))
 }
 
-struct MemoryRow {
+fn diagnostic_project_scope(conn: &Connection, requested: &str) -> Result<(String, Vec<String>)> {
+    match crate::project_alias::resolve_project_identity(conn, requested) {
+        Ok(resolution) => {
+            let mut projects = resolution.active_aliases;
+            projects.push(resolution.canonical_path.clone());
+            projects.sort();
+            projects.dedup();
+            Ok((resolution.canonical_path, projects))
+        }
+        Err(error) => {
+            let exact_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM projects WHERE project_path = ?1",
+                [requested],
+                |row| row.get(0),
+            )?;
+            if exact_count > 1 {
+                Ok((requested.to_string(), vec![requested.to_string()]))
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
+pub(crate) fn reference_epoch(query: &TruthQuery) -> i64 {
+    query.as_of_epoch.unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs() as i64)
+            .unwrap_or(0)
+    })
+}
+
+pub(super) struct MemoryRow {
     id: i64,
     topic_key: Option<String>,
     title: String,
     content: String,
-    project: String,
+    _project: String,
     branch: Option<String>,
     status: String,
     valid_from_epoch: Option<i64>,
@@ -88,9 +175,55 @@ struct MemoryRow {
     updated_at_epoch: i64,
     evidence_event_ids: Option<String>,
     source_trust_class: Option<String>,
+    memory_type: String,
+    owner_scope: String,
+    owner_key: String,
+    state_key: Option<String>,
+    owner_explicit: bool,
 }
 
-fn memory_claim_view(conn: &Connection, row: MemoryRow) -> Result<ClaimView> {
+fn canonical_owner_keys(conn: &Connection, rows: &[MemoryRow]) -> Result<HashMap<String, String>> {
+    let mut canonical = HashMap::new();
+    for row in rows {
+        if row.owner_explicit
+            && row.owner_scope == "repo"
+            && !canonical.contains_key(&row.owner_key)
+        {
+            let owner = crate::project_alias::resolve_project_identity(conn, &row.owner_key)?
+                .canonical_path;
+            canonical.insert(row.owner_key.clone(), owner);
+        }
+    }
+    Ok(canonical)
+}
+
+fn memory_subject_key(row: &MemoryRow, canonical_owners: &HashMap<String, String>) -> String {
+    if !row.owner_explicit {
+        return row.topic_key.clone().unwrap_or_else(|| memory_ref(row.id));
+    }
+    let logical_key = row
+        .state_key
+        .as_deref()
+        .or(row.topic_key.as_deref())
+        .map(str::to_string)
+        .unwrap_or_else(|| memory_ref(row.id));
+    let logical_owner = canonical_owners
+        .get(&row.owner_key)
+        .map(String::as_str)
+        .unwrap_or(&row.owner_key);
+    format!(
+        "state:{}:{logical_owner}:{}:{logical_key}",
+        row.owner_scope, row.memory_type
+    )
+}
+
+fn memory_claim_view(
+    conn: &Connection,
+    row: MemoryRow,
+    canonical_scope: &str,
+    canonical_owners: &HashMap<String, String>,
+) -> Result<ClaimView> {
+    let subject_key = memory_subject_key(&row, canonical_owners);
     let mut evidence = captured_event_evidence(conn, row.evidence_event_ids.as_deref())?;
     if let Some(extra) = trust_class_evidence(row.id, row.source_trust_class.as_deref()) {
         evidence.push(extra);
@@ -102,9 +235,9 @@ fn memory_claim_view(conn: &Connection, row: MemoryRow) -> Result<ClaimView> {
     Ok(ClaimView {
         canonical_ref: memory_ref(row.id),
         source: ClaimSource::Memory,
-        subject_key: row.topic_key.clone().unwrap_or_else(|| memory_ref(row.id)),
+        subject_key,
         statement: format!("{}: {}", row.title, row.content),
-        scope: row.project,
+        scope: canonical_scope.to_string(),
         branch: row.branch,
         lifecycle: memory_lifecycle(&row.status),
         valid_from_epoch: row.valid_from_epoch,
@@ -207,21 +340,34 @@ fn trust_class_evidence(memory_id: i64, class: Option<&str>) -> Option<EvidenceV
 /// contract stores `supersedes` as `(from=current, to=old)`. Both are
 /// normalized to "`from_ref` supersedes `to_ref`". Diagnostic-hint graph edges
 /// never enter the truth projection.
-fn load_memory_relations(conn: &Connection, memory_ids: &[i64]) -> Result<Vec<RelationView>> {
+fn load_memory_relations(
+    conn: &Connection,
+    memory_ids: &[i64],
+    live_context: bool,
+) -> Result<Vec<RelationView>> {
     if memory_ids.is_empty() {
         return Ok(Vec::new());
     }
+    let ids_json = serde_json::to_string(memory_ids)?;
     let mut relations = Vec::new();
+    let endpoint_filter = if live_context {
+        "from_memory_id IN (SELECT value FROM json_each(?1))
+         AND to_memory_id IN (SELECT value FROM json_each(?1))"
+    } else {
+        "(from_memory_id IN (SELECT value FROM json_each(?1))
+          OR to_memory_id IN (SELECT value FROM json_each(?1)))"
+    };
     let mut stmt = conn
-        .prepare(
+        .prepare(&format!(
             "SELECT id, edge_type, from_memory_id, to_memory_id, created_at_epoch
              FROM memory_edges
              WHERE from_memory_id IS NOT NULL AND to_memory_id IS NOT NULL
-             ORDER BY created_at_epoch ASC, id ASC",
-        )
+               AND ({endpoint_filter})
+             ORDER BY created_at_epoch ASC, id ASC"
+        ))
         .context("prepare memory_edges truth query")?;
     let edge_rows = stmt
-        .query_map([], |row| {
+        .query_map([&ids_json], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
@@ -234,9 +380,6 @@ fn load_memory_relations(conn: &Connection, memory_ids: &[i64]) -> Result<Vec<Re
         .collect::<std::result::Result<Vec<_>, _>>()
         .context("read memory_edges rows")?;
     for (id, edge_type, from_id, to_id, created_at) in edge_rows {
-        if !memory_ids.contains(&from_id) && !memory_ids.contains(&to_id) {
-            continue;
-        }
         let Some(view) = replacement_relation(
             format!("memory_edge:{id}"),
             &edge_type,
@@ -251,18 +394,26 @@ fn load_memory_relations(conn: &Connection, memory_ids: &[i64]) -> Result<Vec<Re
         relations.push(view);
     }
 
+    let graph_endpoint_filter = if live_context {
+        "from_node_id IN (SELECT value FROM json_each(?1))
+         AND to_node_id IN (SELECT value FROM json_each(?1))"
+    } else {
+        "(from_node_id IN (SELECT value FROM json_each(?1))
+          OR to_node_id IN (SELECT value FROM json_each(?1)))"
+    };
     let mut stmt = conn
-        .prepare(
+        .prepare(&format!(
             "SELECT id, edge_type, from_node_id, to_node_id, created_at_epoch,
                     valid_from_epoch, valid_to_epoch
              FROM graph_edges
              WHERE edge_trust = 'trusted'
                AND from_node_kind = 'memory' AND to_node_kind = 'memory'
-             ORDER BY created_at_epoch ASC, id ASC",
-        )
+               AND {graph_endpoint_filter}
+             ORDER BY created_at_epoch ASC, id ASC"
+        ))
         .context("prepare graph_edges truth query")?;
     let graph_rows = stmt
-        .query_map([], |row| {
+        .query_map([&ids_json], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
@@ -277,9 +428,6 @@ fn load_memory_relations(conn: &Connection, memory_ids: &[i64]) -> Result<Vec<Re
         .collect::<std::result::Result<Vec<_>, _>>()
         .context("read graph_edges rows")?;
     for (id, edge_type, from_id, to_id, created_at, valid_from, valid_to) in graph_rows {
-        if !memory_ids.contains(&from_id) && !memory_ids.contains(&to_id) {
-            continue;
-        }
         let Some(view) = graph_relation(
             format!("graph_edge:{id}"),
             &edge_type,

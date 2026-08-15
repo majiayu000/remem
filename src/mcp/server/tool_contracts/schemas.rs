@@ -196,6 +196,9 @@ struct SearchResultOutput {
     updated_at: String,
     project: String,
     status: String,
+    classification: String,
+    classification_reason: String,
+    current_context_eligible: bool,
     staleness: Option<MemoryStalenessOutput>,
 }
 

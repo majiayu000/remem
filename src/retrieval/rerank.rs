@@ -192,13 +192,13 @@ pub struct RerankerStatusReport {
 pub fn reranker_status() -> Result<RerankerStatusReport> {
     let config = resolve_rerank_config()?;
     let preset = RerankerPreset::parse(&config.preset)?;
-    let install_dir = inventory::install_dir_for_preset(&config, preset);
+    let install_dir = inventory::install_dir_for_preset(&config, preset)?;
     let mut report = RerankerStatusReport {
         enabled: config.enabled,
         preset: preset.label().to_string(),
         model_id: preset.model_id().to_string(),
         upstream_model: preset.upstream_model().to_string(),
-        model_root: inventory::model_root(&config).display().to_string(),
+        model_root: inventory::model_root(&config)?.display().to_string(),
         install_dir: install_dir.display().to_string(),
         state: String::new(),
         disabled_reason: None,

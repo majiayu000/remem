@@ -213,6 +213,23 @@ pub struct ContextAudit {
     pub token_budget: u32,
     pub truncation_reason: Option<String>,
     pub entries: Vec<AuditEntry>,
+    /// G3: Core-channel mapping vs CurrentTruth selected claims, recorded
+    /// before activation rewrites the live `current_truth` section.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shadow_comparison: Vec<CurrentTruthShadowDiff>,
+}
+
+/// Inclusion/exclusion diff between today's Core channel and CurrentTruth.
+/// Not a user-facing section: audit-only, no memory text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CurrentTruthShadowDiff {
+    pub stable_key: String,
+    /// `core_only`, `projection_only`, or `abstained`.
+    pub verdict: String,
+    pub projection_ref: Option<String>,
+    pub claim_refs: Vec<String>,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -70,6 +70,7 @@ fn recall_combines_user_claim_repo_memory_workstream_and_session() -> Result<()>
         "decision",
         None,
     )?;
+    crate::truth::test_support::seed_current_memory_proof(&conn, memory_id)?;
     crate::workstream::upsert_workstream(
         &conn,
         "/repo",
@@ -196,6 +197,7 @@ fn recall_returns_repo_only_memory_context() -> Result<()> {
         "decision",
         None,
     )?;
+    crate::truth::test_support::seed_current_memory_proof(&conn, memory_id)?;
 
     let result = recall_user_context(&conn, &request("repo-only recall"))?;
 
@@ -326,6 +328,7 @@ fn recall_excludes_sensitive_expired_and_suppressed_by_default() -> Result<()> {
         "decision",
         None,
     )?;
+    crate::truth::test_support::seed_current_memory_proof(&conn, memory_id)?;
     create_suppression(
         &conn,
         &SuppressRequest {
@@ -426,6 +429,108 @@ fn recall_output_respects_budget() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn recall_follows_project_alias_for_sessions_claims_and_workstreams() -> Result<()> {
+    let conn = migrated_conn()?;
+    let canonical = "/canonical/repo";
+    let alias = "/alias/repo";
+    seed_project_alias(&conn, alias, canonical)?;
+
+    let claim_id = create_manual_claim(
+        &conn,
+        &ManualClaimRequest {
+            text: "Prefer alias-aware recall for remem sessions",
+            owner_scope: Some("repo"),
+            owner_key: Some(canonical),
+            claim_type: UserContextClaimType::Preference,
+            claim_key: None,
+            confidence: 1.0,
+            sensitivity: UserContextSensitivity::Normal,
+            valid_from_epoch: None,
+            valid_to_epoch: None,
+        },
+    )?
+    .id;
+    crate::workstream::upsert_workstream(
+        &conn,
+        canonical,
+        "ws-alias",
+        &crate::workstream::ParsedWorkStream {
+            title: Some("Ship alias recall overlay".to_string()),
+            progress: Some("alias recall progress".to_string()),
+            next_action: Some("wire alias recall".to_string()),
+            blockers: None,
+            is_completed: false,
+        },
+    )?;
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, request, completed, created_at_epoch)
+         VALUES ('s-alias', ?1, 'alias recall session request',
+                 'implemented alias recall tests', 10)",
+        [canonical],
+    )?;
+
+    let mut req = request("alias recall");
+    req.project = alias.to_string();
+    let result = recall_user_context(&conn, &req)?;
+
+    assert!(result
+        .included
+        .iter()
+        .any(|item| item.source_type == "user_claim" && item.source_id == Some(claim_id)));
+    assert!(result
+        .included
+        .iter()
+        .any(|item| item.source_type == "workstream"));
+    assert!(result
+        .included
+        .iter()
+        .any(|item| item.source_type == "session_summary"));
+    Ok(())
+}
+
+fn seed_project_alias(conn: &Connection, alias: &str, canonical: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO workspaces(
+            root_path, git_remote, git_branch, created_at_epoch, updated_at_epoch
+         ) VALUES(?1, 'https://github.com/o/r.git', 'main', 1, 1)",
+        [canonical],
+    )?;
+    let workspace_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO projects(
+            workspace_id, project_path, project_key, created_at_epoch, updated_at_epoch
+         ) VALUES(?1, ?2, ?2, 1, 1)",
+        rusqlite::params![workspace_id, canonical],
+    )?;
+    let payload = serde_json::json!({
+        "from_path": alias,
+        "to_path": canonical,
+        "target_remote": "github.com/o/r",
+        "shared_commit_count": 2
+    });
+    let entry = crate::project_alias::ProjectAliasPlanEntry {
+        alias_path: alias.to_string(),
+        canonical_path: canonical.to_string(),
+        proof_kind: crate::project_alias::ProjectAliasProofKind::GitCommitMembership,
+        proof_sha256: crate::project_alias::proof_sha256(&payload)?,
+        proof_payload: payload,
+    };
+    crate::project_alias::apply_project_alias_plan(
+        conn,
+        &crate::project_alias::ProjectAliasApplyRequest {
+            source_inventory_sha256:
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            actor: "test",
+            reason: "fixture",
+            now_epoch: 10,
+            entries: &[entry],
+        },
+    )?;
+    Ok(())
+}
+
 fn seed_current_state(conn: &Connection) -> Result<()> {
     conn.execute(
         "INSERT INTO memory_state_keys
@@ -439,11 +544,12 @@ fn seed_current_state(conn: &Connection) -> Result<()> {
         "INSERT INTO memories
          (id, session_id, project, topic_key, title, content, memory_type, files,
           created_at_epoch, updated_at_epoch, status, branch, scope, source_project,
-          target_project, owner_scope, owner_key, context_class, state_key_id)
+          target_project, owner_scope, owner_key, context_class, state_key_id,
+          source_trust_class)
          VALUES (2, NULL, '/repo', 'deploy-target', 'Deploy target',
                  'Use production for deploy recall.', 'decision', NULL,
                  1700000002, 1700000002, 'active', NULL, 'project', '/repo',
-                 '/repo', 'repo', '/repo', 'startup_core', 10)",
+                 '/repo', 'repo', '/repo', 'startup_core', 10, 'user_prompt')",
         [],
     )?;
     conn.execute(

@@ -6,6 +6,8 @@ use super::super::policy::{ContextLimits, ContextPolicy};
 use super::super::query::{load_context_data, load_context_data_with_policy};
 use super::{insert_global_memory, insert_memory, insert_memory_with_branch, setup_context_schema};
 
+mod legacy_unverified;
+
 #[test]
 fn load_context_data_records_primary_memory_query_failures() {
     let conn = match Connection::open_in_memory() {
@@ -563,7 +565,7 @@ fn load_context_data_filters_lessons_by_current_branch() {
                 content:
                     "Lesson: branch-specific lessons should follow the current context branch.",
                 confidence: 0.9,
-                source_evidence: None,
+                source_evidence: Some("branch fixture evidence"),
                 files: None,
                 branch,
                 scope: "project",

@@ -3,7 +3,10 @@ use crate::db;
 use rusqlite::Connection;
 
 pub(super) fn check_schema_migration(conn: Option<&Connection>, open_error: Option<&str>) -> Check {
-    let db_path = db::db_path();
+    let db_path = match db::try_db_path() {
+        Ok(path) => path,
+        Err(error) => return Check::new("Schema", Status::Fail, error.to_string()),
+    };
     if !db_path.exists() {
         return Check::new(
             "Schema",
@@ -71,7 +74,10 @@ pub(super) fn check_key_format() -> Check {
         }
     }
 
-    let key_path = db::data_dir().join(".key");
+    let key_path = match db::try_data_dir() {
+        Ok(path) => path.join(".key"),
+        Err(error) => return Check::new("Key format", Status::Fail, error.to_string()),
+    };
     if !key_path.exists() {
         return Check::new("Key format", Status::Ok, "no SQLCipher key file yet");
     }

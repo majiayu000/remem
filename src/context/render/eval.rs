@@ -195,14 +195,21 @@ fn render_loaded_context_for_eval(
     }
     if !loaded.memories.is_empty() {
         let render_limits = section_render_limits(policy);
+        let core_memories = crate::context_bundle::core_render_memories(
+            &loaded.memories,
+            loaded.current_truth_projection.as_ref(),
+        );
         let core_summary = render_core_memory_with_limits_and_staleness(
             &mut output,
-            &loaded.memories,
+            core_memories.as_ref(),
             &render_limits,
             loaded.render_reference_epoch,
             &loaded.staleness_labels,
         );
-        let core_ids: HashSet<i64> = core_summary.ids.into_iter().collect();
+        let mut core_ids: HashSet<i64> = core_summary.ids.into_iter().collect();
+        if let Some(projection) = loaded.current_truth_projection.as_ref() {
+            core_ids.extend(crate::context_bundle::abstained_memory_ids(projection));
+        }
         render_memory_index_with_limits_excluding_and_staleness(
             &mut output,
             &loaded.memories,
