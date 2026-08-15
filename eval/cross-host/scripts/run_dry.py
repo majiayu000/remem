@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from schema_validate import validate  # noqa: E402
+from schema_validate import load_json, validate  # noqa: E402
 
 SUITE_ROOT = Path(__file__).resolve().parent.parent
 TASK_SCHEMA = SUITE_ROOT / "schemas" / "cross-host-task.schema.json"
@@ -48,10 +48,6 @@ HOST_BY_DIRECTION = {
     "claude_to_codex": ("claude_code", "codex"),
     "codex_to_claude": ("codex", "claude_code"),
 }
-
-
-def load_json(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def normalize_condition(condition: object, suite_version: str) -> object:
@@ -84,7 +80,14 @@ def diagnostic_conditions(charter: dict, suite_version: str) -> list[str]:
 def validate_tasks(
     charter: dict, errors: list[str], suite_version: str
 ) -> dict[str, list[dict]]:
-    task_schema = load_json(TASK_SCHEMA)
+    try:
+        task_schema = load_json(TASK_SCHEMA)
+    except ValueError as exc:
+        errors.append(str(exc))
+        task_schema = None
+    if task_schema is not None and not isinstance(task_schema, dict):
+        errors.append(f"{TASK_SCHEMA}: schema must be a JSON object")
+        task_schema = None
     required_categories = set(charter["task_requirements"]["required_categories"])
     min_tasks = charter["task_requirements"]["min_tasks_per_direction"]
     tasks_by_direction: dict[str, list[dict]] = {}
@@ -93,10 +96,18 @@ def validate_tasks(
     for direction, task_dir in TASK_DIRS.items():
         tasks: list[dict] = []
         for path in sorted(task_dir.glob("*.json")):
-            task = load_json(path)
             rel = path.relative_to(SUITE_ROOT)
-            for err in validate(task, task_schema):
-                errors.append(f"{rel}: {err}")
+            try:
+                task = load_json(path)
+            except ValueError as exc:
+                errors.append(str(exc))
+                continue
+            if not isinstance(task, dict):
+                errors.append(f"{rel}: task must be a JSON object")
+                continue
+            if task_schema is not None:
+                for err in validate(task, task_schema):
+                    errors.append(f"{rel}: {err}")
             task_id = task.get("id")
             if isinstance(task_id, str):
                 if task_id in seen_ids:
@@ -140,12 +151,36 @@ def validate_tasks(
     return tasks_by_direction
 
 
-def validate_artifacts(artifact_dir: Path, errors: list[str], suite_version: str) -> int:
-    run_schema = load_json(RUN_SCHEMAS[suite_version])
+def validate_artifacts(
+    artifact_dir: Path,
+    errors: list[str],
+    suite_version: str,
+    tasks_by_direction: dict[str, list[dict]],
+    runs_per_task_condition: int,
+) -> int:
+    try:
+        run_schema = load_json(RUN_SCHEMAS[suite_version])
+    except ValueError as exc:
+        errors.append(str(exc))
+        return 0
+    if not isinstance(run_schema, dict):
+        errors.append(f"{RUN_SCHEMAS[suite_version]}: schema must be a JSON object")
+        return 0
+    tasks_by_id = {
+        task["id"]: task
+        for tasks in tasks_by_direction.values()
+        for task in tasks
+        if isinstance(task.get("id"), str) and task.get("id")
+    }
+    seen_v2_tuples: dict[tuple[object, object, object, object], Path] = {}
     count = 0
     for path in sorted(artifact_dir.rglob("*.json")):
         count += 1
-        artifact = load_json(path)
+        try:
+            artifact = load_json(path)
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
         for err in validate(artifact, run_schema):
             errors.append(f"{path}: {err}")
         if not isinstance(artifact, dict):
@@ -156,6 +191,48 @@ def validate_artifacts(artifact_dir: Path, errors: list[str], suite_version: str
                 f"{path}: artifact suite {artifact_suite!r} does not match "
                 f"requested suite {suite_version!r}"
             )
+        if suite_version == SUITE_V2:
+            direction = artifact.get("direction")
+            task_id = artifact.get("task_id")
+            condition = artifact.get("condition")
+            run_index = artifact.get("run_index")
+            if (
+                isinstance(direction, str)
+                and isinstance(task_id, str)
+                and isinstance(condition, str)
+                and isinstance(run_index, int)
+                and not isinstance(run_index, bool)
+            ):
+                identity = (direction, task_id, condition, run_index)
+                previous_path = seen_v2_tuples.get(identity)
+                if previous_path is not None:
+                    errors.append(
+                        f"{path}: duplicate artifact tuple {identity!r}; "
+                        f"first seen in {previous_path}"
+                    )
+                else:
+                    seen_v2_tuples[identity] = path
+            task_id = artifact.get("task_id")
+            task = tasks_by_id.get(task_id) if isinstance(task_id, str) else None
+            if task is None:
+                errors.append(f"{path}: task_id {task_id!r} is not registered in the task matrix")
+            else:
+                for field in ("direction", "source_host", "target_host"):
+                    if artifact.get(field) != task.get(field):
+                        errors.append(
+                            f"{path}: artifact {field} {artifact.get(field)!r} does not match "
+                            f"task {task_id!r} value {task.get(field)!r}"
+                        )
+            run_index = artifact.get("run_index")
+            if (
+                isinstance(run_index, int)
+                and not isinstance(run_index, bool)
+                and not 0 <= run_index < runs_per_task_condition
+            ):
+                errors.append(
+                    f"{path}: run_index {run_index} is outside the registered range "
+                    f"0..{runs_per_task_condition - 1}"
+                )
         condition = artifact.get("condition")
         attribution_value = artifact.get("attribution", {})
         attribution = attribution_value if isinstance(attribution_value, dict) else {}
@@ -233,6 +310,18 @@ def build_plan(charter: dict, tasks_by_direction: dict[str, list[dict]], suite_v
     return plan
 
 
+def emit_report(report: dict, json_out: Path | None) -> int:
+    if json_out:
+        json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    errors = report["schema_errors"]
+    for err in errors:
+        print(f"ERROR: {err}")
+    print(json.dumps(report["plan"], indent=2))
+    status = "PASS" if not errors else f"FAIL ({len(errors)} errors)"
+    print(f"dry-run: {status}")
+    return 0 if not errors else 1
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -251,7 +340,32 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv[1:])
 
     errors: list[str] = []
-    charter = load_json(CHARTER)
+    try:
+        charter = load_json(CHARTER)
+    except ValueError as exc:
+        charter = None
+        errors.append(str(exc))
+    if charter is not None and not isinstance(charter, dict):
+        charter = None
+        errors.append(f"{CHARTER}: charter must be a JSON object")
+    if charter is None:
+        return emit_report(
+            {
+                "suite": args.suite_version,
+                "input_charter_version": None,
+                "mode": "offline_dry_run",
+                "execution_scope": "plan_only",
+                "charter_status": None,
+                "task_definitions_ready": False,
+                "executable_ready": False,
+                "compatibility_conversions": {},
+                "schema_errors": errors,
+                "artifacts_validated": 0,
+                "plan": {},
+                "passed": False,
+            },
+            args.json_out,
+        )
     if charter.get("charter_version") != SUITE_V1:
         errors.append(f"charter: unexpected charter_version {charter.get('charter_version')!r}")
     tasks_by_direction = validate_tasks(charter, errors, args.suite_version)
@@ -265,7 +379,13 @@ def main(argv: list[str]) -> int:
 
     artifact_count = 0
     if args.artifacts:
-        artifact_count = validate_artifacts(args.artifacts, errors, args.suite_version)
+        artifact_count = validate_artifacts(
+            args.artifacts,
+            errors,
+            args.suite_version,
+            tasks_by_direction,
+            charter["task_requirements"]["runs_per_task_condition"],
+        )
 
     executable_ready = False
     task_definitions_ready = all(
@@ -291,14 +411,7 @@ def main(argv: list[str]) -> int:
         "plan": plan,
         "passed": not errors,
     }
-    if args.json_out:
-        args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-
-    for err in errors:
-        print(f"ERROR: {err}")
-    print(json.dumps(report["plan"], indent=2))
-    print(f"dry-run: {'PASS' if not errors else f'FAIL ({len(errors)} errors)'}")
-    return 0 if not errors else 1
+    return emit_report(report, args.json_out)
 
 
 if __name__ == "__main__":

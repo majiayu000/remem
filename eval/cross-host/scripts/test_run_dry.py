@@ -18,6 +18,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import run_dry  # noqa: E402
+import schema_validate  # noqa: E402
 from schema_validate import validate  # noqa: E402
 
 
@@ -31,13 +32,28 @@ class RunDryTests(unittest.TestCase):
             run_dry.SUITE_ROOT / "examples" / "run-artifact-v2-plan-valid.json"
         )
 
-    def _validate_artifact(self, artifact: object, suite: str) -> list[str]:
+    def _validate_artifact_json(self, artifact_json: str, suite: str) -> list[str]:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "artifact.json"
-            path.write_text(json.dumps(artifact), encoding="utf-8")
+            path.write_text(artifact_json, encoding="utf-8")
             errors: list[str] = []
-            self.assertEqual(run_dry.validate_artifacts(Path(tmp), errors, suite), 1)
+            task_errors: list[str] = []
+            tasks = run_dry.validate_tasks(self.charter, task_errors, suite)
+            self.assertEqual(task_errors, [])
+            self.assertEqual(
+                run_dry.validate_artifacts(
+                    Path(tmp),
+                    errors,
+                    suite,
+                    tasks,
+                    self.charter["task_requirements"]["runs_per_task_condition"],
+                ),
+                1,
+            )
             return errors
+
+    def _validate_artifact(self, artifact: object, suite: str) -> list[str]:
+        return self._validate_artifact_json(json.dumps(artifact), suite)
 
     def _isolated_task_dirs(self, root: Path) -> dict[str, Path]:
         mapping = {
@@ -81,6 +97,198 @@ class RunDryTests(unittest.TestCase):
         )
         errors = self._validate_artifact(artifact, run_dry.SUITE_V2)
         self.assertTrue(any("$.condition" in e and "enum" in e for e in errors))
+
+    def test_v2_artifact_must_match_registered_task_tuple(self) -> None:
+        unknown = {**self.v2_artifact, "task_id": "not-registered"}
+        errors = self._validate_artifact(unknown, run_dry.SUITE_V2)
+        self.assertTrue(any("is not registered in the task matrix" in error for error in errors))
+
+        wrong_tuple = {
+            **self.v2_artifact,
+            "direction": "codex_to_claude",
+            "source_host": "codex",
+            "target_host": "claude_code",
+        }
+        errors = self._validate_artifact(wrong_tuple, run_dry.SUITE_V2)
+        for field in ("direction", "source_host", "target_host"):
+            self.assertTrue(any(f"artifact {field}" in error for error in errors))
+
+        outside_run_range = {**self.v2_artifact, "run_index": 3}
+        errors = self._validate_artifact(outside_run_range, run_dry.SUITE_V2)
+        self.assertTrue(any("registered range 0..2" in error for error in errors))
+
+    def test_artifact_json_rejects_duplicate_keys_and_non_finite_numbers(self) -> None:
+        valid_json = json.dumps(self.v2_artifact)
+        duplicate_suite = valid_json.replace(
+            '"suite": "cross-host-v2"',
+            '"suite": "cross-host-v1", "suite": "cross-host-v2"',
+            1,
+        )
+        errors = self._validate_artifact_json(duplicate_suite, run_dry.SUITE_V2)
+        self.assertTrue(any("duplicate object key 'suite'" in error for error in errors))
+
+        non_finite = copy.deepcopy(self.v2_artifact)
+        non_finite["metrics"]["handoff_fact_recall"] = float("nan")
+        errors = self._validate_artifact_json(json.dumps(non_finite), run_dry.SUITE_V2)
+        self.assertTrue(any("non-finite number 'NaN'" in error for error in errors))
+
+        overflowing_float = valid_json.replace(
+            '"artifacts": {',
+            '"artifacts": {"overflow": 1e400, ',
+            1,
+        )
+        errors = self._validate_artifact_json(overflowing_float, run_dry.SUITE_V2)
+        self.assertTrue(any("non-finite number '1e400'" in error for error in errors))
+
+    def test_artifact_json_rejects_floats_that_underflow_to_zero(self) -> None:
+        valid_json = json.dumps(self.v2_artifact)
+        underflowing = valid_json.replace(
+            '"handoff_fact_recall":',
+            '"handoff_fact_recall": 1e-400, "unused":',
+            1,
+        )
+        errors = self._validate_artifact_json(underflowing, run_dry.SUITE_V2)
+        self.assertTrue(any("underflows to zero" in error for error in errors))
+
+        genuine_zero = valid_json.replace(
+            '"artifacts": {',
+            '"artifacts": {"zero": -0.000, "exponent_zero": 0e10, ',
+            1,
+        )
+        errors = self._validate_artifact_json(genuine_zero, run_dry.SUITE_V2)
+        self.assertFalse(any("underflows" in error for error in errors))
+
+        subnormal = valid_json.replace(
+            '"artifacts": {',
+            '"artifacts": {"smallest": 5e-324, ',
+            1,
+        )
+        errors = self._validate_artifact_json(subnormal, run_dry.SUITE_V2)
+        self.assertFalse(any("underflows" in error for error in errors))
+
+    def test_artifact_json_rejects_unpaired_surrogates(self) -> None:
+        lone_surrogate = json.dumps(self.v2_artifact).replace(
+            '"artifacts": {',
+            '"artifacts": {"lone": "\\ud800", ',
+            1,
+        )
+        errors = self._validate_artifact_json(lone_surrogate, run_dry.SUITE_V2)
+        self.assertTrue(any("unpaired surrogate" in error for error in errors))
+
+        surrogate_key = json.dumps(self.v2_artifact).replace(
+            '"artifacts": {',
+            '"artifacts": {"\\udfff": "x", ',
+            1,
+        )
+        errors = self._validate_artifact_json(surrogate_key, run_dry.SUITE_V2)
+        self.assertTrue(any("object key" in error and "surrogate" in error for error in errors))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_path = Path(tmp) / "artifact.json"
+            artifact_path.write_text(lone_surrogate, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "unpaired surrogate"):
+                schema_validate.validate_file(
+                    artifact_path,
+                    run_dry.RUN_SCHEMAS[run_dry.SUITE_V2],
+                )
+
+    def test_charter_strict_load_failure_reports_instead_of_aborting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, redirect_stdout(io.StringIO()):
+            charter_path = Path(tmp) / "benchmark-charter.json"
+            charter_path.write_text(
+                '{"charter_version": "cross-host-v1", "charter_version": "cross-host-v1"}',
+                encoding="utf-8",
+            )
+            report_path = Path(tmp) / "report.json"
+            with mock.patch.object(run_dry, "CHARTER", charter_path):
+                exit_code = run_dry.main(["run_dry.py", "--json-out", str(report_path)])
+            report = run_dry.load_json(report_path)
+
+        self.assertEqual(exit_code, 1)
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["plan"], {})
+        self.assertTrue(
+            any("duplicate object key 'charter_version'" in e for e in report["schema_errors"])
+        )
+
+    def test_task_strict_load_failure_is_recorded_per_file(self) -> None:
+        with tempfile.TemporaryDirectory(dir=run_dry.SUITE_ROOT) as tmp:
+            task_dirs = self._isolated_task_dirs(Path(tmp))
+            task_path = next(task_dirs["claude_to_codex"].glob("*.json"))
+            task_path.write_text('{"id": "dup", "id": "dup"}', encoding="utf-8")
+
+            errors: list[str] = []
+            with mock.patch.object(run_dry, "TASK_DIRS", task_dirs):
+                tasks = run_dry.validate_tasks(self.charter, errors, run_dry.SUITE_V2)
+
+        self.assertTrue(any("duplicate object key 'id'" in error for error in errors))
+        self.assertEqual(len(tasks["claude_to_codex"]), run_dry.V2_TASKS_PER_DIRECTION - 1)
+        self.assertEqual(len(tasks["codex_to_claude"]), run_dry.V2_TASKS_PER_DIRECTION)
+
+    def test_standalone_validator_uses_the_same_strict_json_loader(self) -> None:
+        valid_json = json.dumps(self.v2_artifact)
+        duplicate_suite = valid_json.replace(
+            '"suite": "cross-host-v2"',
+            '"suite": "cross-host-v1", "suite": "cross-host-v2"',
+            1,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_path = Path(tmp) / "artifact.json"
+            artifact_path.write_text(duplicate_suite, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "duplicate object key 'suite'"):
+                schema_validate.validate_file(
+                    artifact_path,
+                    run_dry.RUN_SCHEMAS[run_dry.SUITE_V2],
+                )
+
+    def test_artifact_json_rejects_unsafe_integer_values(self) -> None:
+        safe_boundary = copy.deepcopy(self.v2_artifact)
+        safe_boundary["metrics"]["tokens_total"] = (1 << 53) - 1
+        self.assertEqual(self._validate_artifact(safe_boundary, run_dry.SUITE_V2), [])
+
+        unsafe_integer = json.dumps(self.v2_artifact).replace(
+            '"tokens_total": 0',
+            '"tokens_total": 9007199254740992',
+            1,
+        )
+        errors = self._validate_artifact_json(unsafe_integer, run_dry.SUITE_V2)
+        self.assertTrue(any("outside the safe JSON range" in error for error in errors))
+
+    def test_v2_rejects_duplicate_artifact_tuple_identities(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            artifact_dir = Path(tmp)
+            for name in ("first.json", "copied.json"):
+                (artifact_dir / name).write_text(
+                    json.dumps(self.v2_artifact),
+                    encoding="utf-8",
+                )
+            task_errors: list[str] = []
+            tasks = run_dry.validate_tasks(self.charter, task_errors, run_dry.SUITE_V2)
+            self.assertEqual(task_errors, [])
+            errors: list[str] = []
+            self.assertEqual(
+                run_dry.validate_artifacts(
+                    artifact_dir,
+                    errors,
+                    run_dry.SUITE_V2,
+                    tasks,
+                    self.charter["task_requirements"]["runs_per_task_condition"],
+                ),
+                2,
+            )
+        self.assertEqual(sum("duplicate artifact tuple" in error for error in errors), 1)
+
+    def test_v2_isolation_false_constant_requires_a_boolean(self) -> None:
+        artifact = copy.deepcopy(self.v2_artifact)
+        artifact["handoff_isolation"]["source_session_store_readable_by_target"] = 0
+        errors = self._validate_artifact(artifact, run_dry.SUITE_V2)
+        self.assertTrue(
+            any(
+                "source_session_store_readable_by_target" in error
+                and "expected type ['boolean']" in error
+                for error in errors
+            )
+        )
 
     def test_missing_task_id_keeps_schema_diagnostics_and_plan(self) -> None:
         with tempfile.TemporaryDirectory(dir=run_dry.SUITE_ROOT) as tmp:
