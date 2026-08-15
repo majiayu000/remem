@@ -159,7 +159,8 @@ Acceptance:
 
 ### G2 — Quarantine legacy-unverified data from current context
 
-Status: Implemented in source; copied-production-database validation complete; Draft pending review because this is a large-rollout-impact change. Not merged or deployed.
+Status: Done in #1019; copied-production-database validation and the focused
+#1017 acceptance audit are complete.
 
 - [x] Define an explicit legacy trust/visibility classification without adding
   a second durable memory store.
@@ -180,7 +181,7 @@ Acceptance:
 
 ### G3 — Make CurrentTruth the production current-state boundary
 
-Status: Done in `agent/legacy-unverified-governance`; depends on G2
+Status: Done in #1019; depends on G2
 
 - [x] Route current-state candidates through `remem::truth` rather than mapping
   every loaded core memory directly to a current channel.
