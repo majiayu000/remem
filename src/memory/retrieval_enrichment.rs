@@ -25,7 +25,8 @@ pub const RETRIEVAL_ENRICHMENT_VERSION: i64 = 1;
 /// Binds redaction, poison scanning, and output security rules.
 pub const RETRIEVAL_ENRICHMENT_SECURITY_POLICY_VERSION: i64 = 1;
 
-pub(crate) const IDLE_ENRICHMENT_BATCH_SIZE: i64 = 16;
+pub(crate) const IDLE_ENRICHMENT_BATCH_SIZE: i64 = 4;
+pub(crate) const MAX_RETRIEVAL_ENRICHMENT_FAILURES: i64 = 3;
 pub(crate) const ENRICHMENT_LEASE_SECS: i64 = 300;
 /// Hard timeout for one generation attempt. Must stay below the lease so a
 /// still-running owner is never overtaken while its attempt could still land.
@@ -40,7 +41,8 @@ const PROMPT_CONTENT_BUDGET_BYTES: usize = 4000;
 const PROMPT_FILES_BUDGET_BYTES: usize = 600;
 
 pub(crate) const ELIGIBLE_STATUS_SQL: &str = "status IN ('active', 'stale', 'archived')";
-pub(crate) const DUE_PREDICATE_SQL: &str = "(search_context_enrichment_version < ?1
+pub(crate) const DUE_PREDICATE_SQL: &str = "search_context_enrichment_state = 'pending'
+    AND (search_context_enrichment_version < ?1
         OR search_context_security_policy_version < ?2
         OR search_context_source_hash IS NULL)
     AND (search_context_next_retry_at_epoch IS NULL

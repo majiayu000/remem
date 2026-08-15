@@ -70,11 +70,9 @@ unchanged. `--fast` continues to omit `cargo test`.
 2. Ensure tests pass
 3. Submit a PR with a clear description
 
-### Review and authorization
+### Review
 
 Every pull request must still pass the applicable ordinary CI checks and receive
 normal maintainer review. Changes involving authentication, secrets, security
 boundaries, or private vulnerability information require explicit human
-security review. Merge and release actions require explicit human
-authorization; agents must not infer that authorization from a green check,
-review artifact, or label.
+security review.

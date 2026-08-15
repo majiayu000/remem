@@ -10,8 +10,10 @@ silently ignored so the schemas cannot drift ahead of the validator.
 from __future__ import annotations
 
 import json
+import math
 import re
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 IGNORED_KEYWORDS = {"$schema", "$id", "title", "description"}
@@ -40,6 +42,86 @@ TYPE_CHECKS = {
     "boolean": lambda v: isinstance(v, bool),
     "null": lambda v: v is None,
 }
+JSON_SAFE_INTEGER_MAX = (1 << 53) - 1
+
+
+def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate object key {key!r}")
+        value[key] = item
+    return value
+
+
+def reject_non_finite_number(value: str) -> object:
+    raise ValueError(f"non-finite number {value!r}")
+
+
+def parse_finite_float(value: str) -> float:
+    """Parse a JSON float literal, rejecting the two silent binary64 edges.
+
+    Overflow already surfaces as an infinity, but underflow does not: a literal
+    like ``1e-400`` converts to ``0.0``, which would turn a nonzero measurement
+    into a zero that passes every finiteness check downstream.
+    """
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"non-finite number {value!r}")
+    if parsed == 0.0 and Decimal(value) != 0:
+        raise ValueError(f"number {value!r} underflows to zero")
+    return parsed
+
+
+def parse_safe_integer(value: str) -> int:
+    parsed = int(value)
+    if not -JSON_SAFE_INTEGER_MAX <= parsed <= JSON_SAFE_INTEGER_MAX:
+        raise ValueError(f"integer {value!r} is outside the safe JSON range")
+    return parsed
+
+
+def reject_unpaired_surrogates(value: object, path: str = "$") -> None:
+    """Reject decoded strings that are not valid Unicode scalar sequences.
+
+    ``json.loads`` accepts escaped lone surrogates such as ``"\\ud800"``, which
+    later make UTF-8 encoding and RFC 8785 canonicalization fail or disagree.
+    """
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise ValueError(f"{path}: string contains an unpaired surrogate") from exc
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            reject_unpaired_surrogates(item, f"{path}[{index}]")
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            try:
+                key.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise ValueError(
+                    f"{path}: object key {key!a} contains an unpaired surrogate"
+                ) from exc
+            reject_unpaired_surrogates(item, f"{path}.{key}")
+
+
+def parse_json(value: str) -> object:
+    parsed = json.loads(
+        value,
+        object_pairs_hook=reject_duplicate_keys,
+        parse_constant=reject_non_finite_number,
+        parse_float=parse_finite_float,
+        parse_int=parse_safe_integer,
+    )
+    reject_unpaired_surrogates(parsed)
+    return parsed
+
+
+def load_json(path: Path) -> object:
+    try:
+        return parse_json(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeError, ValueError) as exc:
+        raise ValueError(f"{path}: invalid JSON: {exc}") from exc
 
 
 def _check_type(value: object, expected: object, path: str, errors: list[str]) -> None:
@@ -103,8 +185,10 @@ def validate(value: object, schema: dict, path: str = "$") -> list[str]:
 
 
 def validate_file(data_path: Path, schema_path: Path) -> list[str]:
-    schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    data = json.loads(data_path.read_text(encoding="utf-8"))
+    schema = load_json(schema_path)
+    data = load_json(data_path)
+    if not isinstance(schema, dict):
+        raise ValueError(f"{schema_path}: schema must be a JSON object")
     return validate(data, schema)
 
 

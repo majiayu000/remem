@@ -46,6 +46,16 @@ pub(super) fn pricing_breakdown_for_model(model: &str) -> Option<ModelPricing> {
     }
 
     let model_lower = model.to_lowercase();
+    // GPT-5.6 Codex subscription models are billed in product credits rather
+    // than the generic GPT-5 USD-per-token schedule. Never manufacture a USD
+    // estimate for them; an explicit global operator override above remains
+    // the only way to opt into a local USD conversion.
+    if model_lower.contains("gpt-5.6-luna")
+        || model_lower.contains("gpt-5.6-sol")
+        || model_lower.contains("gpt-5.6-terra")
+    {
+        return None;
+    }
     let (default, prefix) = if model_lower.contains("opus-4-7")
         || model_lower.contains("opus-4.7")
         || model_lower.contains("opus-4-6")

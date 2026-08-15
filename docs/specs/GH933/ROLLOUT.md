@@ -157,10 +157,10 @@ minutes, and no unexplained forward-only or replay conflict growth.
 
 ## Phase 4 — General Release
 
-General release requires separate human merge and release approvals after the
-canary report is attached. Synchronize Cargo, lockfile, Codex plugin, runtime
-manifest, npm wrapper, server metadata, changelog, README, architecture, and
-upgrade guide. Release notes must state:
+General release begins after the canary report is attached and the phase exit
+criteria above are satisfied. Synchronize Cargo, lockfile, Codex plugin,
+runtime manifest, npm wrapper, server metadata, changelog, README,
+architecture, and upgrade guide. Release notes must state:
 
 - breaking 0.7 schema and required downtime;
 - 0.6.x cannot open/write a migrated database;

@@ -33,6 +33,9 @@ pub(super) fn check_retrieval_enrichment(conn: Option<&Connection>) -> Check {
 struct CoverageCounts {
     eligible: i64,
     ready: i64,
+    pending: i64,
+    exhausted: i64,
+    deferred: i64,
     failed: i64,
     drift: i64,
     vector_consistent: i64,
@@ -83,7 +86,6 @@ fn evaluate(conn: &Connection) -> anyhow::Result<Check> {
     }
 
     let provider_enabled = !crate::retrieval::embedding::provider_disabled_or_error()?;
-    let pending = counts.eligible - counts.ready;
     let vector_note = if provider_enabled {
         format!(
             "vector-consistent={}/{}",
@@ -93,33 +95,55 @@ fn evaluate(conn: &Connection) -> anyhow::Result<Check> {
         "vector=disabled".to_string()
     };
     let detail = format!(
-        "{}/{} ready (pending={} failed={} generator=v{RETRIEVAL_ENRICHMENT_VERSION} {vector_note} {convergence})",
-        counts.ready, counts.eligible, pending, counts.failed
+        "{}/{} ready (pending={} exhausted={} deferred={} failed={} generator=v{RETRIEVAL_ENRICHMENT_VERSION} {vector_note} {convergence})",
+        counts.ready,
+        counts.eligible,
+        counts.pending,
+        counts.exhausted,
+        counts.deferred,
+        counts.failed
     );
-    let fully_covered = counts.ready == counts.eligible
+    let fully_covered = counts.pending == 0
+        && counts.exhausted == 0
+        && counts.ready + counts.deferred == counts.eligible
         && (!provider_enabled || counts.vector_consistent == counts.ready);
     if fully_covered {
         Ok(Check::new(CHECK_NAME, Status::Ok, detail))
     } else {
+        let recovery = if counts.pending > 0 {
+            "run `remem worker --once` (or keep the worker daemon running) and check error-level enrichment logs"
+        } else {
+            "automatic enrichment retries are exhausted; inspect error-level enrichment logs"
+        };
         Ok(Check::new(
             CHECK_NAME,
             Status::Warn,
-            format!(
-                "{detail}; run `remem worker --once` (or keep the worker daemon running) and check \
-                 error-level enrichment logs for failed rows"
-            ),
+            format!("{detail}; {recovery}"),
         ))
     }
 }
 
 fn coverage_counts(conn: &Connection) -> anyhow::Result<CoverageCounts> {
-    let (eligible, ready, failed, vector_consistent): (i64, i64, i64, i64) = conn.query_row(
+    let (eligible, ready, pending, exhausted, deferred, failed, vector_consistent): (
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+        i64,
+    ) = conn.query_row(
         "SELECT COUNT(*),
-                SUM(CASE WHEN search_context_enrichment_version = ?1
+                SUM(CASE WHEN search_context_enrichment_state = 'ready'
+                          AND search_context_enrichment_version = ?1
                           AND search_context_security_policy_version = ?2
                           AND search_context_source_hash IS NOT NULL THEN 1 ELSE 0 END),
+                SUM(CASE WHEN search_context_enrichment_state = 'pending' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN search_context_enrichment_state = 'exhausted' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN search_context_enrichment_state = 'deferred' THEN 1 ELSE 0 END),
                 SUM(CASE WHEN search_context_failure_count > 0 THEN 1 ELSE 0 END),
-                SUM(CASE WHEN search_context_index_hash IS NOT NULL
+                SUM(CASE WHEN search_context_enrichment_state = 'ready'
+                          AND search_context_index_hash IS NOT NULL
                           AND EXISTS (
                               SELECT 1 FROM memory_embeddings e
                               WHERE e.memory_id = memories.id
@@ -137,6 +161,9 @@ fn coverage_counts(conn: &Connection) -> anyhow::Result<CoverageCounts> {
                 row.get::<_, Option<i64>>(1)?.unwrap_or(0),
                 row.get::<_, Option<i64>>(2)?.unwrap_or(0),
                 row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                row.get::<_, Option<i64>>(4)?.unwrap_or(0),
+                row.get::<_, Option<i64>>(5)?.unwrap_or(0),
+                row.get::<_, Option<i64>>(6)?.unwrap_or(0),
             ))
         },
     )?;
@@ -148,6 +175,7 @@ fn coverage_counts(conn: &Connection) -> anyhow::Result<CoverageCounts> {
         "SELECT title, content, memory_type, topic_key, files, search_context_source_hash
          FROM memories
          WHERE status IN ('active', 'stale', 'archived')
+           AND search_context_enrichment_state = 'ready'
            AND search_context_source_hash IS NOT NULL",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -177,6 +205,9 @@ fn coverage_counts(conn: &Connection) -> anyhow::Result<CoverageCounts> {
     Ok(CoverageCounts {
         eligible,
         ready,
+        pending,
+        exhausted,
+        deferred,
         failed,
         drift,
         vector_consistent,
@@ -232,6 +263,23 @@ mod tests {
     }
 
     #[test]
+    fn deferred_historical_rows_are_informational_not_actionable() {
+        let conn = migrated_conn();
+        insert_row(&conn, 1);
+        insert_row(&conn, 2);
+        conn.execute(
+            "UPDATE memories SET search_context_enrichment_state = 'deferred'",
+            [],
+        )
+        .unwrap();
+
+        let check = check_retrieval_enrichment(Some(&conn));
+        assert!(matches!(check.status, Status::Ok));
+        assert!(check.detail.contains("deferred=2"));
+        assert!(!check.detail.contains("run `remem worker"));
+    }
+
+    #[test]
     fn source_identity_drift_fails() {
         let conn = migrated_conn();
         insert_row(&conn, 1);
@@ -240,6 +288,7 @@ mod tests {
         conn.execute(
             "UPDATE memories SET
                  search_context_enrichment_version = 1,
+                 search_context_enrichment_state = 'ready',
                  search_context_security_policy_version = 1,
                  search_context_source_hash = 'tampered',
                  search_context_fallback_source_hash = 'tampered'

@@ -78,6 +78,36 @@ fn pricing_for_gpt_52_uses_current_flagship_rate() {
 }
 
 #[test]
+fn gpt_56_codex_credit_models_do_not_use_generic_gpt5_usd_pricing() {
+    with_env_vars(
+        &[
+            ("REMEM_PRICE_INPUT_PER_MTOK", None),
+            ("REMEM_PRICE_OUTPUT_PER_MTOK", None),
+        ],
+        || {
+            let usage = TokenUsage::estimated(1_000_000, 1_000_000);
+            for model in ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"] {
+                assert_eq!(pricing_for_model(model), (0.0, 0.0));
+                assert_eq!(estimate_cost_usd(model, &usage), (0.0, "unknown_pricing"));
+            }
+        },
+    );
+}
+
+#[test]
+fn explicit_usd_override_still_applies_to_gpt_56_credit_models() {
+    with_env_vars(
+        &[
+            ("REMEM_PRICE_INPUT_PER_MTOK", Some("0.25")),
+            ("REMEM_PRICE_OUTPUT_PER_MTOK", Some("1.5")),
+        ],
+        || {
+            assert_eq!(pricing_for_model("gpt-5.6-luna"), (0.25, 1.5));
+        },
+    );
+}
+
+#[test]
 fn pricing_for_model_prefers_env_override() {
     with_env_vars(
         &[

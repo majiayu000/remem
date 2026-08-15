@@ -27,6 +27,109 @@ fn assert_fts_integrity_clean(conn: &Connection) {
 }
 
 #[test]
+fn v083_defers_historical_backlog_preserves_ready_rows_and_corrects_credit_pricing() {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+    for migration in crate::migrate::MIGRATIONS
+        .iter()
+        .filter(|migration| migration.version <= 82)
+    {
+        conn.execute_batch(migration.sql).unwrap();
+    }
+
+    conn.execute(
+        "INSERT INTO memories (id, project, title, content, memory_type,
+             created_at_epoch, updated_at_epoch, status)
+         VALUES (1, 'proj', 'Deferred', 'historical body', 'decision', 1, 1, 'active'),
+                (2, 'proj', 'Ready', 'enriched body', 'decision', 1, 1, 'active')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE memories SET
+             search_context = 'context: existing enrichment',
+             search_context_enrichment_version = 1,
+             search_context_security_policy_version = 1,
+             search_context_source_hash = 'existing-source',
+             search_context_fallback_source_hash = 'existing-source'
+         WHERE id = 2",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO ai_usage_events
+         (created_at, created_at_epoch, project, operation, executor, model,
+          input_tokens, output_tokens, total_tokens, estimated_cost_usd, pricing_source)
+         VALUES ('2026-08-10T11:03:09Z', 1786359789, 'proj',
+                 'retrieval_enrichment', 'codex-cli', 'gpt-5.6-luna',
+                 1000, 100, 1100, 12.5, 'remem_static'),
+                ('2026-08-10T11:04:09Z', 1786359849, 'proj',
+                 'retrieval_enrichment', 'codex-cli', 'gpt-5.6-luna',
+                 1000, 100, 1100, 9.0, 'env_override')",
+        [],
+    )
+    .unwrap();
+
+    let migration = crate::migrate::MIGRATIONS
+        .iter()
+        .find(|migration| migration.version == 83)
+        .unwrap();
+    conn.execute_batch(migration.sql).unwrap();
+
+    let states: Vec<(i64, String)> = conn
+        .prepare("SELECT id, search_context_enrichment_state FROM memories ORDER BY id")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        states,
+        vec![(1, "deferred".to_string()), (2, "ready".to_string())]
+    );
+
+    conn.execute(
+        "INSERT INTO memories (id, project, title, content, memory_type,
+             created_at_epoch, updated_at_epoch, status)
+         VALUES (3, 'proj', 'New', 'new body', 'decision', 2, 2, 'active')",
+        [],
+    )
+    .unwrap();
+    let new_state: String = conn
+        .query_row(
+            "SELECT search_context_enrichment_state FROM memories WHERE id = 3",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(new_state, "pending");
+
+    conn.execute(
+        "UPDATE memories SET content = 'changed historical body' WHERE id = 1",
+        [],
+    )
+    .unwrap();
+    let changed_state: String = conn
+        .query_row(
+            "SELECT search_context_enrichment_state FROM memories WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(changed_state, "pending");
+
+    let usage: Vec<(f64, String)> = conn
+        .prepare("SELECT estimated_cost_usd, pricing_source FROM ai_usage_events ORDER BY id")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(usage[0], (0.0, "unknown_pricing".to_string()));
+    assert_eq!(usage[1], (9.0, "env_override".to_string()));
+}
+
+#[test]
 fn migration_adds_pending_defaults_and_ready_singleton() {
     let conn = migrated_conn();
     conn.execute(
@@ -176,6 +279,16 @@ fn production_writer_same_statement_reset_keeps_deterministic_fallback() {
         None,
     )
     .unwrap();
+    conn.execute(
+        "UPDATE memories SET
+             search_context_enrichment_state = 'ready',
+             search_context_enrichment_version = 1,
+             search_context_security_policy_version = 1,
+             search_context_source_hash = search_context_fallback_source_hash
+         WHERE id = ?1",
+        [id],
+    )
+    .unwrap();
     let updated = crate::memory::insert_memory(
         &conn,
         None,
@@ -189,12 +302,13 @@ fn production_writer_same_statement_reset_keeps_deterministic_fallback() {
     .unwrap();
     assert_eq!(id, updated, "same topic key must update the same row");
 
-    let (search_context, fallback): (String, Option<String>) = conn
+    let (search_context, fallback, state): (String, Option<String>, String) = conn
         .query_row(
-            "SELECT search_context, search_context_fallback_source_hash
+            "SELECT search_context, search_context_fallback_source_hash,
+                    search_context_enrichment_state
              FROM memories WHERE id = ?1",
             [id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .unwrap();
     assert!(
@@ -209,6 +323,7 @@ fn production_writer_same_statement_reset_keeps_deterministic_fallback() {
         None,
     );
     assert_eq!(fallback.as_deref(), Some(expected.as_str()));
+    assert_eq!(state, "pending");
     assert_fts_integrity_clean(&conn);
 }
 

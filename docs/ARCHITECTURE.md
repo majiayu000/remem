@@ -244,8 +244,21 @@ Stop hook fires
        ▼
   process Compress/Dream jobs
        │
-       └─ Long-term compression and governed dream consolidation
+       ├─ Long-term compression and governed dream consolidation
+       │
+       └─ When current work is idle, admit one retrieval-enrichment batch
+            ├─ four rows maximum
+            ├─ once worker: one batch per process
+            ├─ daemon: one batch per 60 seconds
+            └─ pending → ready, or exhausted after three failures
 ```
+
+A once worker shares a process-local budget of four potential AI work items
+across extraction tasks, Compress/Dream jobs, and retrieval enrichment, and
+stops admitting new work after 180 seconds. The budget is checked between
+items; an already-running provider call keeps its surface-specific timeout.
+Daemon workers remain long-running, with the retrieval-enrichment interval
+providing the background rate limit.
 
 Dream treats all generated surfaces as untrusted; every decision rechecks snapshot, TTL, current-state, and suppression under its write lock, and poisoned output becomes an atomic quarantine artifact.
 Clean output stays external trust and cannot reuse an unreviewed target; review tokens bind the exact source set. See [the poisoning contract](specs/memory-poisoning-defense/TECH.md).
@@ -535,9 +548,17 @@ UsageContext { host/profile }
 - **Default Codex profile**: executor `codex-cli`, model `gpt-5.2`
 - **Model mapping**: profile model `haiku` maps to `claude-haiku-4-5-20251001` for Anthropic HTTP; CLI executors receive the configured model string directly
 - **Codex model `auto`**: omit `--model` and use the Codex CLI default
-- **Timeouts**: Single AI call 90s, entire worker 180s
+- **Timeouts**: Ordinary AI calls use the shared 90s deadline; retrieval
+  enrichment has a 120s outer attempt deadline below its 300s lease, and
+  durable worker jobs have a 420s per-job deadline below their 480s lease.
+- **Retrieval-enrichment admission**: schema v083 marks incomplete pre-upgrade
+  rows `deferred`; only new or canonically changed `pending` rows enter the
+  automatic four-row lane. One-shot workers admit one batch, daemons admit one
+  batch per 60 seconds, and the third failure becomes `exhausted`.
 - **Unified prompts**: summarize, session rollup, observation extract, memory candidate, compress, and dream all resolve through the same host/profile config
 - **Usage ledger**: `ai_usage_events` stores model, operation, token breakdown, usage source, pricing source, and estimated USD cost
+- **Codex credit pricing**: GPT-5.6 Luna/Sol/Terra rows keep token counts but
+  use `unknown_pricing` for USD unless an explicit operator override is set.
 - **Precision levels**: provider/log usage (`anthropic_usage`, `codex_log`) is preferred; `text_estimate` is kept only as a fallback and marked in reports
 
 Default generated config:

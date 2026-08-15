@@ -719,7 +719,7 @@ then-current next breaking SemVer boundary, never as a 0.6.x patch. Migration
 docs use the real Rust path `remem::truth`.
 
 Phase A v2 PRs use `Refs #933`. They do not close GH-933 or claim Phase B/C
-delivery. Merge and release remain explicit human decisions.
+delivery.
 The breaking migration is never reached through ordinary database open. A
 single-use canonical plan binds database/binary/backup identity, and only the
 operator's exact lowercase SHA-256 approval authorizes cutover. Plan checkpoints

@@ -711,6 +711,17 @@ Enhancements:
 - Content-hash deduplication via `topic_key`
 - Multi-step retrieval guidance in MCP tool descriptions
 
+AI-generated retrieval enrichment is index-only: it never rewrites canonical
+memory content or enters context injection/export payloads. New and canonically
+changed rows are enriched in bounded idle work (four rows per batch, at most one
+batch per one-shot worker or per 60 seconds in a daemon). Schema upgrades defer
+incomplete historical rows instead of automatically backfilling the whole
+database, and a row stops automatic retries after three failures. `remem
+doctor` reports pending, exhausted, and deferred counts separately.
+Across all worker queues, a one-shot worker admits at most four potential AI
+work items and stops admitting new items after 180 seconds; an already-running
+provider request is allowed to finish under its own timeout.
+
 ## Benchmark Snapshot
 
 ### Public Artifact Suite (Directional Only)
@@ -854,6 +865,9 @@ tagged by source:
 
 Cost is an estimate, not an invoice. Historical rows may be text estimates or
 may have been repriced from older rows that did not store the exact model.
+GPT-5.6 Codex subscription models such as Luna, Sol, and Terra are billed in
+credits, so remem preserves their token counts but reports unknown USD pricing
+unless an operator supplies an explicit USD pricing override.
 
 ## Memory AI Configuration
 
