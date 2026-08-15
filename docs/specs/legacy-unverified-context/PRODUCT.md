@@ -4,9 +4,9 @@ Status: Current contract
 
 Refs #1017.
 
-Implementation status: Draft pending review. The copied-production-database
-validation is complete, but this large-rollout-impact change is not merged or
-deployed.
+Implementation status: Accepted and merged in PR #1019 on 2026-08-15. The
+copied-production-database validation and the focused #1017 acceptance audit
+are complete.
 
 ## Outcome
 
@@ -14,7 +14,7 @@ Historical curated rows remain recoverable, but only evidence-backed current row
 
 ## Classification
 
-The ordered classes are quarantined, expired, superseded, not_yet_valid, inactive, legacy_unverified, and current. Lifecycle exclusions win before proof checks. An active row is legacy_unverified when required provenance is absent or malformed, confidence is absent or below 0.80, validity start is absent, or a topic-keyed mutable decision/architecture/preference lacks a state-key identity. Generated provenance must be either an accepted/approved candidate whose evidence resolves completely to captured events, or direct memory evidence that resolves completely to captured events; syntactically valid dangling identifiers fail closed. Mutable state-key identifiers must resolve to an existing state key. Explicit direct user saves are accepted as user-authored proof; proven lesson writes are accepted through their lesson metadata. Those writer-proof arms do not require generated provenance, and direct-user writes do not require generated state identity. Unknown proof fails closed.
+The ordered classes are quarantined, expired, superseded, not_yet_valid, inactive, legacy_unverified, and current. Lifecycle exclusions win before proof checks. An active row is legacy_unverified when required provenance is absent or malformed, confidence is absent or below 0.80, validity start is absent, or a topic-keyed mutable decision/architecture/preference lacks a state-key identity. Generated provenance must be either an accepted, approved, or auto-promoted candidate whose evidence resolves completely to captured events, or direct memory evidence that resolves completely to captured events; syntactically valid dangling identifiers fail closed. Mutable state-key identifiers must resolve to an existing state key. Explicit direct user saves are accepted as user-authored proof; proven lesson writes are accepted through their lesson metadata. Those writer-proof arms do not require generated provenance, and direct-user writes do not require generated state identity. Unknown proof fails closed.
 
 ## Compatibility and recovery
 
