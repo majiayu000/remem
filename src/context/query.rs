@@ -8,10 +8,6 @@ use super::abstention::filter_recent_rows_by_task_embedding;
 use super::commit_signals::query_recent_commit_messages;
 use super::filters::{
     push_context_related_filter, push_excluded_type_filter, push_owner_excluded_filter,
-    push_owner_included_filter,
-};
-use super::hybrid_context::{
-    query_hybrid_context_memories, query_hybrid_context_memories_with_weights,
 };
 use super::implicit_query::build_implicit_context_query;
 use super::memory_selection::{preselect_memories, sort_memories_by_branch};
@@ -142,13 +138,6 @@ fn load_context_data_with_execution_policy(
     errors.append(&mut memory_selection.errors);
     let relevance_query = memory_selection.fact_label_query.clone();
     let mut memories = memory_selection.memories;
-    exclude_non_current_context_memories(
-        conn,
-        &mut memories,
-        &mut memory_selection.preselection_drops,
-        render_reference_epoch,
-        &mut errors,
-    );
     sort_memories_by_branch(&mut memories, current_branch);
     if let Err(e) = super::fact_labels::annotate_memories_with_temporal_facts_for_query(
         conn,
@@ -188,6 +177,54 @@ fn load_context_data_with_execution_policy(
         .map(|memory| memory.id)
         .collect::<HashSet<_>>();
     lessons.retain(|lesson| lesson_ids.contains(&lesson.memory.id));
+    let clustered_candidate_ids = super::current_truth::clustered_mutable_candidate_ids(
+        conn,
+        &memory_selection.preselection_drops,
+        &mut errors,
+    );
+    let projection_seed_ids = memories
+        .iter()
+        .map(|memory| memory.id)
+        .chain(clustered_candidate_ids.iter().copied())
+        .collect::<Vec<_>>();
+    let current_truth_projection = match crate::context_bundle::project_for_scope(
+        conn,
+        project,
+        current_branch,
+        render_reference_epoch,
+        &projection_seed_ids,
+    ) {
+        Ok(projection) => {
+            let materialized = match super::current_truth::materialize_winners(
+                conn,
+                &mut memories,
+                &projection,
+                &clustered_candidate_ids,
+            ) {
+                Ok(materialized) => {
+                    memory_selection.preselection_drops.retain(|drop| {
+                        !matches!(&drop.item, super::types::ContextPreselectionItem::Memory(memory)
+                            if materialized.contains(&memory.id))
+                    });
+                    true
+                }
+                Err(error) => {
+                    let message = format!("failed to materialize CurrentTruth winners: {error}");
+                    crate::log::error("context", &message);
+                    errors.push(ContextLoadError::new("current_truth", message));
+                    false
+                }
+            };
+            sort_memories_by_branch(&mut memories, current_branch);
+            materialized.then_some(projection)
+        }
+        Err(error) => {
+            let message = format!("current truth projection failed for {project}: {error}");
+            crate::log::error("context", &message);
+            errors.push(ContextLoadError::new("current_truth", message));
+            None
+        }
+    };
     let staleness_memories = memories
         .iter()
         .chain(lessons.iter().map(|lesson| &lesson.memory))
@@ -260,13 +297,7 @@ fn load_context_data_with_execution_policy(
         diagnostics: memory_selection.diagnostics,
         rerank,
         load_phase_timings,
-        current_truth_projection: crate::context_bundle::try_project_for_scope(
-            conn,
-            project,
-            current_branch,
-            render_reference_epoch,
-            "context",
-        ),
+        current_truth_projection,
     }
 }
 
@@ -389,6 +420,7 @@ fn load_project_memories(
     let mut abstained = false;
     let mut task_abstention_query = None;
     let mut fact_label_query = None;
+    let visibility_epoch = chrono::Utc::now().timestamp();
 
     let excluded_types = policy
         .section(SectionKind::MemoryIndex)
@@ -404,28 +436,37 @@ fn load_project_memories(
         workstreams,
     ) {
         fact_label_query = Some(implicit_query.clone());
-        let retrieved = if execution_policy.fixed_bundle_weights {
-            query_hybrid_context_memories_with_weights(
-                conn,
-                project,
-                &implicit_query,
-                current_branch,
-                excluded_types,
-                policy.limits.candidate_fetch_limit as i64,
-                SearchWeights::context_bundle_v1(),
-                execution_policy.allow_remote_embedding,
-            )
-        } else {
-            query_hybrid_context_memories(
-                conn,
-                project,
-                &implicit_query,
-                current_branch,
-                excluded_types,
-                policy.limits.candidate_fetch_limit as i64,
-                execution_policy.allow_remote_embedding,
-            )
-        };
+        let retrieved = super::g2_backfill::fetch_bounded_ranked(
+            conn,
+            policy.limits.candidate_fetch_limit,
+            policy.limits.candidate_fetch_limit as i64,
+            |limit| {
+                if execution_policy.fixed_bundle_weights {
+                    super::hybrid_context::query_hybrid_context_memories_with_weights(
+                        conn,
+                        project,
+                        &implicit_query,
+                        current_branch,
+                        excluded_types,
+                        limit,
+                        SearchWeights::context_bundle_v1(),
+                        execution_policy.allow_remote_embedding,
+                    )
+                } else {
+                    super::hybrid_context::query_hybrid_context_memories(
+                        conn,
+                        project,
+                        &implicit_query,
+                        current_branch,
+                        excluded_types,
+                        limit,
+                        execution_policy.allow_remote_embedding,
+                    )
+                }
+            },
+            |memory| memory.id,
+            visibility_epoch,
+        );
         match retrieved {
             Ok(retrieved) => {
                 if retrieved.is_empty() && has_task_signals {
@@ -457,13 +498,23 @@ fn load_project_memories(
         } else {
             policy.limits.candidate_fetch_limit as i64
         };
-        let recent = query_owner_included_memory_rows(
+        let recent = super::g2_backfill::fetch_until_admitted(
             conn,
-            project,
-            None,
-            current_branch,
-            excluded_types,
+            recent_limit as usize,
             recent_limit,
+            |offset, limit| {
+                super::recent_memory::query_owner_included_memory_rows(
+                    conn,
+                    project,
+                    None,
+                    current_branch,
+                    excluded_types,
+                    offset,
+                    limit,
+                )
+            },
+            |row| row.memory.id,
+            visibility_epoch,
         )
         .unwrap_or_else(|e| {
             let message = format!("failed to load recent context memories for {project}: {e}");
@@ -501,6 +552,14 @@ fn load_project_memories(
 
     memories
         .retain(|memory| policy.allows_memory_type(SectionKind::MemoryIndex, &memory.memory_type));
+    let mut visibility_drops = Vec::new();
+    exclude_non_current_context_memories(
+        conn,
+        &mut memories,
+        &mut visibility_drops,
+        visibility_epoch,
+        &mut errors,
+    );
     let preselection = preselect_memories(
         memories,
         current_branch,
@@ -569,7 +628,10 @@ fn load_project_memories(
         owner_traces: traces,
         owner_counts,
         fact_label_query,
-        preselection_drops: preselection.drops,
+        preselection_drops: visibility_drops
+            .into_iter()
+            .chain(preselection.drops)
+            .collect(),
         diagnostics: if collect_diagnostics {
             super::diagnostics::collect_context_diagnostics(
                 conn,
@@ -582,63 +644,6 @@ fn load_project_memories(
             super::types::ContextDiagnostics::default()
         },
     }
-}
-
-fn query_owner_included_memory_rows(
-    conn: &Connection,
-    project: &str,
-    query: Option<&str>,
-    current_branch: Option<&str>,
-    excluded_types: &[&str],
-    limit: i64,
-) -> Result<Vec<ContextMemoryRow>> {
-    if limit <= 0 || query.is_some_and(|value| value.trim().is_empty()) {
-        return Ok(vec![]);
-    }
-
-    let mut conditions = Vec::new();
-    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-    let mut idx = 1;
-    push_owner_included_filter(conn, project, &mut idx, &mut conditions, &mut params)?;
-    conditions.push(crate::memory::memory_current_filter_sql(
-        "status",
-        "expires_at_epoch",
-        false,
-    ));
-    conditions.push(crate::memory::memory_state_key_current_filter_sql(
-        "memories",
-    ));
-    conditions.push(crate::memory::suppression::memory_policy_filter_sql(
-        "memories",
-    ));
-    if let Some(branch) = current_branch.filter(|branch| !branch.trim().is_empty()) {
-        conditions.push(format!("(branch = ?{idx} OR branch IS NULL)"));
-        params.push(Box::new(branch.to_string()));
-        idx += 1;
-    }
-
-    if let Some(query) = query {
-        let like_pattern = format!("%{query}%");
-        conditions.push(format!("(title LIKE ?{idx} OR content LIKE ?{idx})"));
-        params.push(Box::new(like_pattern));
-        idx += 1;
-    }
-
-    push_excluded_type_filter(excluded_types, &mut idx, &mut conditions, &mut params);
-    params.push(Box::new(limit));
-    let sql = format!(
-        "SELECT {}, {} FROM memories \
-         WHERE {} \
-         ORDER BY updated_at_epoch DESC, id ASC LIMIT ?{}",
-        memory::MEMORY_COLS,
-        MEMORY_OWNER_COLS,
-        conditions.join(" AND "),
-        idx,
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let refs = crate::db::to_sql_refs(&params);
-    let rows = stmt.query_map(refs.as_slice(), map_context_memory_row)?;
-    crate::db::query::collect_rows(rows)
 }
 
 fn query_owner_traces_for_ids(
@@ -727,10 +732,12 @@ fn query_owner_exclusion_traces(
     crate::db::query::collect_rows(rows)
 }
 
-const MEMORY_OWNER_COLS: &str = "source_project, target_project, owner_scope, owner_key, \
-                                topic_domain, context_class";
+pub(super) const MEMORY_OWNER_COLS: &str =
+    "source_project, target_project, owner_scope, owner_key, topic_domain, context_class";
 
-fn map_context_memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ContextMemoryRow> {
+pub(super) fn map_context_memory_row(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<ContextMemoryRow> {
     Ok(ContextMemoryRow {
         memory: memory::map_memory_row_pub(row)?,
         owner: OwnerMetadata::from_memory_row(row, 13)?,

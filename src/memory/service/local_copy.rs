@@ -59,7 +59,7 @@ pub fn resolve_local_note_path(
         };
         confine_to_base(&abs)
     } else {
-        let default_path = default_local_note_path(project, title);
+        let default_path = default_local_note_path(project, title)?;
         let abs = if default_path.is_absolute() {
             default_path
         } else {
@@ -95,7 +95,7 @@ fn normalize_path(path: &Path) -> PathBuf {
 /// symlinks before the prefix check, preventing symlink-based escapes.
 fn confine_to_base(abs: &Path) -> Result<PathBuf> {
     let raw_base = normalize_path(&{
-        let base = remem_data_dir();
+        let base = crate::db::try_data_dir()?;
         if base.is_absolute() {
             base
         } else {
@@ -204,19 +204,17 @@ fn env_enabled(key: &str, default: bool) -> bool {
     }
 }
 
-fn remem_data_dir() -> PathBuf {
-    crate::db::data_dir()
-}
-
-fn default_local_note_path(project: &str, title: Option<&str>) -> PathBuf {
+fn default_local_note_path(project: &str, title: Option<&str>) -> Result<PathBuf> {
     let base = std::env::var(LOCAL_SAVE_DIR_ENV)
         .map(PathBuf::from)
-        .unwrap_or_else(|_| remem_data_dir().join("manual-notes"));
+        .map(Ok)
+        .unwrap_or_else(|_| crate::db::try_data_dir().map(|dir| dir.join("manual-notes")))?;
     let project_dir = sanitize_segment(project, "manual", 64);
     let title_slug = sanitize_segment(title.unwrap_or("memory"), "memory", 64);
     let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
-    base.join(project_dir)
-        .join(format!("{}-{}.md", timestamp, title_slug))
+    Ok(base
+        .join(project_dir)
+        .join(format!("{}-{}.md", timestamp, title_slug)))
 }
 
 fn non_empty_trimmed(raw: &str) -> Option<&str> {

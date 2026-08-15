@@ -73,7 +73,7 @@ pub fn project_from_cwd(cwd: &str) -> String {
 }
 
 pub fn absolute_data_dir() -> Result<PathBuf> {
-    let path = super::data_dir::data_dir();
+    let path = super::data_dir::try_data_dir()?;
     if path.is_absolute() {
         return Ok(path);
     }
@@ -82,12 +82,17 @@ pub fn absolute_data_dir() -> Result<PathBuf> {
         .join(path))
 }
 
+#[cfg(test)]
 pub fn db_path() -> PathBuf {
     super::data_dir::data_dir().join("remem.db")
 }
 
+pub fn try_db_path() -> Result<PathBuf> {
+    Ok(super::data_dir::try_data_dir()?.join("remem.db"))
+}
+
 pub fn open_db() -> Result<Connection> {
-    let path = db_path();
+    let path = try_db_path()?;
     let key = super::crypto::require_cipher_key_or_plaintext_override()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -123,7 +128,7 @@ fn advance_vec_index(conn: &Connection) {
 }
 
 pub fn open_db_no_migrate() -> Result<Connection> {
-    let path = db_path();
+    let path = try_db_path()?;
     let key = super::crypto::require_cipher_key_or_plaintext_override()?;
     if !path.exists() {
         anyhow::bail!("database not found: {}", path.display());
@@ -145,7 +150,7 @@ pub fn open_db_for_hook() -> Result<Connection> {
 }
 
 pub fn open_db_read_only() -> Result<Connection> {
-    let path = db_path();
+    let path = try_db_path()?;
     let key = super::crypto::require_cipher_key_or_plaintext_override()?;
     if !path.exists() {
         anyhow::bail!("database not found: {}", path.display());

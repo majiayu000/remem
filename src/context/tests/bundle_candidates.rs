@@ -779,7 +779,7 @@ fn equal_trust_conflict_shadow_abstains_without_newest_wins() {
     let abstained = bundle
         .current_truth
         .iter()
-        .find(|item| item.stable_key == "current_truth:v1:tie")
+        .find(|item| item.stable_key.ends_with(":tie"))
         .expect("emitted abstention");
     assert!(abstained.text.contains("memory:11"));
     assert!(abstained.text.contains("memory:12"));

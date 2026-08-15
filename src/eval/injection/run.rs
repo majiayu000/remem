@@ -475,10 +475,7 @@ fn seed_fixture(conn: &mut Connection) -> Result<()> {
         params![ABSTENTION_PROJECT, now],
     )?;
     tx.commit()?;
-    for memory in FIXTURE_MEMORIES
-        .iter()
-        .filter(|memory| memory.expected == InjectionExpectation::Expected)
-    {
+    for memory in FIXTURE_MEMORIES {
         crate::truth::test_support::seed_current_memory_proof(conn, memory.id)?;
     }
     Ok(())

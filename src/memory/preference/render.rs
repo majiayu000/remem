@@ -270,9 +270,16 @@ fn filter_non_current_preferences(
     drops: &mut Vec<PreferenceSelectionDrop>,
 ) -> Result<Vec<(Memory, PreferenceSource)>> {
     let as_of_epoch = chrono::Utc::now().timestamp();
+    let ids = preferences
+        .iter()
+        .map(|(memory, _)| memory.id)
+        .collect::<Vec<_>>();
+    let visibility = crate::truth::admit_many_for_current_context(conn, &ids, as_of_epoch)?;
     let mut current = Vec::with_capacity(preferences.len());
     for (memory, source) in preferences {
-        let visibility = crate::truth::classify_memory(conn, memory.id, as_of_epoch)?;
+        let visibility = visibility.get(&memory.id).copied().ok_or_else(|| {
+            anyhow::anyhow!("missing visibility for preference memory {}", memory.id)
+        })?;
         if visibility.current_context_eligible {
             current.push((memory, source));
         } else {

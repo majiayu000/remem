@@ -48,7 +48,7 @@ fn emitted_context_bundle<'a>(
     let delta_emission = decision.action == ContextGateAction::EmittedDelta
         || (decision.action == ContextGateAction::FailOpen
             && decision.retained_context_chars.is_some());
-    let selected_keys = if delta_emission {
+    let mut selected_keys = if delta_emission {
         finalize_items_for_decision(decision, audit_items)
             .into_iter()
             .filter(|item| item.status == "injected")
@@ -63,6 +63,16 @@ fn emitted_context_bundle<'a>(
             .map(|entry| entry.stable_key.clone())
             .collect::<HashSet<_>>()
     };
+    if delta_emission {
+        selected_keys.extend(
+            bundle
+                .current_truth
+                .iter()
+                .filter(|item| item.stable_key.starts_with("current_truth:v"))
+                .filter(|item| decision.output.contains(&item.text))
+                .map(|item| item.stable_key.clone()),
+        );
+    }
     let mut emitted = bundle.clone();
     crate::context_bundle::reseal_after_emission_gate(
         &mut emitted,
@@ -266,6 +276,62 @@ mod tests {
             emitted.audit.truncation_reason.as_deref(),
             Some("delta_preview")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn delta_reseal_keeps_an_abstention_that_is_present_in_output() -> Result<()> {
+        let mut bundle = selected_bundle();
+        let stable_key = "current_truth:v1:state:repo:/repo:decision:db";
+        let text = "Abstained db: unresolved_conflict (memory:10, memory:11)";
+        bundle.current_truth.push(ContextItem {
+            stable_key: stable_key.to_string(),
+            channel: ChannelKind::Core,
+            title: "Abstained db".to_string(),
+            text: text.to_string(),
+            source_kind: SourceKind::GraphDerived,
+            canonical_ref: None,
+            projection_ref: Some(stable_key.to_string()),
+            evidence_refs: Vec::new(),
+            validity: ItemValidity::Current,
+            trust: TrustClass::Standard,
+            project: None,
+            branch: None,
+        });
+        bundle.audit.entries.push(AuditEntry {
+            stable_key: stable_key.to_string(),
+            channel: ChannelKind::Core,
+            source_kind: SourceKind::GraphDerived,
+            validity: ItemValidity::Current,
+            selected: true,
+            reason: "unresolved_conflict".to_string(),
+            relevance_score: None,
+            token_estimate: 8,
+        });
+        let decision = ContextGateDecision {
+            output: format!("delta output\n{text}"),
+            action: ContextGateAction::EmittedDelta,
+            reason: "changed_hash",
+            key: None,
+            context_hash: None,
+            output_mode: Some("delta"),
+            retained_context_chars: Some(200),
+            output_truncated: false,
+        };
+
+        let emitted =
+            emitted_context_bundle(&decision, &[rendered_audit_item(1, 50)], Some(&bundle))
+                .ok_or_else(|| anyhow::anyhow!("delta bundle should be resealed"))?;
+
+        assert!(emitted
+            .current_truth
+            .iter()
+            .any(|item| item.stable_key == stable_key));
+        assert!(emitted
+            .audit
+            .entries
+            .iter()
+            .any(|entry| entry.stable_key == stable_key && entry.selected));
         Ok(())
     }
 

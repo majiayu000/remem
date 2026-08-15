@@ -13,6 +13,7 @@ mod fs_cleanup;
 #[cfg(test)]
 mod hash_counter;
 mod manifest;
+mod model_path;
 #[cfg(feature = "local-onnx")]
 mod runtime;
 #[cfg(test)]
@@ -23,6 +24,10 @@ mod windows_cleanup;
 mod windows_model_root;
 #[cfg(windows)]
 mod windows_security;
+
+#[cfg(not(windows))]
+use model_path::install_dir_for_preset;
+pub(super) use model_path::model_root;
 
 #[cfg(test)]
 use hash_counter::ModelFileHashCounter;
@@ -262,14 +267,6 @@ struct LocalModelSymlink {
     resolved_path: String,
 }
 
-pub(super) fn model_root(config: &EmbeddingConfig) -> PathBuf {
-    config
-        .model_dir
-        .as_ref()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| crate::db::data_dir().join("models"))
-}
-
 #[cfg(feature = "local-onnx")]
 pub(super) fn installed_model_profile(config: &EmbeddingConfig) -> Result<LocalModelProfile> {
     let preset = configured_local_preset_or_default(config)?;
@@ -292,7 +289,7 @@ pub(crate) fn with_configured_model_read_lock<T>(
     #[cfg(windows)]
     let install_dir = _windows_install.install_dir().to_path_buf();
     #[cfg(not(windows))]
-    let install_dir = install_dir_for_preset(config, preset);
+    let install_dir = install_dir_for_preset(config, preset)?;
     #[cfg(not(windows))]
     if config.provider == super::EmbeddingProvider::Auto {
         std::fs::create_dir_all(&install_dir)
@@ -335,7 +332,7 @@ pub(super) fn auto_installed_model_profile(
     #[cfg(windows)]
     let install_dir = _windows_install.install_dir().to_path_buf();
     #[cfg(not(windows))]
-    let install_dir = install_dir_for_preset(config, preset);
+    let install_dir = install_dir_for_preset(config, preset)?;
     match std::fs::symlink_metadata(&install_dir) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Ok(metadata) if metadata.file_type().is_symlink() => Err(model_unavailable_error(format!(
@@ -389,7 +386,7 @@ pub(super) fn download_model(model: Option<&str>) -> Result<LocalEmbeddingDownlo
         #[cfg(windows)]
         let install_dir = _windows_install.install_dir().to_path_buf();
         #[cfg(not(windows))]
-        let install_dir = install_dir_for_preset(&config, preset);
+        let install_dir = install_dir_for_preset(&config, preset)?;
         #[cfg(not(windows))]
         std::fs::create_dir_all(&install_dir).with_context(|| {
             format!("create local embedding model dir {}", install_dir.display())
@@ -458,7 +455,7 @@ pub(super) fn inventory() -> Result<LocalEmbeddingInventoryReport> {
     #[cfg(windows)]
     let root = windows_model_root::checked_model_root(&config)?;
     #[cfg(not(windows))]
-    let root = model_root(&config);
+    let root = model_root(&config)?;
     let configured = configured_local_preset_or_default(&config)?;
     let models = LocalEmbeddingPreset::all()
         .iter()
@@ -485,7 +482,7 @@ pub(super) fn embed_text(
     #[cfg(windows)]
     let install_dir = _windows_install.install_dir().to_path_buf();
     #[cfg(not(windows))]
-    let install_dir = install_dir_for_preset(config, preset);
+    let install_dir = install_dir_for_preset(config, preset)?;
     #[cfg(test)]
     if let Some(failure) = test_support::take_next_embed_failure(&install_dir)? {
         return match failure {
@@ -606,7 +603,7 @@ fn verified_profile_for_preset_with_policy(
     #[cfg(windows)]
     let install_dir = _windows_install.install_dir().to_path_buf();
     #[cfg(not(windows))]
-    let install_dir = install_dir_for_preset(config, preset);
+    let install_dir = install_dir_for_preset(config, preset)?;
     read_verified_manifest_compatible(&install_dir, Some(preset)).map_err(|error| {
         model_unavailable_error(format!(
             "local embedding model {} is not ready in {}: {error:#}",
@@ -695,7 +692,7 @@ fn inventory_for_preset(
                 model_id: preset.model_id().to_string(),
                 upstream_model: preset.upstream_model().to_string(),
                 dimensions: preset.dimensions(),
-                install_dir: model_root(config)
+                install_dir: model_root(config)?
                     .join(preset.model_id())
                     .display()
                     .to_string(),
@@ -708,7 +705,7 @@ fn inventory_for_preset(
     #[cfg(windows)]
     let install_dir = _windows_install.install_dir().to_path_buf();
     #[cfg(not(windows))]
-    let install_dir = install_dir_for_preset(config, preset);
+    let install_dir = install_dir_for_preset(config, preset)?;
     match read_verified_manifest_compatible(&install_dir, Some(preset)) {
         Ok(verified) => Ok(LocalEmbeddingModelInventory {
             preset: verified.manifest.preset,
@@ -731,11 +728,6 @@ fn inventory_for_preset(
             unavailable_reason: Some(error.to_string()),
         }),
     }
-}
-
-#[cfg(not(windows))]
-fn install_dir_for_preset(config: &EmbeddingConfig, preset: LocalEmbeddingPreset) -> PathBuf {
-    model_root(config).join(preset.model_id())
 }
 
 fn checked_relative_path(raw: &str) -> Result<PathBuf> {

@@ -247,7 +247,7 @@ mod tests {
         let _dir = ScopedTestDataDir::new("preference-enqueue-config-error");
         std::fs::create_dir_all(crate::db::data_dir())?;
         std::fs::write(
-            crate::runtime_config::config_path(),
+            crate::runtime_config::config_path()?,
             "[rule_compilation]\nenabled = 'yes'\n",
         )?;
         let conn = Connection::open_in_memory()?;

@@ -14,6 +14,8 @@ pub use types::{
 };
 
 const HISTORY_LIMIT: i64 = 10;
+mod g2_scan;
+use g2_scan::{load_active_state_key_rivals, load_memories_as_of};
 
 pub fn current_state(conn: &Connection, req: &CurrentStateRequest) -> Result<CurrentStateResult> {
     let state_key = req.state_key.trim();
@@ -337,88 +339,12 @@ fn load_active_memory(conn: &Connection, id: i64, now_epoch: i64) -> Result<Opti
         )
         .optional()
         .with_context(|| format!("load active current memory id={id}"))?;
-    Ok(memory.filter(|memory| memory_is_current_context_eligible(conn, memory.id, now_epoch)))
-}
-
-fn load_active_state_key_rivals(
-    conn: &Connection,
-    state_key_id: i64,
-    current_memory_id: i64,
-    now_epoch: i64,
-) -> Result<Vec<CurrentStateMemoryRefParts>> {
-    let sql = format!(
-        "SELECT {}, e.edge_type, e.reason, e.evidence_event_ids,
-                e.source_candidate_id, e.source_operation_id
-         FROM memories m
-         LEFT JOIN memory_edges e ON e.id = (
-             SELECT ce.id
-             FROM memory_edges ce
-             WHERE ce.edge_type = 'conflicts'
-               AND ce.state_key_id = ?1
-               AND ((ce.from_memory_id = m.id AND ce.to_memory_id = ?2)
-                    OR (ce.from_memory_id = ?2 AND ce.to_memory_id = m.id))
-             ORDER BY ce.created_at_epoch DESC, ce.id DESC
-             LIMIT 1
-         )
-         WHERE m.state_key_id = ?1
-           AND m.id <> ?2
-           AND m.status = 'active'
-           AND COALESCE(m.valid_from_epoch, m.created_at_epoch) <= ?3
-           AND (m.valid_to_epoch IS NULL OR m.valid_to_epoch > ?3)
-           AND (m.expires_at_epoch IS NULL OR m.expires_at_epoch > ?3)
-           AND {policy_filter}
-         ORDER BY m.updated_at_epoch DESC, m.id DESC
-         LIMIT ?4",
-        prefixed_memory_cols("m"),
-        policy_filter = crate::memory::suppression::memory_policy_filter_sql("m"),
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(
-        rusqlite::params![state_key_id, current_memory_id, now_epoch, HISTORY_LIMIT],
-        |row| {
-            let memory = memory::map_memory_row_pub(row)?;
-            ref_parts_from_edge_row(memory, row, 13)
-        },
-    )?;
-    let rivals =
-        crate::db::query::collect_rows(rows).context("load active current-state rivals")?;
-    Ok(rivals
-        .into_iter()
-        .filter(|parts| memory_is_current_context_eligible(conn, parts.memory.id, now_epoch))
-        .collect())
-}
-
-fn load_memories_as_of(
-    conn: &Connection,
-    state_key_id: i64,
-    as_of_epoch: i64,
-) -> Result<Vec<Memory>> {
-    let sql = format!(
-        "SELECT {}
-         FROM memories
-         WHERE state_key_id = ?1
-           AND (status = 'active'
-                OR (status = 'stale'
-                    AND (valid_to_epoch IS NOT NULL OR updated_at_epoch > ?2))
-                OR (status = 'archived' AND valid_to_epoch IS NOT NULL))
-           AND COALESCE(valid_from_epoch, created_at_epoch) <= ?2
-           AND (valid_to_epoch IS NULL OR valid_to_epoch > ?2)
-           AND (status <> 'active' OR updated_at_epoch <= ?2)
-           AND (expires_at_epoch IS NULL OR expires_at_epoch > ?2)
-           AND {policy_filter}
-         ORDER BY COALESCE(valid_from_epoch, created_at_epoch) DESC,
-                  updated_at_epoch DESC,
-                  id DESC
-         LIMIT ?3",
-        memory::MEMORY_COLS,
-        policy_filter = crate::memory::suppression::memory_policy_filter_sql("memories"),
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(
-        rusqlite::params![state_key_id, as_of_epoch, HISTORY_LIMIT],
-        memory::map_memory_row_pub,
-    )?;
-    crate::db::query::collect_rows(rows).context("load current-state memories as-of")
+    match memory {
+        Some(memory) if memory_is_current_context_eligible(conn, memory.id, now_epoch)? => {
+            Ok(Some(memory))
+        }
+        _ => Ok(None),
+    }
 }
 
 fn load_history(
@@ -636,17 +562,14 @@ fn parse_evidence_event_ids(raw: Option<String>, column: usize) -> rusqlite::Res
     }
 }
 
-fn memory_is_current_context_eligible(conn: &Connection, memory_id: i64, as_of_epoch: i64) -> bool {
-    match crate::truth::admit_for_current_context(conn, memory_id, as_of_epoch) {
-        Ok(visibility) => visibility.current_context_eligible,
-        Err(error) => {
-            crate::log::error(
-                "current_state",
-                &format!("memory visibility classification failed for id={memory_id}: {error}"),
-            );
-            false
-        }
-    }
+fn memory_is_current_context_eligible(
+    conn: &Connection,
+    memory_id: i64,
+    as_of_epoch: i64,
+) -> Result<bool> {
+    crate::truth::admit_for_current_context(conn, memory_id, as_of_epoch)
+        .map(|visibility| visibility.current_context_eligible)
+        .with_context(|| format!("classify current-state memory id={memory_id}"))
 }
 
 fn prefixed_memory_cols(alias: &str) -> String {

@@ -102,7 +102,7 @@ pub(super) fn insert_memory_with_branch(
 ) {
     let proof_event_id = 8_200_000 + id;
     let candidate_id = 7_200_000 + id;
-    let state_key_id = 6_200_000 + id;
+    let proposed_state_key_id = 6_200_000 + id;
     let candidate_topic = topic_key.map_or_else(|| format!("context-fixture-{id}"), str::to_string);
     let has_capture_attribution: bool = conn
         .query_row(
@@ -187,19 +187,28 @@ pub(super) fn insert_memory_with_branch(
     )
     .unwrap();
     conn.execute(
-        "INSERT INTO memory_state_keys
+        "INSERT OR IGNORE INTO memory_state_keys
          (id, owner_scope, owner_key, memory_type, state_key,
           created_at_epoch, updated_at_epoch)
-         VALUES (?1, 'project', ?2, ?3, ?4, ?5, ?5)",
+         VALUES (?1, 'repo', ?2, ?3, ?4, ?5, ?5)",
         params![
-            state_key_id,
+            proposed_state_key_id,
             project,
             memory_type,
-            format!("context-fixture-{id}"),
+            candidate_topic,
             updated_at_epoch
         ],
     )
     .unwrap();
+    let state_key_id: i64 = conn
+        .query_row(
+            "SELECT id FROM memory_state_keys
+             WHERE owner_scope = 'repo' AND owner_key = ?1
+               AND memory_type = ?2 AND state_key = ?3",
+            params![project, memory_type, candidate_topic],
+            |row| row.get(0),
+        )
+        .unwrap();
     conn.execute(
         "INSERT INTO memories
          (id, session_id, project, topic_key, title, content, memory_type, files,

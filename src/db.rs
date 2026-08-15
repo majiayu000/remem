@@ -26,8 +26,10 @@ pub use capture::*;
 pub use capture_drop::*;
 pub use core::*;
 pub use crypto::*;
+#[cfg(test)]
+pub use data_dir::data_dir;
+pub use data_dir::try_data_dir;
 pub(crate) use data_dir::with_data_dir;
-pub use data_dir::{data_dir, try_data_dir};
 pub use extraction::*;
 pub use extraction_replay::*;
 pub use extraction_task_kind::*;

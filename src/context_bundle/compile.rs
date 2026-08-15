@@ -20,7 +20,6 @@ use crate::retrieval_router::{
 
 use super::current_truth::{
     activate_current_truth_channel, annotate_current_truth_items, attach_shadow_comparison,
-    is_current_truth_abstention, try_project_for_scope,
 };
 use super::domain::{ContextBundle, ContextItem, ContextRequest};
 use super::executor::{
@@ -75,17 +74,12 @@ fn bundle_for_plan(
             mut candidates,
             poisoning_drops,
             preselection_drops,
+            current_truth_projection,
         }) => {
-            let projection = try_project_for_scope(
-                conn,
-                &compiled.filters.project,
-                compiled.filters.branch.as_deref(),
-                compiled.filters.as_of_epoch,
-                "context-bundle",
-            );
-            if let Some(projection) = &projection {
-                annotate_current_truth_items(&mut candidates, projection);
-            }
+            let Some(projection) = current_truth_projection else {
+                return blocked_before_load(compiled, "CurrentTruth projection unavailable");
+            };
+            annotate_current_truth_items(&mut candidates, &projection);
             let mut bundle = execute(
                 compiled,
                 &ExecutorInputs {
@@ -95,10 +89,17 @@ fn bundle_for_plan(
                     enrichment_available,
                 },
             );
-            if let Some(projection) = &projection {
-                attach_shadow_comparison(&mut bundle, projection);
-                activate_current_truth_channel(&mut bundle, projection);
-            }
+            attach_shadow_comparison(&mut bundle, &projection);
+            activate_current_truth_channel(
+                &mut bundle,
+                &projection,
+                Some(&compiled.section_budgets),
+                compiled
+                    .output_sections
+                    .iter()
+                    .find(|section| section.channel == super::domain::ChannelKind::Core)
+                    .map(|section| section.item_limit),
+            );
             bundle
         }
         Err(error) => blocked_before_load(compiled, &error.to_string()),
@@ -137,7 +138,7 @@ pub(crate) fn compile_session_start_for_renderer(
     );
     if let Some(projection) = current_truth {
         attach_shadow_comparison(&mut trace.bundle, projection);
-        activate_current_truth_channel(&mut trace.bundle, projection);
+        activate_current_truth_channel(&mut trace.bundle, projection, None, None);
     }
     Ok(SessionStartCompile {
         bundle: trace.bundle,
@@ -221,8 +222,6 @@ fn retain_selected_sections(
         &mut bundle.memory_index,
         &mut bundle.recent_sessions,
     ] {
-        section.retain(|item| {
-            selected_keys.contains(&item.stable_key) || is_current_truth_abstention(item)
-        });
+        section.retain(|item| selected_keys.contains(&item.stable_key));
     }
 }

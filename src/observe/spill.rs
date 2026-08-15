@@ -138,7 +138,7 @@ pub(super) fn spill_capture_event_with_git_evidence(
     failure_reason: &str,
     db_error: &anyhow::Error,
 ) -> Result<PathBuf> {
-    let path = spill_path();
+    let path = try_spill_path()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create capture spill dir {}", parent.display()))?;
@@ -173,7 +173,7 @@ pub(super) fn spill_capture_event_with_git_evidence(
 }
 
 pub(super) fn replay_spilled_capture_events(conn: &Connection) -> Result<usize> {
-    let path = spill_path();
+    let path = try_spill_path()?;
     let queue = crate::spill_queue::SpillQueue::new(path.clone())?;
     let Some(claim) = queue.claim(Duration::from_secs(
         ORPHANED_CAPTURE_SPILL_CLAIM_MIN_AGE_SECS,
@@ -206,9 +206,12 @@ pub(super) fn replay_spilled_capture_events(conn: &Connection) -> Result<usize> 
                 },
                 Err(error) => {
                     claim.dead_letter_line(line.as_bytes())?;
-                    crate::log::warn(
+                    crate::log::error(
                         "observe",
-                        &format!("capture spill poison dead-lettered: {error}"),
+                        &format!(
+                            "capture spill poison dead-lettered at {}: {error}",
+                            claim.dead_letter_path().display()
+                        ),
                     );
                 }
             }
@@ -394,8 +397,8 @@ fn unique_legacy_spill_event_id(line: &str) -> Result<String> {
     ))
 }
 
-fn spill_path() -> PathBuf {
-    crate::db::data_dir().join("capture-spill.jsonl")
+fn try_spill_path() -> Result<PathBuf> {
+    Ok(crate::db::try_data_dir()?.join("capture-spill.jsonl"))
 }
 
 #[cfg(test)]

@@ -34,7 +34,7 @@ impl ServerHandler for MemoryServer {
 }
 
 pub async fn run_mcp_server() -> Result<()> {
-    let db_path = crate::db::db_path();
+    let db_path = crate::db::try_db_path()?;
     let db_exists = db_path.exists();
     crate::log::info(
         "mcp",

@@ -40,7 +40,7 @@ pub(crate) fn load_cipher_key() -> Result<Option<CipherKey>> {
         }
     }
 
-    let key_path = super::data_dir::data_dir().join(".key");
+    let key_path = super::data_dir::try_data_dir()?.join(".key");
     if key_path.exists() {
         let key = std::fs::read_to_string(&key_path)
             .with_context(|| format!("read SQLCipher key file {}", key_path.display()))?;
@@ -151,7 +151,7 @@ where
         .map(|byte| format!("{:02x}", byte))
         .collect();
 
-    let data_dir = super::data_dir::data_dir();
+    let data_dir = super::data_dir::try_data_dir()?;
     std::fs::create_dir_all(&data_dir)?;
     #[cfg(unix)]
     {
@@ -227,7 +227,7 @@ where
 }
 
 pub fn encrypt_database(key: &CipherKey) -> Result<()> {
-    let db_file = super::core::db_path();
+    let db_file = super::core::try_db_path()?;
     if !db_file.exists() {
         anyhow::bail!("database not found: {}", db_file.display());
     }

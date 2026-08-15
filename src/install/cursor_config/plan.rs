@@ -371,7 +371,7 @@ impl CursorConfigPlan {
     pub(crate) fn build(operation: CursorOperation, bin: &str) -> Result<Self> {
         let hooks_snapshot = FileSnapshot::capture(cursor_hooks_path())?;
         let mcp_snapshot = FileSnapshot::capture(cursor_mcp_path())?;
-        let config_snapshot = FileSnapshot::capture(crate::runtime_config::config_path())?;
+        let config_snapshot = FileSnapshot::capture(crate::runtime_config::config_path()?)?;
 
         let hooks_doc = parse_json_snapshot(&hooks_snapshot)?;
         if let Some(doc) = hooks_doc.as_ref() {

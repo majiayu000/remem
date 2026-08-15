@@ -36,7 +36,7 @@ pub(crate) use compile::{
 };
 pub(crate) use current_truth::{
     abstained_memory_ids, abstention_reason_for_memory, append_core_abstention_lines,
-    core_render_memories, try_project_for_scope,
+    core_render_memories, project_for_scope,
 };
 pub use domain::{
     AgentRole, AuditEntry, ChannelKind, ContextAudit, ContextBundle, ContextFilters, ContextIntent,

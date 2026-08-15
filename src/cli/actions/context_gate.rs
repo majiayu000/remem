@@ -15,7 +15,7 @@ pub(in crate::cli) fn run_context_gate_status(
     let limit = limit.clamp(1, 200);
     let rows = load_recent_context_gate_rows(&conn, project.as_deref(), session, limit)?;
     let report = ContextGateStatusReport {
-        database: db::db_path().display().to_string(),
+        database: db::try_db_path()?.display().to_string(),
         filters: ContextGateStatusFilters {
             project,
             session: session.map(str::to_string),
@@ -33,7 +33,7 @@ pub(in crate::cli) fn run_context_gate_status(
 }
 
 fn open_context_gate_db_read_only() -> Result<Connection> {
-    let db_path = db::db_path();
+    let db_path = db::try_db_path()?;
     db::open_db_read_only()
         .with_context(|| format!("open read-only remem database {}", db_path.display()))
 }

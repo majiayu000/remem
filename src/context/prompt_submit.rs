@@ -11,7 +11,6 @@ use super::audit::{
 use super::fact_labels::annotate_memories_with_temporal_facts_for_query;
 use super::format::{char_len, format_epoch_short, truncate_chars_with_ellipsis};
 use super::host::resolve_host_kind;
-use super::hybrid_context::query_hybrid_context_memories;
 use super::injection_gate::{injection_key_for_audit, ContextGateAction, ContextGateDecision};
 use super::invocation::ContextInvocation;
 use super::policy::{ContextLimits, ContextPolicy, SectionKind};
@@ -54,14 +53,15 @@ pub(crate) fn prompt_submit_additional_context(
         .map(|section| section.exclude_types.as_slice())
         .unwrap_or(&[]);
     let current_branch = crate::db::detect_git_branch(cwd);
-    let mut retrieved = query_hybrid_context_memories(
+    let as_of_epoch = chrono::Utc::now().timestamp();
+    let mut retrieved = super::prompt_submit_retrieval::retrieve(
         conn,
         project,
         prompt,
         current_branch.as_deref(),
         excluded_types,
         PROMPT_SUBMIT_MEMORY_LIMIT,
-        true,
+        as_of_epoch,
     )?;
     annotate_memories_with_temporal_facts_for_query(
         conn,
@@ -69,7 +69,6 @@ pub(crate) fn prompt_submit_additional_context(
         Some(prompt),
         Some(project),
     )?;
-    let as_of_epoch = chrono::Utc::now().timestamp();
     let mut g2_drops = Vec::new();
     let mut g2_errors = Vec::new();
     super::query::exclude_non_current_context_memories(
@@ -79,7 +78,9 @@ pub(crate) fn prompt_submit_additional_context(
         as_of_epoch,
         &mut g2_errors,
     );
-    let _ = g2_errors;
+    if let Some(error) = g2_errors.first() {
+        anyhow::bail!("prompt-submit memory visibility classification failed: {error:?}");
+    }
     let already_injected = query_previously_injected_memory_ids(conn, &invocation)?;
     let mut rendered = Vec::new();
     let mut audit_items = Vec::new();
@@ -105,8 +106,14 @@ pub(crate) fn prompt_submit_additional_context(
                 "prompt_submit",
                 "below_prompt_relevance_threshold",
             ));
-        } else {
+        } else if rendered.len() < PROMPT_SUBMIT_MEMORY_LIMIT as usize {
             rendered.push(memory);
+        } else {
+            audit_items.push(ContextAuditItem::dropped_memory(
+                &memory,
+                "prompt_submit",
+                "prompt_submit_memory_limit",
+            ));
         }
     }
 

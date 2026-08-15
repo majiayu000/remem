@@ -63,7 +63,13 @@ pub(crate) async fn with_resolved_profile<T>(
 }
 
 fn stable_working_dir() -> std::path::PathBuf {
-    let data_dir = crate::db::data_dir();
+    let data_dir = match crate::db::try_data_dir() {
+        Ok(path) => path,
+        Err(error) => {
+            crate::log::error("ai", &format!("cannot resolve AI working dir: {error}"));
+            return std::env::temp_dir();
+        }
+    };
     match std::fs::create_dir_all(&data_dir) {
         Ok(()) => data_dir,
         Err(err) => {

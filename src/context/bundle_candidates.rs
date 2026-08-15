@@ -56,6 +56,7 @@ pub(crate) struct LoadedBundleCandidates {
     pub(crate) candidates: Vec<ContextItem>,
     pub(crate) poisoning_drops: Vec<ContextItem>,
     pub(crate) preselection_drops: Vec<PreselectionDrop>,
+    pub(crate) current_truth_projection: Option<crate::truth::CurrentTruthProjection>,
 }
 
 /// Load candidates against the same already-resolved limits that were hashed
@@ -114,6 +115,7 @@ pub(crate) fn load_session_start_candidates_with_limits(
             project,
         ),
         preselection_drops,
+        current_truth_projection: loaded.current_truth_projection,
     })
 }
 

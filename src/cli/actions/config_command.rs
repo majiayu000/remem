@@ -7,7 +7,7 @@ use crate::runtime_config::LegacyClaudeGateMigration;
 pub(in crate::cli) fn run_config(action: ConfigAction) -> Result<()> {
     match action {
         ConfigAction::Path => {
-            println!("{}", crate::runtime_config::config_path().display());
+            println!("{}", crate::runtime_config::config_path()?.display());
         }
         ConfigAction::Show => {
             print!("{}", crate::runtime_config::show_config_text()?);

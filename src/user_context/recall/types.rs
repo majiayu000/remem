@@ -6,6 +6,7 @@ pub(super) const DEFAULT_BUDGET_CHARS: usize = 4_000;
 pub(super) const MIN_BUDGET_CHARS: usize = 500;
 pub(super) const MAX_BUDGET_CHARS: usize = 12_000;
 pub(super) const MAX_CLAIM_SCAN: i64 = 200;
+pub(super) const MAX_MEMORY_SCAN: i64 = 1_000;
 pub(super) const MAX_SESSION_SCAN: i64 = 50;
 
 #[derive(Debug, Clone)]

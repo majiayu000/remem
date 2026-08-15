@@ -96,7 +96,7 @@ pub fn model_status(host: Option<&str>, profile: Option<&str>) -> Result<ModelSt
         executor: resolved.executor,
         model: resolved.model.unwrap_or_else(|| "auto".to_string()),
         reasoning_effort: resolved.reasoning_effort,
-        config_path: config_path(),
+        config_path: config_path()?,
     })
 }
 
@@ -107,7 +107,7 @@ pub fn set_model(
     reasoning_effort: Option<&str>,
     dry_run: bool,
 ) -> Result<ModelChange> {
-    let path = config_path();
+    let path = config_path()?;
     let mut doc = read_config_doc_or_default()?;
     ensure_config_defaults(&mut doc, &[CLAUDE_HOST, CODEX_HOST])?;
     let selection = select_profile_from_doc(&doc, host, profile)?;
@@ -151,7 +151,7 @@ pub fn set_model(
 }
 
 pub fn rollback_model_config() -> Result<(PathBuf, PathBuf)> {
-    let path = config_path();
+    let path = config_path()?;
     let backup_path = backup_path_for_config(&path);
     if !backup_path.exists() {
         bail!(

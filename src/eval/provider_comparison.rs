@@ -516,10 +516,12 @@ fn row_from_evaluation(
 
 fn redact_provider_reason(config: &EmbeddingConfig, reason: &str) -> String {
     let mut redacted = reason.to_string();
-    let model_root = embedding::configured_local_embedding_model_root(config);
-    let mut sensitive_paths = vec![model_root.clone()];
-    if let Ok(canonical_root) = std::fs::canonicalize(&model_root) {
-        sensitive_paths.push(canonical_root);
+    let mut sensitive_paths = Vec::new();
+    if let Ok(model_root) = embedding::configured_local_embedding_model_root(config) {
+        sensitive_paths.push(model_root.clone());
+        if let Ok(canonical_root) = std::fs::canonicalize(&model_root) {
+            sensitive_paths.push(canonical_root);
+        }
     }
     if let Some(configured) = config.model_dir.as_deref() {
         sensitive_paths.push(PathBuf::from(configured));

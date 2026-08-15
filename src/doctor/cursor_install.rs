@@ -247,7 +247,7 @@ fn read_json(path: &Path) -> Result<Option<Value>, String> {
 }
 
 fn load_receipt() -> Result<Option<CursorInstallReceipt>, String> {
-    let path = crate::runtime_config::config_path();
+    let path = crate::runtime_config::config_path().map_err(|error| error.to_string())?;
     let content = match std::fs::read_to_string(&path) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),

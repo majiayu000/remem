@@ -32,7 +32,7 @@ fn run_sandbox_eval_inner(
 ) -> Result<GovernanceEvalReport> {
     let k = options.k.max(1);
     ensure!(
-        crate::db::db_path().starts_with(data_dir),
+        crate::db::try_db_path()?.starts_with(data_dir),
         "governance eval data dir override failed"
     );
     let mut conn = Connection::open_in_memory().context("open in-memory governance eval DB")?;

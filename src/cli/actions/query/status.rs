@@ -26,7 +26,7 @@ pub(in crate::cli) fn run_status(json: bool, share: bool) -> Result<()> {
 }
 
 fn load_status_report() -> Result<StatusReport> {
-    let db_path = db::db_path();
+    let db_path = db::try_db_path()?;
     ensure_status_database_can_migrate(&db_path)?;
     let conn = db::open_db()?;
     let db_size = std::fs::metadata(&db_path)

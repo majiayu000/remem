@@ -5,7 +5,6 @@
 
 use anyhow::Result;
 use rusqlite::{params, Connection};
-use serde_json::json;
 
 use super::{
     project_current_truth, project_user_claim_truth, EvidenceTrust, TruthQuery,
@@ -562,6 +561,141 @@ fn scope_mismatch_never_leaks_other_projects() -> Result<()> {
 }
 
 #[test]
+fn public_projection_keeps_target_routed_source_owners_distinct() -> Result<()> {
+    let conn = test_conn()?;
+    for (id, owner) in [(1, "/owner-a"), (2, "/owner-b")] {
+        insert_memory(
+            &conn,
+            id,
+            "proj",
+            Some("shared-topic"),
+            "Decision",
+            owner,
+            "active",
+            None,
+            100,
+            100,
+            None,
+        )?;
+        conn.execute(
+            "UPDATE memory_state_keys
+             SET owner_scope = 'repo', owner_key = ?1, state_key = 'shared-slot'
+             WHERE id = ?2",
+            params![owner, 6_000_000 + id],
+        )?;
+        conn.execute(
+            "UPDATE memories
+             SET owner_scope = 'repo', owner_key = ?1, target_project = 'proj'
+             WHERE id = ?2",
+            params![owner, id],
+        )?;
+    }
+
+    let projection = project_current_truth(&conn, &query("proj"))?;
+    assert_eq!(projection.truths.len(), 2);
+    assert_ne!(
+        projection.truths[0].subject_key,
+        projection.truths[1].subject_key
+    );
+    assert!(projection.truths.iter().all(|truth| truth.claim.is_some()));
+    Ok(())
+}
+
+#[test]
+fn explicit_owner_memories_without_stable_keys_remain_unique() -> Result<()> {
+    let conn = test_conn()?;
+    for id in [1, 2] {
+        insert_memory(
+            &conn,
+            id,
+            "proj",
+            Some(&format!("temporary-topic-{id}")),
+            "Decision",
+            &format!("independent claim {id}"),
+            "active",
+            None,
+            100,
+            100,
+            None,
+        )?;
+        conn.execute(
+            "UPDATE memories
+             SET topic_key = NULL, state_key_id = NULL,
+                 owner_scope = 'repo', owner_key = 'proj', target_project = 'proj'
+             WHERE id = ?1",
+            [id],
+        )?;
+    }
+
+    let projection = project_current_truth(&conn, &query("proj"))?;
+    assert_eq!(projection.truths.len(), 2);
+    assert!(projection.truths.iter().all(|truth| truth.claim.is_some()));
+    assert_ne!(
+        projection.truths[0].subject_key,
+        projection.truths[1].subject_key
+    );
+    Ok(())
+}
+
+#[test]
+fn public_projection_reads_historical_project_aliases() -> Result<()> {
+    let conn = test_conn()?;
+    insert_memory(
+        &conn,
+        1,
+        "/old/repo",
+        Some("aliased-decision"),
+        "Decision",
+        "historical checkout",
+        "active",
+        None,
+        100,
+        100,
+        None,
+    )?;
+    conn.execute(
+        "INSERT INTO projects
+         (id, workspace_id, project_path, project_key, created_at_epoch, updated_at_epoch)
+         VALUES (9002, 9001, '/new/repo', 'new-repo', 1, 1)",
+        [],
+    )?;
+    let payload = serde_json::json!({
+        "from_path": "/old/repo",
+        "to_path": "/new/repo",
+        "target_remote": "github.com/example/remem",
+        "shared_commit_count": 1
+    });
+    let entries = [crate::project_alias::ProjectAliasPlanEntry {
+        alias_path: "/old/repo".to_string(),
+        canonical_path: "/new/repo".to_string(),
+        proof_kind: crate::project_alias::ProjectAliasProofKind::GitCommitMembership,
+        proof_sha256: crate::project_alias::proof_sha256(&payload)?,
+        proof_payload: payload,
+    }];
+    crate::project_alias::apply_project_alias_plan(
+        &conn,
+        &crate::project_alias::ProjectAliasApplyRequest {
+            source_inventory_sha256:
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            actor: "truth-test",
+            reason: "historical checkout fixture",
+            now_epoch: 101,
+            entries: &entries,
+        },
+    )?;
+
+    let projection = project_current_truth(&conn, &query("/new/repo"))?;
+    let claim = projection
+        .truths
+        .iter()
+        .find_map(|truth| truth.claim.as_ref())
+        .expect("aliased historical claim");
+    assert_eq!(claim.canonical_ref, "memory:1");
+    assert_eq!(claim.scope, "/new/repo");
+    Ok(())
+}
+
+#[test]
 fn stale_only_group_abstains_instead_of_answering() -> Result<()> {
     let conn = test_conn()?;
     insert_memory(
@@ -630,171 +764,4 @@ fn archived_and_deleted_rows_never_become_current_truth() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn same_tier_same_timestamp_is_contradicted() -> Result<()> {
-    let conn = test_conn()?;
-    insert_memory(
-        &conn,
-        1,
-        "proj",
-        Some("tie"),
-        "Tie",
-        "left",
-        "active",
-        None,
-        100,
-        100,
-        None,
-    )?;
-    insert_memory(
-        &conn,
-        2,
-        "proj",
-        Some("tie"),
-        "Tie",
-        "right",
-        "active",
-        None,
-        100,
-        100,
-        None,
-    )?;
-
-    let projection = project_current_truth(&conn, &query("proj"))?;
-    let truth = &projection.truths[0];
-    assert_eq!(truth.validity, ValidityState::Contradicted);
-    assert_eq!(
-        truth.selected_reason,
-        TruthSelectionReason::UnresolvedConflict
-    );
-    assert_eq!(truth.conflicting_claims.len(), 2);
-    Ok(())
-}
-
-#[test]
-fn user_claim_supersedes_link_resolves_deterministically() -> Result<()> {
-    let conn = test_conn()?;
-    conn.execute(
-        "INSERT INTO user_context_claims
-         (id, owner_scope, owner_key, claim_type, claim_key, claim_text, confidence,
-          sensitivity, source_kind, source_refs_json, status,
-          created_at_epoch, updated_at_epoch)
-         VALUES (1, 'user', 'user:default', 'preference', 'editor', 'uses vim', 0.9,
-                 'normal', 'manual', '[]', 'active', 100, 100)",
-        [],
-    )?;
-    conn.execute(
-        "INSERT INTO user_context_claims
-         (id, owner_scope, owner_key, claim_type, claim_key, claim_text, confidence,
-          sensitivity, source_kind, source_refs_json, status, supersedes_claim_id,
-          created_at_epoch, updated_at_epoch)
-         VALUES (2, 'user', 'user:default', 'preference', 'editor', 'uses helix', 0.9,
-                 'normal', 'manual', '[]', 'active', 1, 200, 200)",
-        [],
-    )?;
-    // Suppressed claims stay policy-hidden even when newest.
-    conn.execute(
-        "INSERT INTO user_context_claims
-         (id, owner_scope, owner_key, claim_type, claim_key, claim_text, confidence,
-          sensitivity, source_kind, source_refs_json, status,
-          created_at_epoch, updated_at_epoch)
-         VALUES (3, 'user', 'user:default', 'preference', 'editor', 'uses emacs', 0.9,
-                 'normal', 'manual', '[]', 'suppressed', 300, 300)",
-        [],
-    )?;
-
-    let projection = project_user_claim_truth(&conn, "user", "user:default", None)?;
-    assert_eq!(projection.truths.len(), 1);
-    let truth = &projection.truths[0];
-    assert_eq!(
-        truth.selected_reason,
-        TruthSelectionReason::ExplicitSupersedes
-    );
-    let claim = truth.claim.as_ref().expect("winner");
-    assert_eq!(claim.canonical_ref, "user_claim:2");
-    assert!(truth.rejected.contains(&"user_claim:1".to_string()));
-    assert!(truth.rejected.contains(&"user_claim:3".to_string()));
-    Ok(())
-}
-
-#[test]
-fn golden_projection_shape_is_versioned_and_stable() -> Result<()> {
-    let conn = test_conn()?;
-    insert_memory(
-        &conn,
-        1,
-        "proj",
-        Some("deploy-target"),
-        "Deploy target",
-        "staging",
-        "active",
-        None,
-        100,
-        100,
-        None,
-    )?;
-    insert_memory(
-        &conn,
-        2,
-        "proj",
-        Some("deploy-target"),
-        "Deploy target",
-        "production",
-        "active",
-        None,
-        180,
-        180,
-        None,
-    )?;
-    insert_edge(&conn, "supersedes", 1, 2, 200)?;
-
-    let mut fixed = query("proj");
-    fixed.as_of_epoch = Some(300);
-    let projection = project_current_truth(&conn, &fixed)?;
-    let actual = serde_json::to_value(&projection)?;
-    let expected = json!({
-        "projection_version": 1,
-        "project": "proj",
-        "branch": null,
-        "as_of_epoch": 300,
-        "truths": [{
-            "subject_key": "deploy-target",
-            "claim": {
-                "canonical_ref": "memory:2",
-                "source": "memory",
-                "subject_key": "deploy-target",
-                "statement": "Deploy target: production",
-                "scope": "proj",
-                "branch": null,
-                "lifecycle": {
-                    "publication": "active",
-                    "validity": "current",
-                    "retention": "live",
-                    "visibility": "visible"
-                },
-                "valid_from_epoch": null,
-                "valid_to_epoch": null,
-                "created_at_epoch": 180,
-                "updated_at_epoch": 180,
-                "evidence": []
-            },
-            "validity": "current",
-            "evidence": [],
-            "supporting_relations": [{
-                "relation_ref": "memory_edge:1",
-                "kind": "supersedes",
-                "from_ref": "memory:2",
-                "to_ref": "memory:1",
-                "created_at_epoch": 200,
-                "valid_from_epoch": null,
-                "valid_to_epoch": null
-            }],
-            "contradicting_relations": [],
-            "rejected": ["memory:1"],
-            "conflicting_claims": [],
-            "selected_reason": "explicit_supersedes"
-        }]
-    });
-    assert_eq!(actual, expected);
-    Ok(())
-}
+mod resolution_cases;

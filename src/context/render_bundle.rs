@@ -95,13 +95,21 @@ pub(super) fn seal_after_render(
     total_truncated_keys: &HashSet<String>,
     output: &str,
 ) -> Result<()> {
-    let selected_keys = rendered_keys(
+    let mut selected_keys = rendered_keys(
         preference_ids,
         core_ids,
         lesson_ids,
         index_ids,
         session_ids,
         workstream_ids,
+    );
+    selected_keys.extend(
+        bundle
+            .current_truth
+            .iter()
+            .filter(|item| item.stable_key.starts_with("current_truth:v"))
+            .filter(|item| output.contains(&item.text))
+            .map(|item| item.stable_key.clone()),
     );
     let available_keys = item_keys(bundle);
     let missing = selected_keys

@@ -1,6 +1,6 @@
 //! Deterministic read-only trust/visibility classification for memories.
 use anyhow::{Context, Result};
-use rusqlite::{params_from_iter, Connection, Row as SqlRow};
+use rusqlite::{params_from_iter, Connection, OptionalExtension, Row as SqlRow};
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
 pub const CURRENT_CONFIDENCE_FLOOR: f64 = 0.80;
@@ -137,6 +137,7 @@ fn apply_gate_mode(visibility: MemoryVisibility) -> MemoryVisibility {
         ..visibility
     }
 }
+#[derive(Clone)]
 struct Row {
     status: String,
     memory_type: String,
@@ -160,12 +161,12 @@ const VISIBILITY_PROJECTION_SQL: &str =
                 COALESCE(confidence, (
                     SELECT candidate.confidence FROM memory_candidates candidate
                     WHERE candidate.id = memories.source_candidate_id
-                      AND candidate.review_status IN ('accepted', 'approved')
+                      AND candidate.review_status IN ('accepted', 'approved', 'auto_promoted')
                 )),
                 COALESCE(valid_from_epoch, (
                     SELECT candidate.created_at_epoch FROM memory_candidates candidate
                     WHERE candidate.id = memories.source_candidate_id
-                      AND candidate.review_status IN ('accepted', 'approved')
+                      AND candidate.review_status IN ('accepted', 'approved', 'auto_promoted')
                 )), valid_to_epoch,
                 expires_at_epoch, state_key_id,
                 EXISTS(
@@ -177,7 +178,7 @@ const VISIBILITY_PROJECTION_SQL: &str =
                 EXISTS(
                     SELECT 1 FROM memory_candidates candidate
                     WHERE candidate.id = memories.source_candidate_id
-                      AND candidate.review_status IN ('accepted', 'approved')
+                      AND candidate.review_status IN ('accepted', 'approved', 'auto_promoted')
                       AND CASE WHEN json_valid(candidate.evidence_event_ids) THEN
                           json_array_length(candidate.evidence_event_ids) > 0
                           AND NOT EXISTS (
@@ -199,7 +200,11 @@ const VISIBILITY_PROJECTION_SQL: &str =
                     ELSE 0
                 END,
                 EXISTS(SELECT 1 FROM memory_state_keys state_key
-                       WHERE state_key.id = memories.state_key_id)
+                       WHERE state_key.id = memories.state_key_id
+                         AND (memories.owner_scope IS NULL
+                              OR state_key.owner_scope = memories.owner_scope)
+                         AND state_key.owner_key = COALESCE(memories.owner_key, memories.project)
+                         AND state_key.memory_type = memories.memory_type)
          FROM memories WHERE id IN";
 
 fn read_visibility_row(row: &SqlRow<'_>) -> rusqlite::Result<Row> {
@@ -311,6 +316,26 @@ pub fn admit_many_for_current_context(
         .into_iter()
         .map(|(id, visibility)| (id, apply_gate_mode(visibility)))
         .collect())
+}
+
+/// G2 admission for a row whose historical lifecycle window has already been
+/// selected by the caller. Stored `stale`/`archived` status must not erase an
+/// otherwise proven claim that was current at the requested epoch.
+pub fn admit_for_historical_context(
+    conn: &Connection,
+    memory_id: i64,
+    as_of_epoch: i64,
+) -> Result<MemoryVisibility> {
+    let sql = format!("{VISIBILITY_PROJECTION_SQL} (?1)");
+    let row = conn
+        .query_row(&sql, [memory_id], read_visibility_row)
+        .optional()?
+        .ok_or_else(|| anyhow::anyhow!("memory visibility row missing for id={memory_id}"))?;
+    let mut historical = row.clone();
+    historical.status = "active".to_string();
+    historical.valid_to_epoch = None;
+    historical.expires_at_epoch = None;
+    Ok(apply_gate_mode(classify_row(&historical, as_of_epoch)))
 }
 
 fn classify_row(row: &Row, as_of: i64) -> MemoryVisibility {
@@ -650,6 +675,28 @@ mod tests {
             MemoryVisibilityReason::RowMissing
         );
         assert!(!classifications[&99].current_context_eligible);
+        Ok(())
+    }
+
+    #[test]
+    fn auto_promoted_candidate_is_valid_writer_proof() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        conn.execute(
+            "INSERT INTO memories
+             (id, project, title, content, memory_type, created_at_epoch,
+              updated_at_epoch, status, source_trust_class)
+             VALUES (1, '/repo', 'automatic capture', 'body', 'bugfix',
+                     1, 1, 'active', 'local_tool_output')",
+            [],
+        )?;
+        crate::truth::test_support::seed_current_memory_proof(&conn, 1)?;
+        conn.execute(
+            "UPDATE memory_candidates SET review_status = 'auto_promoted'
+             WHERE id = (SELECT source_candidate_id FROM memories WHERE id = 1)",
+            [],
+        )?;
+        assert!(classify_memory(&conn, 1, 2)?.current_context_eligible);
         Ok(())
     }
 

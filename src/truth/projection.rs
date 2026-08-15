@@ -11,7 +11,10 @@ use std::collections::BTreeMap;
 use anyhow::Result;
 use rusqlite::Connection;
 
-use super::adapter::{load_memory_claim_groups_at, load_user_claim_groups, reference_epoch};
+use super::adapter::{
+    load_memory_claim_groups_at, load_memory_claim_groups_for_context_at, load_user_claim_groups,
+    reference_epoch,
+};
 use super::lifecycle::apply_expiry;
 use super::types::{
     ClaimRelationKind, ClaimView, CurrentTruthProjection, CurrentTruthView, EvidenceTrust,
@@ -26,6 +29,22 @@ pub fn project_current_truth(
     query: &TruthQuery,
 ) -> Result<CurrentTruthProjection> {
     project_current_truth_at_reference_epoch(conn, query, reference_epoch(query))
+}
+
+pub(crate) fn project_current_truth_for_context(
+    conn: &Connection,
+    query: &TruthQuery,
+    relevant_memory_ids: &[i64],
+) -> Result<CurrentTruthProjection> {
+    let reference_epoch = reference_epoch(query);
+    let (claims, relations) =
+        load_memory_claim_groups_for_context_at(conn, query, reference_epoch, relevant_memory_ids)?;
+    Ok(resolve_projection(
+        query,
+        claims,
+        relations,
+        reference_epoch,
+    ))
 }
 
 pub(crate) fn project_current_truth_at_reference_epoch(

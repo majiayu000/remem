@@ -25,14 +25,18 @@ fn seed_current_memory_proof_inner(
     memory_id: i64,
     with_candidate: bool,
 ) -> Result<()> {
-    let (project, topic_key, content, memory_type, created_at): (
+    let (project, topic_key, content, memory_type, created_at, status, owner_scope, owner_key): (
         String,
         Option<String>,
         String,
         String,
         i64,
+        String,
+        Option<String>,
+        Option<String>,
     ) = conn.query_row(
-        "SELECT project, topic_key, content, memory_type, created_at_epoch
+        "SELECT project, topic_key, content, memory_type, created_at_epoch, status,
+                owner_scope, owner_key
          FROM memories WHERE id = ?1",
         [memory_id],
         |row| {
@@ -42,6 +46,9 @@ fn seed_current_memory_proof_inner(
                 row.get(2)?,
                 row.get(3)?,
                 row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
             ))
         },
     )?;
@@ -66,6 +73,12 @@ fn seed_current_memory_proof_inner(
     )?;
     let canonical_project =
         crate::project_alias::resolve_project_identity(conn, &project)?.canonical_path;
+    let owner_scope = owner_scope.unwrap_or_else(|| "repo".to_string());
+    let mut owner_key = owner_key.unwrap_or_else(|| canonical_project.clone());
+    if owner_scope == "repo" {
+        owner_key =
+            crate::project_alias::resolve_project_identity(conn, &owner_key)?.canonical_path;
+    }
     let evidence_event_ids = serde_json::to_string(&[event.event_row_id])?;
     let candidate_id = if with_candidate {
         let project_id: i64 = conn.query_row(
@@ -99,9 +112,10 @@ fn seed_current_memory_proof_inner(
             "INSERT INTO memory_state_keys
              (owner_scope, owner_key, memory_type, state_key, current_memory_id,
               created_at_epoch, updated_at_epoch)
-            VALUES ('repo', ?1, ?2, ?3, ?4, ?5, ?5)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
             params![
-                canonical_project,
+                owner_scope,
+                owner_key,
                 memory_type,
                 format!("g2-fixture-state-{memory_id}"),
                 memory_id,
@@ -133,13 +147,18 @@ fn seed_current_memory_proof_inner(
     )?;
     let updated = conn.changes();
     anyhow::ensure!(updated == 1, "fixture memory {memory_id} was not updated");
-    let visibility =
-        crate::truth::classify_memory(conn, memory_id, chrono::Utc::now().timestamp())?;
-    anyhow::ensure!(
-        visibility.current_context_eligible,
-        "fixture memory {memory_id} proof classified as {:?}/{:?}",
-        visibility.classification,
-        visibility.reason
-    );
+    let visibility = crate::truth::classify_memory(
+        conn,
+        memory_id,
+        chrono::Utc::now().timestamp().max(created_at),
+    )?;
+    if status == "active" {
+        anyhow::ensure!(
+            visibility.current_context_eligible,
+            "fixture memory {memory_id} proof classified as {:?}/{:?}",
+            visibility.classification,
+            visibility.reason
+        );
+    }
     Ok(())
 }

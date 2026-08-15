@@ -189,7 +189,7 @@ fn rerank_missing_or_corrupt_is_fail_visible() -> Result<()> {
     );
 
     // Corrupt inventory: tamper with a verified file after manifest publish.
-    let install_dir = install_dir_for_preset(&config, RerankerPreset::BgeRerankerBase);
+    let install_dir = install_dir_for_preset(&config, RerankerPreset::BgeRerankerBase)?;
     write_test_manifest(
         &install_dir,
         RerankerPreset::BgeRerankerBase,
@@ -208,7 +208,7 @@ fn rerank_missing_or_corrupt_is_fail_visible() -> Result<()> {
 fn reranker_inventory_publish_is_verified() -> Result<()> {
     let temp = TempModelRoot::new("inventory");
     let config = enabled_config(Some(temp.path()));
-    let install_dir = install_dir_for_preset(&config, RerankerPreset::BgeRerankerBase);
+    let install_dir = install_dir_for_preset(&config, RerankerPreset::BgeRerankerBase)?;
     write_test_manifest(
         &install_dir,
         RerankerPreset::BgeRerankerBase,

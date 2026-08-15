@@ -527,6 +527,12 @@ pub(in crate::context) fn render_context_output_from_inputs(
     let mut index_exclude = core_ids.clone();
     if let Some(projection) = loaded.current_truth_projection.as_ref() {
         index_exclude.extend(crate::context_bundle::abstained_memory_ids(projection));
+    } else {
+        index_exclude.extend(loaded.memories.iter().filter_map(|memory| {
+            crate::memory::MemoryType::parse(&memory.memory_type)
+                .is_some_and(crate::memory::MemoryType::is_core)
+                .then_some(memory.id)
+        }));
     }
     let mut context_bundle = None;
     let relevance_plan = if use_context_bundle && !has_load_errors {

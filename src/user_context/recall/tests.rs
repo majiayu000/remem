@@ -70,6 +70,7 @@ fn recall_combines_user_claim_repo_memory_workstream_and_session() -> Result<()>
         "decision",
         None,
     )?;
+    crate::truth::test_support::seed_current_memory_proof(&conn, memory_id)?;
     crate::workstream::upsert_workstream(
         &conn,
         "/repo",
@@ -196,6 +197,7 @@ fn recall_returns_repo_only_memory_context() -> Result<()> {
         "decision",
         None,
     )?;
+    crate::truth::test_support::seed_current_memory_proof(&conn, memory_id)?;
 
     let result = recall_user_context(&conn, &request("repo-only recall"))?;
 
@@ -326,6 +328,7 @@ fn recall_excludes_sensitive_expired_and_suppressed_by_default() -> Result<()> {
         "decision",
         None,
     )?;
+    crate::truth::test_support::seed_current_memory_proof(&conn, memory_id)?;
     create_suppression(
         &conn,
         &SuppressRequest {

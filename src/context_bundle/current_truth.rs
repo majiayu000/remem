@@ -10,13 +10,13 @@ use rusqlite::Connection;
 
 use crate::memory::Memory;
 use crate::truth::{
-    project_current_truth, CurrentTruthProjection, CurrentTruthView, TruthQuery,
+    project_current_truth_for_context, CurrentTruthProjection, CurrentTruthView, TruthQuery,
     TruthSelectionReason, ValidityState, TRUTH_PROJECTION_VERSION,
 };
 
 use super::domain::{
     AuditEntry, ChannelKind, ContextBundle, ContextItem, CurrentTruthShadowDiff, ItemValidity,
-    SourceKind, TrustClass,
+    SectionBudgets, SourceKind, TrustClass,
 };
 
 const MAX_EVIDENCE_REFS: usize = 32;
@@ -36,8 +36,9 @@ pub(crate) fn project_for_scope(
     project: &str,
     branch: Option<&str>,
     as_of_epoch: i64,
+    relevant_memory_ids: &[i64],
 ) -> Result<CurrentTruthProjection> {
-    project_current_truth(
+    project_current_truth_for_context(
         conn,
         &TruthQuery {
             project: project.to_string(),
@@ -46,26 +47,8 @@ pub(crate) fn project_for_scope(
             as_of_epoch: (as_of_epoch > 0).then_some(as_of_epoch),
             subject_key: None,
         },
+        relevant_memory_ids,
     )
-}
-
-pub(crate) fn try_project_for_scope(
-    conn: &Connection,
-    project: &str,
-    branch: Option<&str>,
-    as_of_epoch: i64,
-    log_component: &str,
-) -> Option<CurrentTruthProjection> {
-    match project_for_scope(conn, project, branch, as_of_epoch) {
-        Ok(projection) => Some(projection),
-        Err(error) => {
-            crate::log::error(
-                log_component,
-                &format!("current truth projection failed for {project}: {error}"),
-            );
-            None
-        }
-    }
 }
 
 pub(crate) fn selected_memory_ids(projection: &CurrentTruthProjection) -> HashSet<i64> {
@@ -114,14 +97,15 @@ pub(crate) fn abstention_reason_for_memory(
     })
 }
 
-/// Core renderer input: selected CurrentTruth claims only. Projection load
-/// failure stays fail-open (today's Core mapping).
+/// Core renderer input: selected CurrentTruth claims only. A missing
+/// projection blocks raw Core claims so projection faults cannot revive
+/// newest-wins behavior.
 pub(crate) fn core_render_memories<'a>(
     memories: &'a [Memory],
     projection: Option<&CurrentTruthProjection>,
 ) -> Cow<'a, [Memory]> {
     let Some(projection) = projection else {
-        return Cow::Borrowed(memories);
+        return Cow::Owned(Vec::new());
     };
     let selected = selected_memory_ids(projection);
     Cow::Owned(
@@ -168,9 +152,11 @@ pub(super) fn attach_shadow_comparison(
 pub(super) fn activate_current_truth_channel(
     bundle: &mut ContextBundle,
     projection: &CurrentTruthProjection,
+    budgets: Option<&SectionBudgets>,
+    core_item_limit: Option<u32>,
 ) {
     retain_selected_current_truth(bundle, projection);
-    emit_abstention_items(bundle, projection);
+    emit_abstention_items(bundle, projection, budgets, core_item_limit);
 }
 
 pub(super) fn is_current_truth_abstention(item: &ContextItem) -> bool {
@@ -240,7 +226,12 @@ fn retain_selected_current_truth(bundle: &mut ContextBundle, projection: &Curren
     recount_audit(bundle);
 }
 
-fn emit_abstention_items(bundle: &mut ContextBundle, projection: &CurrentTruthProjection) {
+fn emit_abstention_items(
+    bundle: &mut ContextBundle,
+    projection: &CurrentTruthProjection,
+    budgets: Option<&SectionBudgets>,
+    core_item_limit: Option<u32>,
+) {
     let existing: HashSet<String> = bundle
         .current_truth
         .iter()
@@ -252,11 +243,47 @@ fn emit_abstention_items(bundle: &mut ContextBundle, projection: &CurrentTruthPr
     {
         let item = abstention_item(truth);
         if !existing.contains(&item.stable_key) {
-            bundle
+            let mut entry = abstention_audit_entry(&item, truth);
+            let selected_core = bundle
                 .audit
                 .entries
-                .push(abstention_audit_entry(&item, truth));
-            bundle.current_truth.push(item);
+                .iter()
+                .filter(|entry| entry.selected && entry.channel == ChannelKind::Core)
+                .count() as u32;
+            if core_item_limit.is_some_and(|limit| selected_core >= limit) {
+                entry.selected = false;
+                entry.reason = "channel_item_limit".to_string();
+            }
+            if let Some(budgets) = budgets {
+                let total: u32 = bundle
+                    .audit
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.selected)
+                    .map(|entry| entry.token_estimate)
+                    .sum();
+                let core: u32 = bundle
+                    .audit
+                    .entries
+                    .iter()
+                    .filter(|entry| entry.selected && entry.channel == ChannelKind::Core)
+                    .map(|entry| entry.token_estimate)
+                    .sum();
+                if entry.selected
+                    && total.saturating_add(entry.token_estimate) > budgets.total_tokens
+                {
+                    entry.selected = false;
+                    entry.reason = "total_token_budget".to_string();
+                } else if entry.selected && core.saturating_add(entry.token_estimate) > budgets.core
+                {
+                    entry.selected = false;
+                    entry.reason = "channel_token_budget".to_string();
+                }
+            }
+            if entry.selected {
+                bundle.current_truth.push(item);
+            }
+            bundle.audit.entries.push(entry);
         }
     }
     bundle.audit.entries.sort_by(|left, right| {
@@ -269,7 +296,7 @@ fn abstention_item(truth: &CurrentTruthView) -> ContextItem {
     ContextItem {
         stable_key: projection_ref_for(&truth.subject_key),
         channel: ChannelKind::Core,
-        title: format!("Abstained {}", truth.subject_key),
+        title: format!("Abstained {}", display_subject_key(&truth.subject_key)),
         text: abstention_line(truth),
         source_kind: SourceKind::GraphDerived,
         canonical_ref: None,
@@ -298,10 +325,17 @@ fn abstention_audit_entry(item: &ContextItem, truth: &CurrentTruthView) -> Audit
 fn abstention_line(truth: &CurrentTruthView) -> String {
     format!(
         "Abstained {}: {} ({})",
-        truth.subject_key,
+        display_subject_key(&truth.subject_key),
         abstain_reason(truth.selected_reason),
         abstain_claim_refs(truth).join(", ")
     )
+}
+
+fn display_subject_key(subject_key: &str) -> &str {
+    [":bugfix:", ":architecture:", ":decision:", ":discovery:"]
+        .into_iter()
+        .find_map(|marker| subject_key.rsplit_once(marker).map(|(_, key)| key))
+        .unwrap_or(subject_key)
 }
 
 fn abstained_truths(projection: &CurrentTruthProjection) -> Vec<&CurrentTruthView> {

@@ -145,23 +145,22 @@ pub struct RerankerDownloadReport {
     pub manifest_sha256: String,
 }
 
-pub fn model_root(config: &RerankConfig) -> PathBuf {
-    config
-        .model_dir
-        .as_ref()
-        .map(PathBuf::from)
-        .unwrap_or_else(|| crate::db::data_dir().join("models"))
+pub fn model_root(config: &RerankConfig) -> Result<PathBuf> {
+    match config.model_dir.as_ref() {
+        Some(path) => Ok(PathBuf::from(path)),
+        None => Ok(crate::db::try_data_dir()?.join("models")),
+    }
 }
 
-pub fn install_dir_for_preset(config: &RerankConfig, preset: RerankerPreset) -> PathBuf {
-    model_root(config).join(preset.model_id())
+pub fn install_dir_for_preset(config: &RerankConfig, preset: RerankerPreset) -> Result<PathBuf> {
+    Ok(model_root(config)?.join(preset.model_id()))
 }
 
 /// Inspect the configured preset's local inventory without touching the
 /// network. Never downloads.
 pub fn inventory_state(config: &RerankConfig) -> Result<RerankerInventoryState> {
     let preset = RerankerPreset::parse(&config.preset)?;
-    let install_dir = install_dir_for_preset(config, preset);
+    let install_dir = install_dir_for_preset(config, preset)?;
     let manifest_path = install_dir.join(MANIFEST_FILE);
     let content = match std::fs::read(&manifest_path) {
         Ok(content) => content,
@@ -209,7 +208,7 @@ pub fn download_model(model: Option<&str>) -> Result<RerankerDownloadReport> {
         Some(raw) => RerankerPreset::parse(raw)?,
         None => RerankerPreset::parse(&config.preset)?,
     };
-    let install_dir = install_dir_for_preset(&config, preset);
+    let install_dir = install_dir_for_preset(&config, preset)?;
     std::fs::create_dir_all(&install_dir)
         .with_context(|| format!("create reranker model dir {}", install_dir.display()))?;
     materialize_fastembed_model(preset, &install_dir)?;

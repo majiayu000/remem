@@ -90,7 +90,10 @@ outside the remem data dir alone does not protect them"
 /// readability. A non-plaintext header alone is not proof of encryption: a
 /// corrupt or inaccessible database can have the same bytes.
 pub(super) fn check_plaintext_artifacts(live_db_readable: bool) -> Check {
-    let db_path = db::db_path();
+    let db_path = match db::try_db_path() {
+        Ok(path) => path,
+        Err(error) => return Check::new("Plaintext residue", Status::Fail, error.to_string()),
+    };
     let Some(data_dir) = db_path.parent().map(Path::to_path_buf) else {
         return Check::new(
             "Plaintext residue",

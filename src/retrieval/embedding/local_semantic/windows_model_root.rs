@@ -22,7 +22,7 @@ impl ManagedInstall {
 }
 
 pub(super) fn checked_model_root(config: &EmbeddingConfig) -> Result<PathBuf> {
-    let root = model_root(config);
+    let root = model_root(config)?;
     let default = dirs::home_dir().map(|home| home.join(".remem/models"));
     let non_default = config.model_dir.is_some() || default.as_ref() != Some(&root);
     #[cfg(test)]

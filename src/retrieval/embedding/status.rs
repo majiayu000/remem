@@ -95,6 +95,17 @@ pub(super) fn resolve_provider_status(config: &EmbeddingConfig) -> EmbeddingProv
         }
     }
 
+    let model_dir = match super::local_semantic::model_root(config) {
+        Ok(path) => Some(path.display().to_string()),
+        Err(error) => {
+            let message = format!("cannot resolve local embedding model directory: {error}");
+            crate::log::error("embedding", &message);
+            degraded = true;
+            runtime.unavailable_reason.get_or_insert(message.clone());
+            degradation_reason.get_or_insert(message);
+            None
+        }
+    };
     EmbeddingProviderStatus {
         configured_provider: configured.label().to_string(),
         fallback_provider: config.fallback.map(|provider| provider.label().to_string()),
@@ -105,11 +116,7 @@ pub(super) fn resolve_provider_status(config: &EmbeddingConfig) -> EmbeddingProv
         disabled: runtime.disabled,
         unavailable_reason: runtime.unavailable_reason,
         degradation_reason,
-        model_dir: Some(
-            super::local_semantic::model_root(config)
-                .display()
-                .to_string(),
-        ),
+        model_dir,
     }
 }
 
