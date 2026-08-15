@@ -41,9 +41,7 @@ user-visible work must close an implementation issue, not a spec issue.
 - [ ] Actionable review findings and conversations are resolved
 - [ ] Security review completed when the change affects a security boundary
 
-## Merge Authorization
+## Merge Readiness
 
 - [ ] Applicable ordinary CI checks are green on the final head
 - [ ] Normal maintainer review is complete
-- [ ] Explicit human merge authorization is recorded
-- [ ] Release authorization will be obtained separately when applicable

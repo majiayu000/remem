@@ -826,7 +826,7 @@ python3 scripts/ci/check_pr_preflight.py --base origin/main \
 
 Focused regressions cover the writers, routing/lifecycle, retry, DDL, UDF, local-copy, trust, fact, and edge cases above. `MIGRATION-REHEARSAL.md` supplies
 exact-head negative/crash evidence; `ROLLOUT.md` requires independent review,
-fresh CI, and separate human merge/release/cutover authorization.
+fresh CI, and exact operator cutover authorization.
 
 ## Phase Boundaries and Rollback
 
