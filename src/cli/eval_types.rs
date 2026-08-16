@@ -97,6 +97,27 @@ pub(in crate::cli) struct BenchCodingArgs {
     /// Explicit remem memory-AI config used by `remem_e2e` extraction.
     #[arg(long)]
     pub(in crate::cli) memory_config: Option<String>,
+    /// Execution identity: local, smoke, or official.
+    #[arg(long, default_value = "local")]
+    pub(in crate::cli) run_phase: String,
+    /// Approval-bound matrix namespace (official-v1 or smoke-* for live phases).
+    #[arg(long, default_value = "local")]
+    pub(in crate::cli) matrix_namespace: String,
+    /// Verify signed live-run inputs and emit a zero-call report without dispatching.
+    #[arg(long)]
+    pub(in crate::cli) verify_live_approval_only: bool,
+    /// Tracked signed live approval envelope.
+    #[arg(long)]
+    pub(in crate::cli) live_approval: Option<String>,
+    /// Tracked approval and supervisor verification-key root.
+    #[arg(long)]
+    pub(in crate::cli) approval_trust_root: Option<String>,
+    /// Signed attestation produced by the independent supervisor.
+    #[arg(long)]
+    pub(in crate::cli) supervisor_attestation: Option<String>,
+    /// Root-owned independent supervisor executable.
+    #[arg(long)]
+    pub(in crate::cli) supervisor_bin: Option<String>,
 }
 
 #[derive(Args)]
@@ -262,4 +283,25 @@ pub(in crate::cli) struct EvalCodingBenchArgs {
     /// Explicit remem memory-AI config used by `remem_e2e` extraction.
     #[arg(long)]
     pub(in crate::cli) memory_config: Option<String>,
+    /// Execution identity: local, smoke, or official.
+    #[arg(long, default_value = "local")]
+    pub(in crate::cli) run_phase: String,
+    /// Approval-bound matrix namespace (official-v1 or smoke-* for live phases).
+    #[arg(long, default_value = "local")]
+    pub(in crate::cli) matrix_namespace: String,
+    /// Verify signed live-run inputs and emit a zero-call report without dispatching.
+    #[arg(long)]
+    pub(in crate::cli) verify_live_approval_only: bool,
+    /// Tracked signed live approval envelope.
+    #[arg(long)]
+    pub(in crate::cli) live_approval: Option<String>,
+    /// Tracked approval and supervisor verification-key root.
+    #[arg(long)]
+    pub(in crate::cli) approval_trust_root: Option<String>,
+    /// Signed attestation produced by the independent supervisor.
+    #[arg(long)]
+    pub(in crate::cli) supervisor_attestation: Option<String>,
+    /// Root-owned independent supervisor executable.
+    #[arg(long)]
+    pub(in crate::cli) supervisor_bin: Option<String>,
 }

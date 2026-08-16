@@ -306,6 +306,8 @@ remem 解决的是不应该依赖手工维护的部分：
 
 这不是“remem 已经在真实编码任务上击败精心维护的 `MEMORY.md`”的公开 benchmark 声明。no-memory / remem / curated-file 三组旗舰 A/B 仍是单独的 benchmark 要求；在它发布前，诚实边界是功能覆盖和可复现的本地检查。
 
+面向 GH-931 运行人员，`remem bench coding --verify-live-approval-only` 现在可以在零 runner/provider 调用下验证默认分支上的签名审批、trust root、精确 benchmark 计划与输入哈希、硬上限，以及 Linux supervisor attestation。通过报告会明确标记为 `local_gate_only`，并不授权 smoke 或 official 调度；独立的受治理 executor、scorer、ledger 与 TUF/Rekor authority 仍是必需项。详见 [`eval/coding-bench/README.md`](eval/coding-bench/README.md)。
+
 ## 检索架构
 
 `remem` 使用受 [Hindsight](https://github.com/vectorize-io/hindsight) 启发的 4 通道 RRF 融合检索：

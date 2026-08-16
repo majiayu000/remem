@@ -189,6 +189,13 @@ mod tests {
             ignore_budget: false,
             curator_root: None,
             memory_config: None,
+            run_phase: "local".to_string(),
+            matrix_namespace: "local".to_string(),
+            verify_live_approval_only: false,
+            live_approval: None,
+            approval_trust_root: None,
+            supervisor_attestation: None,
+            supervisor_bin: None,
         }
     }
 }

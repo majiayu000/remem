@@ -1,6 +1,6 @@
 # GH931 Flagship E2E Public Proof — Tech Spec
 
-Status: Current contract (primary local adapters landed; governed execution pending)
+Status: Current contract (primary local adapters and validation-only approval gate landed; governed execution pending)
 Issue: #931
 
 ## Harness artifacts (this PR)
@@ -133,6 +133,107 @@ canonical audit plus version/hash/count/budget summary, and recompute both the
 audit hash and injection-run binding during verification. Missing evidence is a
 runtime contract failure; control conditions are explicitly not applicable.
 The same contract is enforced by the landed `remem_e2e` adapter.
+
+## Validation-only live approval verifier (implemented repository-local gate)
+
+The repository-owned part of the live gate is a validation-only command:
+
+```text
+remem bench coding \
+  --run-phase smoke|official \
+  --matrix-namespace <approved namespace> \
+  --live-approval <default-branch approval.json> \
+  --approval-trust-root <default-branch trust-root.json> \
+  --supervisor-attestation <signed attestation.json> \
+  --supervisor-bin <root-owned supervisor> \
+  --verify-live-approval-only \
+  --json-out <verification-report.json>
+```
+
+`run_phase=local` remains directional and cannot be promoted into a smoke or
+official identity. Every non-local phase requires the same verifier before any
+runner version probe, provider connection, agent process, target checkout, or
+benchmark database creation. Until the independent governed executor and
+ledger authority in the completion contract below are available, a non-local
+request without `--verify-live-approval-only` fails after validation and still
+performs zero provider/agent work.
+
+The verifier consumes three closed-schema RFC 8785 canonical JSON documents:
+
+1. A default-branch trust root containing separate Ed25519 public keys for the
+   approval authority and host supervisor.
+2. A default-branch approval envelope whose signed payload binds the repository,
+   default-branch commit, run phase/namespace, exact canonical tuple plan,
+   fixture/condition registry, remem and runner binaries, memory configuration,
+   target-blind curator manifest, model/profile/provider/pricing, hard token/call/
+   cost caps, supervisor identity, ledger writer/rulesets, and pinned TUF/Rekor
+   material.
+3. A supervisor-signed attestation binding the same approval id, plan digest,
+   supervisor executable digest, no-follow/same-handle execution capability,
+   OS principal, and a shorter validity interval.
+
+The trust root and approval must be regular non-symlink files tracked at the
+current `HEAD` and byte-identical to their `HEAD` blobs. The current branch must
+be `main`, and current `HEAD` must equal the locally known `origin/main`.
+`approved_commit` names the code commit being authorized and must be an ancestor
+of that policy-bearing `HEAD`; requiring the approval file to contain the SHA of
+the commit that contains itself would be an impossible hash self-reference.
+Exact fixture/registry/config/binary/plan hashes prove that any intervening
+default-branch policy commits did not alter the approved execution. The
+supervisor binary is opened without following the
+final symlink, hashed from that handle, and must be root-owned and not group- or
+world-writable. Production verification is Linux-only until a separately
+reviewed same-handle execution protocol exists for another platform. Security
+expiry uses the real system clock; the evaluation clock is never consulted.
+
+```mermaid
+sequenceDiagram
+    participant CLI as remem bench coding
+    participant Git as local default-branch objects
+    participant Gate as live approval verifier
+    participant Sup as signed supervisor evidence
+    participant Agent as provider/agent boundary
+    CLI->>Git: bind HEAD, origin/main, trust root, approval blobs
+    CLI->>Gate: derive canonical 144/smoke tuple plan and artifact hashes
+    Gate->>Gate: verify approval Ed25519 signature, expiry, caps, exact bindings
+    Gate->>Sup: verify supervisor signature, identity, binary hash, capability flags
+    alt validation-only
+        Gate-->>CLI: signed-input verification report; exit
+    else any missing, stale, drifted, or unsupported input
+        Gate-->>CLI: fail closed before provider/agent work
+    else governed executor not yet integrated
+        Gate-->>CLI: external-authority-required; no dispatch
+    end
+    Note over Agent: unreachable in this milestone
+```
+
+### Alternatives considered
+
+| Option | Decision | Reason |
+|---|---|---|
+| Typed in-process Ed25519 verification over pinned, default-branch documents | Chosen | Makes signature, digest, phase, cap, and drift failures deterministic and testable without invoking provider/agent code. |
+| Trust unsigned JSON because the repository is private to maintainers | Rejected | A writable worktree or caller could forge approval, supervisor capability, pricing, or caps. |
+| Shell out to `cosign`, `openssl`, or the supervisor during validation | Deferred | Executable lookup and path replacement introduce a second trust/TOCTOU surface; TUF/Rekor freshness remains owned by the later external authority milestone. |
+
+### Risks and mitigations
+
+| Risk | Severity | Mitigation |
+|---|---|---|
+| A locally valid envelope is mistaken for full official authorization | Critical | Report `local_gate_only`; block non-local execution until the external governed executor/ledger integration lands. |
+| Worktree replacement or stale default-branch state approves a different plan | Critical | Require tracked, byte-identical `HEAD` blobs, exact `HEAD == origin/main`, an ancestor-bound approved code commit, and exact artifact/binary/plan hashes. |
+| Symlink or executable replacement changes the supervisor after hashing | Critical | Reject final symlinks, hash an open handle, require root ownership and safe mode; this milestone validates capability evidence but does not claim same-handle execution. |
+| Evaluation time is used to extend approval validity | High | Approval/attestation validity uses only the real security clock. |
+| Secret provider credentials leak into approval artifacts or reports | High | Bind only provider/profile identifiers, hashes, pricing, and caps; closed schemas contain no credential fields. |
+
+### Success criteria
+
+| Criterion | Target |
+|---|---|
+| Provider/agent invocations during validation-only success or failure | exactly 0 |
+| Unknown JSON fields, duplicate keys after parsing, malformed key/signature/digest, phase/namespace drift, expired approval, or cap drift | fail closed |
+| Mutation of any tuple or bound artifact | changes the canonical plan/binding digest and fails |
+| Non-local execution before external executor integration | always blocked after validation and before dispatch |
+| Unit/integration coverage | valid fixture plus signature, branch, expiry, cap, binary, symlink, and plan-tamper failures |
 
 ## Completion implementation contract (pending)
 

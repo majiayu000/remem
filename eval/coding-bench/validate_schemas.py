@@ -7,6 +7,7 @@ Validates:
 - eval/coding-bench/examples/curator-log.example.json against
   curator-log.schema.json, plus cross-field budget rules;
 - eval/claims/registry.json via the claim gate.
+- the three GH931 live-approval schemas are closed, versioned contracts.
 
 Usage: python3 eval/coding-bench/validate_schemas.py
 """
@@ -233,18 +234,38 @@ def check_fixture_raw_events(errors):
             errors.append(f"task {task_id}: gold supporting event is absent from raw_events")
 
 
+def check_live_approval_schemas(errors):
+    schema_names = (
+        "live-approval-trust-root.schema.json",
+        "live-approval.schema.json",
+        "supervisor-attestation.schema.json",
+    )
+    for name in schema_names:
+        schema = load(BENCH_DIR / "schemas" / name)
+        if schema.get("$schema") != "https://json-schema.org/draft/2020-12/schema":
+            errors.append(f"{name}: must use JSON Schema draft 2020-12")
+        if schema.get("additionalProperties") is not False:
+            errors.append(f"{name}: root object must be closed")
+        if schema.get("properties", {}).get("schema_version") != {"const": 1}:
+            errors.append(f"{name}: must pin schema_version to 1")
+        required = set(schema.get("required", []))
+        if required != {"schema_version", "payload", "signature"} and name != "live-approval-trust-root.schema.json":
+            errors.append(f"{name}: signed envelope fields are not the closed v1 set")
+
+
 def main():
     errors = []
     check_conditions(errors)
     check_curator_log(errors)
     check_fixture_raw_events(errors)
+    check_live_approval_schemas(errors)
     claim_errors = claim_gate.check(REPO_ROOT / "eval" / "claims" / "registry.json")
     errors.extend(f"claim gate: {e}" for e in claim_errors)
     if errors:
         for error in errors:
             print(f"FAIL {error}")
         return 1
-    print("OK conditions, raw-event fixture, curator log, and claims registry validate")
+    print("OK coding-bench schemas, raw-event fixture, curator log, and claims registry validate")
     return 0
 
 

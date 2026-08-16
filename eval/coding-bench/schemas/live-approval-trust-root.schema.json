@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://remem.ai/schemas/gh931/live-approval-trust-root.schema.json",
+  "title": "GH931 live approval trust root",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "approval_key", "supervisor_key"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "approval_key": { "$ref": "#/$defs/verification_key" },
+    "supervisor_key": { "$ref": "#/$defs/verification_key" }
+  },
+  "$defs": {
+    "verification_key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key_id", "algorithm", "public_key_base64"],
+      "properties": {
+        "key_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "algorithm": { "const": "ed25519" },
+        "public_key_base64": { "type": "string", "minLength": 44, "maxLength": 44 }
+      }
+    }
+  }
+}

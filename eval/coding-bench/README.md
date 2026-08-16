@@ -51,6 +51,38 @@ not satisfy the governed official-run authority contract. The legacy bare ids
 `remem` and `curated_file` are intentionally rejected, and the historical
 `remem_preloaded` id stays reserved for full-body-preload artifacts.
 
+## Validation-only live approval gate
+
+`remem bench coding --verify-live-approval-only` validates a signed smoke or
+official approval without starting a runner, agent, or provider call. It
+requires Linux, `main` at the locally known `origin/main`, tracked trust-root
+and approval files that are byte-identical to their `HEAD` blobs, an approved
+commit that is an ancestor of `HEAD`, exact plan/input/binary hashes, valid
+Ed25519 signatures and security-clock windows, and a root-owned non-writable
+supervisor binary. The input contracts are:
+
+- `schemas/live-approval-trust-root.schema.json`
+- `schemas/live-approval.schema.json`
+- `schemas/supervisor-attestation.schema.json`
+
+The command writes a report with `gate_scope=local_gate_only`,
+`dispatch_authorized=false`, and `provider_or_agent_calls=0`. Any non-local
+execution request is still blocked after validation until the independent
+governed executor, scorer, ledger writer, and TUF/Rekor authority are
+integrated. Local directional runs remain available with the default
+`--run-phase local`; live-approval flags are rejected in that phase.
+
+```bash
+remem bench coding \
+  --run-phase smoke --matrix-namespace smoke-<approval-id> \
+  --task-set smoke --runs-per-condition 1 --matrix primary \
+  --curator-root <frozen-curator-root> --memory-config <frozen-memory-config> \
+  --live-approval <tracked-approval.json> \
+  --approval-trust-root <tracked-trust-root.json> \
+  --supervisor-attestation <signed-attestation.json> \
+  --supervisor-bin <root-owned-supervisor> \
+  --verify-live-approval-only --json-out <verification-report.json>
+```
 
 ## Isolated Baseline (predates #931 renames)
 

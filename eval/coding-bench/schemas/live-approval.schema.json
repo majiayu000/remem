@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://remem.ai/schemas/gh931/live-approval.schema.json",
+  "title": "GH931 signed live approval envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "payload", "signature"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "approval_id", "repository", "default_branch", "approved_commit", "run_phase",
+        "matrix_namespace", "plan_sha256", "fixture_sha256", "condition_registry_sha256",
+        "remem_executable_sha256", "runner_executable_sha256", "memory_config_sha256",
+        "curator_manifest_sha256", "runner", "pricing", "caps", "supervisor", "ledger",
+        "sigstore", "not_before_epoch", "expires_at_epoch"
+      ],
+      "properties": {
+        "approval_id": { "$ref": "#/$defs/identifier" },
+        "repository": { "const": "majiayu000/remem" },
+        "default_branch": { "const": "main" },
+        "approved_commit": { "$ref": "#/$defs/commit" },
+        "run_phase": { "enum": ["smoke", "official"] },
+        "matrix_namespace": { "$ref": "#/$defs/identifier" },
+        "plan_sha256": { "$ref": "#/$defs/sha256" },
+        "fixture_sha256": { "$ref": "#/$defs/sha256" },
+        "condition_registry_sha256": { "$ref": "#/$defs/sha256" },
+        "remem_executable_sha256": { "$ref": "#/$defs/sha256" },
+        "runner_executable_sha256": { "$ref": "#/$defs/sha256" },
+        "memory_config_sha256": { "$ref": "#/$defs/sha256" },
+        "curator_manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "runner": { "$ref": "#/$defs/runner" },
+        "pricing": { "$ref": "#/$defs/pricing" },
+        "caps": { "$ref": "#/$defs/caps" },
+        "supervisor": { "$ref": "#/$defs/supervisor" },
+        "ledger": { "$ref": "#/$defs/ledger" },
+        "sigstore": { "$ref": "#/$defs/sigstore" },
+        "not_before_epoch": { "type": "integer", "minimum": 1 },
+        "expires_at_epoch": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "signature": { "$ref": "#/$defs/signature" }
+  },
+  "$defs": {
+    "identifier": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "runner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runner", "model", "provider", "reasoning_effort"],
+      "properties": {
+        "runner": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "provider": { "type": "string", "minLength": 1 },
+        "reasoning_effort": { "type": "string", "minLength": 1 }
+      }
+    },
+    "pricing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currency", "input_usd_micros_per_million_tokens", "output_usd_micros_per_million_tokens"],
+      "properties": {
+        "currency": { "const": "USD" },
+        "input_usd_micros_per_million_tokens": { "type": "integer", "minimum": 1 },
+        "output_usd_micros_per_million_tokens": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "caps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_agent_calls", "max_provider_calls", "max_input_tokens", "max_output_tokens", "max_cost_usd_micros"],
+      "properties": {
+        "max_agent_calls": { "type": "integer", "minimum": 1 },
+        "max_provider_calls": { "type": "integer", "minimum": 1 },
+        "max_input_tokens": { "type": "integer", "minimum": 1 },
+        "max_output_tokens": { "type": "integer", "minimum": 1 },
+        "max_cost_usd_micros": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "supervisor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identity", "signing_key_id", "executable_sha256", "required_uid"],
+      "properties": {
+        "identity": { "$ref": "#/$defs/identifier" },
+        "signing_key_id": { "$ref": "#/$defs/identifier" },
+        "executable_sha256": { "$ref": "#/$defs/sha256" },
+        "required_uid": { "const": 0 }
+      }
+    },
+    "ledger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "writer_app_id", "writer_app_slug", "signing_key_id", "ledger_ref",
+        "update_ruleset_id", "update_ruleset_sha256", "no_bypass_ruleset_id",
+        "no_bypass_ruleset_sha256"
+      ],
+      "properties": {
+        "writer_app_id": { "type": "integer", "minimum": 1 },
+        "writer_app_slug": { "$ref": "#/$defs/identifier" },
+        "signing_key_id": { "$ref": "#/$defs/identifier" },
+        "ledger_ref": { "$ref": "#/$defs/identifier" },
+        "update_ruleset_id": { "type": "integer", "minimum": 1 },
+        "update_ruleset_sha256": { "$ref": "#/$defs/sha256" },
+        "no_bypass_ruleset_id": { "type": "integer", "minimum": 1 },
+        "no_bypass_ruleset_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "sigstore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trusted_root_sha256", "signing_config_sha256", "rekor_log_id"],
+      "properties": {
+        "trusted_root_sha256": { "$ref": "#/$defs/sha256" },
+        "signing_config_sha256": { "$ref": "#/$defs/sha256" },
+        "rekor_log_id": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key_id", "algorithm", "signature_base64"],
+      "properties": {
+        "key_id": { "$ref": "#/$defs/identifier" },
+        "algorithm": { "const": "ed25519" },
+        "signature_base64": { "type": "string", "minLength": 88, "maxLength": 88 }
+      }
+    }
+  }
+}

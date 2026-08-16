@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::types::{CodingBenchTask, CuratorLogAttachment};
@@ -64,6 +64,34 @@ pub(super) fn install_budgeted_memory(
 
 pub(super) fn validate_budgeted_input(curator_root: &Path, task: &CodingBenchTask) -> Result<()> {
     load_budgeted_input(curator_root, task).map(|_| ())
+}
+
+pub(super) fn budgeted_input_manifest_sha256(
+    curator_root: &Path,
+    tasks: &[&CodingBenchTask],
+) -> Result<String> {
+    let entries = tasks
+        .iter()
+        .map(|task| {
+            let (_, attachment) = load_budgeted_input(curator_root, task)?;
+            Ok(CuratorManifestEntry {
+                task_id: task.id.as_str(),
+                memory_sha256: attachment.memory_sha256,
+                curator_log_sha256: attachment.curator_log_sha256,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let value = serde_json::to_value(entries)?;
+    let canonical = crate::api::mutation::canonical_json_bytes(&value)?;
+    Ok(format!("{:x}", Sha256::digest(canonical)))
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct CuratorManifestEntry<'a> {
+    task_id: &'a str,
+    memory_sha256: String,
+    curator_log_sha256: String,
 }
 
 fn load_budgeted_input(

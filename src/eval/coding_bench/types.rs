@@ -23,6 +23,13 @@ pub struct CodingBenchOptions {
     pub ignore_budget: bool,
     pub curator_root: Option<String>,
     pub memory_config: Option<String>,
+    pub run_phase: String,
+    pub matrix_namespace: String,
+    pub verify_live_approval_only: bool,
+    pub live_approval: Option<String>,
+    pub approval_trust_root: Option<String>,
+    pub supervisor_attestation: Option<String>,
+    pub supervisor_bin: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

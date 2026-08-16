@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://remem.ai/schemas/gh931/supervisor-attestation.schema.json",
+  "title": "GH931 supervisor attestation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "payload", "signature"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "approval_id", "plan_sha256", "supervisor_identity",
+        "supervisor_executable_sha256", "supervisor_uid", "platform",
+        "nofollow_open", "same_handle_execution", "caller_cannot_access_signing_key",
+        "not_before_epoch", "expires_at_epoch"
+      ],
+      "properties": {
+        "approval_id": { "$ref": "#/$defs/identifier" },
+        "plan_sha256": { "$ref": "#/$defs/sha256" },
+        "supervisor_identity": { "$ref": "#/$defs/identifier" },
+        "supervisor_executable_sha256": { "$ref": "#/$defs/sha256" },
+        "supervisor_uid": { "const": 0 },
+        "platform": { "const": "linux" },
+        "nofollow_open": { "const": true },
+        "same_handle_execution": { "const": true },
+        "caller_cannot_access_signing_key": { "const": true },
+        "not_before_epoch": { "type": "integer", "minimum": 1 },
+        "expires_at_epoch": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "signature": { "$ref": "#/$defs/signature" }
+  },
+  "$defs": {
+    "identifier": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key_id", "algorithm", "signature_base64"],
+      "properties": {
+        "key_id": { "$ref": "#/$defs/identifier" },
+        "algorithm": { "const": "ed25519" },
+        "signature_base64": { "type": "string", "minLength": 88, "maxLength": 88 }
+      }
+    }
+  }
+}

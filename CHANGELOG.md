@@ -14,6 +14,14 @@
   official benchmark claims; the independent signed executor, approval
   supervisor, scorer, and cost-ledger authority remain required by the GH-931
   protocol.
+- Staged source version `0.6.77` for the GH-931 validation-only signed
+  live-approval gate. Smoke/official inputs now bind the default branch,
+  canonical tuple plan, exact fixtures/configs/binaries, runner profile,
+  pricing and hard caps, supervisor identity/attestation, ledger rulesets, and
+  TUF/Rekor digests. Unknown fields, duplicate keys, signature/expiry/hash
+  drift, unsafe supervisor ownership, and unsupported platforms fail closed
+  before runner or provider work. Passing reports remain `local_gate_only` and
+  non-local dispatch stays disabled pending the independent governed executor.
 - Staged source version `0.6.75` for GH-1029: the G2 current-context gate now
   applies to live readers instead of running shadow-only. SessionStart,
   `current_state`, UserPromptSubmit, alias-aware recall, and context-bundle

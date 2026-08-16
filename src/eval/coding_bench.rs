@@ -8,6 +8,7 @@ mod e2e;
 mod failure;
 mod fixture;
 mod isolation;
+mod live_approval;
 mod preflight;
 mod process;
 mod run_plan;
@@ -32,3 +33,7 @@ pub use audit_contract::{
 };
 pub use runner::{dry_run_plan, run_coding_bench};
 pub use types::CodingBenchOptions;
+
+pub(crate) fn verify_live_approval_json(options: &CodingBenchOptions) -> anyhow::Result<String> {
+    live_approval::verify_live_approval_json(options)
+}

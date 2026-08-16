@@ -111,6 +111,13 @@ async fn run_bench_coding(args: BenchCodingArgs) -> Result<()> {
         ignore_budget: args.ignore_budget,
         curator_root: args.curator_root,
         memory_config: args.memory_config,
+        run_phase: args.run_phase,
+        matrix_namespace: args.matrix_namespace,
+        verify_live_approval_only: args.verify_live_approval_only,
+        live_approval: args.live_approval,
+        approval_trust_root: args.approval_trust_root,
+        supervisor_attestation: args.supervisor_attestation,
+        supervisor_bin: args.supervisor_bin,
     })
     .await
 }
@@ -417,6 +424,13 @@ pub(in crate::cli) async fn run_eval_coding_bench(args: EvalCodingBenchArgs) -> 
         ignore_budget: args.ignore_budget,
         curator_root: args.curator_root,
         memory_config: args.memory_config,
+        run_phase: args.run_phase,
+        matrix_namespace: args.matrix_namespace,
+        verify_live_approval_only: args.verify_live_approval_only,
+        live_approval: args.live_approval,
+        approval_trust_root: args.approval_trust_root,
+        supervisor_attestation: args.supervisor_attestation,
+        supervisor_bin: args.supervisor_bin,
     })
     .await
 }
@@ -424,6 +438,18 @@ pub(in crate::cli) async fn run_eval_coding_bench(args: EvalCodingBenchArgs) -> 
 async fn run_coding_bench_options(
     options: crate::eval::coding_bench::CodingBenchOptions,
 ) -> Result<()> {
+    if options.verify_live_approval_only {
+        if options.dry_run {
+            bail!("--verify-live-approval-only cannot be combined with --dry-run");
+        }
+        if options.json_out.trim().is_empty() {
+            bail!("--verify-live-approval-only requires --json-out");
+        }
+        let report_json = crate::eval::coding_bench::verify_live_approval_json(&options)?;
+        write_coding_bench_json(&options.json_out, &report_json)?;
+        println!("{report_json}");
+        return Ok(());
+    }
     if options.dry_run {
         println!("{}", crate::eval::coding_bench::dry_run_plan(&options)?);
         return Ok(());
@@ -433,7 +459,13 @@ async fn run_coding_bench_options(
     }
     let report = crate::eval::coding_bench::run_coding_bench(&options).await?;
     let report_json = serde_json::to_string_pretty(&report)?;
-    if let Some(parent) = Path::new(&options.json_out).parent() {
+    write_coding_bench_json(&options.json_out, &report_json)?;
+    println!("{report_json}");
+    Ok(())
+}
+
+fn write_coding_bench_json(path: &str, report_json: &str) -> Result<()> {
+    if let Some(parent) = Path::new(path).parent() {
         if !parent.as_os_str().is_empty() {
             fs::create_dir_all(parent).with_context(|| {
                 format!(
@@ -443,8 +475,7 @@ async fn run_coding_bench_options(
             })?;
         }
     }
-    fs::write(&options.json_out, &report_json)
-        .with_context(|| format!("write coding benchmark report {}", options.json_out))?;
-    println!("{report_json}");
+    fs::write(path, report_json)
+        .with_context(|| format!("write coding benchmark report {path}"))?;
     Ok(())
 }

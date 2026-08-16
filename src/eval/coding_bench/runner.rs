@@ -23,6 +23,7 @@ use super::types::{
 };
 
 pub fn dry_run_plan(options: &CodingBenchOptions) -> Result<String> {
+    super::live_approval::validate_local_planning(options)?;
     let fixture = load_fixture(&options.fixture_path)?;
     let conditions = selected_conditions(options)?;
     let tasks = selected_tasks(&fixture, options)?;
@@ -58,6 +59,7 @@ pub fn dry_run_plan(options: &CodingBenchOptions) -> Result<String> {
 }
 
 pub async fn run_coding_bench(options: &CodingBenchOptions) -> Result<CodingBenchReport> {
+    super::live_approval::enforce_execution_gate(options)?;
     if options.runs_per_condition == 0 {
         bail!("--runs-per-condition must be greater than zero");
     }
@@ -657,6 +659,13 @@ mod tests {
             ignore_budget: true,
             curator_root: None,
             memory_config: None,
+            run_phase: "local".to_string(),
+            matrix_namespace: "local".to_string(),
+            verify_live_approval_only: false,
+            live_approval: None,
+            approval_trust_root: None,
+            supervisor_attestation: None,
+            supervisor_bin: None,
         };
         let args = build_codex_exec_args(&options, Path::new("/tmp/remem-bench-repo"), "prompt");
 

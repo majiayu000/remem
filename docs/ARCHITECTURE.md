@@ -112,7 +112,7 @@ be inspected from the current checkout when needed.
 | `timeline.rs`, `timeline/` | Aggregated project queries and structured/Markdown report generation for the `timeline_report` MCP flow |
 | `db/query/timeline.rs` | Chronological observation-neighborhood queries for the `timeline` MCP flow |
 | `dream/`, `rules/`, `eval/` | Memory consolidation, compiled preference rules, benchmark and policy evaluation gates |
-| `eval/coding_bench/` | GH931 coding-agent matrix planning, closed raw-event capture projection, isolated production capture/drain/SessionStart binding, target-blind curator verification, runner isolation, scoring, and directional report assembly |
+| `eval/coding_bench/` | GH931 coding-agent matrix planning, closed raw-event capture projection, isolated production capture/drain/SessionStart binding, target-blind curator verification, runner isolation/scoring, directional report assembly, and the zero-dispatch signed live-approval/trust-root/supervisor-attestation gate |
 | `log.rs`, `log/` | File logging with cross-process locking/rotation and append fallback, stderr mirroring, private permissions, timing, worker-stderr preparation, and health snapshots |
 | `cli/`, `mcp/`, `api/`, `doctor/`, `install/` | User-facing commands, MCP/REST surfaces, diagnostics, and host configuration |
 

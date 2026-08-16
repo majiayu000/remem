@@ -564,6 +564,14 @@ Do not read this as a published claim that remem beats a carefully maintained
 is still a separate benchmark requirement; until it is published, the honest
 claim is capability coverage and reproducible local checks.
 
+For GH-931 operators, `remem bench coding --verify-live-approval-only` now
+checks the signed default-branch approval, trust root, exact benchmark plan and
+artifact hashes, hard caps, and Linux supervisor attestation with zero
+runner/provider calls. A passing report is explicitly `local_gate_only` and
+does not authorize smoke or official dispatch; the independent governed
+executor, scorer, ledger, and TUF/Rekor authority are still required. See
+[`eval/coding-bench/README.md`](eval/coding-bench/README.md).
+
 ## Embedding Provider Configuration
 
 Vector retrieval is controlled by the `[embeddings]` section in
