@@ -388,7 +388,8 @@ fn validate_raw_event(
 
 pub(super) fn new_opaque_id(prefix: &str) -> Result<String> {
     let mut bytes = [0_u8; 16];
-    getrandom::fill(&mut bytes).context("generate remem_e2e opaque identity")?;
+    getrandom::fill(&mut bytes)
+        .map_err(|error| anyhow::anyhow!("generate remem_e2e opaque identity: {error}"))?;
     let mut id = String::with_capacity(prefix.len() + 32);
     id.push_str(prefix);
     for byte in bytes {

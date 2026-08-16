@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.78` to restore the Intel macOS
+  `--no-default-features` release build: remem_e2e opaque identity generation
+  now maps `getrandom::Error` explicitly instead of requiring the optional
+  standard-error trait needed by `anyhow::Context`.
 - Staged source version `0.6.76` for the first executable GH-931 benchmark
   tranche: fixtures now carry a closed, validated raw-event projection;
   `remem_e2e` replays that projection through production capture, extraction,
