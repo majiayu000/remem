@@ -84,7 +84,7 @@ pub(super) fn generate_context_output_for_invocation(
         host: invocation.host,
         use_colors: invocation.use_colors,
     };
-    let policy = resolve_profile(request.host).default_policy();
+    let policy = resolve_profile(request.host).default_policy()?;
     let hook_integrity_warning = claude_hook_integrity_warning(&invocation);
     let db_open_start = Instant::now();
     let conn = match open_error::open_context_connection_or_error(&request, &policy) {
@@ -317,7 +317,7 @@ pub(in crate::context) fn render_context_output(
     debug: bool,
 ) -> Result<RenderedContext> {
     let profile = resolve_profile(request.host);
-    let policy = profile.default_policy();
+    let policy = profile.default_policy()?;
     let conn = match open_context_connection_or_error(request, &policy) {
         Ok(conn) => conn,
         Err(rendered) => return Ok(*rendered),

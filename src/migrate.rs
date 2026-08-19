@@ -25,6 +25,8 @@ mod tests_fast_path;
 #[cfg(test)]
 mod tests_job_queue_atomicity;
 #[cfg(test)]
+mod tests_legacy_pending_bridge;
+#[cfg(test)]
 mod tests_legacy_summary;
 #[cfg(test)]
 mod tests_memory_embeddings;

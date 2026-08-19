@@ -478,11 +478,13 @@ pub(super) enum Commands {
         branch: Option<String>,
     },
     /// Public benchmark artifact commands.
+    #[cfg(feature = "eval")]
     Bench {
         #[command(subcommand)]
         action: super::eval_types::BenchAction,
     },
     /// Run the golden retrieval evaluation dataset.
+    #[cfg(feature = "eval")]
     Eval {
         /// Golden dataset path.
         #[arg(long, default_value = "eval/golden.json")]
@@ -495,6 +497,7 @@ pub(super) enum Commands {
         json: bool,
     },
     /// Run end-to-end local API evaluation.
+    #[cfg(feature = "eval")]
     EvalE2e {
         /// Number of results to evaluate per query.
         #[arg(long, short = 'k', default_value = "5")]
@@ -507,6 +510,7 @@ pub(super) enum Commands {
         keep_data_dir: bool,
     },
     /// Run sandboxed memory governance quality evaluation.
+    #[cfg(feature = "eval")]
     EvalGovernance {
         /// Number of results to evaluate per query.
         #[arg(long, short = 'k', default_value = "5")]
@@ -515,23 +519,32 @@ pub(super) enum Commands {
         #[arg(long)]
         json: bool,
     },
+    #[cfg(feature = "eval")]
     #[command(name = "eval-extraction")]
     EvalExtraction(super::eval_types::EvalExtractionArgs),
+    #[cfg(feature = "eval")]
     #[command(name = "eval-provider-comparison")]
     EvalProviderComparison(super::eval_types::EvalProviderComparisonArgs),
+    #[cfg(feature = "eval")]
     #[command(name = "eval-graph-decision")]
     EvalGraphDecision(super::eval_types::EvalGraphDecisionArgs),
+    #[cfg(feature = "eval")]
     #[command(name = "eval-associative-baseline")]
     EvalAssociativeBaseline(super::eval_types::EvalAssociativeBaselineArgs),
+    #[cfg(feature = "eval")]
     #[command(name = "eval-capacity")]
     EvalCapacity(super::eval_types::EvalCapacityArgs),
+    #[cfg(feature = "eval")]
     #[command(name = "eval-weight-grid")]
     EvalWeightGrid(super::eval_types::EvalWeightGridArgs),
+    #[cfg(feature = "eval")]
     #[command(name = "eval-gates")]
     EvalGates(super::eval_types::EvalGatesArgs),
+    #[cfg(feature = "eval")]
     #[command(name = "eval-coding-bench")]
     EvalCodingBench(Box<super::eval_types::EvalCodingBenchArgs>),
     /// Run local retrieval diagnostics.
+    #[cfg(feature = "eval")]
     EvalLocal,
     /// Backfill entity records for existing memories.
     BackfillEntities,

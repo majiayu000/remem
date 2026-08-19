@@ -8,7 +8,7 @@
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use toml_edit::{value, DocumentMut, Item};
 
 use super::schema::{validate_hooks_document, validate_mcp_document};
@@ -137,8 +137,12 @@ pub(crate) fn managed_hook_components(
     gates: CursorCapabilityGates,
 ) -> Vec<ReceiptComponent> {
     let mut components = Vec::new();
-    let quoted = crate::install::config::shell_quote(bin);
-    let mut push = |component: &str, event: &str, tail: &str| {
+    let quoted_for = |subcommand: &str| {
+        let exe = crate::hook_cli::hook_invocation_binary(Path::new(bin), subcommand);
+        crate::install::config::shell_quote(exe.to_str().unwrap_or(bin))
+    };
+    let mut push = |component: &str, event: &str, subcommand: &str, tail: &str| {
+        let quoted = quoted_for(subcommand);
         let rendered = format!("{quoted}{tail}");
         let entry = json!({ "command": rendered, "timeout": 120 });
         components.push(ReceiptComponent {
@@ -157,23 +161,31 @@ pub(crate) fn managed_hook_components(
         push(
             "observe_generic_success_v1",
             "postToolUse",
+            "observe",
             " observe --host cursor",
         );
         push(
             "observe_generic_failure_v1",
             "postToolUseFailure",
+            "observe",
             " observe --host cursor",
         );
         if gates.mcp_specific_per_call_id {
             push(
                 "observe_mcp_specific_v1",
                 "afterMCPExecution",
+                "observe",
                 " observe --host cursor",
             );
         }
     }
     if gates.summarize_reader_proven {
-        push("summarize_stop_v1", "stop", " summarize --host cursor");
+        push(
+            "summarize_stop_v1",
+            "stop",
+            "summarize",
+            " summarize --host cursor",
+        );
     }
     components
 }

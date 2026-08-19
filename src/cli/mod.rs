@@ -7,6 +7,7 @@ mod dispatch;
 mod doctor_types;
 mod dream_backfill_types;
 mod embedding_types;
+#[cfg(feature = "eval")]
 mod eval_types;
 mod memory_types;
 mod model_types;
@@ -21,7 +22,7 @@ mod tests;
 mod tests_config;
 #[cfg(test)]
 mod tests_doctor;
-#[cfg(test)]
+#[cfg(all(test, feature = "eval"))]
 mod tests_eval;
 #[cfg(test)]
 mod tests_governance;

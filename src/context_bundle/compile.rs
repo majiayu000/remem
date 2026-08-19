@@ -45,7 +45,7 @@ pub fn compile_session_start_bundle(
     current_branch: Option<&str>,
     enrichment_available: bool,
 ) -> Result<ContextBundle> {
-    let limits = ContextLimits::from_env();
+    let limits = ContextLimits::from_runtime()?;
     let local_embedding_fingerprint = local_only_embedding_profile_fingerprint();
     let compiled = plan_context_bundle_with_limits(request, &limits, &local_embedding_fingerprint)?;
     Ok(bundle_for_plan(

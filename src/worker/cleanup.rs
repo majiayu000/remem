@@ -1,48 +1,20 @@
 use anyhow::{Context, Result};
 use tokio::time::{Duration, Instant};
 
+use super::admission::IntervalAdmission;
 use crate::{db, maintenance};
 
-const CLEANUP_PROBE_INTERVAL: Duration = Duration::from_secs(60);
-
-pub(super) struct CleanupProbeSchedule {
-    once: bool,
-    attempted_once: bool,
-    next_daemon_probe_at: Instant,
-}
-
-impl CleanupProbeSchedule {
-    pub(super) fn new(once: bool, now: Instant) -> Self {
-        Self {
-            once,
-            attempted_once: false,
-            next_daemon_probe_at: now,
-        }
-    }
-
-    pub(super) fn is_due(&self, now: Instant) -> bool {
-        if self.once {
-            !self.attempted_once
-        } else {
-            now >= self.next_daemon_probe_at
-        }
-    }
-
-    pub(super) fn record_probe(&mut self, now: Instant) {
-        self.attempted_once = true;
-        self.next_daemon_probe_at = now + CLEANUP_PROBE_INTERVAL;
-    }
-}
+pub(super) const CLEANUP_PROBE_INTERVAL: Duration = Duration::from_secs(60);
 
 pub(super) fn enqueue_if_due(
     conn: &rusqlite::Connection,
-    schedule: &mut CleanupProbeSchedule,
+    schedule: &mut IntervalAdmission,
     now: Instant,
 ) -> Result<Option<db::CleanupEnqueueDecision>> {
     if !schedule.is_due(now) {
         return Ok(None);
     }
-    schedule.record_probe(now);
+    schedule.record_attempt(now);
     db::maybe_enqueue_cleanup_job(conn)
         .map(Some)
         .context("schedule automatic lifecycle cleanup")
@@ -83,20 +55,20 @@ mod tests {
     #[test]
     fn once_schedule_probes_only_once() {
         let started = Instant::now();
-        let mut schedule = CleanupProbeSchedule::new(true, started);
+        let mut schedule = IntervalAdmission::new(true, started, CLEANUP_PROBE_INTERVAL);
 
         assert!(schedule.is_due(started));
-        schedule.record_probe(started);
+        schedule.record_attempt(started);
         assert!(!schedule.is_due(started + CLEANUP_PROBE_INTERVAL));
     }
 
     #[test]
     fn daemon_schedule_probes_once_per_minute() {
         let started = Instant::now();
-        let mut schedule = CleanupProbeSchedule::new(false, started);
+        let mut schedule = IntervalAdmission::new(false, started, CLEANUP_PROBE_INTERVAL);
 
         assert!(schedule.is_due(started));
-        schedule.record_probe(started);
+        schedule.record_attempt(started);
         assert!(!schedule.is_due(started + CLEANUP_PROBE_INTERVAL - Duration::from_millis(1)));
         assert!(schedule.is_due(started + CLEANUP_PROBE_INTERVAL));
     }

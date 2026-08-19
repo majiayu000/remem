@@ -3,8 +3,10 @@ use tokio::time::{sleep, Duration, Instant};
 
 use crate::db;
 
+mod admission;
 mod cleanup;
 mod job;
+mod legacy_pending;
 mod lock;
 
 // The lease is the maximum time another worker will wait before requeuing a
@@ -23,8 +25,6 @@ const CLEANUP_JOB_LEASE_SECS: i64 = 6 * 60 * 60;
 const EXTRACTION_TASK_TIMEOUT_SECS: u64 = JOB_TIMEOUT_SECS;
 const EMBEDDING_BACKFILL_IDLE_BATCH_SIZE: i64 = 128;
 const RULE_COMPILATION_SWEEP_INTERVAL_SECS: u64 = 60;
-const LEGACY_PENDING_MIGRATION_BATCH: i64 = 25;
-const LEGACY_PENDING_MIGRATION_INTERVAL: Duration = Duration::from_secs(60);
 const RETRIEVAL_ENRICHMENT_INTERVAL: Duration = Duration::from_secs(60);
 const ONCE_WORKER_MAX_WORK_ITEMS: usize = 4;
 const ONCE_WORKER_MAX_ELAPSED: Duration = Duration::from_secs(180);
@@ -85,101 +85,6 @@ fn stop_for_exhausted_once_budget(run_budget: &WorkerRunBudget, now: Instant) ->
         ),
     );
     true
-}
-
-struct RetrievalEnrichmentSchedule {
-    once: bool,
-    attempted_once: bool,
-    next_daemon_attempt_at: Instant,
-}
-
-impl RetrievalEnrichmentSchedule {
-    fn new(once: bool, now: Instant) -> Self {
-        Self {
-            once,
-            attempted_once: false,
-            next_daemon_attempt_at: now,
-        }
-    }
-
-    fn is_due(&self, now: Instant) -> bool {
-        if self.once {
-            !self.attempted_once
-        } else {
-            now >= self.next_daemon_attempt_at
-        }
-    }
-
-    fn record_attempt(&mut self, now: Instant) {
-        self.attempted_once = true;
-        self.next_daemon_attempt_at = now + RETRIEVAL_ENRICHMENT_INTERVAL;
-    }
-}
-
-struct LegacyPendingMigrationSchedule {
-    once: bool,
-    attempted_once: bool,
-    next_daemon_attempt_at: Instant,
-}
-
-impl LegacyPendingMigrationSchedule {
-    fn new(once: bool, now: Instant) -> Self {
-        Self {
-            once,
-            attempted_once: false,
-            next_daemon_attempt_at: now,
-        }
-    }
-
-    fn is_due(&self, now: Instant) -> bool {
-        if self.once {
-            !self.attempted_once
-        } else {
-            now >= self.next_daemon_attempt_at
-        }
-    }
-
-    fn record_attempt(&mut self, now: Instant) {
-        self.attempted_once = true;
-        self.next_daemon_attempt_at = now + LEGACY_PENDING_MIGRATION_INTERVAL;
-    }
-}
-
-fn extraction_pipeline_is_idle(conn: &rusqlite::Connection) -> Result<bool> {
-    let now = chrono::Utc::now().timestamp();
-    let active: i64 = conn.query_row(
-        "SELECT EXISTS(
-             SELECT 1
-             FROM extraction_tasks
-             WHERE (status = 'pending'
-                    AND (next_retry_epoch IS NULL OR next_retry_epoch <= ?1))
-                OR status = 'processing'
-         )",
-        [now],
-        |row| row.get(0),
-    )?;
-    Ok(active == 0)
-}
-
-fn should_attempt_legacy_pending_migration(
-    conn: &rusqlite::Connection,
-    schedule: &LegacyPendingMigrationSchedule,
-    now: Instant,
-) -> Result<bool> {
-    if !schedule.is_due(now) {
-        return Ok(false);
-    }
-    extraction_pipeline_is_idle(conn)
-}
-
-fn record_legacy_pending_migration_outcome(
-    schedule: &mut LegacyPendingMigrationSchedule,
-    now: Instant,
-    outcome: &db::pending::admin::AutoLegacyMigrationOutcome,
-) {
-    if outcome.migrated > 0 || !outcome.yielded_to_current_work {
-        schedule.record_attempt(now);
-    }
 }
 
 fn retry_backoff_secs(attempt: i64) -> i64 {
@@ -419,11 +324,12 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
         record_worker_heartbeat(&conn, &lease_owner, started_at_epoch)?;
     }
 
-    let mut legacy_pending_migration_schedule =
-        LegacyPendingMigrationSchedule::new(once, Instant::now());
-    let mut retrieval_enrichment_schedule = RetrievalEnrichmentSchedule::new(once, Instant::now());
+    let mut legacy_pending_migration_schedule = legacy_pending::new_schedule(once, Instant::now());
+    let mut retrieval_enrichment_schedule =
+        admission::IntervalAdmission::new(once, Instant::now(), RETRIEVAL_ENRICHMENT_INTERVAL);
     let mut run_budget = WorkerRunBudget::new(once, Instant::now());
-    let mut cleanup_probe_schedule = cleanup::CleanupProbeSchedule::new(once, Instant::now());
+    let mut cleanup_probe_schedule =
+        admission::IntervalAdmission::new(once, Instant::now(), cleanup::CLEANUP_PROBE_INTERVAL);
     let mut next_rule_compilation_sweep_at = Instant::now();
     loop {
         if Instant::now() >= next_rule_compilation_sweep_at {
@@ -518,21 +424,24 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
             continue;
         }
         let migration_now = Instant::now();
-        if should_attempt_legacy_pending_migration(
+        if legacy_pending::should_attempt_legacy_pending_migration(
             &conn,
             &legacy_pending_migration_schedule,
             migration_now,
         )? {
             match db::pending::admin::auto_migrate_actionable_legacy_pending(
                 &mut conn,
-                LEGACY_PENDING_MIGRATION_BATCH,
+                legacy_pending::LEGACY_PENDING_MIGRATION_BATCH,
             ) {
                 Ok(outcome) => {
-                    record_legacy_pending_migration_outcome(
+                    legacy_pending::record_legacy_pending_migration_outcome(
                         &mut legacy_pending_migration_schedule,
                         Instant::now(),
                         &outcome,
                     );
+                    if !outcome.yielded_to_current_work {
+                        db::pending::admin::sync_legacy_pending_bridge_state(&conn)?;
+                    }
                     if outcome.migrated > 0 {
                         crate::log::info(
                             "worker",

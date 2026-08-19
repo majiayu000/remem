@@ -17,12 +17,14 @@ pub mod cursor_hook;
 pub mod db;
 pub mod doctor;
 pub mod dream;
+#[cfg(feature = "eval")]
 pub mod eval;
 mod extraction_worker;
 mod git_evidence;
 pub mod git_trace;
 pub mod git_util;
 mod graph_candidate;
+pub mod hook_cli;
 mod hook_integrity;
 pub mod hook_runtime;
 mod hook_stdin;

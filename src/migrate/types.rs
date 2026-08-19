@@ -420,6 +420,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "retrieval_enrichment_budget",
         sql: include_str!("../migrations/v083_retrieval_enrichment_budget.sql"),
     },
+    Migration {
+        version: 84,
+        name: "legacy_pending_bridge_state",
+        sql: include_str!("../migrations/v084_legacy_pending_bridge_state.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

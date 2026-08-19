@@ -19,6 +19,8 @@ jobs:
         run: python3 scripts/ci/check_public_claims.py
       - name: Check source file size guard
         run: python3 scripts/ci/check_file_size.py
+      - name: Check migration concerns
+        run: python3 scripts/ci/check_migration_concerns.py
       - name: Check release workflows
         run: python3 scripts/ci/check_release_workflows.py
       - name: Test plugin runtime scripts
@@ -37,6 +39,7 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --check
+      - run: cargo check --no-default-features --bin remem-hook
       - run: cargo clippy --all-targets -- -D warnings
       - name: Run native web API smoke
         run: scripts/smoke_native_web_api.sh

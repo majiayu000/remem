@@ -1,6 +1,9 @@
-use super::*;
+use super::legacy_pending::*;
+use super::run;
+use crate::db;
 use crate::db::{test_support::ScopedTestDataDir, CaptureEventInput, ExtractionTaskKind};
 use rusqlite::params;
+use tokio::time::{Duration, Instant};
 
 fn setup_conn() -> anyhow::Result<rusqlite::Connection> {
     let conn = rusqlite::Connection::open_in_memory()?;
@@ -31,7 +34,7 @@ fn seed_extraction_task(conn: &rusqlite::Connection) -> anyhow::Result<i64> {
 #[test]
 fn once_schedule_allows_only_one_migration_attempt() {
     let started_at = Instant::now();
-    let mut schedule = LegacyPendingMigrationSchedule::new(true, started_at);
+    let mut schedule = new_schedule(true, started_at);
 
     assert!(schedule.is_due(started_at));
     schedule.record_attempt(started_at);
@@ -44,7 +47,7 @@ fn once_schedule_allows_only_one_migration_attempt() {
 #[test]
 fn daemon_schedule_waits_sixty_seconds_between_attempts() {
     let started_at = Instant::now();
-    let mut schedule = LegacyPendingMigrationSchedule::new(false, started_at);
+    let mut schedule = new_schedule(false, started_at);
 
     assert!(schedule.is_due(started_at));
     schedule.record_attempt(started_at);
@@ -94,9 +97,19 @@ fn due_pending_and_processing_apply_backpressure_but_delayed_does_not() -> anyho
 #[test]
 fn active_extraction_work_does_not_consume_once_migration_slot() -> anyhow::Result<()> {
     let conn = setup_conn()?;
+    crate::db::test_support::insert_legacy_pending_fixture(
+        &conn,
+        crate::runtime_config::CODEX_HOST,
+        "sess-backpressure",
+        "/tmp/remem-backpressure",
+        "Bash",
+        None,
+        None,
+        None,
+    )?;
     let task_id = seed_extraction_task(&conn)?;
     let started_at = Instant::now();
-    let mut schedule = LegacyPendingMigrationSchedule::new(true, started_at);
+    let mut schedule = new_schedule(true, started_at);
 
     assert!(!should_attempt_legacy_pending_migration(
         &conn, &schedule, started_at
@@ -120,7 +133,7 @@ fn active_extraction_work_does_not_consume_once_migration_slot() -> anyhow::Resu
 #[test]
 fn zero_progress_yield_does_not_consume_once_migration_slot() {
     let started_at = Instant::now();
-    let mut schedule = LegacyPendingMigrationSchedule::new(true, started_at);
+    let mut schedule = new_schedule(true, started_at);
     let outcome = db::pending::admin::AutoLegacyMigrationOutcome {
         migrated: 0,
         yielded_to_current_work: true,
@@ -134,7 +147,7 @@ fn zero_progress_yield_does_not_consume_once_migration_slot() {
 #[test]
 fn partial_progress_yield_consumes_once_migration_slot() {
     let started_at = Instant::now();
-    let mut schedule = LegacyPendingMigrationSchedule::new(true, started_at);
+    let mut schedule = new_schedule(true, started_at);
     let outcome = db::pending::admin::AutoLegacyMigrationOutcome {
         migrated: 1,
         yielded_to_current_work: true,
@@ -148,12 +161,52 @@ fn partial_progress_yield_consumes_once_migration_slot() {
 #[test]
 fn completed_zero_progress_attempt_consumes_once_migration_slot() {
     let started_at = Instant::now();
-    let mut schedule = LegacyPendingMigrationSchedule::new(true, started_at);
+    let mut schedule = new_schedule(true, started_at);
     let outcome = db::pending::admin::AutoLegacyMigrationOutcome::default();
 
     record_legacy_pending_migration_outcome(&mut schedule, started_at, &outcome);
 
     assert!(!schedule.is_due(started_at));
+}
+
+#[test]
+fn exhausted_store_does_not_admit_legacy_migration() -> anyhow::Result<()> {
+    let conn = setup_conn()?;
+    let schedule = new_schedule(true, Instant::now());
+
+    assert!(db::pending::admin::legacy_pending_auto_bridge_is_exhausted(
+        &conn
+    )?);
+    assert!(!should_attempt_legacy_pending_migration(
+        &conn,
+        &schedule,
+        Instant::now()
+    )?);
+    Ok(())
+}
+
+#[test]
+fn residual_row_reactivates_once_admission() -> anyhow::Result<()> {
+    let conn = setup_conn()?;
+    crate::db::test_support::insert_legacy_pending_fixture(
+        &conn,
+        crate::runtime_config::CODEX_HOST,
+        "sess-reactivate",
+        "/tmp/remem-reactivate",
+        "Bash",
+        None,
+        None,
+        None,
+    )?;
+    let schedule = new_schedule(true, Instant::now());
+
+    assert!(!db::pending::admin::legacy_pending_auto_bridge_is_exhausted(&conn)?);
+    assert!(should_attempt_legacy_pending_migration(
+        &conn,
+        &schedule,
+        Instant::now()
+    )?);
+    Ok(())
 }
 
 #[test]
@@ -177,7 +230,7 @@ fn lifecycle_requeue_of_due_extraction_work_blocks_legacy_migration() -> anyhow:
     let maintenance = crate::db::maintain_failure_lifecycle(&conn)?;
 
     assert_eq!(maintenance.retried_extraction_tasks, 1);
-    let schedule = LegacyPendingMigrationSchedule::new(true, Instant::now());
+    let schedule = new_schedule(true, Instant::now());
     assert!(!should_attempt_legacy_pending_migration(
         &conn,
         &schedule,

@@ -1,3 +1,5 @@
+use anyhow::Result;
+
 fn parse_env_f64(key: &str) -> Option<f64> {
     std::env::var(key).ok()?.trim().parse::<f64>().ok()
 }
@@ -24,6 +26,27 @@ impl ModelPricing {
         }
     }
 
+    fn from_rates(rates: crate::runtime_config::PricingRates, source: &'static str) -> Self {
+        Self {
+            input_per_mtok: rates.input_per_mtok,
+            output_per_mtok: rates.output_per_mtok,
+            reasoning_per_mtok: rates.reasoning_per_mtok,
+            cache_creation_per_mtok: rates.cache_creation_per_mtok,
+            cache_read_per_mtok: rates.cache_read_per_mtok,
+            source,
+        }
+    }
+
+    fn rates(self) -> crate::runtime_config::PricingRates {
+        crate::runtime_config::PricingRates {
+            input_per_mtok: self.input_per_mtok,
+            output_per_mtok: self.output_per_mtok,
+            reasoning_per_mtok: self.reasoning_per_mtok,
+            cache_creation_per_mtok: self.cache_creation_per_mtok,
+            cache_read_per_mtok: self.cache_read_per_mtok,
+        }
+    }
+
     fn openai(input: f64, output: f64, cache_read: f64) -> Self {
         Self::new(input, output, 0.0, cache_read)
     }
@@ -36,13 +59,17 @@ pub(super) fn estimate_tokens(text: &str) -> i64 {
 #[cfg(test)]
 pub(super) fn pricing_for_model(model: &str) -> (f64, f64) {
     pricing_breakdown_for_model(model)
+        .expect("pricing config should be readable")
         .map(|pricing| (pricing.input_per_mtok, pricing.output_per_mtok))
         .unwrap_or((0.0, 0.0))
 }
 
-pub(super) fn pricing_breakdown_for_model(model: &str) -> Option<ModelPricing> {
+pub(super) fn pricing_breakdown_for_model(model: &str) -> Result<Option<ModelPricing>> {
     if let Some(pricing) = env_pricing() {
-        return Some(pricing);
+        return Ok(Some(pricing));
+    }
+    if let Some(rates) = crate::runtime_config::global_pricing_override()? {
+        return Ok(Some(ModelPricing::from_rates(rates, "config_override")));
     }
 
     let model_lower = model.to_lowercase();
@@ -54,7 +81,7 @@ pub(super) fn pricing_breakdown_for_model(model: &str) -> Option<ModelPricing> {
         || model_lower.contains("gpt-5.6-sol")
         || model_lower.contains("gpt-5.6-terra")
     {
-        return None;
+        return Ok(None);
     }
     let (default, prefix) = if model_lower.contains("opus-4-7")
         || model_lower.contains("opus-4.7")
@@ -89,10 +116,13 @@ pub(super) fn pricing_breakdown_for_model(model: &str) -> Option<ModelPricing> {
     } else if model_lower.contains("gpt-4") {
         (ModelPricing::openai(2.5, 10.0, 0.0), "GPT4")
     } else {
-        return None;
+        return Ok(None);
     };
 
-    Some(apply_family_env(default, prefix))
+    Ok(Some(apply_family_env(
+        apply_family_config(default, prefix)?,
+        prefix,
+    )))
 }
 
 fn env_pricing() -> Option<ModelPricing> {
@@ -107,6 +137,11 @@ fn env_pricing() -> Option<ModelPricing> {
         cache_read_per_mtok: parse_env_f64("REMEM_PRICE_CACHE_READ_PER_MTOK").unwrap_or(input),
         source: "env_override",
     })
+}
+
+fn apply_family_config(default: ModelPricing, prefix: &str) -> Result<ModelPricing> {
+    let overlay = crate::runtime_config::family_pricing_overlay(prefix, default.rates())?;
+    Ok(ModelPricing::from_rates(overlay, default.source))
 }
 
 fn apply_family_env(default: ModelPricing, prefix: &str) -> ModelPricing {
@@ -130,9 +165,12 @@ fn apply_family_env(default: ModelPricing, prefix: &str) -> ModelPricing {
     }
 }
 
-pub(super) fn estimate_cost_usd(model: &str, usage: &crate::ai::TokenUsage) -> (f64, &'static str) {
-    let Some(pricing) = pricing_breakdown_for_model(model) else {
-        return (0.0, "unknown_pricing");
+pub(super) fn estimate_cost_usd(
+    model: &str,
+    usage: &crate::ai::TokenUsage,
+) -> Result<(f64, &'static str)> {
+    let Some(pricing) = pricing_breakdown_for_model(model)? else {
+        return Ok((0.0, "unknown_pricing"));
     };
 
     let cost = (usage.input_tokens as f64 / 1_000_000.0) * pricing.input_per_mtok
@@ -140,5 +178,5 @@ pub(super) fn estimate_cost_usd(model: &str, usage: &crate::ai::TokenUsage) -> (
         + (usage.reasoning_tokens as f64 / 1_000_000.0) * pricing.reasoning_per_mtok
         + (usage.cache_creation_tokens as f64 / 1_000_000.0) * pricing.cache_creation_per_mtok
         + (usage.cache_read_tokens as f64 / 1_000_000.0) * pricing.cache_read_per_mtok;
-    (cost, pricing.source)
+    Ok((cost, pricing.source))
 }

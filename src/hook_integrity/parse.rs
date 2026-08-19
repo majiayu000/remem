@@ -86,7 +86,7 @@ fn is_remem_command_token(token: &str) -> bool {
     Path::new(token)
         .file_stem()
         .and_then(|stem| stem.to_str())
-        .is_some_and(|stem| stem == "remem")
+        .is_some_and(|stem| stem == "remem" || stem == "remem-hook")
 }
 
 fn is_env_prefix(token: &str) -> bool {
@@ -191,5 +191,14 @@ mod tests {
         let flat = parse_remem_invocation("/tmp/remem observe --host claude-code")
             .expect("observe invocation");
         assert_eq!(flat.nested_subcommand, None);
+    }
+
+    #[test]
+    fn parses_remem_hook_executable() {
+        let invocation = parse_remem_invocation("/tmp/remem-hook observe --host claude-code")
+            .expect("remem-hook observe");
+        assert_eq!(invocation.executable, "/tmp/remem-hook");
+        assert_eq!(invocation.subcommand.as_deref(), Some("observe"));
+        assert_eq!(invocation.resolved_host(), Some("claude-code"));
     }
 }

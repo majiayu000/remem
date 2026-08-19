@@ -176,10 +176,7 @@ pub(crate) fn expected_hook_executable_from_hooks(doc: &Value, host: &str) -> Op
             }
         }
     }
-    match paths.as_slice() {
-        [path] => Some(path.clone()),
-        _ => None,
-    }
+    crate::hook_cli::preferred_expected_hook_executable(&paths)
 }
 
 pub(crate) fn event_has_remem_subcommand_hook(doc: &Value, event: &str, subcommand: &str) -> bool {
@@ -381,7 +378,11 @@ fn stale_reason(
     invocation: &RememInvocation,
 ) -> String {
     let mut reasons = Vec::new();
-    if Path::new(&invocation.executable) != executable {
+    if !crate::hook_cli::hook_executable_is_allowed(
+        Path::new(&invocation.executable),
+        executable,
+        spec.subcommand,
+    ) {
         reasons.push(format!("executable {}", invocation.executable));
     }
     if invocation.resolved_host() != Some(spec.host) {
@@ -415,8 +416,11 @@ fn hook_matches_expected(
     entry_matcher_matches(entry, spec.matcher)
         && hook_timeout_matches(hook, spec.timeout_seconds)
         && parse_remem_hook_value(hook).is_some_and(|invocation| {
-            Path::new(&invocation.executable) == executable
-                && invocation_matches_spec_command(&invocation, spec)
+            crate::hook_cli::hook_executable_is_allowed(
+                Path::new(&invocation.executable),
+                executable,
+                spec.subcommand,
+            ) && invocation_matches_spec_command(&invocation, spec)
                 && invocation.resolved_host() == Some(spec.host)
         })
 }
@@ -645,5 +649,125 @@ mod tests {
         assert_eq!(command, "/desktop/remem");
         std::fs::remove_dir_all(dir)?;
         Ok(())
+    }
+
+    #[test]
+    fn accepts_sibling_remem_hook_for_slim_commands() {
+        let dir = std::env::temp_dir().join(format!(
+            "remem-integrity-hook-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let remem = dir.join("remem");
+        let hook = dir.join("remem-hook");
+        std::fs::write(&remem, []).expect("touch remem");
+        std::fs::write(&hook, []).expect("touch remem-hook");
+        let remem_s = remem.to_str().expect("utf8");
+        let hook_s = hook.to_str().expect("utf8");
+        let doc = json!({
+            "hooks": {
+                "SessionStart": [{
+                    "hooks": [{
+                        "command": format!("{hook_s} context --host codex-cli"),
+                        "timeout": 15000
+                    }]
+                }],
+                "Stop": [{
+                    "hooks": [{
+                        "command": format!("{hook_s} summarize --host codex-cli"),
+                        "timeout": 120000
+                    }]
+                }]
+            }
+        });
+
+        let report = evaluate_hooks(
+            &doc,
+            "codex",
+            PathBuf::from("/tmp/settings.json"),
+            remem.as_path(),
+        );
+        assert!(
+            report.is_healthy(),
+            "sibling remem-hook should satisfy slim hook specs: {report:?}"
+        );
+        let _ = remem_s;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn expected_executable_prefers_full_remem_when_hooks_mix_binaries() {
+        let dir = std::env::temp_dir().join(format!(
+            "remem-integrity-mixed-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let remem = dir.join("remem");
+        let hook = dir.join("remem-hook");
+        std::fs::write(&remem, []).expect("touch remem");
+        std::fs::write(&hook, []).expect("touch remem-hook");
+        let remem_s = remem.to_str().expect("utf8");
+        let hook_s = hook.to_str().expect("utf8");
+        let doc = json!({
+            "hooks": {
+                "SessionStart": [{
+                    "matcher": "startup|resume|clear|compact",
+                    "hooks": [{
+                        "command": format!("{hook_s} context --host claude-code"),
+                        "timeout": 15
+                    }]
+                }],
+                "UserPromptSubmit": [{
+                    "hooks": [{
+                        "command": format!("{hook_s} session-init --host claude-code"),
+                        "timeout": 15
+                    }]
+                }],
+                "PreToolUse": [{
+                    "matcher": "Bash",
+                    "hooks": [{
+                        "command": format!("{remem_s} rules eval --host claude-code"),
+                        "timeout": 5
+                    }]
+                }],
+                "PostToolUse": [{
+                    "matcher": "Write|Edit|NotebookEdit|Bash|Grep|Glob|Agent|Task",
+                    "hooks": [{
+                        "command": format!("{hook_s} observe --host claude-code"),
+                        "timeout": 120
+                    }]
+                }],
+                "PreCompact": [{
+                    "hooks": [{
+                        "command": format!("{hook_s} summarize --host claude-code"),
+                        "timeout": 120
+                    }]
+                }],
+                "Stop": [{
+                    "hooks": [{
+                        "command": format!("{hook_s} summarize --host claude-code"),
+                        "timeout": 120
+                    }]
+                }]
+            }
+        });
+
+        assert_eq!(
+            expected_hook_executable_from_hooks(&doc, "claude").as_deref(),
+            Some(remem_s)
+        );
+        let report = evaluate_hooks(
+            &doc,
+            "claude",
+            PathBuf::from("/tmp/settings.json"),
+            remem.as_path(),
+        );
+        assert!(
+            report.is_healthy(),
+            "mixed remem + remem-hook Claude hooks should be healthy: {report:?}"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

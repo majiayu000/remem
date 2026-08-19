@@ -20,11 +20,11 @@ Two storage generations run side by side. The 2026-07-02 verification pass
   bounded drain bridge that migrates their value into the current
   capture/extraction pipeline; this transitional consumer does not revive the
   legacy queue.
-- `session_summaries` is dual-written on every session end: the current
-  `SessionRollup` task and the pre-v006 summarize job chain
-  (`JobType::Summary` -> `finalize_summarize`) both fire from the same Stop
-  hook, unconditionally. The legacy chain also accounts for thousands of
-  failed jobs and unattributed AI spend on the dogfood database.
+- `session_summaries` is a kept current table. After GH684-T7, Stop records a
+  `SessionRollup` extraction task and no longer enqueues `JobType::Summary`,
+  Compress, or Dream jobs directly. A new Summary enqueue fails closed; residual
+  Summary jobs remain drain-only. The table stays because context, timeline,
+  and user-context readers still load it.
 - `observations` (+ `observations_fts`) turned out to be a live intermediate
   of the current extraction pipeline. GH684-T8 fixes the MCP/docs wording that
   previously advertised it as "legacy observations".
@@ -50,8 +50,13 @@ Costs of the dual path:
 - Residual legacy pending rows drain without starving current extraction:
   current work has priority, once workers run at most one 25-row batch, and
   daemons run at most one 25-row batch every 60 seconds.
-- Users can see legacy state: doctor reports legacy row counts and whether
-  legacy writes still occur.
+- An empty or fully drained store persists `legacy_surface_state.state =
+  exhausted` for `pending_observations`. Ordinary workers then skip the drain
+  entirely until a residual auto-actionable row is reintroduced through the
+  admin/test fixture path. The table itself stays until the guarded remem
+  0.7.0 drop.
+- Users can see legacy state: doctor reports legacy row counts, whether the
+  automatic drain is halted, and whether legacy writes still occur.
 
 ## Non-Goals
 
@@ -117,6 +122,8 @@ Acceptance:
 - Doctor distinguishes rows eligible for the automatic drain from permanent
   or unknown-host archived rows that are `admin-required`, and gives the exact
   dry-run/apply recovery commands.
+- When no residual auto-actionable row remains, doctor reports that the
+  automatic drain is halted and that guarded table drop stays remem 0.7.0.
 - After freeze, a legacy write triggers a doctor error, not a silent
   success.
 
@@ -255,7 +262,10 @@ Acceptance:
 3. Reader migration with equivalence fixtures; freeze writers.
 4. Idle-only value migration through the bounded worker bridge plus exact
    archived admin recovery, followed by a deprecation announcement in doctor
-   and release notes; guarded drop migrations no earlier than remem 0.7.0.
+   and release notes. After the store has no residual auto-actionable rows,
+   persist `exhausted` and stop admitting the bridge. Guarded drop migrations
+   remain remem 0.7.0 and still refuse to run while unmigrated valuable rows
+   remain.
 
 Each code phase ships independently with focused tests plus:
 

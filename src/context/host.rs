@@ -1,3 +1,5 @@
+use anyhow::Result;
+
 use super::policy::ContextPolicy;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,7 +47,9 @@ pub(super) struct RetrievalHints {
 
 pub(super) trait ContextHostProfile {
     fn capabilities(&self) -> HostCapabilities;
-    fn default_policy(&self) -> ContextPolicy;
+    fn default_policy(&self) -> Result<ContextPolicy> {
+        ContextPolicy::from_runtime()
+    }
     fn retrieval_hints(&self) -> RetrievalHints;
 }
 
@@ -65,10 +69,6 @@ impl ContextHostProfile for ClaudeCodeContextProfile {
         }
     }
 
-    fn default_policy(&self) -> ContextPolicy {
-        ContextPolicy::from_env()
-    }
-
     fn retrieval_hints(&self) -> RetrievalHints {
         RetrievalHints {
             line: "Use `search`/`get_observations` for details. `save_memory` after decisions/bugfixes.",
@@ -85,10 +85,6 @@ impl ContextHostProfile for CodexCliContextProfile {
             observes_native_file_edits: false,
             observes_bash: false,
         }
-    }
-
-    fn default_policy(&self) -> ContextPolicy {
-        ContextPolicy::from_env()
     }
 
     fn retrieval_hints(&self) -> RetrievalHints {
@@ -113,10 +109,6 @@ impl ContextHostProfile for CursorContextProfile {
         }
     }
 
-    fn default_policy(&self) -> ContextPolicy {
-        ContextPolicy::from_env()
-    }
-
     fn retrieval_hints(&self) -> RetrievalHints {
         RetrievalHints {
             line: "Use `search`/`get_observations` for details. `save_memory` after decisions/bugfixes.",
@@ -133,10 +125,6 @@ impl ContextHostProfile for UnknownContextProfile {
             observes_native_file_edits: false,
             observes_bash: true,
         }
-    }
-
-    fn default_policy(&self) -> ContextPolicy {
-        ContextPolicy::from_env()
     }
 
     fn retrieval_hints(&self) -> RetrievalHints {

@@ -61,15 +61,28 @@ impl Default for ContextLimits {
 }
 
 impl ContextLimits {
+    #[cfg(test)]
     pub(crate) fn from_env() -> Self {
         Self::from_env_reader(|key| std::env::var(key).ok())
     }
 
-    pub(super) fn from_env_reader<F>(mut read: F) -> Self
+    pub(crate) fn from_runtime() -> anyhow::Result<Self> {
+        let file = crate::runtime_config::context_budget_limits()?;
+        Ok(Self::from_env_on_base(file, |key| std::env::var(key).ok()))
+    }
+
+    #[cfg(test)]
+    pub(super) fn from_env_reader<F>(read: F) -> Self
     where
         F: FnMut(&str) -> Option<String>,
     {
-        let defaults = Self::default();
+        Self::from_env_on_base(Self::default(), read)
+    }
+
+    fn from_env_on_base<F>(defaults: Self, mut read: F) -> Self
+    where
+        F: FnMut(&str) -> Option<String>,
+    {
         Self {
             total_char_limit: read_usize(
                 &mut read,
@@ -153,8 +166,13 @@ pub(super) struct ContextPolicy {
 }
 
 impl ContextPolicy {
+    #[cfg(test)]
     pub(super) fn from_env() -> Self {
         Self::from_limits(ContextLimits::from_env())
+    }
+
+    pub(super) fn from_runtime() -> anyhow::Result<Self> {
+        Ok(Self::from_limits(ContextLimits::from_runtime()?))
     }
 
     pub(super) fn from_limits(limits: ContextLimits) -> Self {

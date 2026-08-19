@@ -1,18 +1,21 @@
 use anyhow::Result;
 
-use crate::{api, context, db, doctor, install, mcp, observe, summarize, worker};
+use crate::{api, context, db, doctor, install, mcp, worker};
 
 use super::actions::{
     run_admin, run_archive, run_audit_scope, run_backfill_embeddings, run_backfill_entities,
-    run_bench, run_cleanup, run_commit, run_config, run_current_state, run_dream,
-    run_dream_backfill, run_embedding, run_encrypt, run_eval, run_eval_associative_baseline,
-    run_eval_capacity, run_eval_coding_bench, run_eval_e2e, run_eval_extraction, run_eval_gates,
-    run_eval_governance, run_eval_graph_decision, run_eval_local, run_eval_provider_comparison,
-    run_eval_weight_grid, run_export, run_governance, run_graph_review, run_import,
+    run_cleanup, run_commit, run_config, run_current_state, run_dream, run_dream_backfill,
+    run_embedding, run_encrypt, run_export, run_governance, run_graph_review, run_import,
     run_ingest_sessions_cli, run_memory_action, run_merge_preferences, run_model, run_pending,
     run_preferences, run_procedures, run_raw, run_reroute, run_review, run_rules, run_search,
     run_show, run_status, run_timeline, run_usage, run_user, run_why, run_workstreams,
     GovernanceCliRequest, RerouteCliRequest,
+};
+#[cfg(feature = "eval")]
+use super::actions::{
+    run_bench, run_eval, run_eval_associative_baseline, run_eval_capacity, run_eval_coding_bench,
+    run_eval_e2e, run_eval_extraction, run_eval_gates, run_eval_governance,
+    run_eval_graph_decision, run_eval_local, run_eval_provider_comparison, run_eval_weight_grid,
 };
 use super::cwd::resolve_cwd_arg;
 use super::types::{Cli, Commands, ContextGateAction, DoctorAction, RulesAction};
@@ -41,19 +44,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             force,
             gate,
         } => {
-            if remem_hooks_disabled() {
-                return Ok(());
-            }
-            match parse_explicit_hook_host(host.as_deref())? {
-                Some(crate::identity::InstallHost::Cursor) => {
-                    context::generate_cursor_context_from_stdin()?;
-                }
-                _ => {
-                    context::generate_context_from_cli(
-                        cwd, session_id, color, host, debug, force, gate,
-                    )?;
-                }
-            }
+            crate::hook_cli::run_context(cwd, session_id, host, color, debug, force, gate).await?;
         }
         Commands::ContextPlan(args) => super::actions::run_context_plan(args)?,
         Commands::ContextGate { action } => match action {
@@ -69,47 +60,13 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Embedding { action } => run_embedding(action)?,
         Commands::Reranker { action } => super::actions::run_reranker(action)?,
         Commands::SessionInit { host } => {
-            if remem_hooks_disabled() {
-                return Ok(());
-            }
-            // GH-823 B-006: `cursor` is a recognized host value but an
-            // explicitly unsupported command combination. The rejection
-            // happens at dispatch, before stdin is read and before any
-            // prompt write, context stdout, enqueue, spill, or database
-            // side effect. Cursor's `beforeSubmitPrompt` is permit/block
-            // only and has no proven injection capability.
-            if matches!(
-                parse_explicit_hook_host(host.as_deref())?,
-                Some(crate::identity::InstallHost::Cursor)
-            ) {
-                anyhow::bail!(
-                    "session-init is not supported on --host cursor; \
-                     Cursor beforeSubmitPrompt is permit/block-only (GH-823 B-006)"
-                );
-            }
-            observe::session_init(host.as_deref()).await?;
+            crate::hook_cli::run_session_init(host).await?;
         }
         Commands::Observe { host } => {
-            if remem_hooks_disabled() {
-                return Ok(());
-            }
-            match parse_explicit_hook_host(host.as_deref())? {
-                Some(crate::identity::InstallHost::Cursor) => {
-                    observe::observe_cursor().await?;
-                }
-                _ => observe::observe(host.as_deref()).await?,
-            }
+            crate::hook_cli::run_observe(host).await?;
         }
         Commands::Summarize { host, profile } => {
-            if remem_hooks_disabled() {
-                return Ok(());
-            }
-            match parse_explicit_hook_host(host.as_deref())? {
-                Some(crate::identity::InstallHost::Cursor) => {
-                    summarize::summarize_cursor().await?;
-                }
-                _ => summarize::summarize(host.as_deref(), profile.as_deref()).await?,
-            }
+            crate::hook_cli::run_summarize(host, profile).await?;
         }
         Commands::Worker(args) => {
             if let Some(range_id) = args.replay_range_id {
@@ -150,7 +107,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         }
         Commands::Preferences { action } => run_preferences(action)?,
         Commands::Rules { action } => {
-            if should_skip_rules_action(&action, remem_hooks_disabled()) {
+            if should_skip_rules_action(&action, crate::hook_cli::remem_hooks_disabled()) {
                 return Ok(());
             }
             run_rules(action)?;
@@ -332,28 +289,39 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             project,
             branch,
         } => run_why(id, project.as_deref(), branch.as_deref())?,
+        #[cfg(feature = "eval")]
         Commands::Bench { action } => run_bench(action).await?,
+        #[cfg(feature = "eval")]
         Commands::Eval { dataset, k, json } => run_eval(&dataset, k, json)?,
+        #[cfg(feature = "eval")]
         Commands::EvalE2e {
             k,
             json,
             keep_data_dir,
         } => run_eval_e2e(k, json, keep_data_dir).await?,
+        #[cfg(feature = "eval")]
         Commands::EvalGovernance { k, json } => run_eval_governance(k, json)?,
+        #[cfg(feature = "eval")]
         Commands::EvalExtraction(args) => {
             run_eval_extraction(&args.corpus, &args.baseline, args.json, args.check_baseline)?
         }
+        #[cfg(feature = "eval")]
         Commands::EvalProviderComparison(args) => run_eval_provider_comparison(args)?,
+        #[cfg(feature = "eval")]
         Commands::EvalGraphDecision(args) => {
             run_eval_graph_decision(&args.dataset, args.k, &args.json_out, args.json)?
         }
+        #[cfg(feature = "eval")]
         Commands::EvalAssociativeBaseline(args) => {
             run_eval_associative_baseline(&args.dataset, args.k, &args.json_out, args.json)?
         }
+        #[cfg(feature = "eval")]
         Commands::EvalCapacity(args) => run_eval_capacity(args)?,
+        #[cfg(feature = "eval")]
         Commands::EvalWeightGrid(args) => {
             run_eval_weight_grid(&args.dataset, args.k, &args.json_out, args.json)?
         }
+        #[cfg(feature = "eval")]
         Commands::EvalGates(args) => run_eval_gates(
             &args.baseline,
             &args.thresholds,
@@ -363,7 +331,9 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             args.simulate_golden_regression,
             args.simulate_capacity_regression,
         )?,
+        #[cfg(feature = "eval")]
         Commands::EvalCodingBench(args) => run_eval_coding_bench(*args).await?,
+        #[cfg(feature = "eval")]
         Commands::EvalLocal => run_eval_local()?,
         Commands::BackfillEntities => run_backfill_entities()?,
         Commands::BackfillEmbeddings { limit, batch_size } => {
@@ -407,21 +377,6 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Shared exact hook-host validation at the CLI boundary (GH-823 B-001).
-/// `None` (auto-detection) keeps its existing behavior; every explicit value
-/// must be in the closed set `claude-code`, `codex-cli`, `cursor`. Aliases,
-/// `unknown`, empty strings, and arbitrary values fail here, before any
-/// rendering, adapter dispatch, enqueue, or database write.
-fn parse_explicit_hook_host(host: Option<&str>) -> Result<Option<crate::identity::InstallHost>> {
-    host.map(crate::identity::InstallHost::parse).transpose()
-}
-
-fn remem_hooks_disabled() -> bool {
-    std::env::var("REMEM_DISABLE_HOOKS")
-        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-        .unwrap_or(false)
 }
 
 fn should_skip_rules_action(action: &RulesAction, hooks_disabled: bool) -> bool {
