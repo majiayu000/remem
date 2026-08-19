@@ -4,14 +4,14 @@
   "evidence_fingerprint": {
     "algorithm": "sha256-length-prefixed-v1",
     "dataset_sha256": "0af0538c28347f52a8a2bee2a57d85ce07442eb03b2f8eec48c47c0f50b232f8",
-    "implementation_sha256": "1050c77e8ae922c7241c862a5a23b8569123a0671b0fc1a02fcbeddc997f1356",
-    "combined_sha256": "38c5acd07faf1c1173ad2573a17a374b585b2fa2151ec60826757e00dad6873c",
+    "implementation_sha256": "c56411a9b21668c7ecfb665684f155d2fa7d19d99bd0653ba1ffaf01179d13dc",
+    "combined_sha256": "6c2e106008bdbf6b7250ea86c152da8552555d42acdc07a4c606cf1ba48c67b1",
     "inputs": [
       {
         "path": "crate::migrate::MIGRATIONS",
         "role": "implementation",
-        "byte_len": 231082,
-        "sha256": "2e043ad212544fffc97947c966cb1033b0bccf5011d4d7526063157ea588dd20"
+        "byte_len": 232858,
+        "sha256": "c97028d7d127b7c4b88d45829bb2d887089d42bd67889f255aae38e173c20d05"
       },
       {
         "path": "eval/golden.json",
@@ -178,8 +178,8 @@
       {
         "path": "src/migrate.rs",
         "role": "implementation",
-        "byte_len": 1433,
-        "sha256": "767fdb2963db4c70cf7f133b9fb0270869c6de7a1ca08cb38248a794d3b69ed1"
+        "byte_len": 1479,
+        "sha256": "72c0abdaf94169ba3ceb219ad556663e13d116de04ffb418d38b4ad391ae8202"
       },
       {
         "path": "src/migrate/content_identity.rs",
@@ -196,8 +196,8 @@
       {
         "path": "src/migrate/schema_drift.rs",
         "role": "implementation",
-        "byte_len": 8289,
-        "sha256": "caaa66be43c8bf06889cd5360c8ed03ea3384a643e46cdeea2ae0d8cc5e59c04"
+        "byte_len": 8352,
+        "sha256": "5404f7ca463017eb3c5ed288e1bca3972d6c6d6d9209ffd321d3dcc28bd7a8b3"
       },
       {
         "path": "src/migrate/schema_drift/exists.rs",
@@ -208,8 +208,8 @@
       {
         "path": "src/migrate/schema_drift/invariants.rs",
         "role": "implementation",
-        "byte_len": 24579,
-        "sha256": "78d6593530538cc935c7c0ef6a5a9b1cad02675b7604dd1a05fdb356b51e10a1"
+        "byte_len": 24646,
+        "sha256": "d903e20dc5e9d5a46d2cbf9af76fa7d778f26c5f63100a477121574373de24df"
       },
       {
         "path": "src/migrate/schema_drift/invariants/v068.rs",
@@ -278,6 +278,12 @@
         "sha256": "1db15afaf16cf4801158fd398193ff95275032f8a483bca0d49981690efbe702"
       },
       {
+        "path": "src/migrate/schema_drift/invariants/v084.rs",
+        "role": "implementation",
+        "byte_len": 477,
+        "sha256": "6dc308bd9bc74ba18e64d1d4f522bd912f62c3e90cbcfeaf49430954cdaaa7bb"
+      },
+      {
         "path": "src/migrate/state.rs",
         "role": "implementation",
         "byte_len": 1225,
@@ -292,8 +298,8 @@
       {
         "path": "src/migrate/types.rs",
         "role": "implementation",
-        "byte_len": 13704,
-        "sha256": "3ae0025e9ee49b294bcb24b101c1e0e4de8f5ea4cd52395d2d5457040b1a9551"
+        "byte_len": 13874,
+        "sha256": "849c9be983376dca503a6b8d50ebcb7bf11d75400aac70bca613c08a0d96db4c"
       },
       {
         "path": "src/project_id.rs",
@@ -688,8 +694,8 @@
       {
         "path": "src/runtime_config.rs",
         "role": "implementation",
-        "byte_len": 27448,
-        "sha256": "aea5658294dc3d2ccb4bebee3f0a92123a09594472d3173dfd640771a5e63863"
+        "byte_len": 27714,
+        "sha256": "15819d944a5e279c7d74837deb62474d36f674638471655ca04952d2377de31d"
       }
     ]
   },
@@ -718,8 +724,8 @@
       "abstention_queries": 10,
       "abstention_passed": 10,
       "query_tokens_per_query": 11.971830985915492,
-      "retrieval_latency_p50_ms": 5.759333,
-      "retrieval_latency_p95_ms": 10.741083,
+      "retrieval_latency_p50_ms": 5.005,
+      "retrieval_latency_p95_ms": 9.95325,
       "metrics": {
         "count": 61,
         "hit_at_k": 0.5245901639344263,
@@ -736,8 +742,8 @@
       "abstention_queries": 0,
       "abstention_passed": 0,
       "query_tokens_per_query": 8.933333333333334,
-      "retrieval_latency_p50_ms": 5.436583,
-      "retrieval_latency_p95_ms": 5.866958,
+      "retrieval_latency_p50_ms": 4.993125,
+      "retrieval_latency_p95_ms": 6.281499999999999,
       "metrics": {
         "count": 15,
         "hit_at_k": 0.0,
@@ -754,8 +760,8 @@
       "abstention_queries": 10,
       "abstention_passed": 10,
       "query_tokens_per_query": 12.785714285714286,
-      "retrieval_latency_p50_ms": 5.977917,
-      "retrieval_latency_p95_ms": 10.97725,
+      "retrieval_latency_p50_ms": 5.02675,
+      "retrieval_latency_p95_ms": 10.280332999999999,
       "metrics": {
         "count": 46,
         "hit_at_k": 0.6956521739130435,
@@ -773,8 +779,8 @@
         "abstention_queries": 10,
         "abstention_passed": 10,
         "query_tokens_per_query": 12.0,
-        "retrieval_latency_p50_ms": 5.772208,
-        "retrieval_latency_p95_ms": 7.301291,
+        "retrieval_latency_p50_ms": 4.823167,
+        "retrieval_latency_p95_ms": 6.399625,
         "metrics": null
       },
       "failure_lesson": {
@@ -783,8 +789,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 19.0,
-        "retrieval_latency_p50_ms": 7.582458,
-        "retrieval_latency_p95_ms": 7.582458,
+        "retrieval_latency_p50_ms": 6.551208,
+        "retrieval_latency_p95_ms": 6.551208,
         "metrics": {
           "count": 1,
           "hit_at_k": 1.0,
@@ -801,8 +807,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 12.8,
-        "retrieval_latency_p50_ms": 6.313791,
-        "retrieval_latency_p95_ms": 6.460625,
+        "retrieval_latency_p50_ms": 5.236875,
+        "retrieval_latency_p95_ms": 6.225582999999999,
         "metrics": {
           "count": 10,
           "hit_at_k": 1.0,
@@ -819,8 +825,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 19.6,
-        "retrieval_latency_p50_ms": 10.655125,
-        "retrieval_latency_p95_ms": 11.124625,
+        "retrieval_latency_p50_ms": 9.367708,
+        "retrieval_latency_p95_ms": 10.359292000000002,
         "metrics": {
           "count": 10,
           "hit_at_k": 1.0,
@@ -837,8 +843,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 7.4,
-        "retrieval_latency_p50_ms": 4.757499999999999,
-        "retrieval_latency_p95_ms": 7.839957999999999,
+        "retrieval_latency_p50_ms": 4.231666000000001,
+        "retrieval_latency_p95_ms": 13.539916000000002,
         "metrics": {
           "count": 10,
           "hit_at_k": 0.0,
@@ -855,8 +861,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 11.75,
-        "retrieval_latency_p50_ms": 4.326042,
-        "retrieval_latency_p95_ms": 5.643584,
+        "retrieval_latency_p50_ms": 4.4561660000000005,
+        "retrieval_latency_p95_ms": 5.443333,
         "metrics": {
           "count": 4,
           "hit_at_k": 0.0,
@@ -873,8 +879,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 6.0,
-        "retrieval_latency_p50_ms": 5.572916,
-        "retrieval_latency_p95_ms": 5.572916,
+        "retrieval_latency_p50_ms": 5.3252500000000005,
+        "retrieval_latency_p95_ms": 5.3252500000000005,
         "metrics": {
           "count": 1,
           "hit_at_k": 1.0,
@@ -891,8 +897,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 12.6,
-        "retrieval_latency_p50_ms": 5.851084,
-        "retrieval_latency_p95_ms": 6.450291,
+        "retrieval_latency_p50_ms": 5.005,
+        "retrieval_latency_p95_ms": 5.85725,
         "metrics": {
           "count": 10,
           "hit_at_k": 1.0,
@@ -915,7 +921,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.305625,
+        "retrieval_latency_ms": 13.539916000000002,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -928,7 +934,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 4.810625,
+        "retrieval_latency_ms": 4.738708,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -941,7 +947,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 3.903708,
+        "retrieval_latency_ms": 3.141583,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -954,7 +960,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 3.972333,
+        "retrieval_latency_ms": 3.2221670000000002,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -967,7 +973,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 3.678583,
+        "retrieval_latency_ms": 2.5907080000000002,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -980,7 +986,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 4.568583,
+        "retrieval_latency_ms": 3.610167,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -993,7 +999,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 4.878167,
+        "retrieval_latency_ms": 4.25675,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1006,7 +1012,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 4.757499999999999,
+        "retrieval_latency_ms": 3.957375,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1019,7 +1025,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 4.742125,
+        "retrieval_latency_ms": 4.231666000000001,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1032,7 +1038,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.839957999999999,
+        "retrieval_latency_ms": 6.968542,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1047,7 +1053,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 6.313791,
+        "retrieval_latency_ms": 5.809916,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1062,7 +1068,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.689417000000001,
+        "retrieval_latency_ms": 5.044625,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1077,7 +1083,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.977917,
+        "retrieval_latency_ms": 4.859875,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1092,7 +1098,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 6.455167,
+        "retrieval_latency_ms": 5.236875,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1107,7 +1113,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 6.460625,
+        "retrieval_latency_ms": 4.9607920000000005,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1123,7 +1129,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 6.376083,
+        "retrieval_latency_ms": 4.941459,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1138,7 +1144,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 6.110833,
+        "retrieval_latency_ms": 5.31925,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1154,7 +1160,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 6.111,
+        "retrieval_latency_ms": 4.4665,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1170,7 +1176,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 6.398708,
+        "retrieval_latency_ms": 5.828125,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1185,7 +1191,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 6.1457500000000005,
+        "retrieval_latency_ms": 6.225582999999999,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1200,7 +1206,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.901209,
+        "retrieval_latency_ms": 4.864291,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1215,7 +1221,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.600125,
+        "retrieval_latency_ms": 4.857875,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1230,7 +1236,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.705417,
+        "retrieval_latency_ms": 5.178458,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1245,7 +1251,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 6.450291,
+        "retrieval_latency_ms": 5.005,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1260,7 +1266,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 6.005417,
+        "retrieval_latency_ms": 4.718542,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1275,7 +1281,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.736833,
+        "retrieval_latency_ms": 4.751125,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1290,7 +1296,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 6.038792,
+        "retrieval_latency_ms": 5.195458,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1305,7 +1311,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.596125000000001,
+        "retrieval_latency_ms": 4.572833,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1320,7 +1326,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.423166999999999,
+        "retrieval_latency_ms": 5.85725,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1335,7 +1341,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.851084,
+        "retrieval_latency_ms": 5.200875,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1348,7 +1354,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 7.301291,
+        "retrieval_latency_ms": 6.399625,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1361,7 +1367,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 5.281792,
+        "retrieval_latency_ms": 4.477250000000001,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1374,7 +1380,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 5.76775,
+        "retrieval_latency_ms": 4.823167,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1387,7 +1393,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 6.039292,
+        "retrieval_latency_ms": 3.975958,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1400,7 +1406,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 5.709042,
+        "retrieval_latency_ms": 4.971125,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1413,7 +1419,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 4.673875,
+        "retrieval_latency_ms": 4.590167,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1426,7 +1432,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 5.803875,
+        "retrieval_latency_ms": 5.02675,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1439,7 +1445,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 4.326416,
+        "retrieval_latency_ms": 3.817375,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1452,7 +1458,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 5.772208,
+        "retrieval_latency_ms": 4.661833,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1465,7 +1471,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 6.068958,
+        "retrieval_latency_ms": 6.2616249999999996,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1480,7 +1486,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.582458,
+        "retrieval_latency_ms": 6.551208,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1496,7 +1502,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 9.060165999999999,
+        "retrieval_latency_ms": 7.065167,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1512,7 +1518,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 9.972083,
+        "retrieval_latency_ms": 7.29475,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1528,7 +1534,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 10.97725,
+        "retrieval_latency_ms": 9.33775,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1544,7 +1550,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 10.655125,
+        "retrieval_latency_ms": 9.367708,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1560,7 +1566,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 11.107000000000001,
+        "retrieval_latency_ms": 9.562249999999999,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1576,7 +1582,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 8.421375,
+        "retrieval_latency_ms": 7.744792,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1592,7 +1598,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 10.132499999999999,
+        "retrieval_latency_ms": 8.958874999999999,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1608,7 +1614,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 11.124625,
+        "retrieval_latency_ms": 9.95325,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1624,7 +1630,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 10.522167000000001,
+        "retrieval_latency_ms": 10.280332999999999,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1640,7 +1646,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 10.741083,
+        "retrieval_latency_ms": 10.359292000000002,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1653,7 +1659,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.772208,
+        "retrieval_latency_ms": 6.281499999999999,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1666,7 +1672,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.537542,
+        "retrieval_latency_ms": 5.044541,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1679,7 +1685,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.689667,
+        "retrieval_latency_ms": 5.123542,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1692,7 +1698,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.759333,
+        "retrieval_latency_ms": 5.117459,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1705,7 +1711,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.4244580000000004,
+        "retrieval_latency_ms": 4.993125,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1718,7 +1724,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.490625,
+        "retrieval_latency_ms": 4.584625,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1731,7 +1737,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.367959,
+        "retrieval_latency_ms": 5.149375,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1744,7 +1750,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 4.928334,
+        "retrieval_latency_ms": 4.93475,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1757,7 +1763,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.866958,
+        "retrieval_latency_ms": 4.7253750000000005,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1770,7 +1776,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.569167,
+        "retrieval_latency_ms": 4.826541,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1783,7 +1789,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.322915999999999,
+        "retrieval_latency_ms": 4.794874999999999,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1796,7 +1802,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.436583,
+        "retrieval_latency_ms": 4.758208,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1809,7 +1815,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 4.856333,
+        "retrieval_latency_ms": 5.320292,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1822,7 +1828,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.282958,
+        "retrieval_latency_ms": 4.5975,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1835,7 +1841,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.3225,
+        "retrieval_latency_ms": 5.384833,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1848,7 +1854,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.643584,
+        "retrieval_latency_ms": 5.443333,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1861,7 +1867,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 4.326042,
+        "retrieval_latency_ms": 4.4561660000000005,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1874,7 +1880,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 2.582208,
+        "retrieval_latency_ms": 2.18375,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1887,7 +1893,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 2.3795,
+        "retrieval_latency_ms": 2.04475,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1903,7 +1909,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.572916,
+        "retrieval_latency_ms": 5.3252500000000005,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -1918,8 +1924,8 @@
       "abstention_queries": 10,
       "abstention_passed": 10,
       "query_tokens_per_query": 11.971830985915492,
-      "retrieval_latency_p50_ms": 6.105417,
-      "retrieval_latency_p95_ms": 15.68425,
+      "retrieval_latency_p50_ms": 5.7599160000000005,
+      "retrieval_latency_p95_ms": 13.105,
       "metrics": {
         "count": 61,
         "hit_at_k": 0.5245901639344263,
@@ -1936,8 +1942,8 @@
       "abstention_queries": 0,
       "abstention_passed": 0,
       "query_tokens_per_query": 8.933333333333334,
-      "retrieval_latency_p50_ms": 5.506459,
-      "retrieval_latency_p95_ms": 6.214042,
+      "retrieval_latency_p50_ms": 4.995875000000001,
+      "retrieval_latency_p95_ms": 5.533792,
       "metrics": {
         "count": 15,
         "hit_at_k": 0.0,
@@ -1954,8 +1960,8 @@
       "abstention_queries": 10,
       "abstention_passed": 10,
       "query_tokens_per_query": 12.785714285714286,
-      "retrieval_latency_p50_ms": 9.007042,
-      "retrieval_latency_p95_ms": 15.716667,
+      "retrieval_latency_p50_ms": 8.769041999999999,
+      "retrieval_latency_p95_ms": 14.082749999999999,
       "metrics": {
         "count": 46,
         "hit_at_k": 0.6956521739130435,
@@ -1973,8 +1979,8 @@
         "abstention_queries": 10,
         "abstention_passed": 10,
         "query_tokens_per_query": 12.0,
-        "retrieval_latency_p50_ms": 5.602875,
-        "retrieval_latency_p95_ms": 7.9986250000000005,
+        "retrieval_latency_p50_ms": 5.207583,
+        "retrieval_latency_p95_ms": 6.863958,
         "metrics": null
       },
       "failure_lesson": {
@@ -1983,8 +1989,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 19.0,
-        "retrieval_latency_p50_ms": 12.329667,
-        "retrieval_latency_p95_ms": 12.329667,
+        "retrieval_latency_p50_ms": 10.768791,
+        "retrieval_latency_p95_ms": 10.768791,
         "metrics": {
           "count": 1,
           "hit_at_k": 1.0,
@@ -2001,8 +2007,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 12.8,
-        "retrieval_latency_p50_ms": 9.822834,
-        "retrieval_latency_p95_ms": 11.337125,
+        "retrieval_latency_p50_ms": 10.885250000000001,
+        "retrieval_latency_p95_ms": 12.23825,
         "metrics": {
           "count": 10,
           "hit_at_k": 1.0,
@@ -2019,8 +2025,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 19.6,
-        "retrieval_latency_p50_ms": 15.509167000000001,
-        "retrieval_latency_p95_ms": 15.77,
+        "retrieval_latency_p50_ms": 12.775042000000001,
+        "retrieval_latency_p95_ms": 14.957209,
         "metrics": {
           "count": 10,
           "hit_at_k": 1.0,
@@ -2037,8 +2043,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 7.4,
-        "retrieval_latency_p50_ms": 4.8935,
-        "retrieval_latency_p95_ms": 7.580084,
+        "retrieval_latency_p50_ms": 4.682709,
+        "retrieval_latency_p95_ms": 9.048832999999998,
         "metrics": {
           "count": 10,
           "hit_at_k": 0.0,
@@ -2055,8 +2061,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 11.75,
-        "retrieval_latency_p50_ms": 4.318292,
-        "retrieval_latency_p95_ms": 6.105417,
+        "retrieval_latency_p50_ms": 4.147875,
+        "retrieval_latency_p95_ms": 4.920041,
         "metrics": {
           "count": 4,
           "hit_at_k": 0.0,
@@ -2073,8 +2079,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 6.0,
-        "retrieval_latency_p50_ms": 5.921250000000001,
-        "retrieval_latency_p95_ms": 5.921250000000001,
+        "retrieval_latency_p50_ms": 4.952667,
+        "retrieval_latency_p95_ms": 4.952667,
         "metrics": {
           "count": 1,
           "hit_at_k": 1.0,
@@ -2091,8 +2097,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 12.6,
-        "retrieval_latency_p50_ms": 9.158707999999999,
-        "retrieval_latency_p95_ms": 10.954041,
+        "retrieval_latency_p50_ms": 9.108042000000001,
+        "retrieval_latency_p95_ms": 9.961708999999999,
         "metrics": {
           "count": 10,
           "hit_at_k": 1.0,
@@ -2115,7 +2121,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 4.8935,
+        "retrieval_latency_ms": 5.481125,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2128,7 +2134,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 4.899917,
+        "retrieval_latency_ms": 4.682709,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2141,7 +2147,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 3.330291,
+        "retrieval_latency_ms": 3.10775,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2154,7 +2160,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 3.8336249999999996,
+        "retrieval_latency_ms": 3.41725,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2167,7 +2173,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 3.0794170000000003,
+        "retrieval_latency_ms": 2.677583,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2180,7 +2186,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 4.680417,
+        "retrieval_latency_ms": 4.495083,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2193,7 +2199,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.095542,
+        "retrieval_latency_ms": 4.734167,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2206,7 +2212,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 4.928458,
+        "retrieval_latency_ms": 4.419542,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2219,7 +2225,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 4.847917,
+        "retrieval_latency_ms": 5.293375,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2232,7 +2238,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.580084,
+        "retrieval_latency_ms": 9.048832999999998,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2250,7 +2256,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.216209,
+        "retrieval_latency_ms": 11.997,
         "hops": 2,
         "entities_discovered": [
           "Kestrelnook",
@@ -2271,7 +2277,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.731542,
+        "retrieval_latency_ms": 12.23825,
         "hops": 2,
         "entities_discovered": [
           "Lumenquay",
@@ -2294,7 +2300,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.0455,
+        "retrieval_latency_ms": 8.750208,
         "hops": 2,
         "entities_discovered": [
           "Cinderbloom",
@@ -2315,7 +2321,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.9825,
+        "retrieval_latency_ms": 10.065958,
         "hops": 2,
         "entities_discovered": [
           "Brindleforge",
@@ -2337,7 +2343,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.550042,
+        "retrieval_latency_ms": 10.56275,
         "hops": 2,
         "entities_discovered": [
           "Vellumspire",
@@ -2360,7 +2366,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 11.337125,
+        "retrieval_latency_ms": 11.130667,
         "hops": 2,
         "entities_discovered": [
           "Hollowspan",
@@ -2385,7 +2391,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 8.8825,
+        "retrieval_latency_ms": 8.769041999999999,
         "hops": 2,
         "entities_discovered": [
           "Paleravine",
@@ -2406,7 +2412,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 10.20475,
+        "retrieval_latency_ms": 11.127625,
         "hops": 2,
         "entities_discovered": [
           "Copperoven",
@@ -2429,7 +2435,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.822834,
+        "retrieval_latency_ms": 10.885250000000001,
         "hops": 2,
         "entities_discovered": [
           "Cyanward",
@@ -2452,7 +2458,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 10.819125000000001,
+        "retrieval_latency_ms": 9.626875,
         "hops": 2,
         "entities_discovered": [
           "Violetdome",
@@ -2475,7 +2481,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.568541999999999,
+        "retrieval_latency_ms": 9.961708999999999,
         "hops": 2,
         "entities_discovered": [
           "Kestrelnook",
@@ -2497,7 +2503,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.071582999999999,
+        "retrieval_latency_ms": 9.108042000000001,
         "hops": 2,
         "entities_discovered": [
           "Lumenquay",
@@ -2519,7 +2525,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.424125,
+        "retrieval_latency_ms": 8.901208,
         "hops": 2,
         "entities_discovered": [
           "Cinderbloom",
@@ -2541,7 +2547,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.675583,
+        "retrieval_latency_ms": 9.427958,
         "hops": 2,
         "entities_discovered": [
           "Brindleforge",
@@ -2563,7 +2569,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.007042,
+        "retrieval_latency_ms": 9.407250000000001,
         "hops": 2,
         "entities_discovered": [
           "Vellumspire",
@@ -2585,7 +2591,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.158707999999999,
+        "retrieval_latency_ms": 9.074125,
         "hops": 2,
         "entities_discovered": [
           "Hollowspan",
@@ -2607,7 +2613,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 10.954041,
+        "retrieval_latency_ms": 9.246666000000001,
         "hops": 2,
         "entities_discovered": [
           "Paleravine",
@@ -2631,7 +2637,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 8.970083,
+        "retrieval_latency_ms": 8.689542,
         "hops": 2,
         "entities_discovered": [
           "Copperoven",
@@ -2653,7 +2659,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 8.777125,
+        "retrieval_latency_ms": 8.515583,
         "hops": 2,
         "entities_discovered": [
           "Cyanward",
@@ -2675,7 +2681,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.131625000000001,
+        "retrieval_latency_ms": 8.170416999999999,
         "hops": 2,
         "entities_discovered": [
           "Violetdome",
@@ -2692,7 +2698,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 7.9986250000000005,
+        "retrieval_latency_ms": 6.863958,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2705,7 +2711,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 5.602875,
+        "retrieval_latency_ms": 5.075083,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2718,7 +2724,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 5.583165999999999,
+        "retrieval_latency_ms": 5.973542,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2731,7 +2737,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 5.356666000000001,
+        "retrieval_latency_ms": 5.062375,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2744,7 +2750,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 5.709125,
+        "retrieval_latency_ms": 5.207583,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2757,7 +2763,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 5.008292,
+        "retrieval_latency_ms": 4.376167000000001,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2770,7 +2776,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 5.5889169999999995,
+        "retrieval_latency_ms": 4.96925,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2783,7 +2789,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 4.749375000000001,
+        "retrieval_latency_ms": 3.73825,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2796,7 +2802,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 5.893917,
+        "retrieval_latency_ms": 6.1850000000000005,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2809,7 +2815,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 6.545292,
+        "retrieval_latency_ms": 5.7599160000000005,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -2824,7 +2830,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 12.329667,
+        "retrieval_latency_ms": 10.768791,
         "hops": 1,
         "entities_discovered": [
           "Failureforge",
@@ -2850,7 +2856,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 13.420042,
+        "retrieval_latency_ms": 11.232375,
         "hops": 2,
         "entities_discovered": [
           "Kestrelnook",
@@ -2875,7 +2881,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 14.040624999999999,
+        "retrieval_latency_ms": 12.391667,
         "hops": 2,
         "entities_discovered": [
           "Lumenquay",
@@ -2900,7 +2906,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 15.68425,
+        "retrieval_latency_ms": 12.775042000000001,
         "hops": 2,
         "entities_discovered": [
           "Cinderbloom",
@@ -2925,7 +2931,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 15.716667,
+        "retrieval_latency_ms": 13.105,
         "hops": 2,
         "entities_discovered": [
           "Brindleforge",
@@ -2950,7 +2956,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 15.509167000000001,
+        "retrieval_latency_ms": 12.667042,
         "hops": 2,
         "entities_discovered": [
           "Vellumspire",
@@ -2975,7 +2981,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 13.129167,
+        "retrieval_latency_ms": 11.460208,
         "hops": 2,
         "entities_discovered": [
           "Hollowspan",
@@ -3000,7 +3006,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 14.667625,
+        "retrieval_latency_ms": 12.422291,
         "hops": 2,
         "entities_discovered": [
           "Paleravine",
@@ -3025,7 +3031,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 15.77,
+        "retrieval_latency_ms": 14.957209,
         "hops": 2,
         "entities_discovered": [
           "Copperoven",
@@ -3050,7 +3056,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 15.319792,
+        "retrieval_latency_ms": 14.082749999999999,
         "hops": 2,
         "entities_discovered": [
           "Cyanward",
@@ -3075,7 +3081,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 15.741041000000001,
+        "retrieval_latency_ms": 14.725042,
         "hops": 2,
         "entities_discovered": [
           "Violetdome",
@@ -3094,7 +3100,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.402083999999999,
+        "retrieval_latency_ms": 5.468833999999999,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3107,7 +3113,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 6.214042,
+        "retrieval_latency_ms": 5.533792,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3120,7 +3126,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.808916,
+        "retrieval_latency_ms": 4.983582999999999,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3133,7 +3139,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.619458,
+        "retrieval_latency_ms": 4.859541999999999,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3146,7 +3152,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.194417,
+        "retrieval_latency_ms": 4.995875000000001,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3159,7 +3165,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.098666,
+        "retrieval_latency_ms": 4.569291,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3172,7 +3178,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.1232500000000005,
+        "retrieval_latency_ms": 5.312166,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3185,7 +3191,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.567875,
+        "retrieval_latency_ms": 5.311084,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3198,7 +3204,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.689167,
+        "retrieval_latency_ms": 5.007916000000001,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3211,7 +3217,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.506459,
+        "retrieval_latency_ms": 4.940499999999999,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3224,7 +3230,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.7256670000000005,
+        "retrieval_latency_ms": 5.213417,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3237,7 +3243,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.7253750000000005,
+        "retrieval_latency_ms": 5.034916000000001,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3250,7 +3256,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 4.896707999999999,
+        "retrieval_latency_ms": 4.964291,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3263,7 +3269,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.109624999999999,
+        "retrieval_latency_ms": 4.933834,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3276,7 +3282,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 4.980875,
+        "retrieval_latency_ms": 4.781792,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3289,7 +3295,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 6.105417,
+        "retrieval_latency_ms": 4.920041,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3302,7 +3308,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 4.318292,
+        "retrieval_latency_ms": 4.147875,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3315,7 +3321,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 2.322875,
+        "retrieval_latency_ms": 2.349209,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3328,7 +3334,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 2.6096660000000003,
+        "retrieval_latency_ms": 2.369834,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3344,7 +3350,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.921250000000001,
+        "retrieval_latency_ms": 4.952667,
         "hops": 1,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3359,8 +3365,8 @@
       "abstention_queries": 10,
       "abstention_passed": 10,
       "query_tokens_per_query": 11.971830985915492,
-      "retrieval_latency_p50_ms": 7.343667,
-      "retrieval_latency_p95_ms": 12.315292,
+      "retrieval_latency_p50_ms": 6.896,
+      "retrieval_latency_p95_ms": 11.038208000000001,
       "metrics": {
         "count": 61,
         "hit_at_k": 0.7704918032786885,
@@ -3377,8 +3383,8 @@
       "abstention_queries": 0,
       "abstention_passed": 0,
       "query_tokens_per_query": 8.933333333333334,
-      "retrieval_latency_p50_ms": 9.661,
-      "retrieval_latency_p95_ms": 10.898875,
+      "retrieval_latency_p50_ms": 9.073708,
+      "retrieval_latency_p95_ms": 9.557667,
       "metrics": {
         "count": 15,
         "hit_at_k": 1.0,
@@ -3395,8 +3401,8 @@
       "abstention_queries": 10,
       "abstention_passed": 10,
       "query_tokens_per_query": 12.785714285714286,
-      "retrieval_latency_p50_ms": 7.177459,
-      "retrieval_latency_p95_ms": 12.344166999999999,
+      "retrieval_latency_p50_ms": 6.699417,
+      "retrieval_latency_p95_ms": 11.163541,
       "metrics": {
         "count": 46,
         "hit_at_k": 0.6956521739130435,
@@ -3414,8 +3420,8 @@
         "abstention_queries": 10,
         "abstention_passed": 10,
         "query_tokens_per_query": 12.0,
-        "retrieval_latency_p50_ms": 6.208333,
-        "retrieval_latency_p95_ms": 8.047958,
+        "retrieval_latency_p50_ms": 5.712709,
+        "retrieval_latency_p95_ms": 7.890708,
         "metrics": null
       },
       "failure_lesson": {
@@ -3424,8 +3430,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 19.0,
-        "retrieval_latency_p50_ms": 8.407917000000001,
-        "retrieval_latency_p95_ms": 8.407917000000001,
+        "retrieval_latency_p50_ms": 10.321541999999999,
+        "retrieval_latency_p95_ms": 10.321541999999999,
         "metrics": {
           "count": 1,
           "hit_at_k": 1.0,
@@ -3442,8 +3448,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 12.8,
-        "retrieval_latency_p50_ms": 7.3562080000000005,
-        "retrieval_latency_p95_ms": 7.784459,
+        "retrieval_latency_p50_ms": 7.289458000000001,
+        "retrieval_latency_p95_ms": 8.104083,
         "metrics": {
           "count": 10,
           "hit_at_k": 1.0,
@@ -3460,8 +3466,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 19.6,
-        "retrieval_latency_p50_ms": 12.244458999999999,
-        "retrieval_latency_p95_ms": 12.964917,
+        "retrieval_latency_p50_ms": 10.987333,
+        "retrieval_latency_p95_ms": 11.527292,
         "metrics": {
           "count": 10,
           "hit_at_k": 1.0,
@@ -3478,8 +3484,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 7.4,
-        "retrieval_latency_p50_ms": 5.2944580000000006,
-        "retrieval_latency_p95_ms": 7.552416999999999,
+        "retrieval_latency_p50_ms": 5.488207999999999,
+        "retrieval_latency_p95_ms": 7.102791,
         "metrics": {
           "count": 10,
           "hit_at_k": 0.0,
@@ -3496,8 +3502,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 11.75,
-        "retrieval_latency_p50_ms": 4.955125000000001,
-        "retrieval_latency_p95_ms": 6.3055,
+        "retrieval_latency_p50_ms": 4.275708,
+        "retrieval_latency_p95_ms": 5.473833,
         "metrics": {
           "count": 4,
           "hit_at_k": 0.0,
@@ -3514,8 +3520,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 6.0,
-        "retrieval_latency_p50_ms": 6.439875000000001,
-        "retrieval_latency_p95_ms": 6.439875000000001,
+        "retrieval_latency_p50_ms": 6.794042,
+        "retrieval_latency_p95_ms": 6.794042,
         "metrics": {
           "count": 1,
           "hit_at_k": 1.0,
@@ -3532,8 +3538,8 @@
         "abstention_queries": 0,
         "abstention_passed": 0,
         "query_tokens_per_query": 12.6,
-        "retrieval_latency_p50_ms": 7.233041,
-        "retrieval_latency_p95_ms": 7.901916999999999,
+        "retrieval_latency_p50_ms": 6.864084,
+        "retrieval_latency_p95_ms": 7.181958,
         "metrics": {
           "count": 10,
           "hit_at_k": 1.0,
@@ -3556,7 +3562,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.120416,
+        "retrieval_latency_ms": 5.82925,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3569,7 +3575,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.61375,
+        "retrieval_latency_ms": 5.718166999999999,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3582,7 +3588,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 3.595917,
+        "retrieval_latency_ms": 3.45175,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3595,7 +3601,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 3.954875,
+        "retrieval_latency_ms": 4.025375,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3608,7 +3614,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 3.277542,
+        "retrieval_latency_ms": 3.640958,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3621,7 +3627,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.167459,
+        "retrieval_latency_ms": 4.84075,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3634,7 +3640,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.455916,
+        "retrieval_latency_ms": 5.903958,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3647,7 +3653,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.324625,
+        "retrieval_latency_ms": 4.875624999999999,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3660,7 +3666,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 5.2944580000000006,
+        "retrieval_latency_ms": 5.488207999999999,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3673,7 +3679,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.552416999999999,
+        "retrieval_latency_ms": 7.102791,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3688,7 +3694,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.709333,
+        "retrieval_latency_ms": 6.784917,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3703,7 +3709,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 6.98525,
+        "retrieval_latency_ms": 7.355542,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3718,7 +3724,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.0055,
+        "retrieval_latency_ms": 8.104083,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3733,7 +3739,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.723833,
+        "retrieval_latency_ms": 7.451625,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3748,7 +3754,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.784459,
+        "retrieval_latency_ms": 7.289458000000001,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3764,7 +3770,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.3562080000000005,
+        "retrieval_latency_ms": 6.738625,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3779,7 +3785,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.211666,
+        "retrieval_latency_ms": 8.073375,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3795,7 +3801,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.343667,
+        "retrieval_latency_ms": 6.674833,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3811,7 +3817,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.265625,
+        "retrieval_latency_ms": 6.156541,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3826,7 +3832,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.4269169999999995,
+        "retrieval_latency_ms": 6.870292,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3841,7 +3847,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.2455,
+        "retrieval_latency_ms": 6.896,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3856,7 +3862,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.048583,
+        "retrieval_latency_ms": 6.670417,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3871,7 +3877,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.641667,
+        "retrieval_latency_ms": 6.699417,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3886,7 +3892,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.177459,
+        "retrieval_latency_ms": 7.181958,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3901,7 +3907,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.233041,
+        "retrieval_latency_ms": 6.505707999999999,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3916,7 +3922,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.093042,
+        "retrieval_latency_ms": 6.878958999999999,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3931,7 +3937,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 6.862584,
+        "retrieval_latency_ms": 6.456791,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3946,7 +3952,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.901916999999999,
+        "retrieval_latency_ms": 5.985167,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3961,7 +3967,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.3392919999999995,
+        "retrieval_latency_ms": 6.979208,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3976,7 +3982,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.025333,
+        "retrieval_latency_ms": 6.864084,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -3989,7 +3995,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 8.047958,
+        "retrieval_latency_ms": 7.890708,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4002,7 +4008,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 6.3623330000000005,
+        "retrieval_latency_ms": 6.085583000000001,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4015,7 +4021,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 6.040167,
+        "retrieval_latency_ms": 5.619458,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4028,7 +4034,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 5.1901660000000005,
+        "retrieval_latency_ms": 5.000166999999999,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4041,7 +4047,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 6.691791,
+        "retrieval_latency_ms": 5.665208,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4054,7 +4060,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 5.514542,
+        "retrieval_latency_ms": 4.742334,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4067,7 +4073,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 6.1239170000000005,
+        "retrieval_latency_ms": 6.307958,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4080,7 +4086,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 4.830166999999999,
+        "retrieval_latency_ms": 4.704084,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4093,7 +4099,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 6.208333,
+        "retrieval_latency_ms": 5.712709,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4106,7 +4112,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 0,
-        "retrieval_latency_ms": 7.310334,
+        "retrieval_latency_ms": 6.32,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4121,7 +4127,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 8.407917000000001,
+        "retrieval_latency_ms": 10.321541999999999,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4137,7 +4143,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 9.991708000000001,
+        "retrieval_latency_ms": 8.52575,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4153,7 +4159,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 11.101541,
+        "retrieval_latency_ms": 8.676959,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4169,7 +4175,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 12.344166999999999,
+        "retrieval_latency_ms": 11.527292,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4185,7 +4191,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 12.964917,
+        "retrieval_latency_ms": 10.732833000000001,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4201,7 +4207,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 12.244458999999999,
+        "retrieval_latency_ms": 10.364708,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4217,7 +4223,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 9.813125000000001,
+        "retrieval_latency_ms": 8.71475,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4233,7 +4239,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 11.475959000000001,
+        "retrieval_latency_ms": 11.038208000000001,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4249,7 +4255,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 12.558708,
+        "retrieval_latency_ms": 11.458,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4265,7 +4271,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 12.315292,
+        "retrieval_latency_ms": 10.987333,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4281,7 +4287,7 @@
         ],
         "matched_refs": 2,
         "expected_refs": 2,
-        "retrieval_latency_ms": 11.901916,
+        "retrieval_latency_ms": 11.163541,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4296,7 +4302,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 10.898875,
+        "retrieval_latency_ms": 9.524208,
         "hops": 2,
         "entities_discovered": [],
         "graph_result_count": 1
@@ -4311,7 +4317,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.449542,
+        "retrieval_latency_ms": 8.891417,
         "hops": 2,
         "entities_discovered": [],
         "graph_result_count": 1
@@ -4326,7 +4332,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 10.133209,
+        "retrieval_latency_ms": 9.474542000000001,
         "hops": 2,
         "entities_discovered": [],
         "graph_result_count": 1
@@ -4341,7 +4347,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.318958,
+        "retrieval_latency_ms": 8.971209,
         "hops": 2,
         "entities_discovered": [],
         "graph_result_count": 1
@@ -4356,7 +4362,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 10.116083,
+        "retrieval_latency_ms": 8.9265,
         "hops": 2,
         "entities_discovered": [],
         "graph_result_count": 1
@@ -4371,7 +4377,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 10.040500000000002,
+        "retrieval_latency_ms": 9.557667,
         "hops": 2,
         "entities_discovered": [],
         "graph_result_count": 1
@@ -4386,7 +4392,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.811167000000001,
+        "retrieval_latency_ms": 9.271125,
         "hops": 2,
         "entities_discovered": [],
         "graph_result_count": 1
@@ -4401,7 +4407,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.117833000000001,
+        "retrieval_latency_ms": 9.2245,
         "hops": 2,
         "entities_discovered": [],
         "graph_result_count": 1
@@ -4416,7 +4422,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.967500000000001,
+        "retrieval_latency_ms": 9.10475,
         "hops": 2,
         "entities_discovered": [],
         "graph_result_count": 1
@@ -4431,7 +4437,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.571375,
+        "retrieval_latency_ms": 9.066708,
         "hops": 2,
         "entities_discovered": [],
         "graph_result_count": 1
@@ -4446,7 +4452,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 10.583959,
+        "retrieval_latency_ms": 9.073708,
         "hops": 2,
         "entities_discovered": [],
         "graph_result_count": 1
@@ -4461,7 +4467,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 9.661,
+        "retrieval_latency_ms": 9.331459,
         "hops": 2,
         "entities_discovered": [],
         "graph_result_count": 1
@@ -4476,7 +4482,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.577917,
+        "retrieval_latency_ms": 7.929,
         "hops": 2,
         "entities_discovered": [],
         "graph_result_count": 1
@@ -4491,7 +4497,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.668833,
+        "retrieval_latency_ms": 7.8222499999999995,
         "hops": 2,
         "entities_discovered": [],
         "graph_result_count": 1
@@ -4506,7 +4512,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 7.948083,
+        "retrieval_latency_ms": 7.678209,
         "hops": 2,
         "entities_discovered": [],
         "graph_result_count": 1
@@ -4519,7 +4525,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 6.3055,
+        "retrieval_latency_ms": 5.473833,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4532,7 +4538,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 4.955125000000001,
+        "retrieval_latency_ms": 4.275708,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4545,7 +4551,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 2.484292,
+        "retrieval_latency_ms": 2.186917,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4558,7 +4564,7 @@
         "retrieved_ids": [],
         "matched_refs": 0,
         "expected_refs": 1,
-        "retrieval_latency_ms": 2.386416,
+        "retrieval_latency_ms": 2.056833,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4574,7 +4580,7 @@
         ],
         "matched_refs": 1,
         "expected_refs": 1,
-        "retrieval_latency_ms": 6.439875000000001,
+        "retrieval_latency_ms": 6.794042,
         "hops": null,
         "entities_discovered": [],
         "graph_result_count": 0
@@ -4588,7 +4594,7 @@
     "non_associative_recall_at_k": 0.0,
     "non_associative_evidence_recall_at_k": 0.0,
     "non_associative_ndcg_at_10": 0.0,
-    "p95_latency_ms": 1.5742089999999997
+    "p95_latency_ms": 1.0849580000000003
   },
   "checks": {
     "associative_slice_present": true,
