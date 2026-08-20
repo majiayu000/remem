@@ -6,7 +6,7 @@
 //! `Unknown`. No randomness, no LLM, no stored confidence in the decision
 //! path.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use anyhow::Result;
 use rusqlite::Connection;
@@ -39,12 +39,42 @@ pub(crate) fn project_current_truth_for_context(
     let reference_epoch = reference_epoch(query);
     let (claims, relations) =
         load_memory_claim_groups_for_context_at(conn, query, reference_epoch, relevant_memory_ids)?;
+    let relations = context_safe_relations(&claims, relations);
     Ok(resolve_projection(
         query,
         claims,
         relations,
         reference_epoch,
     ))
+}
+
+fn context_safe_relations(claims: &[ClaimView], relations: Vec<RelationView>) -> Vec<RelationView> {
+    let subjects = claims
+        .iter()
+        .map(|claim| (claim.canonical_ref.as_str(), claim.subject_key.as_str()))
+        .collect::<HashMap<_, _>>();
+    relations
+        .into_iter()
+        .filter(|relation| match relation.kind {
+            // Winner-changing relations are meaningful only within one
+            // subject identity. A cross-subject replacement must not
+            // suppress an otherwise valid production CurrentTruth claim.
+            ClaimRelationKind::Supersedes | ClaimRelationKind::Refutes => {
+                matches!(
+                    (
+                        subjects.get(relation.from_ref.as_str()),
+                        subjects.get(relation.to_ref.as_str())
+                    ),
+                    (Some(from_subject), Some(to_subject)) if from_subject == to_subject
+                )
+            }
+            // Provenance relations may connect subjects, but remain
+            // decision-neutral in winner selection.
+            ClaimRelationKind::Supports
+            | ClaimRelationKind::DerivedFrom
+            | ClaimRelationKind::AppliesTo => true,
+        })
+        .collect()
 }
 
 pub(crate) fn project_current_truth_at_reference_epoch(

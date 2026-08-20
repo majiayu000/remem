@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.81` keeps production CurrentTruth winner-changing
+  relations within one computed subject identity, so a cross-topic or
+  cross-owner supersedes/refutes edge cannot suppress an unrelated valid
+  SessionStart claim while provenance-only relations remain available.
 - Staged source version `0.6.80` for architecture convergence: empty-store
   `pending_observations` drain now persists `exhausted` and skips ordinary
   workers, worker interval schedules share one admission helper, SessionStart

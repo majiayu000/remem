@@ -478,6 +478,137 @@ fn g2_rejected_rival_cannot_supersede_an_admitted_winner() {
 }
 
 #[test]
+fn cross_subject_supersedes_cannot_remove_session_start_truth() {
+    let conn = conn_with_schema();
+    insert_memory(
+        &conn,
+        73,
+        PROJECT,
+        Some("migration-storage"),
+        "decision",
+        "Migration storage decision",
+        "Keep the migration ledger in SQLite.",
+        EPOCH - 10,
+    );
+    insert_memory(
+        &conn,
+        74,
+        PROJECT,
+        Some("migration-runner"),
+        "decision",
+        "Migration runner decision",
+        "Run migrations before starting workers.",
+        EPOCH,
+    );
+    conn.execute(
+        "INSERT INTO memory_edges
+         (edge_type, from_memory_id, to_memory_id, created_at_epoch)
+         VALUES ('supersedes', 73, 74, ?1)",
+        [EPOCH],
+    )
+    .expect("cross-subject replacement edge");
+
+    let bundle = compile_session_start_bundle(
+        &conn,
+        &request(),
+        "/tmp/remem-current-truth-cross-subject",
+        None,
+        true,
+    )
+    .expect("compile");
+
+    for id in [73, 74] {
+        let stable_key = format!("memory:{id}");
+        let selected = bundle
+            .current_truth
+            .iter()
+            .chain(bundle.memory_index.iter())
+            .find(|item| item.stable_key == stable_key);
+        assert!(
+            selected.is_some_and(|item| item.projection_ref.is_some()),
+            "cross-subject relation removed memory:{id}: {bundle:#?}"
+        );
+    }
+}
+
+#[test]
+fn production_relation_filter_preserves_the_relation_contract() {
+    let conn = conn_with_schema();
+    for (id, topic) in [
+        (75, "conflict-left"),
+        (76, "conflict-right"),
+        (77, "same-subject"),
+        (78, "same-subject"),
+        (79, "support-left"),
+        (80, "support-right"),
+        (81, "derived-left"),
+        (82, "derived-right"),
+    ] {
+        insert_memory(
+            &conn,
+            id,
+            PROJECT,
+            Some(topic),
+            "decision",
+            &format!("Decision {id}"),
+            &format!("Evidence for decision {id}"),
+            EPOCH + id,
+        );
+    }
+    for (edge_type, from_id, to_id) in [
+        ("conflicts", 75, 76),
+        ("supersedes", 77, 78),
+        ("duplicates", 79, 80),
+        ("derived_from", 81, 82),
+    ] {
+        conn.execute(
+            "INSERT INTO memory_edges
+             (edge_type, from_memory_id, to_memory_id, created_at_epoch)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![edge_type, from_id, to_id, EPOCH + to_id],
+        )
+        .expect("relation edge");
+    }
+
+    let ids = (75..=82).collect::<Vec<_>>();
+    let projection =
+        crate::context_bundle::project_for_scope(&conn, PROJECT, None, EPOCH + 100, &ids)
+            .expect("production projection");
+    let truth_for = |memory_id: i64| {
+        let canonical_ref = format!("memory:{memory_id}");
+        projection.truths.iter().find(|truth| {
+            truth
+                .claim
+                .as_ref()
+                .is_some_and(|claim| claim.canonical_ref == canonical_ref)
+        })
+    };
+
+    assert!(truth_for(75).is_some() && truth_for(76).is_some());
+    assert!(truth_for(77).is_none());
+    let replacement = truth_for(78).expect("same-subject replacement winner");
+    assert_eq!(
+        replacement.selected_reason,
+        crate::truth::TruthSelectionReason::ExplicitSupersedes
+    );
+    for (id, kind) in [
+        (79, crate::truth::ClaimRelationKind::Supports),
+        (80, crate::truth::ClaimRelationKind::Supports),
+        (81, crate::truth::ClaimRelationKind::DerivedFrom),
+        (82, crate::truth::ClaimRelationKind::DerivedFrom),
+    ] {
+        assert!(
+            truth_for(id)
+                .expect("cross-subject provenance claim")
+                .supporting_relations
+                .iter()
+                .any(|relation| relation.kind == kind),
+            "missing {kind:?} relation for memory:{id}: {projection:#?}"
+        );
+    }
+}
+
+#[test]
 fn projection_failure_blocks_raw_core_from_session_start_output() {
     let _dir = ScopedTestDataDir::new("current-truth-projection-failure");
     let conn = conn_with_schema();
