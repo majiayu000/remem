@@ -310,7 +310,33 @@ fn family_env_only_reports_env_provenance() {
             };
             let (cost, source) = estimate_cost_usd("haiku", &usage).expect("pricing");
             assert_eq!(source, "env_override");
-            assert!((cost - 14.0).abs() < f64::EPSILON);
+            assert!((cost - 12.0).abs() < f64::EPSILON);
+        },
+    );
+}
+
+#[test]
+fn family_output_env_preserves_configured_reasoning_rate() {
+    with_pricing_config(
+        "[pricing.haiku]\nreasoning_per_mtok = 99.0\n",
+        &[
+            ("REMEM_PRICE_INPUT_PER_MTOK", None),
+            ("REMEM_PRICE_OUTPUT_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_INPUT_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_OUTPUT_PER_MTOK", Some("7.0")),
+            ("REMEM_PRICE_HAIKU_REASONING_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_CACHE_CREATION_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_CACHE_READ_PER_MTOK", None),
+        ],
+        || {
+            let usage = TokenUsage {
+                output_tokens: 1_000_000,
+                reasoning_tokens: 1_000_000,
+                ..TokenUsage::default()
+            };
+            let (cost, source) = estimate_cost_usd("haiku", &usage).expect("pricing");
+            assert_eq!(source, "env_override");
+            assert!((cost - 106.0).abs() < f64::EPSILON);
         },
     );
 }

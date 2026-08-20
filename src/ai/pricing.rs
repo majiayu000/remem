@@ -163,17 +163,10 @@ fn apply_family_env(default: ModelPricing, prefix: &str) -> ModelPricing {
         || cache_creation_override.is_some()
         || cache_read_override.is_some();
     let input = input_override.unwrap_or(default.input_per_mtok);
-    let output = output_override.unwrap_or(default.output_per_mtok);
     ModelPricing {
         input_per_mtok: input,
-        output_per_mtok: output,
-        reasoning_per_mtok: reasoning_override.unwrap_or_else(|| {
-            if output_override.is_some() {
-                output
-            } else {
-                default.reasoning_per_mtok
-            }
-        }),
+        output_per_mtok: output_override.unwrap_or(default.output_per_mtok),
+        reasoning_per_mtok: reasoning_override.unwrap_or(default.reasoning_per_mtok),
         cache_creation_per_mtok: cache_creation_override.unwrap_or(default.cache_creation_per_mtok),
         cache_read_per_mtok: cache_read_override.unwrap_or(default.cache_read_per_mtok),
         source: if has_env_override {

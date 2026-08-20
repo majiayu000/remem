@@ -1,5 +1,5 @@
 use std::fs::{File, OpenOptions};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use fs2::FileExt;
@@ -69,6 +69,14 @@ fn should_spawn_worker_once(conn: &rusqlite::Connection) -> Result<bool> {
 
 fn spawn_worker_once(conn: &rusqlite::Connection) -> Result<()> {
     let exe = std::env::current_exe()?;
+    spawn_worker_once_from_executable(conn, &exe)
+}
+
+fn spawn_worker_once_from_executable(
+    conn: &rusqlite::Connection,
+    current_exe: &Path,
+) -> Result<()> {
+    let exe = worker_executable(current_exe)?;
     let worker_dir = stable_worker_dir();
     let stderr_file = crate::log::open_log_append();
     let stderr_cfg = match stderr_file {
@@ -96,6 +104,18 @@ fn spawn_worker_once(conn: &rusqlite::Connection) -> Result<()> {
     )
     .context("record worker --once launch heartbeat")?;
     Ok(())
+}
+
+fn worker_executable(current_exe: &Path) -> Result<PathBuf> {
+    if crate::hook_cli::is_hook_binary(current_exe) {
+        return crate::hook_cli::sibling_full_binary(current_exe).ok_or_else(|| {
+            anyhow::anyhow!(
+                "cannot launch worker from slim hook {}: executable sibling remem is missing",
+                current_exe.display()
+            )
+        });
+    }
+    Ok(current_exe.to_path_buf())
 }
 
 fn stable_worker_dir() -> PathBuf {
@@ -177,9 +197,59 @@ mod tests {
     use crate::db::{self, test_support::ScopedTestDataDir};
 
     use super::{
-        should_spawn_worker_once, spawn_worker_once_if_idle_with, stable_worker_dir,
-        WorkerSpawnDecision,
+        should_spawn_worker_once, spawn_worker_once_from_executable,
+        spawn_worker_once_if_idle_with, stable_worker_dir, worker_executable, WorkerSpawnDecision,
     };
+
+    #[cfg(unix)]
+    #[test]
+    fn slim_hook_stop_fallback_spawns_full_sibling_worker() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let test_dir = ScopedTestDataDir::new("summary-slim-hook-worker");
+        let conn = db::open_db()?;
+        let hook = test_dir.path.join("remem-hook");
+        let full = test_dir.path.join("remem");
+        let args_file = test_dir.path.join("remem.args");
+        std::fs::write(
+            &full,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n",
+                args_file.display()
+            ),
+        )?;
+        let mut permissions = std::fs::metadata(&full)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&full, permissions)?;
+
+        spawn_worker_once_from_executable(&conn, &hook)?;
+
+        for _ in 0..40 {
+            if args_file.exists() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert_eq!(std::fs::read_to_string(args_file)?, "worker\n--once\n");
+        assert!(db::healthy_current_once_worker_heartbeat(
+            &conn,
+            db::WORKER_HEARTBEAT_HEALTH_SECS
+        )?
+        .is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn slim_hook_without_full_sibling_fails_before_launch() {
+        let test_dir = ScopedTestDataDir::new("summary-slim-hook-missing-worker");
+        let hook = test_dir.path.join("remem-hook");
+
+        let error = worker_executable(&hook).expect_err("missing remem sibling must fail");
+
+        assert!(error
+            .to_string()
+            .contains("executable sibling remem is missing"));
+    }
 
     #[test]
     fn missing_worker_uses_stop_fallback_spawn() {
