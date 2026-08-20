@@ -125,7 +125,9 @@ fn hex_decode(value: &str) -> Result<Vec<u8>> {
         anyhow::bail!("hex value must have even length");
     }
     bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| Ok((hex_nibble(pair[0])? << 4) | hex_nibble(pair[1])?))
         .collect()
 }

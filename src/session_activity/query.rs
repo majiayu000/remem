@@ -444,7 +444,7 @@ fn decode_activity_cursor(encoded: &str) -> Result<ActivitySessionCursor> {
         bail!("invalid session activity cursor encoding");
     }
     let mut bytes = Vec::with_capacity(payload.len() / 2);
-    for pair in payload.as_bytes().chunks_exact(2) {
+    for pair in payload.as_bytes().as_chunks::<2>().0 {
         let high =
             decode_hex_nibble(pair[0]).context("invalid session activity cursor encoding")?;
         let low = decode_hex_nibble(pair[1]).context("invalid session activity cursor encoding")?;
