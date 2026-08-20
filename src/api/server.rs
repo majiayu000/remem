@@ -6,15 +6,16 @@ use axum::{
 
 use super::auth::{ensure_api_token, require_api_token};
 use super::handlers::{
-    handle_approve_candidate, handle_archive_memory, handle_blocked_candidates,
-    handle_candidate_detail, handle_capabilities, handle_edit_candidate, handle_event_detail,
-    handle_get_memory, handle_graph, handle_health, handle_list_candidates, handle_list_events,
-    handle_list_memories, handle_list_observations, handle_list_sessions, handle_list_tasks,
-    handle_list_workstreams, handle_memory_detail, handle_observation_detail,
+    handle_activity_sessions, handle_approve_candidate, handle_archive_memory,
+    handle_blocked_candidates, handle_candidate_detail, handle_capabilities, handle_edit_candidate,
+    handle_event_detail, handle_get_memory, handle_graph, handle_health, handle_list_candidates,
+    handle_list_events, handle_list_memories, handle_list_observations,
+    handle_list_session_activity, handle_list_sessions, handle_list_tasks, handle_list_workstreams,
+    handle_memory_detail, handle_observation_detail, handle_project_session_activity,
     handle_reject_candidate, handle_restore_memory, handle_safe_approve_candidate,
     handle_safe_edit_candidate, handle_safe_reject_candidate, handle_save_memory, handle_search,
-    handle_session_detail, handle_stats, handle_status, handle_task_detail, handle_user_recall,
-    handle_workstream_detail,
+    handle_session_activity_detail, handle_session_activity_stats, handle_session_detail,
+    handle_stats, handle_status, handle_task_detail, handle_user_recall, handle_workstream_detail,
 };
 use super::types::{DbState, StatusCache};
 
@@ -62,6 +63,23 @@ pub fn build_router(_port: u16) -> Router<DbState> {
         .route("/api/v1/observations/{id}", get(handle_observation_detail))
         .route("/api/v1/sessions", get(handle_list_sessions))
         .route("/api/v1/sessions/{id}", get(handle_session_detail))
+        .route(
+            "/api/v1/session-activity/sessions",
+            get(handle_activity_sessions),
+        )
+        .route(
+            "/api/v1/session-activity/project",
+            post(handle_project_session_activity),
+        )
+        .route(
+            "/api/v1/session-activity",
+            get(handle_list_session_activity),
+        )
+        .route(
+            "/api/v1/session-activity/{id}",
+            get(handle_session_activity_detail),
+        )
+        .route("/api/v1/session-stats", get(handle_session_activity_stats))
         .route("/api/v1/workstreams", get(handle_list_workstreams))
         .route("/api/v1/workstreams/{id}", get(handle_workstream_detail))
         .route("/api/v1/events", get(handle_list_events))

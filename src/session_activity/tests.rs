@@ -1,7 +1,10 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
-use super::{project_session, SessionActivityKey, PROJECTION_VERSION};
+use super::{
+    activity_stats, get_turn, list_activity_sessions, list_turns, project_session,
+    SessionActivityKey, PROJECTION_VERSION,
+};
 
 fn setup() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
@@ -151,6 +154,30 @@ fn projects_ordered_turns_with_actions_and_is_idempotent() -> Result<()> {
     assert_eq!(action.0, "run");
     assert!(action.1.contains("Bash"));
     assert_eq!(action.2, 20);
+
+    let sessions = list_activity_sessions(&conn, Some("demo/repo"), None, 10)?;
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].projected_turn_count, 2);
+    let turns = list_turns(
+        &conn,
+        Some("demo/repo"),
+        Some("local"),
+        Some("session-1"),
+        None,
+        10,
+    )?;
+    assert_eq!(turns.len(), 2);
+    let first_id = turns[1].turn.id.expect("stored turn id");
+    assert_eq!(
+        get_turn(&conn, first_id)?.expect("turn").turn.actions.len(),
+        1
+    );
+    let stats = activity_stats(&conn, Some("demo/repo"), Some(90), Some(200))?;
+    assert_eq!(stats.sessions, 1);
+    assert_eq!(stats.turns, 2);
+    assert_eq!(stats.actions, 1);
+    assert_eq!(stats.projects[0].key, "demo/repo");
+    assert_eq!(stats.tools[0].key, "Bash");
     Ok(())
 }
 

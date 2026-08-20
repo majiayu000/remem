@@ -23,6 +23,7 @@ const {
 } = require("./request-security");
 const { toolDescriptors, UI_RESOURCE } = require("./tools");
 const { callTraceTool, createTraceBackend } = require("./trace");
+const { createSessionActivityBackend, handleSessionActivityRoute } = require("./session-activity");
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 5577;
@@ -403,6 +404,7 @@ function createBackend(options = {}) {
         requested
       };
     },
+    ...createSessionActivityBackend(api),
     ...createTraceBackend(runRememJson),
     stop() {
       api.stop?.();
@@ -655,6 +657,7 @@ function createServer(options = {}) {
       if (req.method === "GET" && url.pathname === "/api/workstreams") {
         return jsonResponse(res, 200, await backend.workstreamsList(Object.fromEntries(url.searchParams)));
       }
+      if (await handleSessionActivityRoute({ req, res, url, backend, jsonResponse, readJsonBody })) return;
       if (req.method === "POST" && url.pathname === "/api/save") {
         assertLocalPostAllowed(req);
         return jsonResponse(res, 201, await backend.save(await readJsonBody(req)));

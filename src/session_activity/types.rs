@@ -44,3 +44,42 @@ pub struct ProjectionResult {
     pub source_digest: String,
     pub turn_count: usize,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RawSessionActivity {
+    pub source_root: String,
+    pub project: String,
+    pub session_id: String,
+    pub message_count: i64,
+    pub user_message_count: i64,
+    pub assistant_message_count: i64,
+    pub first_epoch: i64,
+    pub last_epoch: i64,
+    pub projected_turn_count: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SessionActivityItem {
+    pub source_root: String,
+    pub project: String,
+    pub session_id: String,
+    #[serde(flatten)]
+    pub turn: SessionTurn,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ActivityCount {
+    pub key: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SessionActivityStats {
+    pub sessions: i64,
+    pub turns: i64,
+    pub actions: i64,
+    pub result_status: Vec<ActivityCount>,
+    pub capture_health: Vec<ActivityCount>,
+    pub projects: Vec<ActivityCount>,
+    pub tools: Vec<ActivityCount>,
+}
