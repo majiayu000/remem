@@ -69,10 +69,11 @@ fn should_spawn_worker_once(conn: &rusqlite::Connection) -> Result<bool> {
 
 fn spawn_worker_once() -> Result<()> {
     let exe = std::env::current_exe()?;
-    spawn_worker_once_from_executable(&exe)
+    drop(spawn_worker_once_from_executable(&exe)?);
+    Ok(())
 }
 
-fn spawn_worker_once_from_executable(current_exe: &Path) -> Result<()> {
+fn spawn_worker_once_from_executable(current_exe: &Path) -> Result<std::process::Child> {
     let exe = worker_executable(current_exe)?;
     let worker_dir = stable_worker_dir();
     let stderr_file = crate::log::open_log_append();
@@ -90,8 +91,7 @@ fn spawn_worker_once_from_executable(current_exe: &Path) -> Result<()> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(stderr_cfg);
-    command.spawn()?;
-    Ok(())
+    Ok(command.spawn()?)
 }
 
 fn worker_executable(current_exe: &Path) -> Result<PathBuf> {
@@ -210,14 +210,13 @@ mod tests {
         permissions.set_mode(0o755);
         std::fs::set_permissions(&full, permissions)?;
 
-        spawn_worker_once_from_executable(&hook)?;
+        let mut child = spawn_worker_once_from_executable(&hook)?;
+        let status = child.wait()?;
 
-        for _ in 0..40 {
-            if args_file.exists() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(25));
-        }
+        assert!(
+            status.success(),
+            "stub full sibling should exit successfully"
+        );
         assert_eq!(std::fs::read_to_string(args_file)?, "worker\n--once\n");
         assert!(db::healthy_current_once_worker_heartbeat(
             &conn,
