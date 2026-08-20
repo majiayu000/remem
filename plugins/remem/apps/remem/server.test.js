@@ -557,11 +557,8 @@ test("widget routes embedded app actions through host tool calls", async () => {
 
     assert.match(html, /data-view="timeline"/);
     assert.match(html, /data-view="workstreams"/);
-    assert.match(html, /data-view="overview"/);
-    assert.match(html, /data-view="sessions"/);
-    assert.match(html, /id="activity-completion"/);
-    assert.match(html, /id="result-distribution"/);
-    assert.match(html, /id="turn-reader"/);
+    for (const marker of [/data-view="overview"/, /data-view="sessions"/, /id="activity-completion"/, /id="result-distribution"/, /id="turn-reader"/])
+      assert.match(html, marker);
     assert.match(widget, /window\.openai\.callTool/);
     assert.match(widget, /remem_dashboard/);
     assert.match(widget, /remem_search/);
@@ -577,12 +574,8 @@ test("widget routes embedded app actions through host tool calls", async () => {
     assert.match(widget, /\/api\/governance-preview/);
     assert.match(widget, /\/api\/timeline-around/);
     assert.match(widget, /\/api\/workstream-update/);
-    assert.match(widget, /Boolean\(apiToolName\(url\.pathname, method\)\)/);
-    assert.match(widget, /\/api\/activity-sessions/);
-    assert.match(widget, /\/api\/session-activity/);
-    assert.match(widget, /\/api\/session-stats/);
-    assert.match(widget, /\/api\/project-session/);
-    assert.match(widget, /Remem will not invent missing reasoning/);
+    for (const marker of [/Boolean\(apiToolName\(url\.pathname, method\)\)/, /\/api\/activity-sessions/, /\/api\/session-activity/, /\/api\/session-stats/, /\/api\/project-session/, /Remem will not invent missing reasoning/])
+      assert.match(widget, marker);
   });
 });
 test("JSON-RPC trace tools return structured content", async () => {
