@@ -352,7 +352,10 @@ fn seed_not_due_failed_legacy_backlog(sandbox: &Sandbox) -> (i64, i64) {
         ],
     )
     .expect("seed legacy pending observation");
-    (conn.last_insert_rowid(), next_retry_epoch)
+    let pending_id = conn.last_insert_rowid();
+    remem::db::pending::admin::reactivate_legacy_pending_bridge(&conn)
+        .expect("mark the synthetic historical backlog as frozen-draining");
+    (pending_id, next_retry_epoch)
 }
 
 fn open_database(sandbox: &Sandbox) -> Connection {
