@@ -22,6 +22,7 @@ python3 scripts/ci/check_plugin_version_sync.py
 python3 scripts/ci/check_public_surface.py
 python3 scripts/ci/check_public_claims.py
 python3 scripts/ci/check_file_size.py
+python3 scripts/ci/check_migration_concerns.py
 python3 scripts/ci/check_release_workflows.py
 ```
 

@@ -22,7 +22,13 @@ pub(super) fn record_usage(
             "text_estimate",
         ),
     };
-    let (cost, pricing_source) = estimate_cost_usd(&result.model, &usage);
+    let (cost, pricing_source) = match estimate_cost_usd(&result.model, &usage) {
+        Ok(estimated) => estimated,
+        Err(error) => {
+            crate::log::error("ai", &format!("usage cost pricing failed: {error}"));
+            return;
+        }
+    };
     if pricing_source == "unknown_pricing" && !usage.is_empty() {
         crate::log::warn(
             "ai",

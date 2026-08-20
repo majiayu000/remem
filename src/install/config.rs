@@ -49,9 +49,12 @@ impl HookStrategy {
 }
 
 fn hook_command(bin: &str, strategy: HookStrategy, subcommand: &str) -> String {
+    let first = subcommand.split_whitespace().next().unwrap_or(subcommand);
+    let exe = crate::hook_cli::hook_invocation_binary(Path::new(bin), first);
+    let exe = exe.to_str().unwrap_or(bin);
     format!(
         "{} {} --host {}",
-        shell_quote(bin),
+        shell_quote(exe),
         subcommand,
         strategy.runtime_host()
     )

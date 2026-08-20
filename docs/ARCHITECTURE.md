@@ -85,10 +85,13 @@ claims: a directory row describes its primary domain, while a cross-cutting
 child may be routed separately when another flow owns its contract. Do not
 hand-maintain line counts here; source sizes are enforced by
 [`scripts/ci/check_file_size.py`](../scripts/ci/check_file_size.py) and should
-be inspected from the current checkout when needed.
+be inspected from the current checkout when needed. New SQLite migrations are
+one concern each; see
+[`docs/maintenance/migration-discipline.md`](maintenance/migration-discipline.md).
 
 | Area | Responsibility |
 |------|----------------|
+| `hook_cli.rs`, `bin/remem_hook.rs` | Slim hook entry: only `context` / `session-init` / `observe` / `summarize`; builds without `eval` and `local-onnx`. Install prefers an executable sibling `remem-hook` for those commands and leaves `rules eval` plus MCP on full `remem` |
 | `adapter/`, `observe/`, `cursor_hook/` | Host hook parsing, capture filtering, capture-specific spill serialization/replay, and capture-ledger writes |
 | `adapter/redaction.rs` | Cross-cutting sensitive-evidence redaction shared by observe capture, SessionRollup (including Cursor snapshots), and summarize capture; general secret, token, and URL-userinfo sanitization, plus header-key redaction and malformed-payload fallback specific to bounded hook-payload previews |
 | `identity.rs`, `project_id.rs`, `project_alias.rs` | Hook-host and capture-identity type contracts, canonical project-root resolution, and alias-governed canonical writes/alias-aware reads |
@@ -101,7 +104,7 @@ be inspected from the current checkout when needed.
 | `perf.rs` | Shared phase-timing capture and formatting for context loading, retrieval, summarization, evaluation, and CLI diagnostics |
 | `db/`, `migrate/`, `migrations/` | SQLite/SQLCipher schema and connection policy, encrypted spill payloads, migrations, read/write helpers, and job, extraction-task, and frozen-legacy state |
 | `worker.rs`, `worker/`, `extraction_worker.rs`, `maintenance/` | Background dispatch, worker singleton and heartbeats, job and extraction-task lease claims/recovery, timeout/retry transitions, task execution, idle legacy-pending migration, and lifecycle cleanup |
-| `ai.rs`, `ai/`, `runtime_config.rs`, `runtime_config/` | AI executor dispatch, provider/CLI execution and usage accounting, plus host/profile/model resolution and runtime configuration |
+| `ai.rs`, `ai/`, `runtime_config.rs`, `runtime_config/` | AI executor dispatch, provider/CLI execution and usage accounting, plus host/profile/model resolution and runtime configuration. SessionStart budgets live in `[context]`; USD cost overrides live in `[pricing]` |
 | `summarize.rs`, `summarize/` | Stop-hook payload intake, capture-ledger enqueue, summary-specific spill serialization/replay, once-worker launch, active Compress processing, and compatibility-only legacy Summary parsing/finalization |
 | `session_rollup/`, `observation_extract.rs`, `observation_extract/` | Production session-summary generation and persistence, required side effects, and tool-event observation extraction and persistence |
 | `memory_candidate.rs`, `memory_candidate/`, `graph_candidate/` | Governed memory and graph candidate generation, source/evidence validation, review/quarantine, and promotion |
@@ -415,7 +418,10 @@ Runtime capture no longer writes `pending_observations`, and `session-init`
 does not auto-flush that legacy queue. The deleted enqueue/claim API stays
 deleted. Ordinary workers instead expose a drain-only migration bridge for
 residual rows, and consider it only after the current extraction worker finds
-no ready task.
+no ready task. After a store has no residual auto-recoverable rows (including
+delayed retries and active leases), v085
+persists `legacy_surface_state.state = exhausted` and workers skip the bridge
+until a residual row is reintroduced. Guarded table drop remains remem 0.7.0.
 
 A once worker admits at most one batch in its process lifetime. A daemon admits
 at most one batch every 60 seconds. Each batch contains at most 25 oldest rows
@@ -659,22 +665,22 @@ Project key = `last two path segments + canonical absolute path hash`, balancing
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `REMEM_DATA_DIR` | `~/.remem` | Data directory (DB + logs) |
-| `REMEM_CONFIG` | `~/.remem/config.toml` | Runtime config file for memory-AI host/profile policy |
+| `REMEM_CONFIG` | `~/.remem/config.toml` | Runtime config file for memory-AI host/profile policy and `[context]` budgets |
 | `ANTHROPIC_API_KEY` | - | Required for HTTP mode (also supports `ANTHROPIC_AUTH_TOKEN`) |
 | `REMEM_DEBUG` | - | Enable debug logging |
-| `REMEM_CONTEXT_TOTAL_CHAR_LIMIT` | `12000` | Soft character cap for rendered context |
-| `REMEM_CONTEXT_CANDIDATE_FETCH_LIMIT` | `120` | Candidate memories fetched before section selection |
-| `REMEM_CONTEXT_MEMORY_INDEX_LIMIT` | `50` | Non-preference memories shown in the main memory index |
-| `REMEM_CONTEXT_OBSERVATIONS` | `50` | Deprecated alias for `REMEM_CONTEXT_MEMORY_INDEX_LIMIT` |
-| `REMEM_CONTEXT_MEMORY_INDEX_CHAR_LIMIT` | `4000` | Main memory index character budget |
-| `REMEM_CONTEXT_CORE_ITEM_LIMIT` | `6` | Core memory item budget |
-| `REMEM_CONTEXT_CORE_CHAR_LIMIT` | `3000` | Core memory character budget |
-| `REMEM_CONTEXT_SESSION_COUNT` | `5` | Session summaries shown |
-| `REMEM_CONTEXT_RELEVANCE_K` | `1` | Global relevant item cap across Lessons, non-Core MemoryIndex, and Sessions; `0` restores legacy selection |
-| `REMEM_CONTEXT_SELF_DIAGNOSTIC_LIMIT` | `2` | Self-diagnostic memory cap |
-| `REMEM_CONTEXT_PREFERENCE_PROJECT_LIMIT` | `20` | Project preference query limit |
-| `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT` | `0` | Global preference query limit; disabled by default |
-| `REMEM_CONTEXT_PREFERENCE_CHAR_LIMIT` | `1500` | Preference section character budget |
+| `REMEM_CONTEXT_TOTAL_CHAR_LIMIT` | `[context].total_char_limit` (`12000`) | Env escape hatch for the SessionStart total character cap |
+| `REMEM_CONTEXT_CANDIDATE_FETCH_LIMIT` | `[context].candidate_fetch_limit` (`120`) | Env escape hatch for candidate fetch before section selection |
+| `REMEM_CONTEXT_MEMORY_INDEX_LIMIT` | `[context].memory_index_limit` (`50`) | Env escape hatch for the main memory index item cap |
+| `REMEM_CONTEXT_OBSERVATIONS` | same as memory index | Deprecated alias for `REMEM_CONTEXT_MEMORY_INDEX_LIMIT` |
+| `REMEM_CONTEXT_MEMORY_INDEX_CHAR_LIMIT` | `[context].memory_index_char_limit` (`4000`) | Env escape hatch for the main memory index character budget |
+| `REMEM_CONTEXT_CORE_ITEM_LIMIT` | `[context].core_item_limit` (`6`) | Env escape hatch for the core item cap |
+| `REMEM_CONTEXT_CORE_CHAR_LIMIT` | `[context].core_char_limit` (`3000`) | Env escape hatch for the core character budget |
+| `REMEM_CONTEXT_SESSION_COUNT` | `[context].session_count` (`5`) | Env escape hatch for session summaries shown |
+| `REMEM_CONTEXT_RELEVANCE_K` | `[context].relevance_k` (`1`) | Env escape hatch for the global relevant-item cap; `0` restores legacy selection |
+| `REMEM_CONTEXT_SELF_DIAGNOSTIC_LIMIT` | `[context].self_diagnostic_limit` (`2`) | Env escape hatch for the self-diagnostic cap |
+| `REMEM_CONTEXT_PREFERENCE_PROJECT_LIMIT` | `[context].preference_project_limit` (`20`) | Env escape hatch for the project preference query cap |
+| `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT` | `[context].preference_global_limit` (`0`) | Env escape hatch for the global preference query cap; compiled default is 0 (disabled) |
+| `REMEM_CONTEXT_PREFERENCE_CHAR_LIMIT` | `[context].preference_char_limit` (`1500`) | Env escape hatch for the preference character budget |
 | `REMEM_LOG_MAX_BYTES` | `10485760` | Log file size limit (bytes), auto-rotated |
 | `REMEM_LOG_MAX_ROTATED_FILES` | `3` | Number of rotated `remem.log.N` files to retain; accepts `0` through `100`, and `0` disables retained suffixes |
 | `REMEM_LOG_LOCK_TIMEOUT_MS` | `250` | Maximum wait for the cross-process log rotation lock before append-only fallback |

@@ -565,7 +565,9 @@ pub(crate) fn decode_embedding(blob: &[u8], dimensions: i64) -> Result<Vec<f32>>
         );
     }
     Ok(blob
-        .chunks_exact(std::mem::size_of::<f32>())
+        .as_chunks::<{ std::mem::size_of::<f32>() }>()
+        .0
+        .iter()
         .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect())
 }

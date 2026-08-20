@@ -8,6 +8,7 @@ mod database;
 mod embedding;
 mod environment;
 pub(crate) mod health_action;
+mod legacy_surfaces;
 mod logging;
 mod mcp_processes;
 mod memory_poisoning;

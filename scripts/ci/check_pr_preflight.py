@@ -112,6 +112,10 @@ def fast_steps(base: str, head: str) -> list[tuple[str, list[str]]]:
         ("Check public surface", ["python3", "scripts/ci/check_public_surface.py"]),
         ("Check public benchmark claims", ["python3", "scripts/ci/check_public_claims.py"]),
         ("Check source file size guard", ["python3", "scripts/ci/check_file_size.py"]),
+        (
+            "Check migration concerns",
+            ["python3", "scripts/ci/check_migration_concerns.py"],
+        ),
         ("Check release workflows", ["python3", "scripts/ci/check_release_workflows.py"]),
         (
             "Test plugin runtime scripts",
@@ -126,6 +130,10 @@ def fast_steps(base: str, head: str) -> list[tuple[str, list[str]]]:
         ),
         ("Check version bump", ["python3", "scripts/ci/check_version_bump.py", base, head]),
         ("Run cargo fmt --check", ["cargo", "fmt", "--check"]),
+        (
+            "Check remem-hook without eval/onnx",
+            ["cargo", "check", "--no-default-features", "--bin", "remem-hook"],
+        ),
         (
             "Run cargo clippy --all-targets -- -D warnings",
             ["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],

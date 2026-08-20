@@ -425,6 +425,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "session_observatory",
         sql: include_str!("../migrations/v084_session_observatory.sql"),
     },
+    Migration {
+        version: 85,
+        name: "legacy_pending_bridge_state",
+        sql: include_str!("../migrations/v085_legacy_pending_bridge_state.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

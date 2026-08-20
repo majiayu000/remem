@@ -36,6 +36,26 @@ fn with_env_vars<T>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> T) -> T {
     result
 }
 
+fn with_pricing_config<T>(body: &str, vars: &[(&str, Option<&str>)], f: impl FnOnce() -> T) -> T {
+    with_env_vars(vars, || {
+        let path = std::env::temp_dir().join(format!(
+            "remem-ai-pricing-{}-{}.toml",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::write(&path, body).expect("write pricing config");
+        let old = std::env::var("REMEM_CONFIG").ok();
+        unsafe { std::env::set_var("REMEM_CONFIG", &path) };
+        let result = f();
+        match old {
+            Some(value) => unsafe { std::env::set_var("REMEM_CONFIG", value) },
+            None => unsafe { std::env::remove_var("REMEM_CONFIG") },
+        }
+        let _ = std::fs::remove_file(path);
+        result
+    })
+}
+
 #[test]
 fn resolve_model_for_api_maps_short_names() {
     assert_eq!(resolve_model_for_api("haiku"), "claude-haiku-4-5-20251001");
@@ -49,7 +69,8 @@ fn resolve_model_for_api_maps_short_names() {
 
 #[test]
 fn pricing_for_model_uses_model_defaults() {
-    with_env_vars(
+    with_pricing_config(
+        "version = 1\n",
         &[
             ("REMEM_PRICE_INPUT_PER_MTOK", None),
             ("REMEM_PRICE_OUTPUT_PER_MTOK", None),
@@ -64,7 +85,8 @@ fn pricing_for_model_uses_model_defaults() {
 
 #[test]
 fn pricing_for_gpt_52_uses_current_flagship_rate() {
-    with_env_vars(
+    with_pricing_config(
+        "version = 1\n",
         &[
             ("REMEM_PRICE_INPUT_PER_MTOK", None),
             ("REMEM_PRICE_OUTPUT_PER_MTOK", None),
@@ -79,7 +101,8 @@ fn pricing_for_gpt_52_uses_current_flagship_rate() {
 
 #[test]
 fn gpt_56_codex_credit_models_do_not_use_generic_gpt5_usd_pricing() {
-    with_env_vars(
+    with_pricing_config(
+        "version = 1\n",
         &[
             ("REMEM_PRICE_INPUT_PER_MTOK", None),
             ("REMEM_PRICE_OUTPUT_PER_MTOK", None),
@@ -88,7 +111,10 @@ fn gpt_56_codex_credit_models_do_not_use_generic_gpt5_usd_pricing() {
             let usage = TokenUsage::estimated(1_000_000, 1_000_000);
             for model in ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"] {
                 assert_eq!(pricing_for_model(model), (0.0, 0.0));
-                assert_eq!(estimate_cost_usd(model, &usage), (0.0, "unknown_pricing"));
+                assert_eq!(
+                    estimate_cost_usd(model, &usage).expect("pricing"),
+                    (0.0, "unknown_pricing")
+                );
             }
         },
     );
@@ -96,7 +122,8 @@ fn gpt_56_codex_credit_models_do_not_use_generic_gpt5_usd_pricing() {
 
 #[test]
 fn explicit_usd_override_still_applies_to_gpt_56_credit_models() {
-    with_env_vars(
+    with_pricing_config(
+        "version = 1\n",
         &[
             ("REMEM_PRICE_INPUT_PER_MTOK", Some("0.25")),
             ("REMEM_PRICE_OUTPUT_PER_MTOK", Some("1.5")),
@@ -109,7 +136,8 @@ fn explicit_usd_override_still_applies_to_gpt_56_credit_models() {
 
 #[test]
 fn pricing_for_model_prefers_env_override() {
-    with_env_vars(
+    with_pricing_config(
+        "version = 1\n",
         &[
             ("REMEM_PRICE_INPUT_PER_MTOK", Some("1.25")),
             ("REMEM_PRICE_OUTPUT_PER_MTOK", Some("6.5")),
@@ -122,14 +150,15 @@ fn pricing_for_model_prefers_env_override() {
 
 #[test]
 fn estimate_cost_usd_combines_input_and_output_prices() {
-    with_env_vars(
+    with_pricing_config(
+        "version = 1\n",
         &[
             ("REMEM_PRICE_INPUT_PER_MTOK", Some("2.0")),
             ("REMEM_PRICE_OUTPUT_PER_MTOK", Some("8.0")),
         ],
         || {
             let usage = TokenUsage::estimated(500_000, 250_000);
-            let (cost, pricing_source) = estimate_cost_usd("any-model", &usage);
+            let (cost, pricing_source) = estimate_cost_usd("any-model", &usage).expect("pricing");
             assert_eq!(pricing_source, "env_override");
             assert!((cost - 3.0).abs() < f64::EPSILON);
         },
@@ -138,7 +167,8 @@ fn estimate_cost_usd_combines_input_and_output_prices() {
 
 #[test]
 fn estimate_cost_usd_charges_cache_and_reasoning_separately() {
-    with_env_vars(
+    with_pricing_config(
+        "version = 1\n",
         &[
             ("REMEM_PRICE_INPUT_PER_MTOK", None),
             ("REMEM_PRICE_OUTPUT_PER_MTOK", None),
@@ -154,9 +184,159 @@ fn estimate_cost_usd_charges_cache_and_reasoning_separately() {
                 cache_read_tokens: 1_000_000,
                 ..TokenUsage::default()
             };
-            let (cost, pricing_source) = estimate_cost_usd("gpt-5.5", &usage);
+            let (cost, pricing_source) = estimate_cost_usd("gpt-5.5", &usage).expect("pricing");
             assert_eq!(pricing_source, "remem_static");
             assert!((cost - 65.5).abs() < f64::EPSILON);
+        },
+    );
+}
+
+#[test]
+fn pricing_for_model_prefers_config_override() {
+    with_pricing_config(
+        "[pricing]\ninput_per_mtok = 0.5\noutput_per_mtok = 2.0\n",
+        &[
+            ("REMEM_PRICE_INPUT_PER_MTOK", None),
+            ("REMEM_PRICE_OUTPUT_PER_MTOK", None),
+        ],
+        || {
+            assert_eq!(pricing_for_model("sonnet"), (0.5, 2.0));
+            assert_eq!(pricing_for_model("gpt-5.6-luna"), (0.5, 2.0));
+            let usage = TokenUsage::estimated(1_000_000, 1_000_000);
+            let (cost, source) = estimate_cost_usd("sonnet", &usage).expect("pricing");
+            assert_eq!(source, "config_override");
+            assert!((cost - 2.5).abs() < f64::EPSILON);
+        },
+    );
+}
+
+#[test]
+fn env_override_wins_over_pricing_config() {
+    with_pricing_config(
+        "[pricing]\ninput_per_mtok = 0.5\noutput_per_mtok = 2.0\n",
+        &[
+            ("REMEM_PRICE_INPUT_PER_MTOK", Some("1.25")),
+            ("REMEM_PRICE_OUTPUT_PER_MTOK", Some("6.5")),
+        ],
+        || {
+            assert_eq!(pricing_for_model("sonnet"), (1.25, 6.5));
+        },
+    );
+}
+
+#[test]
+fn family_pricing_config_overlays_only_that_family() {
+    with_pricing_config(
+        "[pricing.haiku]\ninput_per_mtok = 9.0\n",
+        &[
+            ("REMEM_PRICE_INPUT_PER_MTOK", None),
+            ("REMEM_PRICE_OUTPUT_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_INPUT_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_OUTPUT_PER_MTOK", None),
+        ],
+        || {
+            assert_eq!(pricing_for_model("haiku"), (9.0, 5.0));
+            assert_eq!(pricing_for_model("sonnet"), (3.0, 15.0));
+            let usage = TokenUsage::estimated(1_000_000, 1_000_000);
+            let (_, source) = estimate_cost_usd("haiku", &usage).expect("pricing");
+            assert_eq!(source, "config_override");
+        },
+    );
+}
+
+#[test]
+fn family_env_wins_over_family_pricing_config() {
+    with_pricing_config(
+        "[pricing.haiku]\ninput_per_mtok = 9.0\n",
+        &[
+            ("REMEM_PRICE_INPUT_PER_MTOK", None),
+            ("REMEM_PRICE_OUTPUT_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_INPUT_PER_MTOK", Some("4.0")),
+            ("REMEM_PRICE_HAIKU_OUTPUT_PER_MTOK", None),
+        ],
+        || {
+            assert_eq!(pricing_for_model("haiku"), (4.0, 5.0));
+            let usage = TokenUsage::estimated(1_000_000, 0);
+            let (cost, source) = estimate_cost_usd("haiku", &usage).expect("pricing");
+            assert_eq!(source, "env_override");
+            assert!((cost - 4.0).abs() < f64::EPSILON);
+        },
+    );
+}
+
+#[test]
+fn family_reasoning_config_survives_without_family_env_override() {
+    with_pricing_config(
+        "[pricing.haiku]\nreasoning_per_mtok = 99.0\n",
+        &[
+            ("REMEM_PRICE_INPUT_PER_MTOK", None),
+            ("REMEM_PRICE_OUTPUT_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_INPUT_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_OUTPUT_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_REASONING_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_CACHE_CREATION_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_CACHE_READ_PER_MTOK", None),
+        ],
+        || {
+            let usage = TokenUsage {
+                reasoning_tokens: 1_000_000,
+                ..TokenUsage::default()
+            };
+            let (cost, source) = estimate_cost_usd("haiku", &usage).expect("pricing");
+            assert_eq!(source, "config_override");
+            assert!((cost - 99.0).abs() < f64::EPSILON);
+        },
+    );
+}
+
+#[test]
+fn family_env_only_reports_env_provenance() {
+    with_pricing_config(
+        "version = 1\n",
+        &[
+            ("REMEM_PRICE_INPUT_PER_MTOK", None),
+            ("REMEM_PRICE_OUTPUT_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_INPUT_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_OUTPUT_PER_MTOK", Some("7.0")),
+            ("REMEM_PRICE_HAIKU_REASONING_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_CACHE_CREATION_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_CACHE_READ_PER_MTOK", None),
+        ],
+        || {
+            let usage = TokenUsage {
+                output_tokens: 1_000_000,
+                reasoning_tokens: 1_000_000,
+                ..TokenUsage::default()
+            };
+            let (cost, source) = estimate_cost_usd("haiku", &usage).expect("pricing");
+            assert_eq!(source, "env_override");
+            assert!((cost - 12.0).abs() < f64::EPSILON);
+        },
+    );
+}
+
+#[test]
+fn family_output_env_preserves_configured_reasoning_rate() {
+    with_pricing_config(
+        "[pricing.haiku]\nreasoning_per_mtok = 99.0\n",
+        &[
+            ("REMEM_PRICE_INPUT_PER_MTOK", None),
+            ("REMEM_PRICE_OUTPUT_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_INPUT_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_OUTPUT_PER_MTOK", Some("7.0")),
+            ("REMEM_PRICE_HAIKU_REASONING_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_CACHE_CREATION_PER_MTOK", None),
+            ("REMEM_PRICE_HAIKU_CACHE_READ_PER_MTOK", None),
+        ],
+        || {
+            let usage = TokenUsage {
+                output_tokens: 1_000_000,
+                reasoning_tokens: 1_000_000,
+                ..TokenUsage::default()
+            };
+            let (cost, source) = estimate_cost_usd("haiku", &usage).expect("pricing");
+            assert_eq!(source, "env_override");
+            assert!((cost - 106.0).abs() < f64::EPSILON);
         },
     );
 }

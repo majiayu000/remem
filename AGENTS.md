@@ -84,10 +84,12 @@ CI also runs:
 
 ```bash
 python3 scripts/ci/check_plugin_version_sync.py
+python3 scripts/ci/check_migration_concerns.py
 node --test plugins/remem/scripts/remem-runtime.test.js plugins/remem/apps/remem/server.test.js npm/remem/scripts/install.test.js
 python3 scripts/ci/check_version_bump.py <base-sha> HEAD
 cargo run -- eval-extraction --json --check-baseline
 cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json
+cargo check --no-default-features --bin remem-hook
 cargo clippy --all-targets -- -D warnings
 ```
 

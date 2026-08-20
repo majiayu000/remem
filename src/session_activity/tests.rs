@@ -128,7 +128,7 @@ fn migration_creates_session_observatory_shape() -> Result<()> {
             [],
         )
         .is_err());
-    assert_eq!(crate::migrate::latest_schema_version(), 84);
+    assert_eq!(crate::migrate::latest_schema_version(), 85);
     for (sql, expected_index) in [
         (
             "EXPLAIN QUERY PLAN SELECT id FROM raw_messages

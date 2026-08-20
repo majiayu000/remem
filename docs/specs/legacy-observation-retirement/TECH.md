@@ -37,6 +37,16 @@ production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
 - The 2026-07-02 dogfood snapshot was empty, but #943 found non-empty
   long-running stores. The transitional drain exists for those stragglers
   without changing the frozen disposition.
+- v085 persists `legacy_surface_state` for `pending_observations`. Migration
+  writes `exhausted` when no auto-recoverable residual row exists, otherwise
+  `frozen_draining`; delayed retries and active processing leases remain
+  recoverable and therefore cannot persist a false terminal state. Ordinary
+  workers read that row before the idle/extraction
+  probe: `exhausted` means the bridge is not admitted. A completed zero-progress
+  drain, or a due probe that finds no auto-actionable row, writes `exhausted`.
+  `insert_legacy_pending_fixture` and residual-creating admin paths write
+  `frozen_draining` again. This is a halt of the transitional consumer, not a
+  table drop. The guarded drop stays remem 0.7.0.
 
 ### `observations` — verdict: reclassify-current (NOT legacy)
 

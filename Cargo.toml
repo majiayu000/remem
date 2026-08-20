@@ -1,6 +1,7 @@
 [package]
 name = "remem-ai"
-version = "0.6.79"
+version = "0.6.80"
+default-run = "remem"
 edition = "2021"
 description = "Local-first coding agent memory for Claude Code and OpenAI Codex"
 license = "MIT"
@@ -25,6 +26,10 @@ name = "remem"
 [[bin]]
 name = "remem"
 path = "src/main.rs"
+
+[[bin]]
+name = "remem-hook"
+path = "src/bin/remem_hook.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive", "string"] }
@@ -69,7 +74,8 @@ windows-sys = { version = "=0.61.2", features = [
 tower = { version = "0.5", features = ["util"] }
 
 [features]
-default = ["local-onnx"]
+default = ["local-onnx", "eval"]
+eval = []
 local-onnx = [
     "dep:fastembed",
     "dep:hf-hub",

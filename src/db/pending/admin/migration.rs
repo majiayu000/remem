@@ -6,21 +6,11 @@ use serde::Serialize;
 
 use crate::db::{self, CaptureEventInput, ExtractionTaskKind};
 
+use super::bridge_state::AUTO_ACTIONABLE_PREDICATE;
+
 const AUTO_MIGRATION_RETRY_BASE_SECS: i64 = 5;
 const AUTO_MIGRATION_RETRY_MAX_SECS: i64 = 900;
 const AUTO_MIGRATION_RETRY_MAX_SHIFT: i64 = 8;
-
-const AUTO_ACTIONABLE_PREDICATE: &str = "
-    host IN (:claude_host, :codex_host)
-    AND (
-        (status = 'pending'
-         AND (next_retry_epoch IS NULL OR next_retry_epoch <= :now))
-        OR (status = 'processing'
-            AND (lease_expires_epoch IS NULL OR lease_expires_epoch < :now))
-        OR (status = 'failed'
-            AND COALESCE(failure_class, 'transient') = 'transient'
-            AND (next_retry_epoch IS NULL OR next_retry_epoch <= :now))
-    )";
 
 const MANUAL_ELIGIBLE_PREDICATE: &str = "
     (status = 'pending'

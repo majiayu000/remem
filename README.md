@@ -883,7 +883,8 @@ Cost is an estimate, not an invoice. Historical rows may be text estimates or
 may have been repriced from older rows that did not store the exact model.
 GPT-5.6 Codex subscription models such as Luna, Sol, and Terra are billed in
 credits, so remem preserves their token counts but reports unknown USD pricing
-unless an operator supplies an explicit USD pricing override.
+unless an operator supplies an explicit USD pricing override in `[pricing]`
+or `REMEM_PRICE_*`.
 
 ## Memory AI Configuration
 
@@ -914,6 +915,42 @@ remem model rollback
 `remem model test` only validates the selected config unless `--live` is set.
 `remem model use` saves a rollback backup before writing the config. Built-in
 presets are Codex-focused; use explicit model names for Claude Code profiles.
+
+SessionStart numeric budgets live in the same file:
+
+```toml
+[context]
+total_char_limit = 12000
+core_char_limit = 3000
+preference_global_limit = 0
+relevance_k = 1
+```
+
+`REMEM_CONTEXT_*` environment variables remain overrides. Set a budget with
+`remem config set context.total_char_limit 8000`.
+
+USD cost estimates use compiled per-family rates unless you set a global
+override in the same file:
+
+```toml
+[pricing]
+input_per_mtok = 1.25
+output_per_mtok = 6.5
+```
+
+`REMEM_PRICE_*` environment variables remain overrides. A complete
+`[pricing]` pair also prices GPT-5.6 credit models; family tables such as
+`[pricing.haiku]` overlay only that family. Init writes an empty `[pricing]`
+table and does not pin compiled rates.
+
+Installed hooks still call the full `remem` binary unless a `remem-hook`
+sibling executable sits next to it. Then SessionStart/Stop/observe/session-init use the
+slim entry; `rules eval` and MCP stay on `remem`.
+
+```bash
+cargo build --release --bin remem
+cargo build --release --no-default-features --bin remem-hook
+```
 
 Default Codex profile:
 

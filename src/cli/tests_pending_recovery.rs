@@ -1,6 +1,7 @@
 use super::super::types::{Cli, Commands, ImportAction, PendingAction};
 use clap::Parser;
 
+#[cfg(feature = "eval")]
 #[test]
 fn cli_parses_eval_e2e_options() {
     let cli = Cli::parse_from(["remem", "eval-e2e", "--json", "--keep-data-dir", "-k", "3"]);
@@ -19,6 +20,7 @@ fn cli_parses_eval_e2e_options() {
     }
 }
 
+#[cfg(feature = "eval")]
 #[test]
 fn cli_parses_eval_governance_options() {
     let cli = Cli::parse_from(["remem", "eval-governance", "--json", "-k", "4"]);

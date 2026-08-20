@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod auto_migration_tests;
+mod bridge_state;
 mod migration;
 mod mutate;
 mod query;
@@ -8,6 +9,11 @@ mod recovery;
 mod tests;
 mod types;
 
+pub use bridge_state::{
+    has_auto_actionable_legacy_pending, legacy_pending_auto_bridge_is_exhausted,
+    reactivate_legacy_pending_bridge, sync_legacy_pending_bridge_state,
+    LEGACY_PENDING_REMOVAL_VERSION,
+};
 pub use migration::{
     auto_migrate_actionable_legacy_pending, count_admin_required_archived_legacy_pending,
     count_legacy_migration_candidates, count_recoverable_archived_legacy_pending,

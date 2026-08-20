@@ -3,6 +3,30 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.80` for architecture convergence: empty-store
+  `pending_observations` drain now persists `exhausted` and skips ordinary
+  workers, worker interval schedules share one admission helper, SessionStart
+  budgets live in `config.toml` `[context]`, USD overrides live in
+  `[pricing]`, `remem-hook` compiles without `eval`/`local-onnx` and install
+  prefers a sibling slim binary, and CI rejects mixed-concern migrations.
+- USD cost overrides now live in `config.toml` `[pricing]`. `REMEM_PRICE_*`
+  remains an env escape hatch. Init writes an empty `[pricing]` table and
+  does not pin compiled family rates. A present invalid rate fails closed.
+- `remem install` writes slim hook commands to an executable sibling `remem-hook` when
+  that file exists next to `remem`. `rules eval` and MCP stay on the full
+  binary. Doctor treats the executable sibling as a valid hook executable and does
+  not count it as a second remem install.
+- Optional `remem-hook` binary accepts only host hook commands and compiles
+  without the `eval` and `local-onnx` features. Default `remem` install is
+  unchanged. Build the slim entry with
+  `cargo build --release --no-default-features --bin remem-hook`.
+- CI now rejects a new SQLite migration that mixes schema evolution with an
+  unrelated upgrade-time `UPDATE`/`DELETE`. Historical mixed files stay
+  allowlisted; see `docs/maintenance/migration-discipline.md`.
+- SessionStart numeric budgets now live in `config.toml` `[context]`. Existing
+  `REMEM_CONTEXT_*` environment variables remain overrides; a present invalid
+  `[context]` integer fails closed. The compiled `preference_global_limit`
+  default stays `0` (global preference injection remains disabled by default).
 - Staged source version `0.6.79` adds the Session Observatory: a lossless,
   idempotent projection from raw session evidence into turns and captured
   actions; bounded REST and plugin-app read models; and an editorial local UI

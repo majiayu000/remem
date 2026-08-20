@@ -151,5 +151,6 @@ pub fn insert_legacy_pending_fixture(
             epoch
         ],
     )?;
+    crate::db::pending::admin::reactivate_legacy_pending_bridge(conn)?;
     Ok(conn.last_insert_rowid())
 }

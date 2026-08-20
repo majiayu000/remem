@@ -523,6 +523,51 @@ fn build_hooks_contains_expected_claude_commands() {
 }
 
 #[test]
+fn build_hooks_prefers_sibling_remem_hook_for_slim_commands() {
+    let dir = std::env::temp_dir().join(format!(
+        "remem-install-hook-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let remem = dir.join("remem");
+    let hook = dir.join("remem-hook");
+    std::fs::write(&remem, []).expect("touch remem");
+    std::fs::write(&hook, []).expect("touch remem-hook");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&hook)
+            .expect("hook metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&hook, permissions).expect("make hook executable");
+    }
+    let remem = remem.to_str().expect("utf8");
+    let hook = hook.to_str().expect("utf8");
+
+    let hooks = build_hooks(remem, HookStrategy::ClaudeCode);
+    assert_eq!(
+        hooks["SessionStart"][0]["hooks"][0]["command"],
+        format!("{hook} context --host claude-code")
+    );
+    assert_eq!(
+        hooks["PostToolUse"][0]["hooks"][0]["command"],
+        format!("{hook} observe --host claude-code")
+    );
+    assert_eq!(
+        hooks["Stop"][0]["hooks"][0]["command"],
+        format!("{hook} summarize --host claude-code")
+    );
+    assert_eq!(
+        hooks["PreToolUse"][0]["hooks"][0]["command"],
+        format!("{remem} rules eval --host claude-code")
+    );
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn build_hooks_contains_expected_codex_commands() {
     let hooks = build_hooks("/tmp/remem", HookStrategy::Codex);
     assert_eq!(

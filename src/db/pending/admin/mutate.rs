@@ -2,6 +2,7 @@ use anyhow::Result;
 use rusqlite::{params, Connection};
 
 pub fn retry_failed(conn: &Connection, project: Option<&str>, limit: i64) -> Result<usize> {
+    let tx = conn.unchecked_transaction()?;
     let now = chrono::Utc::now().timestamp();
     let limit = limit.max(1);
     let sql = if project.is_some() {
@@ -41,10 +42,14 @@ pub fn retry_failed(conn: &Connection, project: Option<&str>, limit: i64) -> Res
     };
 
     let changed = if let Some(project) = project {
-        conn.execute(sql, params![now, project, limit])?
+        tx.execute(sql, params![now, project, limit])?
     } else {
-        conn.execute(sql, params![now, limit])?
+        tx.execute(sql, params![now, limit])?
     };
+    if changed > 0 {
+        super::bridge_state::reactivate_legacy_pending_bridge(&tx)?;
+    }
+    tx.commit()?;
     Ok(changed)
 }
 

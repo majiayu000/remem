@@ -4,16 +4,22 @@ use anyhow::{bail, Context, Result};
 use toml_edit::{value, DocumentMut, Item, Table};
 
 mod config_value;
+mod context;
 #[cfg(test)]
 mod migration_tests;
 mod model;
+mod pricing;
 mod promotion;
 mod rules;
 mod user_auto_promote;
 use config_value::cli_value;
+pub(crate) use context::context_budget_limits;
 pub use model::{
     model_status, model_statuses, rollback_model_config, set_model, ModelChange, ModelPreset,
     ModelStatus, MODEL_PRESETS,
+};
+pub(crate) use pricing::{
+    family_pricing_overlay, global_pricing_override, validate_pricing_config, PricingRates,
 };
 pub use promotion::{summary_gate_mode, SummaryGateMode};
 pub use rules::{rule_compilation_config, RuleCompilationConfig};
@@ -264,6 +270,8 @@ fn ensure_config_defaults(doc: &mut DocumentMut, hosts: &[&str]) -> Result<()> {
     promotion::ensure_defaults(doc)?;
     rules::ensure_defaults(doc)?;
     user_auto_promote::ensure_defaults(doc)?;
+    context::ensure_defaults(doc)?;
+    pricing::ensure_defaults(doc)?;
 
     let memory_ai = top_table_mut(doc, "memory_ai")?;
     set_str_if_missing(memory_ai, "default_host", CODEX_HOST);

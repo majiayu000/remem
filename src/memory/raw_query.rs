@@ -414,7 +414,7 @@ fn decode_raw_session_cursor(encoded: &str) -> Result<RawSessionCursor> {
         anyhow::bail!("invalid raw messages cursor encoding");
     }
     let mut bytes = Vec::with_capacity(payload.len() / 2);
-    for pair in payload.as_bytes().chunks_exact(2) {
+    for pair in payload.as_bytes().as_chunks::<2>().0 {
         let high = decode_hex_nibble(pair[0]).context("invalid raw messages cursor encoding")?;
         let low = decode_hex_nibble(pair[1]).context("invalid raw messages cursor encoding")?;
         bytes.push((high << 4) | low);

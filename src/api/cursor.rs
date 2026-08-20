@@ -139,7 +139,6 @@ fn valid_fingerprint(fingerprint: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
-    use base64::Engine as _;
     use serde_json::json;
 
     use super::*;

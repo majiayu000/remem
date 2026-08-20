@@ -5,6 +5,7 @@ mod context_plan;
 mod dream_backfill;
 mod embedding;
 mod encrypt_state;
+#[cfg(feature = "eval")]
 mod eval;
 mod export;
 mod import;
@@ -34,6 +35,7 @@ pub(super) use config_command::run_config;
 pub(super) use context_plan::run_context_plan;
 pub(super) use dream_backfill::run_dream_backfill;
 pub(super) use embedding::run_embedding;
+#[cfg(feature = "eval")]
 pub(super) use eval::{
     run_bench, run_eval, run_eval_associative_baseline, run_eval_capacity, run_eval_coding_bench,
     run_eval_e2e, run_eval_extraction, run_eval_gates, run_eval_governance,
