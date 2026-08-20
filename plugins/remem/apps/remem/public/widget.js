@@ -1,4 +1,13 @@
-const state = { snapshot: null, results: [], rawError: "", selected: null };
+const state = {
+  snapshot: null,
+  results: [],
+  rawError: "",
+  selected: null,
+  activityStats: null,
+  sessions: [],
+  selectedSession: null,
+  turns: []
+};
 const $ = (id) => document.getElementById(id);
 function cls(value, truthy) {
   value.classList.toggle("hidden", !truthy);
@@ -7,7 +16,7 @@ function valueAt(object, path, fallback = 0) {
   return path.split(".").reduce((acc, key) => acc && acc[key], object) ?? fallback;
 }
 async function request(route, options = {}) {
-  if (canCallHostTool(route)) {
+  if (canCallHostTool(route, options)) {
     return requestViaHostTool(route, options);
   }
   const response = await fetch(route, options);
@@ -17,8 +26,11 @@ async function request(route, options = {}) {
   }
   return payload;
 }
-function canCallHostTool(route) {
-  return typeof window.openai?.callTool === "function" && String(route).startsWith("/api/");
+function canCallHostTool(route, options = {}) {
+  if (typeof window.openai?.callTool !== "function") return false;
+  const method = String(options.method || "GET").toUpperCase();
+  const url = new URL(route, "http://remem.local");
+  return Boolean(apiToolName(url.pathname, method));
 }
 async function requestViaHostTool(route, options = {}) {
   const method = String(options.method || "GET").toUpperCase();
@@ -154,7 +166,8 @@ function renderHealth(snapshot) {
 }
 async function refresh() {
   try {
-    state.snapshot = await request("/api/status");
+    const [snapshot] = await Promise.all([request("/api/status"), refreshActivity()]);
+    state.snapshot = snapshot;
     renderRuntime(state.snapshot);
     renderCounts(state.snapshot.status || {});
     renderActivation(state.snapshot.activation || {});
@@ -164,6 +177,130 @@ async function refresh() {
     $("health-pill").className = "pill bad";
     $("health-pill").textContent = "Error";
   }
+}
+
+async function refreshActivity(project = "") {
+  const query = project ? `?project=${encodeURIComponent(project)}` : "";
+  const [statsPayload, sessionsPayload] = await Promise.all([
+    request(`/api/session-stats${query}`),
+    request(`/api/activity-sessions${query ? `${query}&limit=50` : "?limit=50"}`)
+  ]);
+  state.activityStats = statsPayload.data || {};
+  state.sessions = sessionsPayload.data || [];
+  renderActivityOverview();
+  renderSessionList();
+}
+
+function renderActivityOverview() {
+  const stats = state.activityStats || {};
+  const completed = (stats.result_status || [])
+    .filter((item) => ["answered", "done"].includes(item.key))
+    .reduce((sum, item) => sum + Number(item.count || 0), 0);
+  const completion = Number(stats.turns || 0) ? Math.round((completed / stats.turns) * 100) : 0;
+  $("activity-sessions").textContent = stats.sessions || 0;
+  $("activity-turns").textContent = stats.turns || 0;
+  $("activity-actions").textContent = stats.actions || 0;
+  $("activity-completion").textContent = `${completion}%`;
+  renderSessionItems($("recent-sessions"), state.sessions.slice(0, 5), true);
+  const statuses = stats.result_status || [];
+  const maximum = Math.max(1, ...statuses.map((item) => Number(item.count || 0)));
+  $("result-distribution").innerHTML = statuses.length ? statuses.map((item) => `
+    <div class="distribution-row">
+      <span>${escapeHtml(item.key)}</span>
+      <div class="distribution-track"><div class="distribution-fill" style="width:${Math.max(2, (Number(item.count || 0) / maximum) * 100)}%"></div></div>
+      <strong>${escapeHtml(item.count)}</strong>
+    </div>
+  `).join("") : `<div class="empty">Project a session to see its result distribution.</div>`;
+}
+
+function sessionKey(session) {
+  return [session.source_root, session.project, session.session_id].join("\u001f");
+}
+
+function projectName(project) {
+  return String(project || "Unknown project").split(/[\\/]/).filter(Boolean).at(-1) || "Unknown project";
+}
+
+function shortSessionId(id) {
+  const text = String(id || "session");
+  return text.length > 13 ? `${text.slice(0, 8)}…${text.slice(-4)}` : text;
+}
+
+function formatDate(epoch) {
+  if (!Number(epoch)) return "unknown";
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(Number(epoch) * 1000));
+}
+
+function renderSessionItems(target, sessions, compact = false) {
+  if (!sessions.length) {
+    target.innerHTML = `<div class="empty">No raw sessions found. Remem will show them here after capture.</div>`;
+    return;
+  }
+  target.innerHTML = sessions.map((session) => `
+    <button class="session-item ${state.selectedSession && sessionKey(state.selectedSession) === sessionKey(session) ? "active" : ""}" data-session-key="${escapeHtml(sessionKey(session))}">
+      <span class="session-item-title">${escapeHtml(projectName(session.project))} / ${escapeHtml(shortSessionId(session.session_id))}</span>
+      <span class="session-item-project">${escapeHtml(session.project || session.source_root)}</span>
+      <span class="session-item-meta"><span>${escapeHtml(session.message_count)} msg</span><span>${compact ? escapeHtml(formatDate(session.last_epoch)) : `${escapeHtml(session.projected_turn_count)} turns · ${escapeHtml(formatDate(session.last_epoch))}`}</span></span>
+    </button>
+  `).join("");
+}
+
+function renderSessionList() {
+  renderSessionItems($("session-list"), state.sessions);
+}
+
+async function openSession(key) {
+  const session = state.sessions.find((item) => sessionKey(item) === key);
+  if (!session) return;
+  state.selectedSession = session;
+  renderSessionList();
+  renderSessionItems($("recent-sessions"), state.sessions.slice(0, 5), true);
+  $("turn-reader").innerHTML = `<div class="reader-empty"><span class="reader-number">··</span><h3>Reading evidence</h3><p>Building the structured view for this raw session.</p></div>`;
+  try {
+    if (!Number(session.projected_turn_count)) {
+      await request("/api/project-session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ source_root: session.source_root, project: session.project, session_id: session.session_id })
+      });
+    }
+    const params = new URLSearchParams({ source_root: session.source_root, project: session.project, session_id: session.session_id, limit: "200" });
+    const payload = await request(`/api/session-activity?${params}`);
+    state.turns = (payload.data || []).sort((a, b) => a.turn_index - b.turn_index);
+    session.projected_turn_count = state.turns.length;
+    renderTurns();
+    await refreshActivity($("session-project").value.trim());
+  } catch (error) {
+    $("turn-reader").innerHTML = `<div class="message error">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderTurns() {
+  const session = state.selectedSession;
+  if (!session) return;
+  const turns = state.turns;
+  $("turn-reader").innerHTML = `
+    <header class="reader-head">
+      <p class="eyebrow">${escapeHtml(session.source_root)} / SESSION</p>
+      <h3>${escapeHtml(projectName(session.project))}</h3>
+      <div class="reader-meta"><span class="pill">${escapeHtml(shortSessionId(session.session_id))}</span><span class="pill">${escapeHtml(turns.length)} turns</span><span class="pill">${escapeHtml(formatDate(session.last_epoch))}</span></div>
+    </header>
+    ${turns.length ? turns.map(renderTurn).join("") : `<div class="empty">This session contains no user turns that can be projected.</div>`}
+  `;
+}
+
+function renderTurn(turn) {
+  const actions = turn.actions || [];
+  const healthClass = turn.capture_health === "full" ? "ok" : turn.capture_health === "partial" ? "warn" : "bad";
+  return `<article class="turn">
+    <div class="turn-label"><strong>${String(turn.turn_index + 1).padStart(2, "0")}</strong>TURN<br><span class="pill ${healthClass}">${escapeHtml(turn.capture_health)}</span></div>
+    <div class="turn-content">
+      <section class="turn-block"><h4>01 · Request</h4><p>${escapeHtml(turn.user_said)}</p><div class="evidence">raw message #${escapeHtml(turn.user_message_id)}</div></section>
+      <section class="turn-block"><h4>02 · Understanding</h4><p>${escapeHtml(turn.understanding || "Not captured — Remem will not invent missing reasoning.")}</p>${turn.understanding_message_id ? `<div class="evidence">raw message #${escapeHtml(turn.understanding_message_id)} · ${escapeHtml(turn.understanding_source || "captured")}</div>` : ""}</section>
+      <section class="turn-block"><h4>03 · Actions</h4>${actions.length ? `<ul class="action-list">${actions.map((action) => `<li><span class="action-kind">${escapeHtml(action.tool_name || action.kind)}</span><span>${escapeHtml(action.summary)}${action.outcome ? ` · ${escapeHtml(action.outcome)}` : ""}</span></li>`).join("")}</ul>` : `<p class="subtle">No precise action events were captured.</p>`}</section>
+      <section class="turn-block"><h4>04 · Result <span class="pill">${escapeHtml(turn.result_status)}</span></h4><p>${escapeHtml(turn.result_summary || "No result message captured.")}</p>${turn.result_message_id ? `<div class="evidence">raw message #${escapeHtml(turn.result_message_id)}</div>` : ""}</section>
+    </div>
+  </article>`;
 }
 async function runSearch() {
   const query = $("search-query").value.trim();
@@ -478,6 +615,22 @@ function switchView(name) {
   document.querySelectorAll(".tab").forEach((tab) => {
     tab.classList.toggle("active", tab.dataset.view === name);
   });
+  const copy = {
+    overview: ["WORKSPACE / OVERVIEW", "Your work, with the reasoning intact.", "A structured view over Remem's raw, append-only session evidence."],
+    sessions: ["WORKSPACE / SESSIONS", "Trace a session from request to result.", "Every section points back to captured evidence; unknown fields stay visibly unknown."],
+    search: ["MEMORY / SEARCH", "Find what the project already knows.", "Search durable memories and, when requested, the raw archive."],
+    timeline: ["MEMORY / TIMELINE", "Follow decisions through time.", "Inspect nearby observations or generate a project timeline report."],
+    workstreams: ["MEMORY / WORKSTREAMS", "Keep ongoing work legible.", "Review active threads, next actions, and blockers."],
+    save: ["MEMORY / SAVE", "Write down what should survive.", "Create an explicit durable memory for a project or your global workspace."],
+    governance: ["SYSTEM / GOVERNANCE", "Preview memory lifecycle changes.", "Review the exact affected rows before any separate mutation workflow."],
+    activation: ["SYSTEM / ACTIVATION", "Inspect the integration plan.", "Review the hooks-only dry run without changing local configuration."]
+  };
+  const [eyebrow, title, description] = copy[name] || copy.overview;
+  $("view-eyebrow").textContent = eyebrow;
+  $("view-title").textContent = title;
+  $("view-description").textContent = description;
+  cls($("overview-view"), name === "overview");
+  cls($("sessions-view"), name === "sessions");
   cls($("search-view"), name === "search");
   cls($("save-view"), name === "save");
   cls($("governance-view"), name === "governance");
@@ -533,5 +686,28 @@ $("plan-button").addEventListener("click", () => refreshPlan().catch((error) => 
 }));
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.addEventListener("click", () => switchView(tab.dataset.view));
+});
+document.querySelectorAll("[data-jump]").forEach((button) => {
+  button.addEventListener("click", () => switchView(button.dataset.jump));
+});
+[$("session-list"), $("recent-sessions")].forEach((list) => {
+  list.addEventListener("click", (event) => {
+    const item = event.target.closest("[data-session-key]");
+    if (!item) return;
+    switchView("sessions");
+    openSession(item.dataset.sessionKey);
+  });
+});
+let projectFilterTimer;
+$("session-project").addEventListener("input", () => {
+  clearTimeout(projectFilterTimer);
+  projectFilterTimer = setTimeout(() => refreshActivity($("session-project").value.trim()).catch((error) => {
+    $("session-list").innerHTML = `<div class="message error">${escapeHtml(error.message)}</div>`;
+  }), 250);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.target.matches("input, textarea, select")) return;
+  if (event.key === "1") switchView("overview");
+  if (event.key === "2") switchView("sessions");
 });
 refresh();

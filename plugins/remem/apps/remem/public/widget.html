@@ -9,240 +9,72 @@
 <body>
   <div class="shell">
     <aside class="rail">
-      <div class="brand">
-        <div class="mark">R</div>
-        <div>
-          <h1>Remem</h1>
-          <p class="subtle">Project memory control surface</p>
-        </div>
+      <div class="brand"><div class="mark">R</div><div><h1>Remem</h1><p class="subtle">Engineering memory</p></div></div>
+      <nav class="nav" aria-label="Dashboard views">
+        <p class="nav-label">Workspace</p>
+        <button class="tab active" data-view="overview"><span>Overview</span><kbd>1</kbd></button>
+        <button class="tab" data-view="sessions"><span>Sessions</span><kbd>2</kbd></button>
+        <p class="nav-label">Memory</p>
+        <button class="tab" data-view="search"><span>Search</span></button>
+        <button class="tab" data-view="timeline"><span>Timeline</span></button>
+        <button class="tab" data-view="workstreams"><span>Workstreams</span></button>
+        <button class="tab" data-view="save"><span>Save memory</span></button>
+        <p class="nav-label">System</p>
+        <button class="tab" data-view="governance"><span>Governance</span></button>
+        <button class="tab" data-view="activation"><span>Activation</span></button>
+      </nav>
+      <div class="rail-foot">
+        <div class="row spread"><span class="subtle">Runtime</span><span class="pill" id="health-pill">Loading</span></div>
+        <div id="runtime-status" class="stack runtime-compact"></div>
+        <div id="activation-summary" class="hidden"></div>
       </div>
-      <section class="section stack">
-        <div class="row spread">
-          <h2>Runtime</h2>
-          <button class="icon" id="refresh" title="Refresh">↻</button>
-        </div>
-        <div id="runtime-status" class="stack"></div>
-      </section>
-      <section class="section stack">
-        <h2>Memory Store</h2>
-        <div class="stat-grid">
-          <div class="stat"><p class="subtle">Memories</p><div class="value" id="count-memories">0</div></div>
-          <div class="stat"><p class="subtle">Observations</p><div class="value" id="count-observations">0</div></div>
-          <div class="stat"><p class="subtle">Raw Archive</p><div class="value" id="count-raw">0</div></div>
-          <div class="stat"><p class="subtle">Queue</p><div class="value" id="count-queue">0</div></div>
-        </div>
-      </section>
-      <section class="section stack">
-        <h2>Activation</h2>
-        <div id="activation-summary" class="stack"></div>
-      </section>
     </aside>
+
     <main class="main">
-      <div class="row spread">
-        <div class="tabs" role="tablist">
-          <button class="tab active" data-view="search">Search</button>
-          <button class="tab" data-view="save">Save</button>
-          <button class="tab" data-view="governance">Governance</button>
-          <button class="tab" data-view="timeline">Timeline</button>
-          <button class="tab" data-view="workstreams">Workstreams</button>
-          <button class="tab" data-view="activation">Activation</button>
+      <header class="page-head">
+        <div><p class="eyebrow" id="view-eyebrow">WORKSPACE / OVERVIEW</p><h2 id="view-title">Your work, with the reasoning intact.</h2><p class="subtle" id="view-description">A structured view over Remem's raw, append-only session evidence.</p></div>
+        <button class="refresh-button" id="refresh" title="Refresh"><span>Refresh</span><span aria-hidden="true">↻</span></button>
+      </header>
+
+      <section id="overview-view" class="view stack">
+        <div class="metric-row">
+          <article class="metric"><span>Sessions</span><strong id="activity-sessions">0</strong><small>raw tuples</small></article>
+          <article class="metric"><span>Turns</span><strong id="activity-turns">0</strong><small>structured</small></article>
+          <article class="metric"><span>Actions</span><strong id="activity-actions">0</strong><small>captured events</small></article>
+          <article class="metric signal"><span>Complete</span><strong id="activity-completion">0%</strong><small>answered or done</small></article>
         </div>
-        <span class="pill" id="health-pill">Loading</span>
-      </div>
-      <section id="search-view" class="stack">
-        <div class="toolbar">
-          <input id="search-query" placeholder="Search project memory">
-          <select id="search-type">
-            <option value="">All types</option>
-            <option value="decision">Decision</option>
-            <option value="bugfix">Bugfix</option>
-            <option value="architecture">Architecture</option>
-            <option value="discovery">Discovery</option>
-            <option value="preference">Preference</option>
-          </select>
-          <label class="check-row raw-toggle">
-            <input type="checkbox" id="include-raw">
-            <span>Raw archive</span>
-          </label>
-          <button class="primary" id="search-button">Search</button>
-        </div>
-        <div class="content-grid">
-          <section class="panel">
-            <div class="panel-head">
-              <h3>Compact Results</h3>
-              <span class="subtle" id="result-count">0</span>
-            </div>
-            <ul class="results" id="results"></ul>
-          </section>
-          <section class="panel">
-            <div class="panel-head">
-              <h3>Detail</h3>
-              <span class="pill" id="detail-type">No selection</span>
-            </div>
-            <div class="panel-body" id="detail"></div>
-          </section>
+        <div class="overview-grid">
+          <section class="journal-panel"><div class="section-head"><div><p class="eyebrow">RECENT ACTIVITY</p><h3>Session journal</h3></div><button class="text-button" data-jump="sessions">View all →</button></div><div id="recent-sessions" class="session-list compact-list"><div class="empty">Loading session evidence…</div></div></section>
+          <aside class="insight-column">
+            <section class="journal-panel distribution-panel"><div class="section-head"><div><p class="eyebrow">OUTCOMES</p><h3>Result distribution</h3></div></div><div id="result-distribution" class="distribution"><div class="empty">No structured turns yet.</div></div></section>
+            <section class="memory-strip"><div><span>Memories</span><strong id="count-memories">0</strong></div><div><span>Observations</span><strong id="count-observations">0</strong></div><div><span>Raw archive</span><strong id="count-raw">0</strong></div><div><span>Queue</span><strong id="count-queue">0</strong></div></section>
+          </aside>
         </div>
       </section>
-      <section id="save-view" class="panel hidden">
-        <div class="panel-head"><h3>Save Explicit Memory</h3></div>
-        <div class="panel-body stack">
-          <div class="form-grid">
-            <label>Type
-              <select id="save-type">
-                <option value="decision">Decision</option>
-                <option value="bugfix">Bugfix</option>
-                <option value="architecture">Architecture</option>
-                <option value="discovery">Discovery</option>
-                <option value="preference">Preference</option>
-              </select>
-            </label>
-            <label>Scope
-              <select id="save-scope">
-                <option value="project">Project</option>
-                <option value="global">Global</option>
-              </select>
-            </label>
-            <label class="wide">Title
-              <input id="save-title" placeholder="Short durable title">
-            </label>
-            <label class="wide">Topic key
-              <input id="save-topic" placeholder="kebab-case-topic-key">
-            </label>
-            <label class="wide">Project
-              <input id="save-project" placeholder="/path/to/repo, optional">
-            </label>
-            <label class="wide">Memory text
-              <textarea id="save-text" placeholder="What should future sessions remember?"></textarea>
-            </label>
-          </div>
-          <div class="row spread">
-            <span class="subtle">Writes through Remem API; no hook config is changed.</span>
-            <button class="primary" id="save-button">Save</button>
-          </div>
-          <div id="save-result" class="message hidden"></div>
-        </div>
+
+      <section id="sessions-view" class="view hidden">
+        <div class="session-toolbar"><div><p class="eyebrow">SESSION EXPLORER</p><p class="subtle">One raw evidence tuple at a time. Projection never rewrites the archive.</p></div><input id="session-project" placeholder="Filter by project path" aria-label="Filter sessions by project"></div>
+        <div class="session-grid"><aside class="session-index"><div id="session-list" class="session-list"><div class="empty">Loading sessions…</div></div></aside><section class="turn-reader" id="turn-reader"><div class="reader-empty"><span class="reader-number">01</span><h3>Select a session</h3><p>Open a session to read its requests, inferred understanding, captured actions, and results.</p></div></section></div>
       </section>
-      <section id="governance-view" class="panel hidden">
-        <div class="panel-head"><h3>Governance Preview</h3></div>
-        <div class="panel-body stack">
-          <div class="message">Dry-run only. This preview never mutates memory rows.</div>
-          <div class="form-grid">
-            <label>Action
-              <select id="govern-action">
-                <option value="stale">Stale</option>
-                <option value="reject">Reject</option>
-                <option value="delete">Delete</option>
-              </select>
-            </label>
-            <label>Limit
-              <input id="govern-limit" type="number" min="1" max="200" value="50">
-            </label>
-            <label class="wide">Memory IDs
-              <input id="govern-ids" placeholder="7, 12, 42">
-            </label>
-            <label class="wide">Project
-              <input id="govern-project" placeholder="/path/to/repo">
-            </label>
-            <label class="wide">Query selector
-              <input id="govern-query" placeholder="old migration plan">
-            </label>
-            <label>Type
-              <input id="govern-type" placeholder="decision">
-            </label>
-            <label>Status
-              <input id="govern-status" placeholder="active">
-            </label>
-          </div>
-          <div class="row spread">
-            <span class="subtle">IDs or a selector are required.</span>
-            <button class="primary" id="govern-button">Preview</button>
-          </div>
-          <div id="govern-result" class="message hidden"></div>
-        </div>
+
+      <section id="search-view" class="view stack hidden">
+        <div class="toolbar"><input id="search-query" placeholder="Search project memory"><select id="search-type"><option value="">All types</option><option value="decision">Decision</option><option value="bugfix">Bugfix</option><option value="architecture">Architecture</option><option value="discovery">Discovery</option><option value="preference">Preference</option></select><label class="check-row raw-toggle"><input type="checkbox" id="include-raw"><span>Raw archive</span></label><button class="primary" id="search-button">Search</button></div>
+        <div class="content-grid"><section class="panel"><div class="panel-head"><h3>Compact Results</h3><span class="subtle" id="result-count">0</span></div><ul class="results" id="results"></ul></section><section class="panel"><div class="panel-head"><h3>Detail</h3><span class="pill" id="detail-type">No selection</span></div><div class="panel-body" id="detail"></div></section></div>
       </section>
-      <section id="timeline-view" class="panel hidden">
-        <div class="panel-head"><h3>Timeline</h3></div>
-        <div class="panel-body stack">
-          <div class="form-grid">
-            <label class="wide">Project
-              <input id="timeline-project" placeholder="/path/to/repo">
-            </label>
-            <label>Anchor ID
-              <input id="timeline-anchor" type="number" min="1">
-            </label>
-            <label>Query
-              <input id="timeline-query" placeholder="release manifest">
-            </label>
-            <label>Before
-              <input id="timeline-before" type="number" min="1" value="6">
-            </label>
-            <label>After
-              <input id="timeline-after" type="number" min="1" value="6">
-            </label>
-          </div>
-          <div class="row spread">
-            <button id="timeline-around-button">Around</button>
-            <button class="primary" id="timeline-report-button">Report</button>
-          </div>
-          <div id="timeline-result" class="message hidden"></div>
-        </div>
-      </section>
-      <section id="workstreams-view" class="panel hidden">
-        <div class="panel-head"><h3>Workstreams</h3></div>
-        <div class="panel-body stack">
-          <div class="form-grid">
-            <label class="wide">Project
-              <input id="workstream-project" placeholder="/path/to/repo">
-            </label>
-            <label>Status
-              <select id="workstream-status">
-                <option value="">Any</option>
-                <option value="active">Active</option>
-                <option value="paused">Paused</option>
-                <option value="completed">Completed</option>
-                <option value="abandoned">Abandoned</option>
-              </select>
-            </label>
-            <label>Workstream ID
-              <input id="workstream-id" type="number" min="1">
-            </label>
-            <label>New status
-              <select id="workstream-new-status">
-                <option value="">Unchanged</option>
-                <option value="active">Active</option>
-                <option value="paused">Paused</option>
-                <option value="completed">Completed</option>
-                <option value="abandoned">Abandoned</option>
-              </select>
-            </label>
-            <label class="wide">Next action
-              <input id="workstream-next-action">
-            </label>
-            <label class="wide">Blockers
-              <input id="workstream-blockers">
-            </label>
-            <label class="row">
-              <input id="workstream-confirm" type="checkbox">
-              <span>Confirm update</span>
-            </label>
-          </div>
-          <div class="row spread">
-            <button id="workstream-list-button">Load</button>
-            <button class="primary" id="workstream-update-button">Update</button>
-          </div>
-          <div id="workstream-result" class="message hidden"></div>
-        </div>
-      </section>
-      <section id="activation-view" class="panel hidden">
-        <div class="panel-head">
-          <h3>Activation Plan</h3>
-          <button id="plan-button">Regenerate</button>
-        </div>
-        <div class="panel-body stack">
-          <div class="message">This preview runs the same hooks-only dry run used by the plugin. It does not write Codex config or trust hooks.</div>
-          <pre id="activation-plan"></pre>
-        </div>
-      </section>
+
+      <section id="save-view" class="panel view hidden"><div class="panel-head"><h3>Save Explicit Memory</h3></div><div class="panel-body stack"><div class="form-grid">
+        <label>Type<select id="save-type"><option value="decision">Decision</option><option value="bugfix">Bugfix</option><option value="architecture">Architecture</option><option value="discovery">Discovery</option><option value="preference">Preference</option></select></label><label>Scope<select id="save-scope"><option value="project">Project</option><option value="global">Global</option></select></label><label class="wide">Title<input id="save-title" placeholder="Short durable title"></label><label class="wide">Topic key<input id="save-topic" placeholder="kebab-case-topic-key"></label><label class="wide">Project<input id="save-project" placeholder="/path/to/repo, optional"></label><label class="wide">Memory text<textarea id="save-text" placeholder="What should future sessions remember?"></textarea></label>
+      </div><div class="row spread"><span class="subtle">Writes through Remem API; no hook config is changed.</span><button class="primary" id="save-button">Save</button></div><div id="save-result" class="message hidden"></div></div></section>
+
+      <section id="governance-view" class="panel view hidden"><div class="panel-head"><h3>Governance Preview</h3></div><div class="panel-body stack"><div class="message">Dry-run only. This preview never mutates memory rows.</div><div class="form-grid">
+        <label>Action<select id="govern-action"><option value="stale">Stale</option><option value="reject">Reject</option><option value="delete">Delete</option></select></label><label>Limit<input id="govern-limit" type="number" min="1" max="200" value="50"></label><label class="wide">Memory IDs<input id="govern-ids" placeholder="7, 12, 42"></label><label class="wide">Project<input id="govern-project" placeholder="/path/to/repo"></label><label class="wide">Query selector<input id="govern-query" placeholder="old migration plan"></label><label>Type<input id="govern-type" placeholder="decision"></label><label>Status<input id="govern-status" placeholder="active"></label>
+      </div><div class="row spread"><span class="subtle">IDs or a selector are required.</span><button class="primary" id="govern-button">Preview</button></div><div id="govern-result" class="message hidden"></div></div></section>
+
+      <section id="timeline-view" class="panel view hidden"><div class="panel-head"><h3>Timeline</h3></div><div class="panel-body stack"><div class="form-grid"><label class="wide">Project<input id="timeline-project" placeholder="/path/to/repo"></label><label>Anchor ID<input id="timeline-anchor" type="number" min="1"></label><label>Query<input id="timeline-query" placeholder="release manifest"></label><label>Before<input id="timeline-before" type="number" min="1" value="6"></label><label>After<input id="timeline-after" type="number" min="1" value="6"></label></div><div class="row spread"><button id="timeline-around-button">Around</button><button class="primary" id="timeline-report-button">Report</button></div><div id="timeline-result" class="message hidden"></div></div></section>
+
+      <section id="workstreams-view" class="panel view hidden"><div class="panel-head"><h3>Workstreams</h3></div><div class="panel-body stack"><div class="form-grid"><label class="wide">Project<input id="workstream-project" placeholder="/path/to/repo"></label><label>Status<select id="workstream-status"><option value="">Any</option><option value="active">Active</option><option value="paused">Paused</option><option value="completed">Completed</option><option value="abandoned">Abandoned</option></select></label><label>Workstream ID<input id="workstream-id" type="number" min="1"></label><label>New status<select id="workstream-new-status"><option value="">Unchanged</option><option value="active">Active</option><option value="paused">Paused</option><option value="completed">Completed</option><option value="abandoned">Abandoned</option></select></label><label class="wide">Next action<input id="workstream-next-action"></label><label class="wide">Blockers<input id="workstream-blockers"></label><label class="row"><input id="workstream-confirm" type="checkbox"><span>Confirm update</span></label></div><div class="row spread"><button id="workstream-list-button">Load</button><button class="primary" id="workstream-update-button">Update</button></div><div id="workstream-result" class="message hidden"></div></div></section>
+
+      <section id="activation-view" class="panel view hidden"><div class="panel-head"><h3>Activation Plan</h3><button id="plan-button">Regenerate</button></div><div class="panel-body stack"><div class="message">This preview runs the same hooks-only dry run used by the plugin. It does not write Codex config or trust hooks.</div><pre id="activation-plan"></pre></div></section>
     </main>
   </div>
   <script src="/widget.js"></script>
