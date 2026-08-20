@@ -46,6 +46,7 @@ pub mod retrieval;
 pub mod retrieval_router;
 pub mod rules;
 pub mod runtime_config;
+pub mod session_activity;
 mod session_rollup;
 mod spill_queue;
 pub mod summarize;

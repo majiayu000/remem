@@ -3,20 +3,20 @@ use rusqlite::Connection;
 
 use super::run_migrations;
 
-fn run_through_v083(conn: &Connection) -> Result<()> {
-    for migration in &super::MIGRATIONS[..83] {
+fn run_through_v084(conn: &Connection) -> Result<()> {
+    for migration in &super::MIGRATIONS[..84] {
         conn.execute_batch(migration.sql)?;
     }
     Ok(())
 }
 
 #[test]
-fn v084_marks_empty_store_exhausted() -> Result<()> {
+fn v085_marks_empty_store_exhausted() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
     run_migrations(&conn)?;
 
-    assert_eq!(super::latest_schema_version(), 84);
+    assert_eq!(super::latest_schema_version(), 85);
     let (state, residual): (String, i64) = conn.query_row(
         "SELECT state, residual_count FROM legacy_surface_state
          WHERE surface = 'pending_observations'",
@@ -29,10 +29,10 @@ fn v084_marks_empty_store_exhausted() -> Result<()> {
 }
 
 #[test]
-fn v084_keeps_delayed_and_leased_residual_rows_draining() -> Result<()> {
+fn v085_keeps_delayed_and_leased_residual_rows_draining() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
-    run_through_v083(&conn)?;
+    run_through_v084(&conn)?;
     let now = chrono::Utc::now().timestamp();
     for (session, status) in [
         ("delayed-pending", "pending"),
@@ -50,7 +50,7 @@ fn v084_keeps_delayed_and_leased_residual_rows_draining() -> Result<()> {
         )?;
     }
 
-    conn.execute_batch(super::MIGRATIONS[83].sql)?;
+    conn.execute_batch(super::MIGRATIONS[84].sql)?;
 
     let (state, residual): (String, i64) = conn.query_row(
         "SELECT state, residual_count FROM legacy_surface_state

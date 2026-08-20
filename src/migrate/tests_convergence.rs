@@ -498,6 +498,71 @@ fn assert_v076_shape_drift(conn: &Connection, expected: &str) -> Result<()> {
     Ok(())
 }
 
+fn assert_v084_shape_drift(conn: &Connection, expected: &str) -> Result<()> {
+    let drift = validate_schema_invariants(conn)?;
+    assert!(
+        drift.iter().any(|finding| {
+            finding.contains("v084_session_observatory critical shape mismatch")
+                && finding.contains(expected)
+        }),
+        "same-name wrong-shape object must fail loud for {expected}: {drift:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn v084_same_name_wrong_shape_index_fails_loud() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    run_migrations(&conn)?;
+    conn.execute_batch(
+        "DROP INDEX idx_session_turns_session;
+         CREATE INDEX idx_session_turns_session ON session_turns(session_id);",
+    )?;
+
+    assert_v084_shape_drift(&conn, "index idx_session_turns_session")
+}
+
+#[test]
+fn v084_same_columns_wrong_predicate_and_neutralized_check_fail_loud() -> Result<()> {
+    let wrong_index = Connection::open_in_memory()?;
+    run_migrations(&wrong_index)?;
+    wrong_index.execute_batch(
+        "DROP INDEX idx_session_turns_identity;
+         CREATE INDEX idx_session_turns_identity
+         ON session_turns(transcript_identity_id, turn_index) WHERE 0;",
+    )?;
+    assert_v084_shape_drift(&wrong_index, "index idx_session_turns_identity SQL differs")?;
+
+    let wrong_check = Connection::open_in_memory()?;
+    run_migrations(&wrong_check)?;
+    wrong_check.execute_batch(
+        "PRAGMA foreign_keys = OFF;
+         ALTER TABLE session_turn_actions RENAME TO session_turn_actions_old;
+         CREATE TABLE session_turn_actions (
+             id INTEGER PRIMARY KEY,
+             session_turn_id INTEGER NOT NULL REFERENCES session_turns(id) ON DELETE CASCADE,
+             action_index INTEGER NOT NULL CHECK(action_index >= 1 OR 1),
+             kind TEXT NOT NULL CHECK(kind IN ('read', 'edit', 'create', 'delete', 'run', 'search', 'external', 'other')),
+             tool_name TEXT,
+             summary TEXT NOT NULL,
+             event_row_id INTEGER REFERENCES captured_events(id) ON DELETE SET NULL,
+             files_json TEXT NOT NULL DEFAULT '[]',
+             outcome TEXT CHECK(outcome IS NULL OR outcome IN ('succeeded', 'failed', 'unknown')),
+             created_at_epoch INTEGER NOT NULL,
+             UNIQUE(session_turn_id, action_index)
+         );
+         DROP TABLE session_turn_actions_old;
+         CREATE INDEX idx_session_turn_actions_turn
+             ON session_turn_actions(session_turn_id, action_index);
+         CREATE INDEX idx_session_turn_actions_event
+             ON session_turn_actions(event_row_id) WHERE event_row_id IS NOT NULL;",
+    )?;
+    assert_v084_shape_drift(
+        &wrong_check,
+        "table session_turn_actions SQL differs from the canonical v084 contract",
+    )
+}
+
 #[test]
 fn v076_same_name_wrong_shape_objects_fail_loud() -> Result<()> {
     let wrong_index = Connection::open_in_memory()?;

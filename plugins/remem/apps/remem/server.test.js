@@ -557,6 +557,8 @@ test("widget routes embedded app actions through host tool calls", async () => {
 
     assert.match(html, /data-view="timeline"/);
     assert.match(html, /data-view="workstreams"/);
+    for (const marker of [/data-view="overview"/, /data-view="sessions"/, /id="activity-completion"/, /id="result-distribution"/, /id="turn-reader"/])
+      assert.match(html, marker);
     assert.match(widget, /window\.openai\.callTool/);
     assert.match(widget, /remem_dashboard/);
     assert.match(widget, /remem_search/);
@@ -572,6 +574,8 @@ test("widget routes embedded app actions through host tool calls", async () => {
     assert.match(widget, /\/api\/governance-preview/);
     assert.match(widget, /\/api\/timeline-around/);
     assert.match(widget, /\/api\/workstream-update/);
+    for (const marker of [/Boolean\(apiToolName\(url\.pathname, method\)\)/, /\/api\/activity-sessions/, /\/api\/session-activity/, /\/api\/session-stats/, /\/api\/project-session/, /Remem will not invent missing reasoning/])
+      assert.match(widget, marker);
   });
 });
 test("JSON-RPC trace tools return structured content", async () => {

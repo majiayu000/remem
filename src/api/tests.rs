@@ -27,6 +27,7 @@ mod candidate_safe_review;
 mod candidates;
 mod memory_governance;
 mod read_resources;
+mod session_activity;
 mod web_regressions;
 
 fn authorized_request(method: Method, uri: &str, token: &str, body: Body) -> Request<Body> {

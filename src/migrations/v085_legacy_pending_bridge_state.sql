@@ -1,4 +1,4 @@
--- v084_legacy_pending_bridge_state: halt the idle drain after residual rows are gone.
+-- v085_legacy_pending_bridge_state: halt the idle drain after residual rows are gone.
 --
 -- Fresh and already-empty stores must not keep admitting the
 -- pending_observations bridge. Residual auto-recoverable rows stay

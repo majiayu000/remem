@@ -22,6 +22,8 @@ candidate detail/evidence and idempotent safe review, five independently gated
 safe read resources, and recoverable memory archive/restore. This source
 version remains unavailable to installed-binary clients until a corresponding
 release is published.
+The source-only Session Observatory contract adds rebuildable turn activity,
+bounded activity statistics, and explicit exact-tuple projection in schema 84.
 
 ## Endpoint Groups
 
@@ -58,6 +60,11 @@ release is published.
 | GET | `/api/v1/observations/{id}` | Safe observation detail. |
 | GET | `/api/v1/sessions?page_size=&cursor=&project=` | Safe session list with typed keyset cursor. |
 | GET | `/api/v1/sessions/{id}` | Safe session detail. |
+| GET | `/api/v1/session-activity/sessions?project=&cursor=&limit=` | Raw-backed exact session tuples with projected turn counts and a filter-bound bounded-scan cursor; sparse/empty pages can still advance, and capped message counts carry `message_counts_truncated`. |
+| GET | `/api/v1/session-activity?project=&source_root=&session_id=&before_id=&limit=` | Evidence-aware projected turn list. |
+| GET | `/api/v1/session-activity/{id}` | Projected turn detail with bounded source text and action evidence IDs. |
+| GET | `/api/v1/session-stats?project=&since_epoch=&until_epoch=` | Bounded activity, result, capture-health, project, and tool counts; defaults to 30 days and rejects windows over 366 days. |
+| POST | `/api/v1/session-activity/project` | Idempotently rebuild one exact raw session tuple; never scans history. |
 | GET | `/api/v1/workstreams?page_size=&cursor=&project=` | Safe workstream list with typed keyset cursor. |
 | GET | `/api/v1/workstreams/{id}` | Safe workstream detail. |
 | GET | `/api/v1/events?page_size=&cursor=&project=` | Safe captured-event metadata list; raw content is excluded. |
@@ -103,6 +110,7 @@ release is published.
     "candidate_review_safe": true,
     "observations": true,
     "sessions": true,
+    "session_activity": true,
     "workstreams": true,
     "events": true,
     "tasks": true,
@@ -133,6 +141,10 @@ release is published.
     "observations_detail": "/api/v1/observations/{id}",
     "sessions_list": "/api/v1/sessions",
     "sessions_detail": "/api/v1/sessions/{id}",
+    "session_activity": "/api/v1/session-activity",
+    "session_activity_sessions": "/api/v1/session-activity/sessions",
+    "session_activity_project": "/api/v1/session-activity/project",
+    "session_activity_stats": "/api/v1/session-stats",
     "workstreams_list": "/api/v1/workstreams",
     "workstreams_detail": "/api/v1/workstreams/{id}",
     "events_list": "/api/v1/events",

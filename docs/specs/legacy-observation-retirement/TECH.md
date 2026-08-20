@@ -37,7 +37,7 @@ production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
 - The 2026-07-02 dogfood snapshot was empty, but #943 found non-empty
   long-running stores. The transitional drain exists for those stragglers
   without changing the frozen disposition.
-- v084 persists `legacy_surface_state` for `pending_observations`. Migration
+- v085 persists `legacy_surface_state` for `pending_observations`. Migration
   writes `exhausted` when no auto-recoverable residual row exists, otherwise
   `frozen_draining`; delayed retries and active processing leases remain
   recoverable and therefore cannot persist a false terminal state. Ordinary

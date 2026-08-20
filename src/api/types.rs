@@ -144,6 +144,7 @@ pub(super) struct CapabilitiesFeatures {
     pub candidate_review_safe: bool,
     pub observations: bool,
     pub sessions: bool,
+    pub session_activity: bool,
     pub workstreams: bool,
     pub events: bool,
     pub tasks: bool,

@@ -199,6 +199,49 @@ fn exact_collision_rewrites_every_persisted_evidence_reference() -> anyhow::Resu
                    'failure', 'saved', '[41,42,43,44]', 1, 1)",
         [],
     )?;
+    conn.execute_batch("PRAGMA foreign_keys = ON")?;
+    for (turn_id, raw_id, session_id, project) in [
+        (
+            701,
+            41,
+            plan.fallback_session_id.as_str(),
+            plan.legacy_project.as_str(),
+        ),
+        (
+            702,
+            43,
+            plan.canonical_session_id.as_str(),
+            plan.legacy_project.as_str(),
+        ),
+        (
+            703,
+            44,
+            plan.fallback_session_id.as_str(),
+            plan.project.as_str(),
+        ),
+        (
+            704,
+            42,
+            plan.canonical_session_id.as_str(),
+            plan.project.as_str(),
+        ),
+    ] {
+        conn.execute(
+            "INSERT INTO session_turns (
+                id, source_root, project, session_id, turn_index, user_message_id,
+                result_status, started_at_epoch, capture_health, source_digest,
+                projection_version, created_at_epoch, updated_at_epoch
+             ) VALUES (?1, 'local', ?2, ?3, 1, ?4, 'unknown', 100,
+                       'unavailable', 'stale', 1, 100, 100)",
+            params![turn_id, project, session_id, raw_id],
+        )?;
+        conn.execute(
+            "INSERT INTO session_turn_actions (
+                session_turn_id, action_index, kind, summary, created_at_epoch
+             ) VALUES (?1, 1, 'other', 'stale action', 100)",
+            [turn_id],
+        )?;
+    }
 
     let report = rekey_legacy_rows(&conn, &identity)?;
 
@@ -227,6 +270,20 @@ fn exact_collision_rewrites_every_persisted_evidence_reference() -> anyhow::Resu
             |row| row.get::<_, String>(0)
         )?,
         "raw_message:42:sha256 sha256 sha256"
+    );
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM session_turns", [], |row| {
+            row.get::<_, i64>(0)
+        })?,
+        0,
+        "rekeyed identity tuples must invalidate stale projections"
+    );
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM session_turn_actions", [], |row| {
+            row.get::<_, i64>(0)
+        })?,
+        0,
+        "projection invalidation must cascade to action rows"
     );
     std::fs::remove_file(path)?;
     Ok(())

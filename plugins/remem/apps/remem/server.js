@@ -23,6 +23,7 @@ const {
 } = require("./request-security");
 const { toolDescriptors, UI_RESOURCE } = require("./tools");
 const { callTraceTool, createTraceBackend } = require("./trace");
+const { createSessionActivityBackend, handleSessionActivityRoute } = require("./session-activity");
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 5577;
@@ -403,6 +404,7 @@ function createBackend(options = {}) {
         requested
       };
     },
+    ...createSessionActivityBackend(api),
     ...createTraceBackend(runRememJson),
     stop() {
       api.stop?.();
@@ -522,6 +524,26 @@ async function callTool(backend, name, args = {}) {
       `Governance dry-run found ${result.affected?.length ?? 0} affected memory result(s).`,
       result
     );
+  }
+  if (name === "remem_activity_sessions") {
+    const result = await backend.activitySessions(args);
+    return toolResult(`Loaded ${result.meta?.count ?? 0} session(s).`, result);
+  }
+  if (name === "remem_session_activity") {
+    const result = await backend.sessionActivity(args);
+    return toolResult(`Loaded ${result.meta?.count ?? 0} turn(s).`, result);
+  }
+  if (name === "remem_session_turn") {
+    const result = await backend.sessionTurn(args.id);
+    return toolResult(`Loaded session turn ${args.id}.`, result);
+  }
+  if (name === "remem_session_stats") {
+    const result = await backend.sessionStats(args);
+    return toolResult("Loaded session activity statistics.", result);
+  }
+  if (name === "remem_project_session") {
+    const result = await backend.projectSession(args);
+    return toolResult(`Projected ${result.data?.turn_count ?? 0} turn(s).`, result);
   }
   const traceResult = await callTraceTool(backend, name, args, toolResult);
   if (traceResult) return traceResult;
@@ -655,6 +677,7 @@ function createServer(options = {}) {
       if (req.method === "GET" && url.pathname === "/api/workstreams") {
         return jsonResponse(res, 200, await backend.workstreamsList(Object.fromEntries(url.searchParams)));
       }
+      if (await handleSessionActivityRoute({ req, res, url, backend, jsonResponse, readJsonBody })) return;
       if (req.method === "POST" && url.pathname === "/api/save") {
         assertLocalPostAllowed(req);
         return jsonResponse(res, 201, await backend.save(await readJsonBody(req)));

@@ -19,6 +19,16 @@ pub(in crate::api) async fn handle_capabilities() -> impl IntoResponse {
         ("candidate_review", "/api/v1/candidates/{id}/approve"),
         ("graph", "/api/v1/graph"),
         ("user_recall", "/api/v1/user/recall"),
+        ("session_activity", "/api/v1/session-activity"),
+        (
+            "session_activity_sessions",
+            "/api/v1/session-activity/sessions",
+        ),
+        (
+            "session_activity_project",
+            "/api/v1/session-activity/project",
+        ),
+        ("session_activity_stats", "/api/v1/session-stats"),
     ]);
     endpoints.extend(candidate_console_endpoint_bundle(true));
     endpoints.extend(memory_governance_endpoint_bundle(
@@ -58,6 +68,7 @@ pub(in crate::api) async fn handle_capabilities() -> impl IntoResponse {
             candidate_review_safe: true,
             observations: true,
             sessions: true,
+            session_activity: true,
             workstreams: true,
             events: true,
             tasks: true,

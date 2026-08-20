@@ -419,7 +419,7 @@ does not auto-flush that legacy queue. The deleted enqueue/claim API stays
 deleted. Ordinary workers instead expose a drain-only migration bridge for
 residual rows, and consider it only after the current extraction worker finds
 no ready task. After a store has no residual auto-recoverable rows (including
-delayed retries and active leases), v084
+delayed retries and active leases), v085
 persists `legacy_surface_state.state = exhausted` and workers skip the bridge
 until a residual row is reintroduced. Guarded table drop remains remem 0.7.0.
 

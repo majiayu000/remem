@@ -91,7 +91,7 @@ class ExtraRewriteTablesTests(unittest.TestCase):
 
     def test_v084_is_not_mixed(self) -> None:
         sql = (
-            concerns.ROOT / "src/migrations/v084_legacy_pending_bridge_state.sql"
+            concerns.ROOT / "src/migrations/v085_legacy_pending_bridge_state.sql"
         ).read_text(encoding="utf-8")
         self.assertEqual(concerns.extra_rewrite_tables(sql), set())
 

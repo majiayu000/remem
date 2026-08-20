@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Added
-- Staged source version `0.6.79` for architecture convergence: empty-store
+- Staged source version `0.6.80` for architecture convergence: empty-store
   `pending_observations` drain now persists `exhausted` and skips ordinary
   workers, worker interval schedules share one admission helper, SessionStart
   budgets live in `config.toml` `[context]`, USD overrides live in
@@ -27,6 +27,10 @@
   `REMEM_CONTEXT_*` environment variables remain overrides; a present invalid
   `[context]` integer fails closed. The compiled `preference_global_limit`
   default stays `0` (global preference injection remains disabled by default).
+- Staged source version `0.6.79` adds the Session Observatory: a lossless,
+  idempotent projection from raw session evidence into turns and captured
+  actions; bounded REST and plugin-app read models; and an editorial local UI
+  with activity statistics, session browsing, and request-to-result evidence.
 - Staged source version `0.6.78` to restore the Intel macOS
   `--no-default-features` release build: remem_e2e opaque identity generation
   now maps `getrandom::Error` explicitly instead of requiring the optional
