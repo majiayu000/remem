@@ -151,23 +151,36 @@ fn apply_family_config(default: ModelPricing, prefix: &str) -> Result<ModelPrici
 }
 
 fn apply_family_env(default: ModelPricing, prefix: &str) -> ModelPricing {
-    let input = parse_env_f64(&format!("REMEM_PRICE_{}_INPUT_PER_MTOK", prefix))
-        .unwrap_or(default.input_per_mtok);
-    let output = parse_env_f64(&format!("REMEM_PRICE_{}_OUTPUT_PER_MTOK", prefix))
-        .unwrap_or(default.output_per_mtok);
+    let input_override = parse_env_f64(&format!("REMEM_PRICE_{}_INPUT_PER_MTOK", prefix));
+    let output_override = parse_env_f64(&format!("REMEM_PRICE_{}_OUTPUT_PER_MTOK", prefix));
+    let reasoning_override = parse_env_f64(&format!("REMEM_PRICE_{}_REASONING_PER_MTOK", prefix));
+    let cache_creation_override =
+        parse_env_f64(&format!("REMEM_PRICE_{}_CACHE_CREATION_PER_MTOK", prefix));
+    let cache_read_override = parse_env_f64(&format!("REMEM_PRICE_{}_CACHE_READ_PER_MTOK", prefix));
+    let has_env_override = input_override.is_some()
+        || output_override.is_some()
+        || reasoning_override.is_some()
+        || cache_creation_override.is_some()
+        || cache_read_override.is_some();
+    let input = input_override.unwrap_or(default.input_per_mtok);
+    let output = output_override.unwrap_or(default.output_per_mtok);
     ModelPricing {
         input_per_mtok: input,
         output_per_mtok: output,
-        reasoning_per_mtok: parse_env_f64(&format!("REMEM_PRICE_{}_REASONING_PER_MTOK", prefix))
-            .unwrap_or(output),
-        cache_creation_per_mtok: parse_env_f64(&format!(
-            "REMEM_PRICE_{}_CACHE_CREATION_PER_MTOK",
-            prefix
-        ))
-        .unwrap_or(default.cache_creation_per_mtok),
-        cache_read_per_mtok: parse_env_f64(&format!("REMEM_PRICE_{}_CACHE_READ_PER_MTOK", prefix))
-            .unwrap_or(default.cache_read_per_mtok),
-        source: default.source,
+        reasoning_per_mtok: reasoning_override.unwrap_or_else(|| {
+            if output_override.is_some() {
+                output
+            } else {
+                default.reasoning_per_mtok
+            }
+        }),
+        cache_creation_per_mtok: cache_creation_override.unwrap_or(default.cache_creation_per_mtok),
+        cache_read_per_mtok: cache_read_override.unwrap_or(default.cache_read_per_mtok),
+        source: if has_env_override {
+            "env_override"
+        } else {
+            default.source
+        },
     }
 }
 

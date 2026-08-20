@@ -426,7 +426,7 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
         let migration_now = Instant::now();
         if legacy_pending::should_attempt_legacy_pending_migration(
             &conn,
-            &legacy_pending_migration_schedule,
+            &mut legacy_pending_migration_schedule,
             migration_now,
         )? {
             match db::pending::admin::auto_migrate_actionable_legacy_pending(

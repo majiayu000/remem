@@ -29,7 +29,7 @@ pub(super) fn extraction_pipeline_is_idle(conn: &rusqlite::Connection) -> Result
 
 pub(super) fn should_attempt_legacy_pending_migration(
     conn: &rusqlite::Connection,
-    schedule: &IntervalAdmission,
+    schedule: &mut IntervalAdmission,
     now: Instant,
 ) -> Result<bool> {
     if db::pending::admin::legacy_pending_auto_bridge_is_exhausted(conn)? {
@@ -40,6 +40,7 @@ pub(super) fn should_attempt_legacy_pending_migration(
     }
     if !db::pending::admin::has_auto_actionable_legacy_pending(conn)? {
         db::pending::admin::sync_legacy_pending_bridge_state(conn)?;
+        schedule.record_attempt(now);
         return Ok(false);
     }
     extraction_pipeline_is_idle(conn)

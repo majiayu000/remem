@@ -58,6 +58,48 @@ fn daemon_schedule_waits_sixty_seconds_between_attempts() {
 }
 
 #[test]
+fn delayed_legacy_rows_sync_once_per_daemon_interval() -> anyhow::Result<()> {
+    let conn = setup_conn()?;
+    let pending_id = crate::db::test_support::insert_legacy_pending_fixture(
+        &conn,
+        crate::runtime_config::CODEX_HOST,
+        "sess-delayed-cadence",
+        "/tmp/remem-delayed-cadence",
+        "Bash",
+        None,
+        None,
+        None,
+    )?;
+    conn.execute(
+        "UPDATE pending_observations SET next_retry_epoch = ?1 WHERE id = ?2",
+        params![chrono::Utc::now().timestamp() + 3_600, pending_id],
+    )?;
+    let started_at = Instant::now();
+    let mut schedule = new_schedule(false, started_at);
+
+    let before_sync = conn.total_changes();
+    assert!(!should_attempt_legacy_pending_migration(
+        &conn,
+        &mut schedule,
+        started_at
+    )?);
+    let after_sync = conn.total_changes();
+    assert!(after_sync > before_sync);
+
+    assert!(!should_attempt_legacy_pending_migration(
+        &conn,
+        &mut schedule,
+        started_at + Duration::from_secs(1)
+    )?);
+    assert_eq!(conn.total_changes(), after_sync);
+    assert!(
+        !schedule.is_due(started_at + LEGACY_PENDING_MIGRATION_INTERVAL - Duration::from_millis(1))
+    );
+    assert!(schedule.is_due(started_at + LEGACY_PENDING_MIGRATION_INTERVAL));
+    Ok(())
+}
+
+#[test]
 fn due_pending_and_processing_apply_backpressure_but_delayed_does_not() -> anyhow::Result<()> {
     let conn = setup_conn()?;
     let task_id = seed_extraction_task(&conn)?;
@@ -112,7 +154,9 @@ fn active_extraction_work_does_not_consume_once_migration_slot() -> anyhow::Resu
     let mut schedule = new_schedule(true, started_at);
 
     assert!(!should_attempt_legacy_pending_migration(
-        &conn, &schedule, started_at
+        &conn,
+        &mut schedule,
+        started_at
     )?);
     assert!(schedule.is_due(started_at));
 
@@ -121,11 +165,15 @@ fn active_extraction_work_does_not_consume_once_migration_slot() -> anyhow::Resu
         [task_id],
     )?;
     assert!(should_attempt_legacy_pending_migration(
-        &conn, &schedule, started_at
+        &conn,
+        &mut schedule,
+        started_at
     )?);
     schedule.record_attempt(started_at);
     assert!(!should_attempt_legacy_pending_migration(
-        &conn, &schedule, started_at
+        &conn,
+        &mut schedule,
+        started_at
     )?);
     Ok(())
 }
@@ -172,14 +220,14 @@ fn completed_zero_progress_attempt_consumes_once_migration_slot() {
 #[test]
 fn exhausted_store_does_not_admit_legacy_migration() -> anyhow::Result<()> {
     let conn = setup_conn()?;
-    let schedule = new_schedule(true, Instant::now());
+    let mut schedule = new_schedule(true, Instant::now());
 
     assert!(db::pending::admin::legacy_pending_auto_bridge_is_exhausted(
         &conn
     )?);
     assert!(!should_attempt_legacy_pending_migration(
         &conn,
-        &schedule,
+        &mut schedule,
         Instant::now()
     )?);
     Ok(())
@@ -198,12 +246,12 @@ fn residual_row_reactivates_once_admission() -> anyhow::Result<()> {
         None,
         None,
     )?;
-    let schedule = new_schedule(true, Instant::now());
+    let mut schedule = new_schedule(true, Instant::now());
 
     assert!(!db::pending::admin::legacy_pending_auto_bridge_is_exhausted(&conn)?);
     assert!(should_attempt_legacy_pending_migration(
         &conn,
-        &schedule,
+        &mut schedule,
         Instant::now()
     )?);
     Ok(())
@@ -230,10 +278,10 @@ fn lifecycle_requeue_of_due_extraction_work_blocks_legacy_migration() -> anyhow:
     let maintenance = crate::db::maintain_failure_lifecycle(&conn)?;
 
     assert_eq!(maintenance.retried_extraction_tasks, 1);
-    let schedule = new_schedule(true, Instant::now());
+    let mut schedule = new_schedule(true, Instant::now());
     assert!(!should_attempt_legacy_pending_migration(
         &conn,
-        &schedule,
+        &mut schedule,
         Instant::now()
     )?);
     Ok(())
