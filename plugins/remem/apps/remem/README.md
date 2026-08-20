@@ -14,6 +14,8 @@ This app surface provides:
 - timeline: project report and around-anchor/query browsing
 - workstreams: status filtering plus confirmed status/next-action/blocker updates
 - activation: packaged hook review plus hooks-only dry-run plan without writing Codex config
+- session observatory: exact raw-session discovery, idempotent turn projection,
+  evidence-aware turn detail, and activity statistics
 
 ## Surface map
 
@@ -32,6 +34,10 @@ This app surface provides:
 | Workstreams | `remem_workstreams_list` | `GET /api/workstreams` | `remem workstreams list --json` |
 | Workstream update | `remem_workstream_update` | `POST /api/workstream-update` | `remem workstreams update --json --confirm` |
 | Activation plan | `remem_activation_plan` | `GET /api/activation-plan` | `remem install --target codex --hooks-only --dry-run` |
+| Activity sessions | App route | `GET /api/activity-sessions` | native `GET /api/v1/session-activity/sessions` |
+| Session turns | App route | `GET /api/session-activity`, `GET /api/session-turn` | native session activity list/detail |
+| Activity stats | App route | `GET /api/session-stats` | native `GET /api/v1/session-stats` |
+| Project session | App route | `POST /api/project-session` | native exact-tuple activity projection |
 
 Timeline and workstream backend routes are wired for app and MCP callers through
 machine-readable Rust CLI bridges. The visible widget is split into HTML, CSS,

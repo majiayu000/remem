@@ -71,8 +71,12 @@ the caller workspace instead of the plugin checkout.
 
 ## Local App Surface
 
-The local app prototype exposes a dashboard, search/detail view, explicit save
-form, and hooks-only activation dry run:
+The local app prototype opens on an activity overview with session, turn,
+action, completion, outcome, and memory statistics. Its session explorer reads
+an exact raw session tuple as structured request, understanding, captured
+actions, and result evidence. Search/detail, explicit save, timeline,
+workstreams, governance preview, and hooks-only activation remain available in
+the sidebar:
 
 ```bash
 cargo build --release

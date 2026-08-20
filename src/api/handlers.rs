@@ -12,6 +12,7 @@ mod memory_governance;
 mod observations;
 mod save;
 mod search;
+mod session_activity;
 mod sessions;
 mod show;
 mod stats;
@@ -44,6 +45,10 @@ pub(super) use save::handle_save_memory;
 pub(super) use search::handle_search;
 #[cfg(test)]
 pub(super) use search::search_request_from_params;
+pub(super) use session_activity::{
+    handle_activity_sessions, handle_list_session_activity, handle_project_session_activity,
+    handle_session_activity_detail, handle_session_activity_stats,
+};
 pub(super) use sessions::{handle_list_sessions, handle_session_detail};
 pub(super) use show::handle_get_memory;
 pub(super) use stats::handle_stats;

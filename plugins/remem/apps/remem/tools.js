@@ -3,7 +3,7 @@
 const UI_RESOURCE = "ui://remem/dashboard.html";
 
 function toolDescriptors() {
-  return [
+  const tools = [
     {
       name: "remem_dashboard",
       title: "Remem Dashboard",
@@ -281,6 +281,62 @@ function toolDescriptors() {
         "openai/widgetAccessible": true
       }
     }
+  ];
+  return [...tools, ...sessionActivityToolDescriptors()];
+}
+
+function activityTool(name, title, description, properties, options = {}) {
+  return {
+    name,
+    title,
+    description,
+    inputSchema: {
+      type: "object",
+      properties,
+      ...(options.required ? { required: options.required } : {}),
+      additionalProperties: false
+    },
+    annotations: {
+      readOnlyHint: options.readOnly !== false,
+      destructiveHint: false,
+      openWorldHint: false
+    },
+    _meta: {
+      ui: { visibility: ["model", "app"] },
+      "openai/widgetAccessible": true
+    }
+  };
+}
+
+function sessionActivityToolDescriptors() {
+  const exactSession = {
+    source_root: { type: "string", minLength: 1, maxLength: 1024 },
+    project: { type: "string", minLength: 1, maxLength: 4096 },
+    session_id: { type: "string", minLength: 1, maxLength: 512 }
+  };
+  return [
+    activityTool("remem_activity_sessions", "List Session Activity", "List bounded raw-backed session tuples.", {
+      project: { type: "string" },
+      cursor: { type: "string" },
+      limit: { type: "integer", minimum: 1, maximum: 200 }
+    }),
+    activityTool("remem_session_activity", "Read Session Turns", "Read one bounded page of projected session turns.", {
+      ...exactSession,
+      before_id: { type: "integer", minimum: 1 },
+      limit: { type: "integer", minimum: 1, maximum: 200 }
+    }),
+    activityTool("remem_session_turn", "Read Session Turn", "Read one projected session turn by ID.", {
+      id: { type: "integer", minimum: 1 }
+    }, { required: ["id"] }),
+    activityTool("remem_session_stats", "Read Session Statistics", "Read bounded session activity statistics.", {
+      project: { type: "string" },
+      since_epoch: { type: "integer" },
+      until_epoch: { type: "integer" }
+    }),
+    activityTool("remem_project_session", "Project Session Activity", "Idempotently project one exact raw session tuple.", exactSession, {
+      required: ["source_root", "project", "session_id"],
+      readOnly: false
+    })
   ];
 }
 

@@ -65,11 +65,16 @@ const IMPLEMENTATION_INPUTS: &[&str] = &[
     "src/migrate/schema_drift/invariants/v072.rs",
     "src/migrate/schema_drift/invariants/v073.rs",
     "src/migrate/schema_drift/invariants/v076.rs",
+    "src/migrate/schema_drift/invariants/v076/shape.rs",
     "src/migrate/schema_drift/invariants/v077.rs",
     "src/migrate/schema_drift/invariants/v078.rs",
     "src/migrate/schema_drift/invariants/v079.rs",
     "src/migrate/schema_drift/invariants/v080.rs",
     "src/migrate/schema_drift/invariants/v081.rs",
+    "src/migrate/schema_drift/invariants/v082.rs",
+    "src/migrate/schema_drift/invariants/v083.rs",
+    "src/migrate/schema_drift/invariants/v084.rs",
+    "src/migrate/schema_drift/invariants/v084/shape.rs",
     "src/migrate/state.rs",
     "src/migrate/transition.rs",
     "src/migrate/types.rs",
@@ -236,6 +241,7 @@ const MIGRATION_SQL_INPUTS: &[&str] = &[
     "src/migrations/v081_context_bundle_audits.sql",
     "src/migrations/v082_project_identity_aliases.sql",
     "src/migrations/v083_retrieval_enrichment_budget.sql",
+    "src/migrations/v084_session_observatory.sql",
 ];
 
 #[derive(Debug, Clone, Serialize)]
