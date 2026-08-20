@@ -32,7 +32,16 @@ fn temp_data_dir(label: &str) -> PathBuf {
 }
 
 fn run_hook(data_dir: &Path, args: &[&str], stdin_bytes: &[u8]) -> HookRun {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_remem"))
+    run_hook_with_binary(env!("CARGO_BIN_EXE_remem"), data_dir, args, stdin_bytes)
+}
+
+fn run_hook_with_binary(
+    binary: &str,
+    data_dir: &Path,
+    args: &[&str],
+    stdin_bytes: &[u8],
+) -> HookRun {
+    let mut child = Command::new(binary)
         .args(args)
         .env("REMEM_DATA_DIR", data_dir)
         .env("REMEM_ALLOW_PLAINTEXT_DB", "1")
@@ -54,6 +63,47 @@ fn run_hook(data_dir: &Path, args: &[&str], stdin_bytes: &[u8]) -> HookRun {
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
     }
+}
+
+#[test]
+fn slim_hook_cursor_stop_launches_full_sibling_worker() {
+    let dir = temp_data_dir("slim-summarize-worker");
+    migrate_db_at(&dir);
+
+    let run = run_hook_with_binary(
+        env!("CARGO_BIN_EXE_remem-hook"),
+        &dir,
+        &["summarize", "--host", "cursor"],
+        stop_payload().as_bytes(),
+    );
+    assert!(
+        run.status.success(),
+        "slim summarize failed: {}",
+        run.stderr
+    );
+
+    let expected_prefix = format!("worker-v{}-once-", env!("CARGO_PKG_VERSION"));
+    let mut observed_owner = None;
+    for _ in 0..80 {
+        if let Ok(conn) = rusqlite::Connection::open(dir.join("remem.db")) {
+            observed_owner = conn
+                .query_row(
+                    "SELECT owner FROM worker_heartbeats ORDER BY updated_at_epoch DESC LIMIT 1",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .ok();
+        }
+        if observed_owner.is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    let owner = observed_owner.expect("full sibling worker should publish its own heartbeat");
+    assert!(
+        owner.starts_with(&expected_prefix),
+        "unexpected worker heartbeat owner: {owner}"
+    );
 }
 
 fn session_start_payload() -> String {

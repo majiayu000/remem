@@ -16,7 +16,7 @@ pub(super) enum WorkerSpawnDecision {
 pub(super) fn spawn_worker_once_if_idle(
     conn: &rusqlite::Connection,
 ) -> Result<WorkerSpawnDecision> {
-    spawn_worker_once_if_idle_with(conn, || spawn_worker_once(conn))
+    spawn_worker_once_if_idle_with(conn, spawn_worker_once)
 }
 
 fn spawn_worker_once_if_idle_with(
@@ -67,15 +67,12 @@ fn should_spawn_worker_once(conn: &rusqlite::Connection) -> Result<bool> {
     Ok(true)
 }
 
-fn spawn_worker_once(conn: &rusqlite::Connection) -> Result<()> {
+fn spawn_worker_once() -> Result<()> {
     let exe = std::env::current_exe()?;
-    spawn_worker_once_from_executable(conn, &exe)
+    spawn_worker_once_from_executable(&exe)
 }
 
-fn spawn_worker_once_from_executable(
-    conn: &rusqlite::Connection,
-    current_exe: &Path,
-) -> Result<()> {
+fn spawn_worker_once_from_executable(current_exe: &Path) -> Result<()> {
     let exe = worker_executable(current_exe)?;
     let worker_dir = stable_worker_dir();
     let stderr_file = crate::log::open_log_append();
@@ -93,16 +90,7 @@ fn spawn_worker_once_from_executable(
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(stderr_cfg);
-    let child = command.spawn()?;
-    let now = chrono::Utc::now();
-    db::upsert_worker_heartbeat(
-        conn,
-        &db::current_worker_owner("once", child.id(), now.timestamp_millis()),
-        i64::from(child.id()),
-        now.timestamp(),
-        now.timestamp(),
-    )
-    .context("record worker --once launch heartbeat")?;
+    command.spawn()?;
     Ok(())
 }
 
@@ -203,7 +191,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn slim_hook_stop_fallback_spawns_full_sibling_worker() -> anyhow::Result<()> {
+    fn immediately_exiting_full_sibling_does_not_publish_worker_health() -> anyhow::Result<()> {
         use std::os::unix::fs::PermissionsExt;
 
         let test_dir = ScopedTestDataDir::new("summary-slim-hook-worker");
@@ -222,7 +210,7 @@ mod tests {
         permissions.set_mode(0o755);
         std::fs::set_permissions(&full, permissions)?;
 
-        spawn_worker_once_from_executable(&conn, &hook)?;
+        spawn_worker_once_from_executable(&hook)?;
 
         for _ in 0..40 {
             if args_file.exists() {
@@ -235,7 +223,8 @@ mod tests {
             &conn,
             db::WORKER_HEARTBEAT_HEALTH_SECS
         )?
-        .is_some());
+        .is_none());
+        assert!(db::latest_worker_heartbeat(&conn)?.is_none());
         Ok(())
     }
 
