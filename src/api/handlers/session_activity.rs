@@ -89,8 +89,15 @@ pub(in crate::api) async fn handle_session_activity_detail(
     Path(id): Path<String>,
 ) -> Response {
     let id = match parse_positive_id(&id) {
-        Ok(id) => id,
-        Err(response) => return response,
+        Some(id) => id,
+        None => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "invalid_session_activity_id",
+                "session activity id must be a positive integer",
+            )
+            .into_response()
+        }
     };
     let conn = match open_request_db() {
         Ok(conn) => conn,
@@ -169,15 +176,8 @@ fn trimmed_filter(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
-fn parse_positive_id(id: &str) -> Result<i64, Response> {
-    id.parse::<i64>().ok().filter(|id| *id > 0).ok_or_else(|| {
-        error_response(
-            StatusCode::BAD_REQUEST,
-            "invalid_session_activity_id",
-            "session activity id must be a positive integer",
-        )
-        .into_response()
-    })
+fn parse_positive_id(id: &str) -> Option<i64> {
+    id.parse::<i64>().ok().filter(|id| *id > 0)
 }
 
 fn activity_error(code: &str, error: anyhow::Error) -> Response {
