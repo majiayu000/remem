@@ -60,10 +60,10 @@ bounded activity statistics, and explicit exact-tuple projection in schema 84.
 | GET | `/api/v1/observations/{id}` | Safe observation detail. |
 | GET | `/api/v1/sessions?page_size=&cursor=&project=` | Safe session list with typed keyset cursor. |
 | GET | `/api/v1/sessions/{id}` | Safe session detail. |
-| GET | `/api/v1/session-activity/sessions?project=&before_epoch=&limit=` | Raw-backed exact session tuples with projected turn counts. |
+| GET | `/api/v1/session-activity/sessions?project=&cursor=&limit=` | Raw-backed exact session tuples with projected turn counts and a filter-bound bounded-scan cursor; sparse/empty pages can still advance, and capped message counts carry `message_counts_truncated`. |
 | GET | `/api/v1/session-activity?project=&source_root=&session_id=&before_id=&limit=` | Evidence-aware projected turn list. |
 | GET | `/api/v1/session-activity/{id}` | Projected turn detail with bounded source text and action evidence IDs. |
-| GET | `/api/v1/session-stats?project=&since_epoch=&until_epoch=` | Bounded activity, result, capture-health, project, and tool counts. |
+| GET | `/api/v1/session-stats?project=&since_epoch=&until_epoch=` | Bounded activity, result, capture-health, project, and tool counts; defaults to 30 days and rejects windows over 366 days. |
 | POST | `/api/v1/session-activity/project` | Idempotently rebuild one exact raw session tuple; never scans history. |
 | GET | `/api/v1/workstreams?page_size=&cursor=&project=` | Safe workstream list with typed keyset cursor. |
 | GET | `/api/v1/workstreams/{id}` | Safe workstream detail. |

@@ -29,15 +29,15 @@ One row per projected conversational turn:
 ```sql
 CREATE TABLE session_turns (
     id INTEGER PRIMARY KEY,
-    transcript_identity_id INTEGER REFERENCES raw_session_identities(id),
+    transcript_identity_id INTEGER REFERENCES raw_session_identities(id) ON DELETE RESTRICT,
     source_root TEXT NOT NULL,
     project TEXT NOT NULL,
     session_id TEXT NOT NULL,
-    session_row_id INTEGER REFERENCES sessions(id),
+    session_row_id INTEGER REFERENCES sessions(id) ON DELETE SET NULL,
     turn_index INTEGER NOT NULL,
-    user_message_id INTEGER NOT NULL REFERENCES raw_messages(id),
-    understanding_message_id INTEGER REFERENCES raw_messages(id),
-    result_message_id INTEGER REFERENCES raw_messages(id),
+    user_message_id INTEGER NOT NULL REFERENCES raw_messages(id) ON DELETE CASCADE,
+    understanding_message_id INTEGER REFERENCES raw_messages(id) ON DELETE SET NULL,
+    result_message_id INTEGER REFERENCES raw_messages(id) ON DELETE SET NULL,
     understanding TEXT,
     understanding_source TEXT,
     actions_summary TEXT,
@@ -78,7 +78,7 @@ CREATE TABLE session_turn_actions (
     kind TEXT NOT NULL,
     tool_name TEXT,
     summary TEXT NOT NULL,
-    event_row_id INTEGER REFERENCES captured_events(id),
+    event_row_id INTEGER REFERENCES captured_events(id) ON DELETE SET NULL,
     files_json TEXT NOT NULL DEFAULT '[]',
     outcome TEXT,
     created_at_epoch INTEGER NOT NULL,
@@ -93,8 +93,9 @@ bounded.
 
 Add `src/session_activity/` with a pure projector and a transactional store.
 
-1. Load raw messages for one exact tuple. Prefer transcript ordinal, then event
-   time and row ID for legacy rows.
+1. Start an `IMMEDIATE` transaction, then load raw messages for one exact tuple
+   inside that source snapshot. Prefer transcript ordinal, then event time and
+   row ID for legacy rows. Reject tuples over 10,000 messages.
 2. Start a turn at each `role = user` occurrence. Assistant messages before the
    next user occurrence belong to that turn.
 3. Select the first meaningful assistant text as `understanding`; greetings or
@@ -102,15 +103,32 @@ Add `src/session_activity/` with a pure projector and a transactional store.
 4. Select the final assistant message as the result. With no assistant result,
    use `aborted`; with no linked tool actions, use `answered`; otherwise use a
    conservative keyword classifier and allow `unknown`.
-5. Link captured events only when an unambiguous `session_row_id` matches the
-   project/session identity. Assign events to timestamp windows. Equal or
-   missing timestamps reduce capture health instead of being guessed.
-6. Derive compact action summaries from redacted event metadata. Never expose
+5. Link captured events only for the local source root and when the active
+   transcript identity path identifies exactly one supported host (`.claude`,
+   `.codex`, or `.cursor`) and an unambiguous `session_row_id` matches that host,
+   the
+   canonical `projects.project_path` (or an approved active project alias) and
+   session identity. Other source roots fail closed instead of borrowing local
+   tool evidence. Never join through basename-only `project_key`. Assign events
+   by authoritative `reference_time_epoch`, falling back to event creation time
+   only when reference time is absent. Equal or missing boundary timestamps
+   remain unassigned and reduce capture health. Reject sessions over 20,000
+   captured actions.
+6. Treat an assistant message as an action-bearing result only when it occurs
+   unambiguously after the last assigned action. A pre-action plan is not a
+   completed result. Derive compact action summaries from redacted event
+   metadata. Pass every API-visible user, assistant, action, and label field
+   through the shared sensitive-text redactor before truncation. Never expose
    blob payloads or unrestricted command text through the new API.
-7. Hash the ordered raw-message IDs/hashes and linked event IDs/hashes into a
-   source digest.
+7. Hash every projection-affecting input, including session/transcript identity,
+   event-time provenance, and tool names, into a source digest.
 8. In one transaction, no-op when digest and projection version match;
-   otherwise delete and replace only this exact tuple's projected rows.
+   otherwise upsert turns by exact tuple and turn index so continuation IDs stay
+   stable, replace their child actions, and delete only stale trailing turns.
+9. Session-identity rekeying invalidates every affected old and canonical
+   tuple inside the same savepoint as the raw-row rewrite. A failed collision
+   check rolls both operations back; a later explicit projection rebuilds the
+   canonical tuple.
 
 Projection version starts at `1`.
 
@@ -129,9 +147,18 @@ The POST route accepts one exact tuple and projects it explicitly. The normal
 UI list may request bounded lazy projection for visible sessions through the
 plugin server; API reads never silently trigger unbounded work.
 
-List and stats parameters support bounded `project`, `since`, `until`, cursor,
-and limit filters. Defaults and maximum limits follow existing read-resource
-patterns.
+Session listing uses an opaque raw-row cursor bound to its project filter and a
+fixed scan budget proportional to the requested result limit. A page may be
+sparse or empty while `has_more=true`; clients continue with `next_cursor`.
+Dedicated recency and exact-tuple indexes bound both the candidate scan and its
+latest-occurrence probes without grouping the full archive. Per-session role
+counts inspect at most 10,001 messages, return counts capped at 10,000 with
+`message_counts_truncated=true`, and omit `first_epoch` when the true first
+message lies outside that bound. Turn listing
+returns `has_more` and `next_before_id`. At most 100 actions are returned per turn, with
+`actions_truncated=true` when more exist. The app follows at most five 200-turn
+pages and labels the bounded 1,000-turn view when more remain. Statistics
+default to 30 days and reject windows wider than 366 days.
 
 The turn response includes evidence IDs and capture health. It does not expose
 raw filesystem transcript paths, content blobs, unrestricted tool inputs, API
@@ -145,6 +172,10 @@ Extend the existing local app server rather than create a second server.
 - Add local `/api/session-activity`, `/api/session-turn`, and
   `/api/session-stats` routes.
 - Keep loopback and local POST-origin protections.
+- Expose widget-accessible host tools for every activity route; embedded Apps
+  SDK mode must not fall back to iframe-relative HTTP requests.
+- Re-run idempotent exact-tuple projection whenever a session is selected, and
+  discard stale async responses when the selection changes.
 - Rework the widget into a persistent application shell with Overview,
   Sessions, Memory, and System navigation.
 - Use a dense editorial/technical visual direction: warm paper background,
@@ -188,4 +219,3 @@ cargo test api_public
 node --test plugins/remem/apps/remem/server.test.js
 cargo test
 ```
-

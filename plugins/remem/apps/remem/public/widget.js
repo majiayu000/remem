@@ -5,8 +5,12 @@ const state = {
   selected: null,
   activityStats: null,
   sessions: [],
+  sessionsTruncated: false,
   selectedSession: null,
-  turns: []
+  turns: [],
+  turnsTruncated: false,
+  sessionRequestGeneration: 0,
+  activityRequestGeneration: 0
 };
 const $ = (id) => document.getElementById(id);
 function cls(value, truthy) {
@@ -50,9 +54,14 @@ function apiToolName(pathname, method) {
   if (method === "GET" && pathname === "/api/timeline-around") return "remem_timeline_around";
   if (method === "GET" && pathname === "/api/timeline-report") return "remem_timeline_report";
   if (method === "GET" && pathname === "/api/workstreams") return "remem_workstreams_list";
+  if (method === "GET" && pathname === "/api/activity-sessions") return "remem_activity_sessions";
+  if (method === "GET" && pathname === "/api/session-activity") return "remem_session_activity";
+  if (method === "GET" && pathname === "/api/session-turn") return "remem_session_turn";
+  if (method === "GET" && pathname === "/api/session-stats") return "remem_session_stats";
   if (method === "POST" && pathname === "/api/save") return "remem_save_memory";
   if (method === "POST" && pathname === "/api/governance-preview") return "remem_governance_preview";
   if (method === "POST" && pathname === "/api/workstream-update") return "remem_workstream_update";
+  if (method === "POST" && pathname === "/api/project-session") return "remem_project_session";
   return null;
 }
 function apiToolArgs(url, method, options) {
@@ -92,6 +101,32 @@ function apiToolArgs(url, method, options) {
       status: url.searchParams.get("status") || undefined
     };
   }
+  if (method === "GET" && url.pathname === "/api/activity-sessions") {
+    return {
+      project: url.searchParams.get("project") || undefined,
+      cursor: url.searchParams.get("cursor") || undefined,
+      limit: numericParam(url.searchParams, "limit", 50)
+    };
+  }
+  if (method === "GET" && url.pathname === "/api/session-activity") {
+    return {
+      source_root: url.searchParams.get("source_root") || undefined,
+      project: url.searchParams.get("project") || undefined,
+      session_id: url.searchParams.get("session_id") || undefined,
+      before_id: optionalNumericParam(url.searchParams, "before_id"),
+      limit: numericParam(url.searchParams, "limit", 200)
+    };
+  }
+  if (method === "GET" && url.pathname === "/api/session-turn") {
+    return { id: Number(url.searchParams.get("id")) };
+  }
+  if (method === "GET" && url.pathname === "/api/session-stats") {
+    return {
+      project: url.searchParams.get("project") || undefined,
+      since_epoch: optionalNumericParam(url.searchParams, "since_epoch"),
+      until_epoch: optionalNumericParam(url.searchParams, "until_epoch")
+    };
+  }
   if (method === "POST" && url.pathname === "/api/save") {
     return JSON.parse(options.body || "{}");
   }
@@ -99,6 +134,9 @@ function apiToolArgs(url, method, options) {
     return JSON.parse(options.body || "{}");
   }
   if (method === "POST" && url.pathname === "/api/workstream-update") {
+    return JSON.parse(options.body || "{}");
+  }
+  if (method === "POST" && url.pathname === "/api/project-session") {
     return JSON.parse(options.body || "{}");
   }
   return {};
@@ -180,13 +218,27 @@ async function refresh() {
 }
 
 async function refreshActivity(project = "") {
-  const query = project ? `?project=${encodeURIComponent(project)}` : "";
-  const [statsPayload, sessionsPayload] = await Promise.all([
-    request(`/api/session-stats${query}`),
-    request(`/api/activity-sessions${query ? `${query}&limit=50` : "?limit=50"}`)
-  ]);
+  const requestGeneration = ++state.activityRequestGeneration;
+  const statsQuery = project ? `?project=${encodeURIComponent(project)}` : "";
+  const sessions = [];
+  let cursor;
+  let hasMore = false;
+  for (let page = 0; page < 5 && sessions.length < 50; page += 1) {
+    const params = new URLSearchParams({ limit: "50" });
+    if (project) params.set("project", project);
+    if (cursor) params.set("cursor", cursor);
+    const payload = await request(`/api/activity-sessions?${params}`);
+    if (requestGeneration !== state.activityRequestGeneration) return;
+    sessions.push(...(payload.data || []));
+    hasMore = Boolean(payload.meta?.has_more);
+    cursor = payload.meta?.next_cursor;
+    if (!hasMore || !cursor) break;
+  }
+  const statsPayload = await request(`/api/session-stats${statsQuery}`);
+  if (requestGeneration !== state.activityRequestGeneration) return;
   state.activityStats = statsPayload.data || {};
-  state.sessions = sessionsPayload.data || [];
+  state.sessions = sessions.slice(0, 50);
+  state.sessionsTruncated = hasMore || sessions.length > 50;
   renderActivityOverview();
   renderSessionList();
 }
@@ -240,37 +292,54 @@ function renderSessionItems(target, sessions, compact = false) {
     <button class="session-item ${state.selectedSession && sessionKey(state.selectedSession) === sessionKey(session) ? "active" : ""}" data-session-key="${escapeHtml(sessionKey(session))}">
       <span class="session-item-title">${escapeHtml(projectName(session.project))} / ${escapeHtml(shortSessionId(session.session_id))}</span>
       <span class="session-item-project">${escapeHtml(session.project || session.source_root)}</span>
-      <span class="session-item-meta"><span>${escapeHtml(session.message_count)} msg</span><span>${compact ? escapeHtml(formatDate(session.last_epoch)) : `${escapeHtml(session.projected_turn_count)} turns · ${escapeHtml(formatDate(session.last_epoch))}`}</span></span>
+      <span class="session-item-meta"><span>${escapeHtml(session.message_count)}${session.message_counts_truncated ? "+" : ""} msg</span><span>${compact ? escapeHtml(formatDate(session.last_epoch)) : `${escapeHtml(session.projected_turn_count)} turns · ${escapeHtml(formatDate(session.last_epoch))}`}</span></span>
     </button>
   `).join("");
 }
 
 function renderSessionList() {
   renderSessionItems($("session-list"), state.sessions);
+  if (state.sessionsTruncated) $("session-list").insertAdjacentHTML("beforeend", `<div class="message warn">Showing a bounded recent-session view. More sessions remain available through the paginated API.</div>`);
 }
 
 async function openSession(key) {
   const session = state.sessions.find((item) => sessionKey(item) === key);
   if (!session) return;
   state.selectedSession = session;
+  const requestGeneration = ++state.sessionRequestGeneration;
+  state.turns = [];
+  state.turnsTruncated = false;
   renderSessionList();
   renderSessionItems($("recent-sessions"), state.sessions.slice(0, 5), true);
   $("turn-reader").innerHTML = `<div class="reader-empty"><span class="reader-number">··</span><h3>Reading evidence</h3><p>Building the structured view for this raw session.</p></div>`;
   try {
-    if (!Number(session.projected_turn_count)) {
-      await request("/api/project-session", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ source_root: session.source_root, project: session.project, session_id: session.session_id })
-      });
+    const projection = await request("/api/project-session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ source_root: session.source_root, project: session.project, session_id: session.session_id })
+    });
+    if (requestGeneration !== state.sessionRequestGeneration) return;
+    session.projected_turn_count = Number(projection.data?.turn_count || 0);
+
+    const turns = [];
+    let beforeId;
+    let hasMore = false;
+    for (let page = 0; page < 5; page += 1) {
+      const params = new URLSearchParams({ source_root: session.source_root, project: session.project, session_id: session.session_id, limit: "200" });
+      if (beforeId) params.set("before_id", String(beforeId));
+      const payload = await request(`/api/session-activity?${params}`);
+      if (requestGeneration !== state.sessionRequestGeneration) return;
+      turns.push(...(payload.data || []));
+      hasMore = Boolean(payload.meta?.has_more);
+      beforeId = payload.meta?.next_before_id;
+      if (!hasMore || !beforeId) break;
     }
-    const params = new URLSearchParams({ source_root: session.source_root, project: session.project, session_id: session.session_id, limit: "200" });
-    const payload = await request(`/api/session-activity?${params}`);
-    state.turns = (payload.data || []).sort((a, b) => a.turn_index - b.turn_index);
-    session.projected_turn_count = state.turns.length;
+    state.turns = turns.sort((a, b) => a.turn_index - b.turn_index);
+    state.turnsTruncated = hasMore;
     renderTurns();
     await refreshActivity($("session-project").value.trim());
   } catch (error) {
+    if (requestGeneration !== state.sessionRequestGeneration) return;
     $("turn-reader").innerHTML = `<div class="message error">${escapeHtml(error.message)}</div>`;
   }
 }
@@ -285,6 +354,7 @@ function renderTurns() {
       <h3>${escapeHtml(projectName(session.project))}</h3>
       <div class="reader-meta"><span class="pill">${escapeHtml(shortSessionId(session.session_id))}</span><span class="pill">${escapeHtml(turns.length)} turns</span><span class="pill">${escapeHtml(formatDate(session.last_epoch))}</span></div>
     </header>
+    ${state.turnsTruncated ? `<div class="message warn">Showing the newest 1,000 turns. Older turns remain available through the paginated API.</div>` : ""}
     ${turns.length ? turns.map(renderTurn).join("") : `<div class="empty">This session contains no user turns that can be projected.</div>`}
   `;
 }
@@ -293,11 +363,11 @@ function renderTurn(turn) {
   const actions = turn.actions || [];
   const healthClass = turn.capture_health === "full" ? "ok" : turn.capture_health === "partial" ? "warn" : "bad";
   return `<article class="turn">
-    <div class="turn-label"><strong>${String(turn.turn_index + 1).padStart(2, "0")}</strong>TURN<br><span class="pill ${healthClass}">${escapeHtml(turn.capture_health)}</span></div>
+    <div class="turn-label"><strong>${String(turn.turn_index).padStart(2, "0")}</strong>TURN<br><span class="pill ${healthClass}">${escapeHtml(turn.capture_health)}</span></div>
     <div class="turn-content">
       <section class="turn-block"><h4>01 · Request</h4><p>${escapeHtml(turn.user_said)}</p><div class="evidence">raw message #${escapeHtml(turn.user_message_id)}</div></section>
       <section class="turn-block"><h4>02 · Understanding</h4><p>${escapeHtml(turn.understanding || "Not captured — Remem will not invent missing reasoning.")}</p>${turn.understanding_message_id ? `<div class="evidence">raw message #${escapeHtml(turn.understanding_message_id)} · ${escapeHtml(turn.understanding_source || "captured")}</div>` : ""}</section>
-      <section class="turn-block"><h4>03 · Actions</h4>${actions.length ? `<ul class="action-list">${actions.map((action) => `<li><span class="action-kind">${escapeHtml(action.tool_name || action.kind)}</span><span>${escapeHtml(action.summary)}${action.outcome ? ` · ${escapeHtml(action.outcome)}` : ""}</span></li>`).join("")}</ul>` : `<p class="subtle">No precise action events were captured.</p>`}</section>
+      <section class="turn-block"><h4>03 · Actions</h4>${actions.length ? `<ul class="action-list">${actions.map((action) => `<li><span class="action-kind">${escapeHtml(action.tool_name || action.kind)}</span><span>${escapeHtml(action.summary)}${action.outcome ? ` · ${escapeHtml(action.outcome)}` : ""}</span></li>`).join("")}</ul>${turn.actions_truncated ? `<p class="subtle">Additional actions are omitted from this bounded response.</p>` : ""}` : `<p class="subtle">No precise action events were captured.</p>`}</section>
       <section class="turn-block"><h4>04 · Result <span class="pill">${escapeHtml(turn.result_status)}</span></h4><p>${escapeHtml(turn.result_summary || "No result message captured.")}</p>${turn.result_message_id ? `<div class="evidence">raw message #${escapeHtml(turn.result_message_id)}</div>` : ""}</section>
     </div>
   </article>`;
@@ -701,6 +771,12 @@ document.querySelectorAll("[data-jump]").forEach((button) => {
 let projectFilterTimer;
 $("session-project").addEventListener("input", () => {
   clearTimeout(projectFilterTimer);
+  state.sessionRequestGeneration += 1;
+  state.selectedSession = null;
+  state.turns = [];
+  state.turnsTruncated = false;
+  renderSessionList();
+  $("turn-reader").innerHTML = `<div class="reader-empty"><span class="reader-number">—</span><h3>Select a session</h3><p>Choose a session matching the current project filter.</p></div>`;
   projectFilterTimer = setTimeout(() => refreshActivity($("session-project").value.trim()).catch((error) => {
     $("session-list").innerHTML = `<div class="message error">${escapeHtml(error.message)}</div>`;
   }), 250);

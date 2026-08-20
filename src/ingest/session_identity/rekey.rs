@@ -15,13 +15,29 @@ pub(crate) fn rekey_legacy_rows(
     conn: &Connection,
     identity: &IdentityRecord,
 ) -> Result<RekeyReport> {
+    conn.execute_batch("SAVEPOINT session_activity_rekey")?;
+    match rekey_legacy_rows_inner(conn, identity) {
+        Ok(report) => {
+            conn.execute_batch("RELEASE session_activity_rekey")?;
+            Ok(report)
+        }
+        Err(error) => {
+            conn.execute_batch(
+                "ROLLBACK TO session_activity_rekey; RELEASE session_activity_rekey",
+            )?;
+            Err(error)
+        }
+    }
+}
+
+fn rekey_legacy_rows_inner(conn: &Connection, identity: &IdentityRecord) -> Result<RekeyReport> {
     if identity.status == "conflict" {
         return Ok(RekeyReport::default());
     }
     let rows: Vec<LegacyRawRow> = {
         let mut statement = conn.prepare(
-            "SELECT id, role, content, content_hash, source, created_at_epoch,
-                    event_time_source
+            "SELECT id, project, session_id, role, content, content_hash, source,
+                    created_at_epoch, event_time_source
              FROM raw_messages
              WHERE source_root = ?1 AND session_id IN (?2, ?3)
                AND project IN (?4, ?5) AND transcript_identity_id IS NULL
@@ -40,18 +56,21 @@ pub(crate) fn rekey_legacy_rows(
                 |row| {
                     Ok(LegacyRawRow {
                         id: row.get(0)?,
-                        role: row.get(1)?,
-                        content: row.get(2)?,
-                        content_hash: row.get(3)?,
-                        source: row.get(4)?,
-                        created_at_epoch: row.get(5)?,
-                        event_time_source: row.get(6)?,
+                        project: row.get(1)?,
+                        session_id: row.get(2)?,
+                        role: row.get(3)?,
+                        content: row.get(4)?,
+                        content_hash: row.get(5)?,
+                        source: row.get(6)?,
+                        created_at_epoch: row.get(7)?,
+                        event_time_source: row.get(8)?,
                     })
                 },
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows
     };
+    invalidate_session_activity_projections(conn, identity, &rows)?;
     let mut mutations = Vec::with_capacity(rows.len());
     let mut assigned_targets = BTreeSet::new();
     let mut unmatched_targets = BTreeMap::new();
@@ -121,12 +140,43 @@ pub(crate) fn rekey_legacy_rows(
 #[derive(Debug)]
 struct LegacyRawRow {
     id: i64,
+    project: String,
+    session_id: String,
     role: String,
     content: String,
     content_hash: String,
     source: String,
     created_at_epoch: i64,
     event_time_source: String,
+}
+
+fn invalidate_session_activity_projections(
+    conn: &Connection,
+    identity: &IdentityRecord,
+    rows: &[LegacyRawRow],
+) -> Result<()> {
+    let available: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_schema
+         WHERE type = 'table' AND name = 'session_turns'",
+        [],
+        |row| row.get(0),
+    )?;
+    if available == 0 {
+        return Ok(());
+    }
+    let mut tuples = rows
+        .iter()
+        .map(|row| (row.project.as_str(), row.session_id.as_str()))
+        .collect::<BTreeSet<_>>();
+    tuples.insert((&identity.project, &identity.canonical_session_id));
+    for (project, session_id) in tuples {
+        conn.execute(
+            "DELETE FROM session_turns
+             WHERE source_root = ?1 AND project = ?2 AND session_id = ?3",
+            params![identity.source_root, project, session_id],
+        )?;
+    }
+    Ok(())
 }
 
 #[derive(Debug)]

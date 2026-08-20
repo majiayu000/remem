@@ -2,9 +2,11 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
 
-const { createServer } = require("./server");
+const { callTool, createServer, toolDescriptors } = require("./server");
 const { apiRoute, createSessionActivityBackend } = require("./session-activity");
 
 async function withActivityServer(backend, run) {
@@ -91,4 +93,45 @@ test("activity app routes expose sessions, turns, stats, detail, and projection"
 
 test("apiRoute omits empty filters", () => {
   assert.equal(apiRoute("/api/v1/session-stats", { project: "", limit: null }), "/api/v1/session-stats");
+});
+
+test("embedded activity tools dispatch to the native API backend", async () => {
+  const calls = [];
+  const backend = {
+    async activitySessions(args) { calls.push(["sessions", args]); return { meta: { count: 1 }, data: [] }; },
+    async sessionActivity(args) { calls.push(["turns", args]); return { meta: { count: 1 }, data: [] }; },
+    async sessionTurn(id) { calls.push(["turn", id]); return { data: { id } }; },
+    async sessionStats(args) { calls.push(["stats", args]); return { data: { sessions: 1 } }; },
+    async projectSession(args) { calls.push(["project", args]); return { data: { turn_count: 1 } }; }
+  };
+
+  for (const [name, args] of [
+    ["remem_activity_sessions", { project: "/repo" }],
+    ["remem_session_activity", { session_id: "s1" }],
+    ["remem_session_turn", { id: 31 }],
+    ["remem_session_stats", { since_epoch: 100 }],
+    ["remem_project_session", { source_root: "local", project: "/repo", session_id: "s1" }]
+  ]) {
+    const descriptor = toolDescriptors().find((tool) => tool.name === name);
+    assert.ok(descriptor, `missing descriptor ${name}`);
+    assert.equal(descriptor._meta["openai/widgetAccessible"], true);
+    const result = await callTool(backend, name, args);
+    assert.ok(result.structuredContent);
+  }
+  assert.deepEqual(calls.map(([kind]) => kind), ["sessions", "turns", "turn", "stats", "project"]);
+});
+
+test("project filter invalidates an in-flight session request before refresh", () => {
+  const widget = fs.readFileSync(path.join(__dirname, "public", "widget.js"), "utf8");
+  const handler = widget.match(/\$\("session-project"\)\.addEventListener\("input", \(\) => \{([\s\S]*?)\n\}\);/);
+  assert.ok(handler, "missing project-filter input handler");
+  const invalidation = handler[1].indexOf("state.sessionRequestGeneration += 1");
+  const refresh = handler[1].indexOf("setTimeout(() => refreshActivity");
+  assert.ok(invalidation >= 0, "filter change must invalidate the selected session request");
+  assert.ok(refresh > invalidation, "invalidation must happen synchronously before delayed refresh");
+  assert.match(handler[1], /state\.selectedSession = null/);
+  assert.match(handler[1], /state\.turns = \[\]/);
+  assert.match(widget, /page < 5 && sessions\.length < 50/);
+  assert.match(widget, /params\.set\("cursor", cursor\)/);
+  assert.match(widget, /state\.sessionsTruncated = hasMore/);
 });

@@ -1,11 +1,15 @@
+use std::collections::BTreeSet;
+
 use anyhow::{bail, Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use sha2::{Digest, Sha256};
 
 use super::types::{ProjectionResult, SessionActivityKey, SessionTurn, TurnAction};
 
 pub const PROJECTION_VERSION: i64 = 1;
 const MAX_DERIVED_TEXT_BYTES: usize = 600;
+const MAX_PROJECT_MESSAGES: usize = 10_000;
+const MAX_PROJECT_ACTIONS: usize = 20_000;
 
 #[derive(Debug)]
 struct RawMessage {
@@ -26,6 +30,13 @@ struct CapturedAction {
     tool_name: Option<String>,
     content_hash: String,
     created_at_epoch: i64,
+    reference_time_epoch: Option<i64>,
+}
+
+impl CapturedAction {
+    fn effective_epoch(&self) -> i64 {
+        self.reference_time_epoch.unwrap_or(self.created_at_epoch)
+    }
 }
 
 pub fn project_session(
@@ -34,21 +45,32 @@ pub fn project_session(
     now_epoch: i64,
 ) -> Result<ProjectionResult> {
     validate_key(key)?;
-    let messages = load_messages(conn, key)?;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .context("begin session activity projection snapshot")?;
+    let messages = load_messages(&tx, key)?;
     if messages.iter().all(|message| message.role != "user") {
         bail!("raw session contains no user message occurrences");
     }
 
     let transcript_identity_id = single_transcript_identity(&messages)?;
-    let session_row_id = resolve_session_row_id(conn, key)?;
+    let session_row_id = resolve_session_row_id(&tx, key, transcript_identity_id)?;
     let captured_actions = match session_row_id {
-        Some(id) => load_captured_actions(conn, id)?,
+        Some(id) => load_captured_actions(&tx, id)?,
         None => Vec::new(),
     };
-    let source_digest = source_digest(key, &messages, &captured_actions);
+    let source_digest = source_digest(
+        key,
+        transcript_identity_id,
+        session_row_id,
+        &messages,
+        &captured_actions,
+    );
 
-    if projection_is_current(conn, key, &source_digest)? {
-        let turn_count = count_turns(conn, key)? as usize;
+    if projection_is_current(&tx, key, &source_digest)? {
+        let turn_count = count_turns(&tx, key)? as usize;
+        tx.commit()
+            .context("commit unchanged session activity projection snapshot")?;
         return Ok(ProjectionResult {
             changed: false,
             source_digest,
@@ -57,15 +79,6 @@ pub fn project_session(
     }
 
     let turns = build_turns(&messages, &captured_actions, session_row_id.is_some());
-    let tx = conn
-        .transaction()
-        .context("begin session activity projection")?;
-    tx.execute(
-        "DELETE FROM session_turns
-         WHERE source_root = ?1 AND project = ?2 AND session_id = ?3",
-        params![key.source_root, key.project, key.session_id],
-    )?;
-
     for turn in &turns {
         tx.execute(
             "INSERT INTO session_turns
@@ -77,7 +90,25 @@ pub fn project_session(
               capture_health, source_digest, projection_version,
               created_at_epoch, updated_at_epoch)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
-                     ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+                     ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
+             ON CONFLICT(source_root, project, session_id, turn_index) DO UPDATE SET
+                 transcript_identity_id = excluded.transcript_identity_id,
+                 session_row_id = excluded.session_row_id,
+                 user_message_id = excluded.user_message_id,
+                 understanding_message_id = excluded.understanding_message_id,
+                 result_message_id = excluded.result_message_id,
+                 understanding = excluded.understanding,
+                 understanding_source = excluded.understanding_source,
+                 actions_summary = excluded.actions_summary,
+                 actions_summary_source = excluded.actions_summary_source,
+                 result_status = excluded.result_status,
+                 result_summary = excluded.result_summary,
+                 started_at_epoch = excluded.started_at_epoch,
+                 ended_at_epoch = excluded.ended_at_epoch,
+                 capture_health = excluded.capture_health,
+                 source_digest = excluded.source_digest,
+                 projection_version = excluded.projection_version,
+                 updated_at_epoch = excluded.updated_at_epoch",
             params![
                 transcript_identity_id,
                 key.source_root,
@@ -103,7 +134,22 @@ pub fn project_session(
                 now_epoch,
             ],
         )?;
-        let turn_id = tx.last_insert_rowid();
+        let turn_id: i64 = tx.query_row(
+            "SELECT id FROM session_turns
+             WHERE source_root = ?1 AND project = ?2 AND session_id = ?3
+               AND turn_index = ?4",
+            params![
+                key.source_root,
+                key.project,
+                key.session_id,
+                turn.turn_index
+            ],
+            |row| row.get(0),
+        )?;
+        tx.execute(
+            "DELETE FROM session_turn_actions WHERE session_turn_id = ?1",
+            [turn_id],
+        )?;
         for action in &turn.actions {
             tx.execute(
                 "INSERT INTO session_turn_actions
@@ -124,6 +170,17 @@ pub fn project_session(
             )?;
         }
     }
+    tx.execute(
+        "DELETE FROM session_turns
+         WHERE source_root = ?1 AND project = ?2 AND session_id = ?3
+           AND turn_index > ?4",
+        params![
+            key.source_root,
+            key.project,
+            key.session_id,
+            turns.len() as i64
+        ],
+    )?;
     tx.commit().context("commit session activity projection")?;
 
     Ok(ProjectionResult {
@@ -140,6 +197,9 @@ fn validate_key(key: &SessionActivityKey) -> Result<()> {
     {
         bail!("source_root, project, and session_id must be non-empty");
     }
+    if key.source_root.len() > 1_024 || key.project.len() > 4_096 || key.session_id.len() > 512 {
+        bail!("session activity identity exceeds the supported length");
+    }
     Ok(())
 }
 
@@ -155,10 +215,16 @@ fn load_messages(conn: &Connection, key: &SessionActivityKey) -> Result<Vec<RawM
            CASE WHEN transcript_record_ordinal IS NULL THEN 1 ELSE 0 END,
            transcript_record_ordinal,
            created_at_epoch,
-           id",
+           id
+         LIMIT ?4",
     )?;
     let rows = stmt.query_map(
-        params![key.source_root, key.project, key.session_id],
+        params![
+            key.source_root,
+            key.project,
+            key.session_id,
+            (MAX_PROJECT_MESSAGES + 1) as i64
+        ],
         |row| {
             Ok(RawMessage {
                 id: row.get(0)?,
@@ -172,8 +238,12 @@ fn load_messages(conn: &Connection, key: &SessionActivityKey) -> Result<Vec<RawM
             })
         },
     )?;
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(Into::into)
+    let mut messages = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    if messages.len() > MAX_PROJECT_MESSAGES {
+        bail!("raw session exceeds the projection message limit of {MAX_PROJECT_MESSAGES}");
+    }
+    messages.shrink_to_fit();
+    Ok(messages)
 }
 
 fn single_transcript_identity(messages: &[RawMessage]) -> Result<Option<i64>> {
@@ -189,15 +259,50 @@ fn single_transcript_identity(messages: &[RawMessage]) -> Result<Option<i64>> {
     Ok(identities.first().copied())
 }
 
-fn resolve_session_row_id(conn: &Connection, key: &SessionActivityKey) -> Result<Option<i64>> {
+fn resolve_session_row_id(
+    conn: &Connection,
+    key: &SessionActivityKey,
+    transcript_identity_id: Option<i64>,
+) -> Result<Option<i64>> {
+    if key.source_root != crate::memory::raw_archive::SOURCE_ROOT_LOCAL {
+        return Ok(None);
+    }
+    let Some(transcript_identity_id) = transcript_identity_id else {
+        return Ok(None);
+    };
+    let transcript_path = conn
+        .query_row(
+            "SELECT transcript_path FROM raw_session_identities
+             WHERE id = ?1 AND source_root = ?2 AND project = ?3
+               AND canonical_session_id = ?4 AND status = 'active'",
+            params![
+                transcript_identity_id,
+                key.source_root,
+                key.project,
+                key.session_id
+            ],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    let Some(host_name) = transcript_path.as_deref().and_then(transcript_host) else {
+        return Ok(None);
+    };
+    let Some(project_id) =
+        crate::project_alias::resolve_project_identity(conn, &key.project)?.canonical_project_id
+    else {
+        return Ok(None);
+    };
     let mut stmt = conn.prepare(
         "SELECT s.id
-         FROM sessions s JOIN projects p ON p.id = s.project_id
-         WHERE p.project_key = ?1 AND s.session_id = ?2
+         FROM sessions s
+         JOIN hosts h ON h.id = s.host_id
+         WHERE s.project_id = ?1 AND s.session_id = ?2 AND h.name = ?3
          ORDER BY s.id LIMIT 2",
     )?;
     let ids = stmt
-        .query_map(params![key.project, key.session_id], |row| row.get(0))?
+        .query_map(params![project_id, key.session_id, host_name], |row| {
+            row.get(0)
+        })?
         .collect::<rusqlite::Result<Vec<i64>>>()?;
     Ok(match ids.as_slice() {
         [id] => Some(*id),
@@ -205,27 +310,55 @@ fn resolve_session_row_id(conn: &Connection, key: &SessionActivityKey) -> Result
     })
 }
 
+fn transcript_host(path: &str) -> Option<&'static str> {
+    let normalized = path.replace('\\', "/");
+    let segments = normalized.split('/').collect::<BTreeSet<_>>();
+    let matches = [
+        (".claude", "claude-code"),
+        (".codex", "codex-cli"),
+        (".cursor", "cursor"),
+    ]
+    .into_iter()
+    .filter_map(|(segment, host)| segments.contains(segment).then_some(host))
+    .collect::<Vec<_>>();
+    matches
+        .as_slice()
+        .first()
+        .copied()
+        .filter(|_| matches.len() == 1)
+}
+
 fn load_captured_actions(conn: &Connection, session_row_id: i64) -> Result<Vec<CapturedAction>> {
     let mut stmt = conn.prepare(
-        "SELECT id, event_type, tool_name, content_hash, created_at_epoch
+        "SELECT id, event_type, tool_name, content_hash, created_at_epoch,
+                reference_time_epoch
          FROM captured_events
          WHERE session_row_id = ?1
            AND (tool_name IS NOT NULL OR event_type IN
                 ('file_edit', 'file_create', 'file_write', 'search', 'bash',
                  'tool_result', 'cursor_tool_failure'))
-         ORDER BY created_at_epoch, id",
+         ORDER BY COALESCE(reference_time_epoch, created_at_epoch), id
+         LIMIT ?2",
     )?;
-    let rows = stmt.query_map([session_row_id], |row| {
-        Ok(CapturedAction {
-            id: row.get(0)?,
-            event_type: row.get(1)?,
-            tool_name: row.get(2)?,
-            content_hash: row.get(3)?,
-            created_at_epoch: row.get(4)?,
-        })
-    })?;
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(Into::into)
+    let rows = stmt.query_map(
+        params![session_row_id, (MAX_PROJECT_ACTIONS + 1) as i64],
+        |row| {
+            Ok(CapturedAction {
+                id: row.get(0)?,
+                event_type: row.get(1)?,
+                tool_name: row.get(2)?,
+                content_hash: row.get(3)?,
+                created_at_epoch: row.get(4)?,
+                reference_time_epoch: row.get(5)?,
+            })
+        },
+    )?;
+    let mut actions = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    if actions.len() > MAX_PROJECT_ACTIONS {
+        bail!("session exceeds the projection action limit of {MAX_PROJECT_ACTIONS}");
+    }
+    actions.shrink_to_fit();
+    Ok(actions)
 }
 
 fn build_turns(
@@ -239,70 +372,115 @@ fn build_turns(
         .filter_map(|(index, message)| (message.role == "user").then_some(index))
         .collect::<Vec<_>>();
 
-    user_positions
+    let boundary_epochs = user_positions
         .iter()
-        .enumerate()
-        .map(|(turn_offset, &start)| {
-            let end = user_positions
-                .get(turn_offset + 1)
-                .copied()
-                .unwrap_or(messages.len());
-            let user = &messages[start];
-            let assistant_messages = messages[start + 1..end]
-                .iter()
-                .filter(|message| message.role == "assistant")
-                .collect::<Vec<_>>();
-            let next_started_at = user_positions
-                .get(turn_offset + 1)
-                .map(|&position| messages[position].created_at_epoch);
-            let turn_actions = actions
-                .iter()
-                .filter(|action| {
-                    action.created_at_epoch >= user.created_at_epoch
-                        && next_started_at
-                            .map(|end_epoch| action.created_at_epoch < end_epoch)
-                            .unwrap_or(true)
-                })
-                .enumerate()
-                .map(|(index, action)| project_action(index as i64 + 1, action))
-                .collect::<Vec<_>>();
-            let understanding_message = assistant_messages
-                .iter()
-                .copied()
-                .find(|message| meaningful_understanding(&message.content));
-            let result_message = assistant_messages.last().copied();
-            let result_summary = result_message.map(|message| bounded_text(&message.content));
-            let result_status = classify_result(result_summary.as_deref(), &turn_actions);
-            let actions_summary = summarize_actions(&turn_actions);
-            let precise_time = user.event_time_source == "transcript_event"
-                && result_message
-                    .map(|message| message.event_time_source == "transcript_event")
-                    .unwrap_or(false);
-            let capture_health = if has_session_link && precise_time {
-                "partial"
-            } else {
-                "unavailable"
-            };
+        .map(|&position| messages[position].created_at_epoch)
+        .collect::<BTreeSet<_>>();
+    let ambiguous_epochs = actions
+        .iter()
+        .map(CapturedAction::effective_epoch)
+        .filter(|epoch| boundary_epochs.contains(epoch))
+        .collect::<BTreeSet<_>>();
+    let usable_actions = actions
+        .iter()
+        .filter(|action| !ambiguous_epochs.contains(&action.effective_epoch()))
+        .collect::<Vec<_>>();
+    let mut action_cursor = 0usize;
+    let mut turns = Vec::with_capacity(user_positions.len());
 
-            SessionTurn {
-                id: None,
-                turn_index: turn_offset as i64 + 1,
-                user_message_id: user.id,
-                user_said: user.content.clone(),
-                understanding_message_id: understanding_message.map(|message| message.id),
-                understanding: understanding_message.map(|message| bounded_text(&message.content)),
-                understanding_source: understanding_message.map(|_| "assistant_text".to_string()),
-                result_message_id: result_message.map(|message| message.id),
-                actions_summary,
-                result_status,
-                result_summary,
-                started_at_epoch: user.created_at_epoch,
-                ended_at_epoch: result_message.map(|message| message.created_at_epoch),
-                capture_health: capture_health.to_string(),
-                actions: turn_actions,
-            }
-        })
-        .collect()
+    for (turn_offset, &start) in user_positions.iter().enumerate() {
+        let end = user_positions
+            .get(turn_offset + 1)
+            .copied()
+            .unwrap_or(messages.len());
+        let user = &messages[start];
+        let assistant_messages = messages[start + 1..end]
+            .iter()
+            .filter(|message| message.role == "assistant")
+            .collect::<Vec<_>>();
+        let next_started_at = user_positions
+            .get(turn_offset + 1)
+            .map(|&position| messages[position].created_at_epoch);
+        while action_cursor < usable_actions.len()
+            && usable_actions[action_cursor].effective_epoch() <= user.created_at_epoch
+        {
+            action_cursor += 1;
+        }
+        let action_start = action_cursor;
+        while action_cursor < usable_actions.len()
+            && next_started_at
+                .map(|end_epoch| usable_actions[action_cursor].effective_epoch() < end_epoch)
+                .unwrap_or(true)
+        {
+            action_cursor += 1;
+        }
+        let turn_action_sources = &usable_actions[action_start..action_cursor];
+        let ambiguous_action_boundary = ambiguous_epochs.contains(&user.created_at_epoch)
+            || next_started_at.is_some_and(|epoch| ambiguous_epochs.contains(&epoch));
+        let turn_actions = turn_action_sources
+            .iter()
+            .enumerate()
+            .map(|(index, action)| project_action(index as i64 + 1, action))
+            .collect::<Vec<_>>();
+        let first_action_epoch = turn_action_sources
+            .first()
+            .map(|action| action.effective_epoch());
+        let understanding_message = assistant_messages.iter().copied().find(|message| {
+            first_action_epoch
+                .map(|epoch| {
+                    message.event_time_source == "transcript_event"
+                        && message.created_at_epoch < epoch
+                })
+                .unwrap_or(true)
+                && meaningful_understanding(&message.content)
+        });
+        let last_action_epoch = turn_action_sources
+            .last()
+            .map(|action| action.effective_epoch());
+        let result_message = if let Some(last_action_epoch) = last_action_epoch {
+            assistant_messages.iter().rev().copied().find(|message| {
+                message.event_time_source == "transcript_event"
+                    && message.created_at_epoch > last_action_epoch
+            })
+        } else {
+            assistant_messages.last().copied()
+        };
+        let result_summary = result_message.map(|message| bounded_text(&message.content));
+        let result_status = classify_result(result_summary.as_deref(), &turn_actions);
+        let actions_summary = summarize_actions(&turn_actions);
+        let precise_time = user.event_time_source == "transcript_event"
+            && turn_action_sources
+                .iter()
+                .all(|action| action.reference_time_epoch.is_some())
+            && result_message
+                .map(|message| message.event_time_source == "transcript_event")
+                .unwrap_or(false);
+        let capture_health = if has_session_link && precise_time && !ambiguous_action_boundary {
+            "partial"
+        } else {
+            "unavailable"
+        };
+
+        turns.push(SessionTurn {
+            id: None,
+            turn_index: turn_offset as i64 + 1,
+            user_message_id: user.id,
+            user_said: bounded_text(&user.content),
+            understanding_message_id: understanding_message.map(|message| message.id),
+            understanding: understanding_message.map(|message| bounded_text(&message.content)),
+            understanding_source: understanding_message.map(|_| "assistant_text".to_string()),
+            result_message_id: result_message.map(|message| message.id),
+            actions_summary,
+            result_status,
+            result_summary,
+            started_at_epoch: user.created_at_epoch,
+            ended_at_epoch: result_message.map(|message| message.created_at_epoch),
+            capture_health: capture_health.to_string(),
+            actions: turn_actions,
+            actions_truncated: false,
+        });
+    }
+    turns
 }
 
 fn meaningful_understanding(text: &str) -> bool {
@@ -324,7 +502,8 @@ fn meaningful_understanding(text: &str) -> bool {
 }
 
 fn bounded_text(text: &str) -> String {
-    let trimmed = text.trim();
+    let redacted = crate::adapter::common::redact_sensitive_text(text);
+    let trimmed = redacted.trim();
     if trimmed.len() <= MAX_DERIVED_TEXT_BYTES {
         return trimmed.to_string();
     }
@@ -384,6 +563,7 @@ fn project_action(index: i64, action: &CapturedAction) -> TurnAction {
         .tool_name
         .as_deref()
         .unwrap_or(action.event_type.as_str());
+    let safe_label = crate::adapter::common::redact_sensitive_text(label);
     let outcome = action
         .event_type
         .contains("failure")
@@ -391,8 +571,11 @@ fn project_action(index: i64, action: &CapturedAction) -> TurnAction {
     TurnAction {
         index,
         kind: kind.to_string(),
-        tool_name: action.tool_name.clone(),
-        summary: format!("Captured {label} activity"),
+        tool_name: action
+            .tool_name
+            .as_deref()
+            .map(crate::adapter::common::redact_sensitive_text),
+        summary: format!("Captured {safe_label} activity"),
         event_row_id: Some(action.id),
         files: Vec::new(),
         outcome,
@@ -415,6 +598,8 @@ fn summarize_actions(actions: &[TurnAction]) -> Option<String> {
 
 fn source_digest(
     key: &SessionActivityKey,
+    transcript_identity_id: Option<i64>,
+    session_row_id: Option<i64>,
     messages: &[RawMessage],
     actions: &[CapturedAction],
 ) -> String {
@@ -422,11 +607,21 @@ fn source_digest(
     for value in [&key.source_root, &key.project, &key.session_id] {
         feed(&mut hasher, value.as_bytes());
     }
+    feed(
+        &mut hasher,
+        &transcript_identity_id.unwrap_or(-1).to_be_bytes(),
+    );
+    feed(&mut hasher, &session_row_id.unwrap_or(-1).to_be_bytes());
     for message in messages {
         feed(&mut hasher, &message.id.to_be_bytes());
         feed(&mut hasher, message.role.as_bytes());
         feed(&mut hasher, message.content_hash.as_bytes());
         feed(&mut hasher, &message.created_at_epoch.to_be_bytes());
+        feed(&mut hasher, message.event_time_source.as_bytes());
+        feed(
+            &mut hasher,
+            &message.transcript_identity_id.unwrap_or(-1).to_be_bytes(),
+        );
         feed(
             &mut hasher,
             &message
@@ -438,8 +633,16 @@ fn source_digest(
     for action in actions {
         feed(&mut hasher, &action.id.to_be_bytes());
         feed(&mut hasher, action.event_type.as_bytes());
+        feed(
+            &mut hasher,
+            action.tool_name.as_deref().unwrap_or_default().as_bytes(),
+        );
         feed(&mut hasher, action.content_hash.as_bytes());
         feed(&mut hasher, &action.created_at_epoch.to_be_bytes());
+        feed(
+            &mut hasher,
+            &action.reference_time_epoch.unwrap_or(-1).to_be_bytes(),
+        );
     }
     format!("{:x}", hasher.finalize())
 }

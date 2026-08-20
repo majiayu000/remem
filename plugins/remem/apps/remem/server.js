@@ -525,6 +525,26 @@ async function callTool(backend, name, args = {}) {
       result
     );
   }
+  if (name === "remem_activity_sessions") {
+    const result = await backend.activitySessions(args);
+    return toolResult(`Loaded ${result.meta?.count ?? 0} session(s).`, result);
+  }
+  if (name === "remem_session_activity") {
+    const result = await backend.sessionActivity(args);
+    return toolResult(`Loaded ${result.meta?.count ?? 0} turn(s).`, result);
+  }
+  if (name === "remem_session_turn") {
+    const result = await backend.sessionTurn(args.id);
+    return toolResult(`Loaded session turn ${args.id}.`, result);
+  }
+  if (name === "remem_session_stats") {
+    const result = await backend.sessionStats(args);
+    return toolResult("Loaded session activity statistics.", result);
+  }
+  if (name === "remem_project_session") {
+    const result = await backend.projectSession(args);
+    return toolResult(`Projected ${result.data?.turn_count ?? 0} turn(s).`, result);
+  }
   const traceResult = await callTraceTool(backend, name, args, toolResult);
   if (traceResult) return traceResult;
   throw Object.assign(new Error(`Unknown tool: ${name}`), { code: -32602 });

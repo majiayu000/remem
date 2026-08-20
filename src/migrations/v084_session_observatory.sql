@@ -64,3 +64,9 @@ CREATE INDEX idx_session_turn_actions_event
     ON session_turn_actions(event_row_id)
     WHERE event_row_id IS NOT NULL;
 
+CREATE INDEX idx_raw_messages_activity_tuple_recent
+    ON raw_messages(source_root, project, session_id, created_at_epoch DESC, id DESC);
+CREATE INDEX idx_raw_messages_activity_recent
+    ON raw_messages(created_at_epoch DESC, id DESC, source_root, project, session_id);
+CREATE INDEX idx_raw_messages_project_activity_recent
+    ON raw_messages(project, created_at_epoch DESC, id DESC, source_root, session_id);

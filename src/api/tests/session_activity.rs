@@ -94,7 +94,7 @@ async fn session_activity_routes_project_list_detail_and_report_stats() -> anyho
     let stats = app
         .oneshot(authorized_request(
             Method::GET,
-            "/api/v1/session-stats?project=activity%2Fproject",
+            "/api/v1/session-stats?project=activity%2Fproject&since_epoch=90&until_epoch=200",
             &token,
             Body::empty(),
         ))
@@ -125,6 +125,17 @@ async fn session_activity_rejects_invalid_windows_and_ids() -> anyhow::Result<()
         ))
         .await?;
     assert_eq!(window.status(), StatusCode::BAD_REQUEST);
+
+    let id = app
+        .clone()
+        .oneshot(authorized_request(
+            Method::GET,
+            "/api/v1/session-activity/sessions?cursor=not-a-cursor",
+            &token,
+            Body::empty(),
+        ))
+        .await?;
+    assert_eq!(id.status(), StatusCode::BAD_REQUEST);
 
     let id = app
         .oneshot(authorized_request(

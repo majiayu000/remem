@@ -36,6 +36,7 @@ pub struct SessionTurn {
     pub ended_at_epoch: Option<i64>,
     pub capture_health: String,
     pub actions: Vec<TurnAction>,
+    pub actions_truncated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -53,9 +54,17 @@ pub struct RawSessionActivity {
     pub message_count: i64,
     pub user_message_count: i64,
     pub assistant_message_count: i64,
-    pub first_epoch: i64,
+    pub first_epoch: Option<i64>,
     pub last_epoch: i64,
+    pub message_counts_truncated: bool,
     pub projected_turn_count: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RawSessionActivityPage {
+    pub data: Vec<RawSessionActivity>,
+    pub has_more: bool,
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -65,6 +74,13 @@ pub struct SessionActivityItem {
     pub session_id: String,
     #[serde(flatten)]
     pub turn: SessionTurn,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SessionActivityPage {
+    pub data: Vec<SessionActivityItem>,
+    pub has_more: bool,
+    pub next_before_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

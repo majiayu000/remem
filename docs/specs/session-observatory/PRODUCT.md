@@ -66,6 +66,9 @@ Each turn presents:
 
 Missing understanding or result text is rendered as unavailable. A turn with
 incomplete action capture is marked `partial` or `unavailable`, never `full`.
+All transcript-derived text is passed through the shared sensitive-text
+redactor before it becomes API-visible; truncation alone is not a privacy
+boundary.
 
 ### Activity Statistics
 
@@ -87,6 +90,12 @@ meaning.
 - New database tables are additive and rebuildable.
 - Existing raw sessions are not synchronously backfilled during migration.
 - Projecting a session is idempotent for an unchanged source digest.
+- Projection and API responses have explicit message, action, turn, cursor,
+  and statistics-window bounds. Truncation is machine-visible.
+- Session-list pages may be sparse while their bounded raw scan advances; a
+  non-null cursor is authoritative even when the current page is empty.
+- Session message counts are capped and explicitly marked when truncated;
+  `first_epoch` is unavailable rather than misleading on a truncated count.
 
 ## Acceptance Criteria
 
@@ -103,4 +112,3 @@ meaning.
 - The local Remem app provides Overview, Sessions, and turn-detail views and
   preserves the existing memory/admin capabilities.
 - Focused Rust and Node tests plus desktop/mobile browser inspection pass.
-

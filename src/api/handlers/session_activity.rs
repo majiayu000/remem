@@ -14,6 +14,8 @@ use super::super::types::DbState;
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 200;
+const DEFAULT_STATS_WINDOW_SECS: i64 = 30 * 24 * 60 * 60;
+const MAX_STATS_WINDOW_SECS: i64 = 366 * 24 * 60 * 60;
 
 #[derive(Debug, Deserialize, Default)]
 pub(in crate::api) struct ActivityParams {
@@ -21,7 +23,7 @@ pub(in crate::api) struct ActivityParams {
     source_root: Option<String>,
     session_id: Option<String>,
     before_id: Option<i64>,
-    before_epoch: Option<i64>,
+    cursor: Option<String>,
     since_epoch: Option<i64>,
     until_epoch: Option<i64>,
     limit: Option<i64>,
@@ -46,13 +48,24 @@ pub(in crate::api) async fn handle_activity_sessions(
     match session_activity::list_activity_sessions(
         &conn,
         trimmed_filter(params.project.as_deref()),
-        params.before_epoch,
+        trimmed_filter(params.cursor.as_deref()),
         limit,
     ) {
-        Ok(data) => Json(json!({
-            "meta": { "count": data.len(), "limit": limit },
-            "data": data
+        Ok(page) => Json(json!({
+            "meta": {
+                "count": page.data.len(),
+                "limit": limit,
+                "has_more": page.has_more,
+                "next_cursor": page.next_cursor
+            },
+            "data": page.data
         }))
+        .into_response(),
+        Err(error) if error.to_string().contains("cursor") => error_response(
+            StatusCode::BAD_REQUEST,
+            "invalid_session_activity_cursor",
+            "session activity cursor is invalid or does not match the requested filters",
+        )
         .into_response(),
         Err(error) => activity_error("session_activity_sessions_failed", error),
     }
@@ -75,9 +88,14 @@ pub(in crate::api) async fn handle_list_session_activity(
         params.before_id,
         limit,
     ) {
-        Ok(data) => Json(json!({
-            "meta": { "count": data.len(), "limit": limit },
-            "data": data
+        Ok(page) => Json(json!({
+            "meta": {
+                "count": page.data.len(),
+                "limit": limit,
+                "has_more": page.has_more,
+                "next_before_id": page.next_before_id
+            },
+            "data": page.data
         }))
         .into_response(),
         Err(error) => activity_error("session_activity_list_failed", error),
@@ -119,15 +137,18 @@ pub(in crate::api) async fn handle_session_activity_stats(
     State(_state): State<DbState>,
     Query(params): Query<ActivityParams>,
 ) -> Response {
-    if let (Some(since), Some(until)) = (params.since_epoch, params.until_epoch) {
-        if since > until {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                "invalid_activity_window",
-                "since_epoch must not exceed until_epoch",
-            )
-            .into_response();
-        }
+    let now = chrono::Utc::now().timestamp();
+    let until = params.until_epoch.unwrap_or(now);
+    let since = params
+        .since_epoch
+        .unwrap_or_else(|| until.saturating_sub(DEFAULT_STATS_WINDOW_SECS));
+    if since > until || until.saturating_sub(since) > MAX_STATS_WINDOW_SECS {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "invalid_activity_window",
+            "activity window must be ordered and no wider than 366 days",
+        )
+        .into_response();
     }
     let conn = match open_request_db() {
         Ok(conn) => conn,
@@ -136,8 +157,8 @@ pub(in crate::api) async fn handle_session_activity_stats(
     match session_activity::activity_stats(
         &conn,
         trimmed_filter(params.project.as_deref()),
-        params.since_epoch,
-        params.until_epoch,
+        Some(since),
+        Some(until),
     ) {
         Ok(data) => Json(json!({ "data": data })).into_response(),
         Err(error) => activity_error("session_activity_stats_failed", error),
@@ -159,12 +180,20 @@ pub(in crate::api) async fn handle_project_session_activity(
     };
     match session_activity::project_session(&mut conn, &key, chrono::Utc::now().timestamp()) {
         Ok(data) => Json(json!({ "data": data })).into_response(),
-        Err(error) => error_response(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "session_activity_projection_failed",
-            &error.to_string(),
-        )
-        .into_response(),
+        Err(error) => {
+            crate::log::error(
+                "api",
+                &format!("session activity projection failed: {error:#}"),
+            );
+            let redacted = crate::adapter::common::redact_sensitive_text(&error.to_string());
+            let detail = crate::db::truncate_str(&redacted, 500);
+            error_response(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "session_activity_projection_failed",
+                detail,
+            )
+            .into_response()
+        }
     }
 }
 
