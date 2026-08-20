@@ -35,9 +35,31 @@ fn platform_binary_name(stem: &str) -> String {
     }
 }
 
+fn sibling_named_path(bin: &Path, stem: &str) -> Option<PathBuf> {
+    Some(bin.parent()?.join(platform_binary_name(stem)))
+}
+
 fn sibling_named_binary(bin: &Path, stem: &str) -> Option<PathBuf> {
-    let candidate = bin.parent()?.join(platform_binary_name(stem));
-    candidate.is_file().then_some(candidate)
+    let candidate = sibling_named_path(bin, stem)?;
+    executable_file(&candidate).then_some(candidate)
+}
+
+fn executable_file(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 pub fn sibling_hook_binary(remem_bin: &Path) -> Option<PathBuf> {
@@ -46,6 +68,10 @@ pub fn sibling_hook_binary(remem_bin: &Path) -> Option<PathBuf> {
 
 pub fn sibling_full_binary(hook_bin: &Path) -> Option<PathBuf> {
     sibling_named_binary(hook_bin, "remem")
+}
+
+pub fn sibling_full_binary_path(hook_bin: &Path) -> Option<PathBuf> {
+    sibling_named_path(hook_bin, "remem")
 }
 
 pub fn hook_invocation_binary(remem_bin: &Path, subcommand: &str) -> PathBuf {
@@ -63,7 +89,7 @@ pub fn hook_executable_is_allowed(
     subcommand: &str,
 ) -> bool {
     if invocation == expected_remem {
-        return true;
+        return !is_hook_binary(invocation) || executable_file(invocation);
     }
     hook_subcommand_uses_slim_binary(subcommand)
         && sibling_hook_binary(expected_remem).as_deref() == Some(invocation)
@@ -226,6 +252,16 @@ mod tests {
 
     use super::{HookCli, HookCommand, HOOK_COMMANDS};
 
+    fn make_executable(path: &std::path::Path) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(path).expect("metadata").permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(path, permissions).expect("set executable mode");
+        }
+    }
+
     #[test]
     fn hook_command_names_are_stable() {
         assert_eq!(
@@ -256,6 +292,8 @@ mod tests {
         let hook = dir.join("remem-hook");
         std::fs::write(&remem, []).expect("touch remem");
         std::fs::write(&hook, []).expect("touch remem-hook");
+        make_executable(&remem);
+        make_executable(&hook);
 
         assert_eq!(
             super::sibling_hook_binary(&remem).as_deref(),
@@ -277,6 +315,28 @@ mod tests {
             .as_deref(),
             remem.to_str()
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_executable_sibling_hook_is_not_selected_or_allowed() {
+        let dir = std::env::temp_dir().join(format!(
+            "remem-hook-non-executable-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let remem = dir.join("remem");
+        let hook = dir.join("remem-hook");
+        std::fs::write(&remem, []).expect("touch remem");
+        std::fs::write(&hook, []).expect("touch remem-hook");
+        make_executable(&remem);
+
+        assert_eq!(super::sibling_hook_binary(&remem), None);
+        assert_eq!(super::hook_invocation_binary(&remem, "observe"), remem);
+        assert!(!super::hook_executable_is_allowed(&hook, &hook, "observe"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

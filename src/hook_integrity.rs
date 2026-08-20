@@ -481,6 +481,20 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    fn make_executable(_paths: &[&Path]) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for path in _paths {
+                let mut permissions = std::fs::metadata(path)
+                    .expect("binary metadata")
+                    .permissions();
+                permissions.set_mode(0o755);
+                std::fs::set_permissions(path, permissions).expect("make binary executable");
+            }
+        }
+    }
+
     #[test]
     fn detects_missing_claude_hooks_as_three_of_six() {
         let doc = json!({
@@ -663,6 +677,7 @@ mod tests {
         let hook = dir.join("remem-hook");
         std::fs::write(&remem, []).expect("touch remem");
         std::fs::write(&hook, []).expect("touch remem-hook");
+        make_executable(&[&remem, &hook]);
         let remem_s = remem.to_str().expect("utf8");
         let hook_s = hook.to_str().expect("utf8");
         let doc = json!({
@@ -708,6 +723,7 @@ mod tests {
         let hook = dir.join("remem-hook");
         std::fs::write(&remem, []).expect("touch remem");
         std::fs::write(&hook, []).expect("touch remem-hook");
+        make_executable(&[&remem, &hook]);
         let remem_s = remem.to_str().expect("utf8");
         let hook_s = hook.to_str().expect("utf8");
         let doc = json!({

@@ -25,7 +25,6 @@ HISTORICAL_CROSS_TABLE_REWRITES = {
     "src/migrations/v068_session_rollup_followup_checkpoint.sql": frozenset(
         {"extraction_tasks"}
     ),
-    "src/migrations/v069_job_queue_atomicity.sql": frozenset({"jobs"}),
     "src/migrations/v083_retrieval_enrichment_budget.sql": frozenset(
         {"ai_usage_events"}
     ),
@@ -55,11 +54,24 @@ DROP_TABLE_RE = re.compile(
     re.I,
 )
 RENAME_TO_RE = re.compile(r"\bRENAME\s+TO\s+[\"`]?(\w+)[\"`]?", re.I)
+CREATE_INDEX_TABLE_RE = re.compile(
+    r"\bCREATE\s+(?:UNIQUE\s+)?INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+"
+    r"[\"`]?(?:\w+\.)?(?:\w+)[\"`]?\s+ON\s+[\"`]?(\w+)[\"`]?",
+    re.I,
+)
+CREATE_TRIGGER_TABLE_RE = re.compile(
+    r"\bCREATE\s+(?:TEMP(?:ORARY)?\s+)?TRIGGER"
+    r"(?:\s+IF\s+NOT\s+EXISTS)?\s+[\"`]?(?:\w+\.)?(?:\w+)[\"`]?"
+    r"(?:(?!\bBEGIN\b).)*?\bON\s+[\"`]?(\w+)[\"`]?.*?\bBEGIN\b",
+    re.I | re.S,
+)
 UPDATE_RE = re.compile(r"\bUPDATE\s+(?:OR\s+\w+\s+)?[\"`]?(\w+)[\"`]?", re.I)
 DELETE_RE = re.compile(r"\bDELETE\s+FROM\s+[\"`]?(\w+)[\"`]?", re.I)
-CREATE_TRIGGER_RE = re.compile(r"\bCREATE\s+TRIGGER\b", re.I)
-BEGIN_RE = re.compile(r"\bBEGIN\b", re.I)
-END_RE = re.compile(r"\bEND\s*;", re.I)
+SQL_TOKEN_RE = re.compile(
+    r"--[^\n]*|/\*.*?\*/|'(?:''|[^'])*'|\"(?:\"\"|[^\"])*\"|"
+    r"`(?:``|[^`])*`|\[[^\]]*\]|\b[A-Za-z_][A-Za-z0-9_]*\b|;",
+    re.S,
+)
 
 
 def strip_line_comments(sql: str) -> str:
@@ -72,23 +84,96 @@ def strip_line_comments(sql: str) -> str:
 
 
 def strip_trigger_definitions(sql: str) -> str:
+    tokens = list(SQL_TOKEN_RE.finditer(sql))
+    ranges: list[tuple[int, int]] = []
+    index = 0
+    while index < len(tokens):
+        if token_keyword(tokens[index]) != "CREATE":
+            index += 1
+            continue
+        cursor = next_significant_token(tokens, index + 1)
+        if cursor is not None and token_keyword(tokens[cursor]) in {"TEMP", "TEMPORARY"}:
+            cursor = next_significant_token(tokens, cursor + 1)
+        if cursor is None or token_keyword(tokens[cursor]) != "TRIGGER":
+            index += 1
+            continue
+
+        begin = next_keyword(tokens, cursor + 1, "BEGIN")
+        if begin is None:
+            ranges.append((tokens[index].start(), len(sql)))
+            break
+
+        case_depth = 0
+        end_pos: int | None = None
+        cursor = begin + 1
+        while cursor < len(tokens):
+            keyword = token_keyword(tokens[cursor])
+            if keyword == "CASE":
+                case_depth += 1
+            elif keyword == "END":
+                if case_depth > 0:
+                    case_depth -= 1
+                else:
+                    semicolon = next_significant_token(tokens, cursor + 1)
+                    if semicolon is not None and tokens[semicolon].group(0) == ";":
+                        end_pos = tokens[semicolon].end()
+                    else:
+                        end_pos = tokens[cursor].end()
+                    break
+            cursor += 1
+
+        if end_pos is None:
+            ranges.append((tokens[index].start(), len(sql)))
+            break
+        ranges.append((tokens[index].start(), end_pos))
+        while index < len(tokens) and tokens[index].end() <= end_pos:
+            index += 1
+
     pieces: list[str] = []
     pos = 0
-    for match in CREATE_TRIGGER_RE.finditer(sql):
-        pieces.append(sql[pos : match.start()])
-        begin = BEGIN_RE.search(sql, match.start())
-        end = END_RE.search(sql, begin.start() if begin else match.start())
-        if begin is None or end is None:
-            pieces.append(sql[match.start() :])
-            return "".join(pieces)
-        pos = end.end()
+    for start, end in ranges:
+        pieces.append(sql[pos:start])
+        pos = end
     pieces.append(sql[pos:])
     return "".join(pieces)
 
 
+def token_keyword(token: re.Match[str]) -> str | None:
+    value = token.group(0)
+    if value and (value[0].isalpha() or value[0] == "_"):
+        return value.upper()
+    return None
+
+
+def next_significant_token(tokens: list[re.Match[str]], start: int) -> int | None:
+    for index in range(start, len(tokens)):
+        value = tokens[index].group(0)
+        if not value.startswith(("--", "/*")):
+            return index
+    return None
+
+
+def next_keyword(
+    tokens: list[re.Match[str]], start: int, expected: str
+) -> int | None:
+    cursor = start
+    while (cursor := next_significant_token(tokens, cursor)) is not None:
+        if token_keyword(tokens[cursor]) == expected:
+            return cursor
+        cursor += 1
+    return None
+
+
 def schema_tables(sql: str) -> set[str]:
     names: set[str] = set()
-    for pattern in (CREATE_TABLE_RE, ALTER_TABLE_RE, DROP_TABLE_RE, RENAME_TO_RE):
+    for pattern in (
+        CREATE_TABLE_RE,
+        ALTER_TABLE_RE,
+        DROP_TABLE_RE,
+        RENAME_TO_RE,
+        CREATE_INDEX_TABLE_RE,
+        CREATE_TRIGGER_TABLE_RE,
+    ):
         names.update(match.group(1) for match in pattern.finditer(sql))
     return names
 
@@ -116,10 +201,11 @@ def related_tables(schema: set[str]) -> set[str]:
 
 
 def extra_rewrite_tables(sql: str) -> set[str]:
-    body = strip_trigger_definitions(strip_line_comments(sql))
-    schema = schema_tables(body)
+    uncommented = strip_line_comments(sql)
+    schema = schema_tables(uncommented)
     if not schema:
         return set()
+    body = strip_trigger_definitions(uncommented)
     extras = rewrite_tables(body) - related_tables(schema)
     return {name for name in extras if not name.startswith("_")}
 

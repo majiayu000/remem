@@ -20,6 +20,15 @@ pub(super) const AUTO_ACTIONABLE_PREDICATE: &str = "
             AND (next_retry_epoch IS NULL OR next_retry_epoch <= :now))
     )";
 
+const AUTO_RECOVERABLE_PREDICATE: &str = "
+    host IN (:claude_host, :codex_host)
+    AND (
+        status = 'pending'
+        OR status = 'processing'
+        OR (status = 'failed'
+            AND COALESCE(failure_class, 'transient') = 'transient')
+    )";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LegacyPendingBridgeState {
     FrozenDraining,
@@ -58,6 +67,23 @@ pub fn count_auto_actionable_legacy_pending(conn: &Connection) -> Result<i64> {
     .context("count auto-actionable legacy pending rows")
 }
 
+fn count_auto_recoverable_legacy_pending(conn: &Connection) -> Result<i64> {
+    if !legacy_surface_state_ready(conn)? && !pending_observations_ready(conn)? {
+        return Ok(0);
+    }
+    let sql =
+        format!("SELECT COUNT(*) FROM pending_observations WHERE {AUTO_RECOVERABLE_PREDICATE}");
+    conn.query_row(
+        &sql,
+        named_params! {
+            ":claude_host": CLAUDE_HOST,
+            ":codex_host": CODEX_HOST,
+        },
+        |row| row.get(0),
+    )
+    .context("count auto-recoverable legacy pending rows")
+}
+
 pub fn legacy_pending_auto_bridge_is_exhausted(conn: &Connection) -> Result<bool> {
     let Some(state) = load_legacy_pending_bridge_state(conn)? else {
         return Ok(false);
@@ -66,7 +92,7 @@ pub fn legacy_pending_auto_bridge_is_exhausted(conn: &Connection) -> Result<bool
 }
 
 pub fn sync_legacy_pending_bridge_state(conn: &Connection) -> Result<LegacyPendingBridgeState> {
-    let residual = count_auto_actionable_legacy_pending(conn)?;
+    let residual = count_auto_recoverable_legacy_pending(conn)?;
     let state = if residual == 0 {
         LegacyPendingBridgeState::Exhausted
     } else {
@@ -80,7 +106,10 @@ pub fn reactivate_legacy_pending_bridge(conn: &Connection) -> Result<()> {
     if !legacy_surface_state_ready(conn)? {
         return Ok(());
     }
-    let residual = count_auto_actionable_legacy_pending(conn)?.max(1);
+    let residual = count_auto_recoverable_legacy_pending(conn)?;
+    if residual == 0 {
+        return Ok(());
+    }
     write_legacy_pending_bridge_state(conn, LegacyPendingBridgeState::FrozenDraining, residual)
 }
 

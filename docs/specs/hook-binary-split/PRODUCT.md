@@ -17,7 +17,7 @@ long-term tax on every PostToolUse and SessionStart spawn.
 - That entry must compile without the `eval` and `local-onnx` features.
 - Default `remem` install, plugin, and npm wrapper stay on the full binary
   when `remem-hook` is not sitting next to it.
-- When a sibling `remem-hook` exists beside the installed `remem`, hook
+- When an executable sibling `remem-hook` exists beside the installed `remem`, hook
   commands that remem-hook can run (`context`, `session-init`, `observe`,
   `summarize`) are written to that slim binary. `rules eval` and MCP stay on
   full `remem`.
@@ -45,7 +45,7 @@ cargo build --release --no-default-features --bin remem-hook
 - `cargo check --no-default-features --bin remem-hook` passes.
 - `remem-hook worker` / `remem-hook eval` fail closed.
 - Default `cargo test` still includes eval commands.
-- `remem install` writes slim hook commands to sibling `remem-hook` when
+- `remem install` writes slim hook commands to an executable sibling `remem-hook` when
   that file exists, and leaves `rules eval` plus MCP on `remem`.
 - Doctor accepts that mixed layout and does not treat `remem-hook` as a
   second remem install.

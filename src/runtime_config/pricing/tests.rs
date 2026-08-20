@@ -114,12 +114,34 @@ fn one_sided_or_invalid_global_section_fails_closed() -> Result<()> {
 }
 
 #[test]
+fn pricing_section_rejects_non_table_values() -> Result<()> {
+    for (label, body) in [
+        ("scalar", "pricing = 1.25\n"),
+        (
+            "inline-table",
+            "pricing = { input_per_mtok = 1.25, output_per_mtok = 6.5 }\n",
+        ),
+    ] {
+        let path = temp_config_path(&format!("pricing-{label}"));
+        with_config_path(&path, || -> Result<()> {
+            std::fs::write(&path, body)?;
+            let err = validate_pricing_config().expect_err("non-table pricing must fail");
+            assert_eq!(err.to_string(), "pricing must be a table");
+            Ok(())
+        })?;
+        std::fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+#[test]
 fn family_table_overlays_selected_fields() -> Result<()> {
     let path = temp_config_path("pricing-family");
     with_config_path(&path, || -> Result<()> {
         std::fs::write(&path, "[pricing.haiku]\ninput_per_mtok = 2.5\n")?;
-        let overlay =
+        let (overlay, configured) =
             family_pricing_overlay("HAIKU", PricingRates::from_parts(1.0, 5.0, 1.25, 0.10))?;
+        assert!(configured);
         assert_eq!(overlay.input_per_mtok, 2.5);
         assert_eq!(overlay.output_per_mtok, 5.0);
         Ok(())

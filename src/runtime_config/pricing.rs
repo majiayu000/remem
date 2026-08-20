@@ -1,5 +1,5 @@
 use anyhow::{bail, Result};
-use toml_edit::{DocumentMut, Item, Table};
+use toml_edit::{DocumentMut, Table};
 
 const RATE_KEYS: &[&str] = &[
     "input_per_mtok",
@@ -69,14 +69,20 @@ pub(crate) fn global_pricing_override() -> Result<Option<PricingRates>> {
     global_pricing_from_doc(&doc)
 }
 
-pub(crate) fn family_pricing_overlay(prefix: &str, base: PricingRates) -> Result<PricingRates> {
+pub(crate) fn family_pricing_overlay(
+    prefix: &str,
+    base: PricingRates,
+) -> Result<(PricingRates, bool)> {
     let doc = super::read_config_doc_or_default()?;
     family_pricing_from_doc(&doc, &prefix.to_ascii_lowercase(), base)
 }
 
 fn global_pricing_from_doc(doc: &DocumentMut) -> Result<Option<PricingRates>> {
-    let Some(table) = doc.get("pricing").and_then(Item::as_table) else {
+    let Some(pricing) = doc.get("pricing") else {
         return Ok(None);
+    };
+    let Some(table) = pricing.as_table() else {
+        bail!("pricing must be a table");
     };
     reject_unknown_keys(table, RATE_KEYS, FAMILY_TABLES, "pricing")?;
     let input = optional_rate(table, "pricing.input_per_mtok")?;
@@ -109,12 +115,15 @@ fn family_pricing_from_doc(
     doc: &DocumentMut,
     family: &str,
     mut base: PricingRates,
-) -> Result<PricingRates> {
-    let Some(pricing) = doc.get("pricing").and_then(Item::as_table) else {
-        return Ok(base);
+) -> Result<(PricingRates, bool)> {
+    let Some(pricing_item) = doc.get("pricing") else {
+        return Ok((base, false));
+    };
+    let Some(pricing) = pricing_item.as_table() else {
+        bail!("pricing must be a table");
     };
     let Some(table) = pricing.get(family) else {
-        return Ok(base);
+        return Ok((base, false));
     };
     let Some(table) = table.as_table() else {
         bail!("pricing.{family} must be a table");
@@ -136,7 +145,7 @@ fn family_pricing_from_doc(
     if let Some(value) = optional_rate(table, &format!("pricing.{family}.cache_read_per_mtok"))? {
         base.cache_read_per_mtok = value;
     }
-    Ok(base)
+    Ok((base, !table.is_empty()))
 }
 
 fn reject_unknown_keys(

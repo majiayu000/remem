@@ -122,7 +122,8 @@ Acceptance:
 - Doctor distinguishes rows eligible for the automatic drain from permanent
   or unknown-host archived rows that are `admin-required`, and gives the exact
   dry-run/apply recovery commands.
-- When no residual auto-actionable row remains, doctor reports that the
+- When no residual auto-recoverable row remains, including delayed retries and
+  active processing leases, doctor reports that the
   automatic drain is halted and that guarded table drop stays remem 0.7.0.
 - After freeze, a legacy write triggers a doctor error, not a silent
   success.
@@ -262,7 +263,7 @@ Acceptance:
 3. Reader migration with equivalence fixtures; freeze writers.
 4. Idle-only value migration through the bounded worker bridge plus exact
    archived admin recovery, followed by a deprecation announcement in doctor
-   and release notes. After the store has no residual auto-actionable rows,
+   and release notes. After the store has no residual auto-recoverable rows,
    persist `exhausted` and stop admitting the bridge. Guarded drop migrations
    remain remem 0.7.0 and still refuse to run while unmigrated valuable rows
    remain.

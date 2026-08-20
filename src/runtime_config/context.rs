@@ -1,5 +1,5 @@
 use anyhow::{bail, Result};
-use toml_edit::{DocumentMut, Item};
+use toml_edit::DocumentMut;
 
 use crate::context::ContextLimits;
 
@@ -48,8 +48,11 @@ pub(super) fn ensure_defaults(doc: &mut DocumentMut) -> Result<()> {
 
 fn context_budget_limits_from_doc(doc: &DocumentMut) -> Result<ContextLimits> {
     let defaults = ContextLimits::default();
-    let Some(table) = doc.get("context").and_then(Item::as_table) else {
+    let Some(context) = doc.get("context") else {
         return Ok(defaults);
+    };
+    let Some(table) = context.as_table() else {
+        bail!("context must be a table");
     };
     Ok(ContextLimits {
         total_char_limit: read_usize_field(table, "total_char_limit", defaults.total_char_limit)?,

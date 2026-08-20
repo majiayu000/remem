@@ -12,9 +12,9 @@
 - USD cost overrides now live in `config.toml` `[pricing]`. `REMEM_PRICE_*`
   remains an env escape hatch. Init writes an empty `[pricing]` table and
   does not pin compiled family rates. A present invalid rate fails closed.
-- `remem install` writes slim hook commands to a sibling `remem-hook` when
+- `remem install` writes slim hook commands to an executable sibling `remem-hook` when
   that file exists next to `remem`. `rules eval` and MCP stay on the full
-  binary. Doctor treats the sibling as a valid hook executable and does
+  binary. Doctor treats the executable sibling as a valid hook executable and does
   not count it as a second remem install.
 - Optional `remem-hook` binary accepts only host hook commands and compiles
   without the `eval` and `local-onnx` features. Default `remem` install is
@@ -26,7 +26,7 @@
 - SessionStart numeric budgets now live in `config.toml` `[context]`. Existing
   `REMEM_CONTEXT_*` environment variables remain overrides; a present invalid
   `[context]` integer fails closed. The compiled `preference_global_limit`
-  default stays `5`.
+  default stays `0` (global preference injection remains disabled by default).
 - Staged source version `0.6.78` to restore the Intel macOS
   `--no-default-features` release build: remem_e2e opaque identity generation
   now maps `getrandom::Error` explicitly instead of requiring the optional

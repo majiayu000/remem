@@ -140,8 +140,14 @@ fn env_pricing() -> Option<ModelPricing> {
 }
 
 fn apply_family_config(default: ModelPricing, prefix: &str) -> Result<ModelPricing> {
-    let overlay = crate::runtime_config::family_pricing_overlay(prefix, default.rates())?;
-    Ok(ModelPricing::from_rates(overlay, default.source))
+    let (overlay, configured) =
+        crate::runtime_config::family_pricing_overlay(prefix, default.rates())?;
+    let source = if configured {
+        "config_override"
+    } else {
+        default.source
+    };
+    Ok(ModelPricing::from_rates(overlay, source))
 }
 
 fn apply_family_env(default: ModelPricing, prefix: &str) -> ModelPricing {

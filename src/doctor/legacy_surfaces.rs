@@ -9,7 +9,10 @@ fn legacy_pending_deprecation_notice() -> String {
     )
 }
 const LEGACY_PENDING_MIGRATION_NOTICE: &str = "actionable pending_observations: preview with `remem pending migrate-legacy --dry-run`, then apply with `remem pending migrate-legacy`; if the legacy host is unknown, apply explicitly with `remem pending migrate-legacy --host claude-code` or `remem pending migrate-legacy --host codex-cli`";
-const LEGACY_PENDING_HALT_NOTICE: &str = "automatic drain halted (no residual actionable rows)";
+const LEGACY_PENDING_HALT_NOTICE: &str =
+    "automatic drain halted (no auto-recoverable residual rows)";
+const LEGACY_PENDING_ACTIVE_NOTICE: &str =
+    "automatic drain active (auto-recoverable residual rows remain)";
 
 pub(super) fn check_legacy_surfaces(conn: Option<&Connection>) -> Check {
     let deprecation = legacy_pending_deprecation_notice();
@@ -41,6 +44,17 @@ pub(super) fn check_legacy_surfaces(conn: Option<&Connection>) -> Check {
                 )
             }
         };
+    let auto_bridge_exhausted =
+        match db::pending::admin::legacy_pending_auto_bridge_is_exhausted(conn) {
+            Ok(exhausted) => exhausted,
+            Err(err) => {
+                return Check::new(
+                    "Legacy surfaces",
+                    Status::Warn,
+                    format!("cannot load automatic legacy bridge state: {err}; {deprecation}"),
+                )
+            }
+        };
     let mut detail = stats
         .legacy_surfaces
         .iter()
@@ -63,8 +77,11 @@ pub(super) fn check_legacy_surfaces(conn: Option<&Connection>) -> Check {
     detail.push_str(&format!("; {deprecation}"));
     if actionable_pending_rows > 0 {
         detail.push_str(&format!("; {LEGACY_PENDING_MIGRATION_NOTICE}"));
-    } else {
+    }
+    if auto_bridge_exhausted {
         detail.push_str(&format!("; {LEGACY_PENDING_HALT_NOTICE}"));
+    } else {
+        detail.push_str(&format!("; {LEGACY_PENDING_ACTIVE_NOTICE}"));
     }
     let violations: i64 = stats
         .legacy_surfaces
@@ -79,5 +96,39 @@ pub(super) fn check_legacy_surfaces(conn: Option<&Connection>) -> Check {
         )
     } else {
         Check::new("Legacy surfaces", Status::Ok, detail)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn due_transient_row_reports_active_auto_bridge() -> anyhow::Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        let id = crate::db::test_support::insert_legacy_pending_fixture(
+            &conn,
+            crate::runtime_config::CODEX_HOST,
+            "doctor-auto-bridge",
+            "alpha",
+            "Bash",
+            None,
+            None,
+            None,
+        )?;
+        conn.execute(
+            "UPDATE pending_observations
+             SET status = 'failed', failure_class = 'transient',
+                 next_retry_epoch = 0, failed_at_epoch = 1
+             WHERE id = ?1",
+            [id],
+        )?;
+
+        let check = check_legacy_surfaces(Some(&conn));
+
+        assert!(check.detail.contains(LEGACY_PENDING_ACTIVE_NOTICE));
+        assert!(!check.detail.contains(LEGACY_PENDING_HALT_NOTICE));
+        Ok(())
     }
 }

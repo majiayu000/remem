@@ -100,6 +100,24 @@ fn context_section_rejects_non_integer_and_negative() -> Result<()> {
 }
 
 #[test]
+fn context_section_rejects_non_table_values() -> Result<()> {
+    for (label, body) in [
+        ("scalar", "context = 8000\n"),
+        ("inline-table", "context = { total_char_limit = 8000 }\n"),
+    ] {
+        let path = temp_config_path(&format!("context-budget-{label}"));
+        with_config_path(&path, || -> Result<()> {
+            std::fs::write(&path, body)?;
+            let err = context_budget_limits().expect_err("non-table context must fail");
+            assert_eq!(err.to_string(), "context must be a table");
+            Ok(())
+        })?;
+        std::fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+#[test]
 fn env_override_wins_over_context_section() -> Result<()> {
     let path = temp_config_path("context-budget-env-wins");
     with_config_path(&path, || -> Result<()> {

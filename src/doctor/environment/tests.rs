@@ -367,6 +367,13 @@ fn probe_hooks_accepts_sibling_remem_hook_for_slim_commands() -> anyhow::Result<
     let hook = dir.join("remem-hook");
     std::fs::write(&remem, [])?;
     std::fs::write(&hook, [])?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&hook)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&hook, permissions)?;
+    }
     let remem_s = remem.to_str().expect("utf8");
     let hook_s = hook.to_str().expect("utf8");
     let hooks_path = dir.join("settings.json");
@@ -421,7 +428,7 @@ fn probe_hooks_accepts_sibling_remem_hook_for_slim_commands() -> anyhow::Result<
 }
 
 #[test]
-fn configured_paths_ignore_sibling_remem_hook() {
+fn configured_paths_map_sibling_remem_hook_to_full_binary() {
     let dir = temp_path("doctor-configured-sibling-hook");
     let remem = dir.join("remem");
     let hook = dir.join("remem-hook");
@@ -457,4 +464,33 @@ fn configured_paths_ignore_sibling_remem_hook() {
 
     assert_eq!(paths, vec![remem]);
     assert!(!paths.iter().any(|path| path.ends_with("remem-hook")));
+}
+
+#[test]
+fn configured_paths_map_slim_only_hooks_to_sibling_full_binary() {
+    let dir = temp_path("doctor-configured-slim-only-hook");
+    let remem = dir.join("remem");
+    let hook = dir.join("remem-hook");
+    let hook_s = hook.to_str().expect("utf8");
+    let hooks_path = dir.join("hooks.json");
+    std::fs::write(
+        &hooks_path,
+        format!(
+            r#"{{
+  "hooks": {{
+    "SessionStart": [{{ "hooks": [{{ "command": "{hook_s} context --host codex-cli" }}] }}],
+    "Stop": [{{ "hooks": [{{ "command": "{hook_s} summarize --host codex-cli" }}] }}]
+  }}
+}}"#
+        ),
+    )
+    .unwrap();
+
+    let paths = configured_remem_paths_for(vec![HostProbe {
+        name: "codex",
+        hooks_path,
+        mcp_paths: Vec::new(),
+    }]);
+
+    assert_eq!(paths, vec![remem]);
 }

@@ -237,6 +237,9 @@ fn family_pricing_config_overlays_only_that_family() {
         || {
             assert_eq!(pricing_for_model("haiku"), (9.0, 5.0));
             assert_eq!(pricing_for_model("sonnet"), (3.0, 15.0));
+            let usage = TokenUsage::estimated(1_000_000, 1_000_000);
+            let (_, source) = estimate_cost_usd("haiku", &usage).expect("pricing");
+            assert_eq!(source, "config_override");
         },
     );
 }

@@ -20,7 +20,7 @@ documentation already drifted from the code default.
 ## Non-Goals
 
 - Moving gate, host, debug, delta, bundle-render, or price knobs.
-- Changing compiled defaults, including `preference_global_limit = 5`.
+- Changing compiled defaults, including `preference_global_limit = 0`.
 - Changing env `0` handling except `REMEM_CONTEXT_RELEVANCE_K`.
 - Dropping `REMEM_CONTEXT_OBSERVATIONS`.
 

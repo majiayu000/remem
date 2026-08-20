@@ -534,6 +534,15 @@ fn build_hooks_prefers_sibling_remem_hook_for_slim_commands() {
     let hook = dir.join("remem-hook");
     std::fs::write(&remem, []).expect("touch remem");
     std::fs::write(&hook, []).expect("touch remem-hook");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&hook)
+            .expect("hook metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&hook, permissions).expect("make hook executable");
+    }
     let remem = remem.to_str().expect("utf8");
     let hook = hook.to_str().expect("utf8");
 

@@ -922,7 +922,7 @@ SessionStart numeric budgets live in the same file:
 [context]
 total_char_limit = 12000
 core_char_limit = 3000
-preference_global_limit = 5
+preference_global_limit = 0
 relevance_k = 1
 ```
 
@@ -944,7 +944,7 @@ output_per_mtok = 6.5
 table and does not pin compiled rates.
 
 Installed hooks still call the full `remem` binary unless a `remem-hook`
-sibling sits next to it. Then SessionStart/Stop/observe/session-init use the
+sibling executable sits next to it. Then SessionStart/Stop/observe/session-init use the
 slim entry; `rules eval` and MCP stay on `remem`.
 
 ```bash

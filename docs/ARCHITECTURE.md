@@ -91,7 +91,7 @@ one concern each; see
 
 | Area | Responsibility |
 |------|----------------|
-| `hook_cli.rs`, `bin/remem_hook.rs` | Slim hook entry: only `context` / `session-init` / `observe` / `summarize`; builds without `eval` and `local-onnx`. Install prefers a sibling `remem-hook` for those commands and leaves `rules eval` plus MCP on full `remem` |
+| `hook_cli.rs`, `bin/remem_hook.rs` | Slim hook entry: only `context` / `session-init` / `observe` / `summarize`; builds without `eval` and `local-onnx`. Install prefers an executable sibling `remem-hook` for those commands and leaves `rules eval` plus MCP on full `remem` |
 | `adapter/`, `observe/`, `cursor_hook/` | Host hook parsing, capture filtering, capture-specific spill serialization/replay, and capture-ledger writes |
 | `adapter/redaction.rs` | Cross-cutting sensitive-evidence redaction shared by observe capture, SessionRollup (including Cursor snapshots), and summarize capture; general secret, token, and URL-userinfo sanitization, plus header-key redaction and malformed-payload fallback specific to bounded hook-payload previews |
 | `identity.rs`, `project_id.rs`, `project_alias.rs` | Hook-host and capture-identity type contracts, canonical project-root resolution, and alias-governed canonical writes/alias-aware reads |
@@ -418,7 +418,8 @@ Runtime capture no longer writes `pending_observations`, and `session-init`
 does not auto-flush that legacy queue. The deleted enqueue/claim API stays
 deleted. Ordinary workers instead expose a drain-only migration bridge for
 residual rows, and consider it only after the current extraction worker finds
-no ready task. After a store has no residual auto-actionable rows, v084
+no ready task. After a store has no residual auto-recoverable rows (including
+delayed retries and active leases), v084
 persists `legacy_surface_state.state = exhausted` and workers skip the bridge
 until a residual row is reintroduced. Guarded table drop remains remem 0.7.0.
 
@@ -678,7 +679,7 @@ Project key = `last two path segments + canonical absolute path hash`, balancing
 | `REMEM_CONTEXT_RELEVANCE_K` | `[context].relevance_k` (`1`) | Env escape hatch for the global relevant-item cap; `0` restores legacy selection |
 | `REMEM_CONTEXT_SELF_DIAGNOSTIC_LIMIT` | `[context].self_diagnostic_limit` (`2`) | Env escape hatch for the self-diagnostic cap |
 | `REMEM_CONTEXT_PREFERENCE_PROJECT_LIMIT` | `[context].preference_project_limit` (`20`) | Env escape hatch for the project preference query cap |
-| `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT` | `[context].preference_global_limit` (`5`) | Env escape hatch for the global preference query cap; compiled default is 5 |
+| `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT` | `[context].preference_global_limit` (`0`) | Env escape hatch for the global preference query cap; compiled default is 0 (disabled) |
 | `REMEM_CONTEXT_PREFERENCE_CHAR_LIMIT` | `[context].preference_char_limit` (`1500`) | Env escape hatch for the preference character budget |
 | `REMEM_LOG_MAX_BYTES` | `10485760` | Log file size limit (bytes), auto-rotated |
 | `REMEM_LOG_MAX_ROTATED_FILES` | `3` | Number of rotated `remem.log.N` files to retain; accepts `0` through `100`, and `0` disables retained suffixes |

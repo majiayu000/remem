@@ -17,6 +17,13 @@ pub(super) fn check_runtime_config() -> Check {
         crate::runtime_config::MemoryAiSelection::default(),
     ) {
         Ok(profile) => {
+            if let Err(error) = crate::runtime_config::context_budget_limits() {
+                return Check::new(
+                    "Runtime config",
+                    Status::Fail,
+                    format!("{} invalid: {}", path.display(), error),
+                );
+            }
             if let Err(error) = crate::runtime_config::validate_pricing_config() {
                 return Check::new(
                     "Runtime config",
@@ -41,5 +48,36 @@ pub(super) fn check_runtime_config() -> Check {
             Status::Fail,
             format!("{} invalid: {}", path.display(), error),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_context_budget_fails_runtime_config_check() -> anyhow::Result<()> {
+        let _guard = crate::runtime_config::TEST_ENV_LOCK.lock()?;
+        let path = std::env::temp_dir().join(format!(
+            "remem-doctor-context-{}-{}.toml",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::write(&path, "[context]\ntotal_char_limit = -1\n")?;
+        let previous = std::env::var_os("REMEM_CONFIG");
+        unsafe { std::env::set_var("REMEM_CONFIG", &path) };
+
+        let check = check_runtime_config();
+
+        match previous {
+            Some(value) => unsafe { std::env::set_var("REMEM_CONFIG", value) },
+            None => unsafe { std::env::remove_var("REMEM_CONFIG") },
+        }
+        std::fs::remove_file(path)?;
+        assert_eq!(check.status, Status::Fail);
+        assert!(check
+            .detail
+            .contains("context.total_char_limit must be >= 0"));
+        Ok(())
     }
 }

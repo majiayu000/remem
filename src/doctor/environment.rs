@@ -371,7 +371,15 @@ fn configured_hook_paths(path: &PathBuf) -> Vec<PathBuf> {
     hook_command_strings(&doc)
         .filter_map(extract_remem_command_path)
         .map(PathBuf::from)
-        .filter(|path| crate::hook_cli::is_full_remem_binary(path))
+        .filter_map(|path| {
+            if crate::hook_cli::is_full_remem_binary(&path) {
+                Some(path)
+            } else if crate::hook_cli::is_hook_binary(&path) {
+                crate::hook_cli::sibling_full_binary_path(&path)
+            } else {
+                None
+            }
+        })
         .collect()
 }
 

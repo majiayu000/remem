@@ -26,6 +26,51 @@ class ExtraRewriteTablesTests(unittest.TestCase):
         """
         self.assertEqual(concerns.extra_rewrite_tables(sql), set())
 
+    def test_trigger_case_end_does_not_expose_later_trigger_dml(self) -> None:
+        sql = """
+        ALTER TABLE memories ADD COLUMN enrichment_state TEXT;
+        CREATE TRIGGER memories_validate BEFORE UPDATE ON memories
+        BEGIN
+            SELECT CASE
+                WHEN NEW.enrichment_state IS NULL
+                THEN RAISE(ABORT, 'missing state')
+            END;
+            UPDATE jobs SET status = 'failed';
+            DELETE FROM ai_usage_events;
+        END;
+        """
+        self.assertEqual(concerns.extra_rewrite_tables(sql), set())
+
+    def test_upgrade_dml_after_case_trigger_is_still_detected(self) -> None:
+        sql = """
+        CREATE TRIGGER memories_validate BEFORE UPDATE ON memories
+        BEGIN
+            SELECT CASE WHEN NEW.topic_key = '' THEN RAISE(ABORT, 'empty') END;
+            UPDATE jobs SET status = 'failed';
+        END;
+        UPDATE ai_usage_events SET pricing_source = 'unknown_pricing';
+        """
+        self.assertEqual(
+            concerns.extra_rewrite_tables(sql), {"ai_usage_events"}
+        )
+
+    def test_create_index_counts_as_schema_change_on_its_table(self) -> None:
+        sql = """
+        CREATE INDEX idx_memories_topic ON memories(topic_key);
+        UPDATE jobs SET status = 'failed';
+        """
+        self.assertEqual(concerns.extra_rewrite_tables(sql), {"jobs"})
+
+    def test_create_trigger_counts_as_schema_change_on_its_table(self) -> None:
+        sql = """
+        CREATE TRIGGER memories_touch AFTER UPDATE ON memories
+        BEGIN
+            SELECT 1;
+        END;
+        UPDATE jobs SET status = 'failed';
+        """
+        self.assertEqual(concerns.extra_rewrite_tables(sql), {"jobs"})
+
     def test_unrelated_pricing_rewrite_is_mixed(self) -> None:
         sql = """
         ALTER TABLE memories ADD COLUMN enrichment_state TEXT;

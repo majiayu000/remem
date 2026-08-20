@@ -1,7 +1,7 @@
 -- v084_legacy_pending_bridge_state: halt the idle drain after residual rows are gone.
 --
 -- Fresh and already-empty stores must not keep admitting the
--- pending_observations bridge. Residual auto-actionable rows stay
+-- pending_observations bridge. Residual auto-recoverable rows stay
 -- frozen_draining. This is durable consumer halt only; guarded table drop
 -- remains remem 0.7.0.
 
@@ -30,15 +30,9 @@ FROM (
     FROM pending_observations
     WHERE host IN ('claude-code', 'codex-cli')
       AND (
-            (status = 'pending'
-             AND (next_retry_epoch IS NULL
-                  OR next_retry_epoch <= CAST(strftime('%s', 'now') AS INTEGER)))
-         OR (status = 'processing'
-             AND (lease_expires_epoch IS NULL
-                  OR lease_expires_epoch < CAST(strftime('%s', 'now') AS INTEGER)))
+            status = 'pending'
+         OR status = 'processing'
          OR (status = 'failed'
-             AND COALESCE(failure_class, 'transient') = 'transient'
-             AND (next_retry_epoch IS NULL
-                  OR next_retry_epoch <= CAST(strftime('%s', 'now') AS INTEGER)))
+             AND COALESCE(failure_class, 'transient') = 'transient')
       )
 ) AS residual;
