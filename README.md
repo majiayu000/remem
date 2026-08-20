@@ -1409,6 +1409,11 @@ frequently than the returned `cache.ttl_secs`; use
 | Endpoint | Method | Description |
 |---|---|---|
 | `/api/v1/stats` | GET | Product stats for local dashboards |
+| `/api/v1/session-activity/sessions?project=&before_epoch=&limit=` | GET | Raw-backed session tuples with projection counts |
+| `/api/v1/session-activity?project=&source_root=&session_id=&before_id=&limit=` | GET | Structured request, understanding, action, and result turns |
+| `/api/v1/session-activity/{id}` | GET | One structured session turn with captured actions |
+| `/api/v1/session-stats?project=&since_epoch=&until_epoch=` | GET | Session, turn, action, outcome, capture-health, project, and tool counts |
+| `/api/v1/session-activity/project` | POST | Idempotently project one exact raw session tuple without rewriting raw evidence |
 | `/api/v1/candidates?project=&status=&limit=&offset=` | GET | List compact memory candidates |
 | `/api/v1/candidates/{id}` | GET | Safe candidate detail, evidence/provenance, action-specific review decision, and Dream review token when applicable |
 | `/api/v1/candidates/{id}/review/approve` | POST | Versioned, audited, idempotent safe approval; Dream quarantine requires the current pattern and provenance-token acknowledgements |
