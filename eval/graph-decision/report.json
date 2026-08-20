@@ -4,14 +4,14 @@
   "evidence_fingerprint": {
     "algorithm": "sha256-length-prefixed-v1",
     "dataset_sha256": "0af0538c28347f52a8a2bee2a57d85ce07442eb03b2f8eec48c47c0f50b232f8",
-    "implementation_sha256": "1050c77e8ae922c7241c862a5a23b8569123a0671b0fc1a02fcbeddc997f1356",
-    "combined_sha256": "38c5acd07faf1c1173ad2573a17a374b585b2fa2151ec60826757e00dad6873c",
+    "implementation_sha256": "fa1e7858c8a1f84738d09de6c6d0cbdcfba69e0864ac63df01ac202e1caca40c",
+    "combined_sha256": "bbfba6c14843935ed7966aa1471a40cf9465054eb196c47a66cac74c549a4657",
     "inputs": [
       {
         "path": "crate::migrate::MIGRATIONS",
         "role": "implementation",
-        "byte_len": 231082,
-        "sha256": "2e043ad212544fffc97947c966cb1033b0bccf5011d4d7526063157ea588dd20"
+        "byte_len": 234060,
+        "sha256": "2b725f3dfb3607ab30a33b71e49751063de3e54c1062aafb1f2b8cc8233e8524"
       },
       {
         "path": "eval/golden.json",
@@ -196,8 +196,8 @@
       {
         "path": "src/migrate/schema_drift.rs",
         "role": "implementation",
-        "byte_len": 8289,
-        "sha256": "caaa66be43c8bf06889cd5360c8ed03ea3384a643e46cdeea2ae0d8cc5e59c04"
+        "byte_len": 8352,
+        "sha256": "5404f7ca463017eb3c5ed288e1bca3972d6c6d6d9209ffd321d3dcc28bd7a8b3"
       },
       {
         "path": "src/migrate/schema_drift/exists.rs",
@@ -208,8 +208,8 @@
       {
         "path": "src/migrate/schema_drift/invariants.rs",
         "role": "implementation",
-        "byte_len": 24579,
-        "sha256": "78d6593530538cc935c7c0ef6a5a9b1cad02675b7604dd1a05fdb356b51e10a1"
+        "byte_len": 24646,
+        "sha256": "d903e20dc5e9d5a46d2cbf9af76fa7d778f26c5f63100a477121574373de24df"
       },
       {
         "path": "src/migrate/schema_drift/invariants/v068.rs",
@@ -292,8 +292,8 @@
       {
         "path": "src/migrate/types.rs",
         "role": "implementation",
-        "byte_len": 13704,
-        "sha256": "3ae0025e9ee49b294bcb24b101c1e0e4de8f5ea4cd52395d2d5457040b1a9551"
+        "byte_len": 13858,
+        "sha256": "8e86ba70aa4703064c543d323c05a47247e46bc869ea8433928a477d41ad2d7a"
       },
       {
         "path": "src/project_id.rs",

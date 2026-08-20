@@ -236,6 +236,7 @@ const MIGRATION_SQL_INPUTS: &[&str] = &[
     "src/migrations/v081_context_bundle_audits.sql",
     "src/migrations/v082_project_identity_aliases.sql",
     "src/migrations/v083_retrieval_enrichment_budget.sql",
+    "src/migrations/v084_session_observatory.sql",
 ];
 
 #[derive(Debug, Clone, Serialize)]
