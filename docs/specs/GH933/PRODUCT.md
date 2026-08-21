@@ -4,16 +4,20 @@ Refs #933.
 
 ## Status
 
-Phase A v1 was merged in PR #939 and publicly released in `remem-ai` 0.6.26;
-0.6.27 still contains that API. It is a library-only baseline, not completion
-of GH-933.
+Phase A v1 was merged in PR #939 and publicly released in `remem-ai` 0.6.26.
+It began as a library-only baseline. Version 0.6.81 also consumes a bounded,
+fail-closed v1 projection in the default Context Bundle/SessionStart path and
+retains the focused `remem doctor truth` diagnostic. This bounded v1 precursor
+does not complete GH-933's broader Phase B acceptance or implement the breaking
+v2 contract below.
 
 This document defines the pending Phase A v2 hardening contract. Its checkboxes
 remain open until implementation and fresh verification land. Phase A now
 includes narrow durable route/lifecycle ledgers, migration/backfill, and writer
-instrumentation required for exact history. Phase B Context Bundle consumption,
-worktree/task scope, and Phase C general writer convergence remain later work,
-so GH-933 stays open.
+instrumentation required for exact history. A bounded v1 precursor to Phase B
+has landed; Phase B's shared-epoch/separate-output/history/rollback contract,
+typed v2 integration, worktree/task scope, and Phase C general writer
+convergence remain later work, so GH-933 stays open.
 This Phase A v2 persistence/cutover contract is Unix-only until a separately
 reviewed Windows-native locking/publication contract lands; supported Windows
 installations remain on the existing v1 runtime and are never silently migrated.
@@ -52,9 +56,16 @@ replayability.
       omits claim text, uses a current-schema read-only connection, applies
       effective-time filtering to relation diagnostics, and returns warning
       exit status 1 when contradictions or invalid references are present.
+- [x] Released v0.6.81 bounded-v1 precursor for default Context Bundle/
+      SessionStart consumption: selected Core claims retain stable projection/
+      evidence refs, contradictions emit compact abstentions, projection/load
+      failure cannot revive newest-wins Core output, and production winner
+      relations are restricted to endpoints with the same computed subject
+      identity.
 
-These checks describe released v1 evidence only; they do not satisfy the
-pending v2 requirements below.
+These checks describe released v1 evidence. The bounded Context Bundle item is
+only a precursor and does not satisfy the unchecked broader Phase B or pending
+v2 requirements below.
 
 ## Phase A v2 Behavior
 

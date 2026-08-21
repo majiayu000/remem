@@ -86,7 +86,12 @@ context bundle.
 - No rerank, graph expansion, or LLM calls in plan or execute. The MCP loader
   also disables a globally configured reranker rather than applying an
   unplanned top-k cut.
-- No change to the existing SessionStart rendered output or gating.
+- The original GH932 v1 rollout made no change to SessionStart rendered output
+  or gating. GH933's bounded v1 consumer, released later in v0.6.81,
+  supersedes that historical non-goal only for CurrentTruth Core selection,
+  stable evidence/projection references, and explicit conflict abstention. It
+  is not permission for unrelated Context Bundle output or gate changes, and
+  it does not complete GH933's broader Phase B acceptance.
 - Coding-bench remem runs must consume the durable audit for the exact
   SessionStart `injection_run_id` that produced their context. The run artifact
   records the bundle/plan and policy versions, plan/audit hashes, a separate
