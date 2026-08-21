@@ -3,8 +3,11 @@ Refs #933. `PRODUCT.md` defines product behavior. This file is the normative
 Phase A v2 implementation contract.
 
 ## Status and Module Boundary
-Truth v1 shipped in `remem-ai` 0.6.26/0.6.27; the Cargo target is `remem`, so
-the public API is `remem::truth`.
+Truth v1 shipped in `remem-ai` 0.6.26; the Cargo target is `remem`, so the
+public API is `remem::truth`. Version 0.6.81 additionally uses the bounded v1
+projection in `context_bundle/current_truth.rs` on the default SessionStart
+Context Bundle path. That integration remains a v1 precursor to the broader
+Phase B acceptance and does not authorize the v2 migration described here.
 
 The Phase A v2 projection call remains read-only. Exact historical routing
 requires a narrow durable history substrate and its canonical writers:
@@ -23,7 +26,21 @@ No projection query may write/migrate/call external systems/change Context Bundl
 The v2 migration is Unix-only and `operator_only`: plan fsyncs a nonce-bound preparation journal before the sole backup; restart adopts only exact `backup_ready` output or removes exact owned temp. Apply writes `approved`; a pure full rebuild validates before start and repeats under the write lock; started cannot retire and only exact-resumes/completes. Windows remains on v1 and plan/apply fail typed before side effects.
 Atomic route/lifecycle instrumentation and duplicate timestamp preservation are the only added writer scope; split `src/truth/tests.rs` before v2 tests, and keep every source file below 800 lines.
 
-## Shipped v1 Diagnostic Consumer
+## Current v1 Consumer State
+
+### Released Bounded-v1 Context Bundle / SessionStart Precursor
+
+`context_bundle/current_truth.rs` is the production v1 consumer released in
+0.6.81. The canonical loader projects only the bounded relevant memory set,
+annotates selected claims with stable projection/evidence references, excludes Core rows not selected by
+the projection, and renders compact abstentions for contradictions. A missing
+projection fails closed for Core claims rather than reviving newest-wins
+behavior. Production `supersedes` and `refutes` winner relations are admitted
+only when both endpoints resolve to the same computed v1 subject identity;
+cross-subject support/provenance relations remain non-suppressing. Context
+Bundle compilation and SessionStart audit behavior are governed by GH932.
+
+### Released Doctor Consumer
 
 `remem doctor truth` is the first production consumer of the released v1 read
 model. `src/doctor/truth.rs` opens `open_db_read_only_current`, projects exact

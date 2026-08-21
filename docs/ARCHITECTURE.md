@@ -121,10 +121,18 @@ one concern each; see
 
 ## Data Flow
 
-Current-context reads share a deterministic, read-only trust/visibility
-projection in src/truth/visibility.rs. It classifies historical active rows
-without rewriting them; unknown proof fails closed. This is the G2 exclusion
-boundary, not G3 production routing through CurrentTruth.
+Current-context reads first share the deterministic, read-only trust/visibility
+projection in `src/truth/visibility.rs`. It classifies historical active rows
+without rewriting them and fails closed when proof is unknown. The default
+Context Bundle/SessionStart path then applies the bounded CurrentTruth v1
+projection released in v0.6.81 from `src/context_bundle/current_truth.rs`:
+selected Core claims carry stable projection/evidence references,
+contradictions produce audited abstentions, and a projection failure cannot
+revive newest-wins Core output. The `legacy` render mode rolls back Context
+Bundle relevance/audit only and retains this CurrentTruth-governed Core path.
+This is a production v1 precursor, not completion of GH933's broader Phase B,
+and not the typed/history-replayable v2 writer and migration contract that
+remains pending there.
 
 ### 1. Capture Ledger (hook/session evidence → captured_events)
 

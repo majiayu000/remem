@@ -53,12 +53,20 @@ captured events:
 | Bash/tool output | `local_tool_output` |
 | Session summaries | Inherit the lowest trust class of the covered source events; if source expansion is unavailable, treat as `external_content` for auto-promote decisions |
 | WebFetch/WebSearch results, MCP output from remote servers | `external_content` |
-| Direct `save_memory` CLI/API input from the local authenticated caller | `user_prompt` |
+| Direct save service input from MCP/REST (current compatibility behavior) | `user_prompt` |
 
 Lowest class among supporting evidence wins. Stored as a new candidate column
 and copied onto promoted memories (next free migration after the current
 schema; do not reserve an already-used migration number). Pre-existing rows
 default to `local_tool_output`.
+
+Transition note: the current request DTO cannot distinguish authenticated
+human input from an agent invoking MCP `save_memory`, and current code stamps
+both with the direct-save class. The GH969 activation contract supersedes that
+unconditional elevation for the future consolidated boundary: trusted adapters
+must bind caller evidence, and an unbound agent call uses `external_content`.
+Until that implementation lands, this remains explicit transition debt rather
+than a claimed closed protection.
 
 ### Instruction-pattern scan
 
