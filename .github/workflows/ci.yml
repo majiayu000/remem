@@ -19,6 +19,10 @@ jobs:
         run: python3 scripts/ci/check_public_claims.py
       - name: Check source file size guard
         run: python3 scripts/ci/check_file_size.py
+      - name: Check active-memory write boundary
+        run: python3 scripts/ci/check_active_memory_writes.py
+      - name: Self-test active-memory write boundary
+        run: python3 scripts/ci/check_active_memory_writes.py --self-test
       - name: Check migration concerns
         run: python3 scripts/ci/check_migration_concerns.py
       - name: Check release workflows

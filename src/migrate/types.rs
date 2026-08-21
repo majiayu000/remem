@@ -430,6 +430,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "legacy_pending_bridge_state",
         sql: include_str!("../migrations/v085_legacy_pending_bridge_state.sql"),
     },
+    Migration {
+        version: 86,
+        name: "memory_activation_boundary",
+        sql: include_str!("../migrations/v086_memory_activation_boundary.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

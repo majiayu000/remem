@@ -34,9 +34,15 @@ pub(in crate::api) async fn handle_save_memory(
         claim_enabled: req.claim_enabled,
         claim_source: req.claim_source.or_else(|| Some("api_save".to_string())),
         acknowledge_pattern: req.acknowledge_pattern,
+        idempotency_key: req.idempotency_key,
     };
 
-    match service::save_memory_with_reference_time(&conn, &save_req, reference_time_epoch) {
+    match service::save_memory_from_with_reference_time(
+        &conn,
+        &save_req,
+        reference_time_epoch,
+        service::SaveMemoryCaller::RestAgent,
+    ) {
         Ok(saved) => (
             StatusCode::CREATED,
             Json(SaveMemoryResponse {
@@ -118,6 +124,7 @@ mod tests {
             claim_enabled: None,
             claim_source: None,
             acknowledge_pattern: None,
+            idempotency_key: None,
         }
     }
 

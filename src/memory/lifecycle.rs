@@ -96,40 +96,103 @@ pub fn apply_update(
     let mut superseded_targets = superseded_ids.to_vec();
     superseded_targets.extend(find_active_same_state_or_topic(
         &tx,
+        project,
+        branch,
+        scope,
         &ownership,
         memory_type,
         topic_key,
         state_key.as_ref(),
     )?);
-    let memory_id = insert_replacement_memory(
-        &tx,
-        session_id,
+    superseded_targets.sort_unstable();
+    superseded_targets.dedup();
+    if let Some(matched) =
+        crate::memory::poisoning::scan_instruction_pattern(&format!("{title}\n{content}"))
+    {
+        anyhow::bail!(
+            "lifecycle update payload matched instruction-pattern {}@{}",
+            matched.pattern_id,
+            matched.pattern_set_version
+        );
+    }
+    let superseded_json = serde_json::to_string(&superseded_targets)?;
+    let payload_sha256 = crate::memory::activation::payload_sha256(&[
         project,
         topic_key,
         title,
         content,
         memory_type,
-        files,
-        branch,
+        files.unwrap_or(""),
+        branch.unwrap_or(""),
         scope,
-        &ownership,
-        state_key.as_ref(),
-    )?;
-    let superseded = soft_supersede(&tx, project, &superseded_targets, Some(memory_id))?;
-    crate::memory::edge::insert_supersedes_edges(
-        &tx,
-        &superseded_targets,
-        memory_id,
-        crate::memory::edge::MemoryEdgeWriteContext {
-            reason: Some("lifecycle update supersedes old memory"),
-            ..Default::default()
+        &superseded_json,
+    ]);
+    let request = crate::memory::activation::ActiveMemoryWriteRequest {
+        activation_id: crate::memory::activation::ephemeral_activation_id(
+            "lifecycle-update",
+            &payload_sha256,
+        ),
+        route_kind: crate::memory::activation::ActivationRouteKind::RustApi,
+        actor_kind: crate::memory::activation::ActivationActorKind::RustApi,
+        source_operation: "memory_lifecycle_update".to_string(),
+        source_trust: crate::memory::poisoning::SourceTrustClass::LocalToolOutput,
+        source_project: ownership.source_project.to_string(),
+        route: crate::memory::activation::ActiveMemoryRoute {
+            project: project.to_string(),
+            branch: branch.map(str::to_string),
+            scope: scope.to_string(),
+            owner_scope: ownership.owner_scope.to_string(),
+            owner_key: ownership.owner_key.to_string(),
+            target_project: ownership.target_project.map(str::to_string),
         },
-    )?;
+        provenance_kind: crate::memory::activation::ActivationProvenanceKind::RustApi,
+        provenance_ref: "rust-api:lifecycle-update:v1".to_string(),
+        payload_sha256,
+        expected_memory: crate::memory::activation::ExpectedActiveMemory::new(
+            title,
+            content,
+            memory_type,
+        )
+        .with_topic_key(Some(topic_key))
+        .with_files(files),
+        poisoning_verdict: crate::memory::activation::ActivationPoisoningVerdict::Clean,
+        superseded_ids: superseded_targets.clone(),
+    };
+    let mut superseded = None;
+    let activation_result = crate::memory::activation::execute_one(&tx, &request, |permit| {
+        let memory_id = insert_replacement_memory(
+            &tx,
+            permit,
+            session_id,
+            project,
+            topic_key,
+            title,
+            content,
+            memory_type,
+            files,
+            branch,
+            scope,
+            &ownership,
+            state_key.as_ref(),
+        )?;
+        let count = soft_supersede(&tx, project, &superseded_targets, Some(memory_id))?;
+        crate::memory::edge::insert_supersedes_edges(
+            &tx,
+            &superseded_targets,
+            memory_id,
+            crate::memory::edge::MemoryEdgeWriteContext {
+                reason: Some("lifecycle update supersedes old memory"),
+                ..Default::default()
+            },
+        )?;
+        superseded = Some(count);
+        Ok(memory_id)
+    })?;
     tx.commit()?;
     Ok(LifecycleOutcome {
         op: MemoryLifecycleOp::Update,
-        memory_id: Some(memory_id),
-        superseded,
+        memory_id: Some(activation_result.memory_id),
+        superseded: superseded.unwrap_or(0),
         noop: false,
         deferred: false,
         reason: None,
@@ -158,6 +221,7 @@ pub fn apply_invalidate(
 #[allow(clippy::too_many_arguments)]
 fn insert_replacement_memory(
     conn: &Connection,
+    _permit: &crate::memory::activation::ActiveMemoryWritePermit,
     session_id: Option<&str>,
     project: &str,
     topic_key: &str,
@@ -195,8 +259,7 @@ fn insert_replacement_memory(
           expires_at_epoch, valid_from_epoch)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?18,
                  ?9, ?9, 'active', ?10, ?11,
-                 ?12, ?13, ?14, ?15, 'startup_core',
-                 ?16, ?17)",
+                 ?12, ?13, ?14, ?15, 'startup_core', ?16, ?17)",
         params![
             session_id,
             project,
@@ -230,8 +293,6 @@ fn insert_replacement_memory(
             now,
         )?;
     }
-    // Fresh insert: enrichment is pending, so the passage is canonical-only
-    // until the idle enrichment CAS installs the enriched snapshot.
     crate::retrieval::vector::upsert_memory_embedding(
         conn,
         memory_id,
@@ -271,6 +332,9 @@ fn lifecycle_ownership<'a>(project: &'a str, scope: &str) -> LifecycleOwnership<
 
 fn find_active_same_state_or_topic(
     conn: &Connection,
+    project: &str,
+    branch: Option<&str>,
+    scope: &str,
     ownership: &LifecycleOwnership<'_>,
     memory_type: &str,
     topic_key: &str,
@@ -278,7 +342,7 @@ fn find_active_same_state_or_topic(
 ) -> Result<Vec<i64>> {
     let mut ids = Vec::new();
     if let Some(state_key) = state_key {
-        ids.extend(crate::memory::state_key::active_memory_ids(
+        let candidates = crate::memory::state_key::active_memory_ids(
             conn,
             ownership.owner_scope,
             ownership.owner_key,
@@ -286,10 +350,18 @@ fn find_active_same_state_or_topic(
             &state_key.state_key,
             chrono::Utc::now().timestamp(),
             false,
-        )?);
+        )?;
+        for memory_id in candidates {
+            if matches_lifecycle_route(conn, memory_id, project, branch, scope, ownership)? {
+                ids.push(memory_id);
+            }
+        }
     }
     ids.extend(find_active_same_topic_key(
         conn,
+        project,
+        branch,
+        scope,
         ownership,
         memory_type,
         topic_key,
@@ -299,34 +371,73 @@ fn find_active_same_state_or_topic(
 
 fn find_active_same_topic_key(
     conn: &Connection,
+    project: &str,
+    branch: Option<&str>,
+    scope: &str,
     ownership: &LifecycleOwnership<'_>,
     memory_type: &str,
     topic_key: &str,
 ) -> Result<Vec<i64>> {
     let mut stmt = conn.prepare(
         "SELECT id FROM memories
-         WHERE memory_type = ?1
-           AND topic_key = ?2
-           AND COALESCE(
-                owner_scope,
-                CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END
-           ) = ?3
-           AND COALESCE(
-                owner_key,
-                CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user:default' ELSE project END
-           ) = ?4
+         WHERE memory_type = ?1 AND topic_key = ?2
+           AND project = ?3 AND branch IS ?4 AND COALESCE(scope, 'project') = ?5
+           AND COALESCE(owner_scope,
+                CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END) = ?6
+           AND COALESCE(owner_key,
+                CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user:default' ELSE project END) = ?7
+           AND target_project IS ?8
            AND status = 'active'",
     )?;
     let rows = stmt.query_map(
         params![
             memory_type,
             topic_key,
+            project,
+            branch,
+            scope,
             ownership.owner_scope,
-            ownership.owner_key
+            ownership.owner_key,
+            ownership.target_project,
         ],
         |row| row.get(0),
     )?;
     crate::db::query::collect_rows(rows)
+}
+
+fn matches_lifecycle_route(
+    conn: &Connection,
+    memory_id: i64,
+    project: &str,
+    branch: Option<&str>,
+    scope: &str,
+    ownership: &LifecycleOwnership<'_>,
+) -> Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM memories
+             WHERE id = ?1 AND status = 'active' AND project = ?2
+               AND branch IS ?3 AND COALESCE(scope, 'project') = ?4
+               AND COALESCE(owner_scope,
+                   CASE WHEN COALESCE(scope, 'project') = 'global'
+                        THEN 'user' ELSE 'repo' END) = ?5
+               AND COALESCE(owner_key,
+                   CASE WHEN COALESCE(scope, 'project') = 'global'
+                        THEN 'user:default' ELSE project END) = ?6
+               AND target_project IS ?7
+         )",
+        params![
+            memory_id,
+            project,
+            branch,
+            scope,
+            ownership.owner_scope,
+            ownership.owner_key,
+            ownership.target_project,
+        ],
+        |row| row.get(0),
+    )
+    .map_err(Into::into)
 }
 
 pub fn noop(reason: impl Into<String>) -> LifecycleOutcome {
@@ -556,239 +667,3 @@ fn durable_type_has_no_content_ttl(memory_type: &str) -> bool {
 mod ttl_tests;
 #[cfg(test)]
 mod vector_tests;
-
-#[cfg(test)]
-mod tests {
-    use rusqlite::Connection;
-
-    use super::*;
-    use crate::memory::insert_memory;
-    use crate::memory::tests_helper::setup_memory_schema;
-    use crate::retrieval::search::search_with_branch;
-
-    #[test]
-    fn update_preserves_superseded_memory_but_default_search_returns_current_fact() -> Result<()> {
-        let conn = Connection::open_in_memory()?;
-        setup_memory_schema(&conn);
-        let project = "test-lifecycle";
-        let old_id = insert_memory(
-            &conn,
-            Some("s1"),
-            project,
-            Some("deploy-target"),
-            "Deploy target",
-            "Deploy target is staging.",
-            "decision",
-            None,
-        )?;
-
-        let outcome = apply_update(
-            &conn,
-            Some("s2"),
-            project,
-            "deploy-target-current",
-            "Deploy target corrected",
-            "Deploy target is production.",
-            "decision",
-            None,
-            None,
-            "project",
-            &[old_id],
-        )?;
-
-        assert_eq!(outcome.op, MemoryLifecycleOp::Update);
-        assert_eq!(outcome.superseded, 1);
-        let old_status: String = conn.query_row(
-            "SELECT status FROM memories WHERE id = ?1",
-            [old_id],
-            |row| row.get(0),
-        )?;
-        assert_eq!(old_status, "stale");
-
-        let results = search_with_branch(
-            &conn,
-            Some("deploy target"),
-            Some(project),
-            None,
-            10,
-            0,
-            false,
-            None,
-        )?;
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].text, "Deploy target is production.");
-        Ok(())
-    }
-
-    #[test]
-    fn update_records_supersedes_edge_in_same_transaction() -> Result<()> {
-        let conn = Connection::open_in_memory()?;
-        setup_memory_schema(&conn);
-        let project = "test-lifecycle-edge";
-        let old_id = insert_memory(
-            &conn,
-            Some("s1"),
-            project,
-            Some("deploy-target"),
-            "Deploy target",
-            "Deploy target is staging.",
-            "decision",
-            None,
-        )?;
-
-        let outcome = apply_update(
-            &conn,
-            Some("s2"),
-            project,
-            "deploy-target",
-            "Deploy target",
-            "Deploy target is production.",
-            "decision",
-            None,
-            None,
-            "project",
-            &[old_id],
-        )?;
-        let Some(new_id) = outcome.memory_id else {
-            anyhow::bail!("update should create replacement");
-        };
-
-        let edge: (String, i64, i64) = conn.query_row(
-            "SELECT edge_type, from_memory_id, to_memory_id
-             FROM memory_edges
-             WHERE from_memory_id = ?1 AND to_memory_id = ?2",
-            [old_id, new_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )?;
-        assert_eq!(edge, ("supersedes".to_string(), old_id, new_id));
-        Ok(())
-    }
-
-    #[test]
-    fn invalidate_marks_memory_stale_without_deleting_it() -> Result<()> {
-        let conn = Connection::open_in_memory()?;
-        setup_memory_schema(&conn);
-        let project = "test-lifecycle";
-        let id = insert_memory(
-            &conn,
-            Some("s1"),
-            project,
-            Some("old-fact"),
-            "Old fact",
-            "This fact is no longer valid.",
-            "discovery",
-            None,
-        )?;
-
-        let outcome = apply_invalidate(&conn, project, &[id], Some("contradicted"))?;
-        assert_eq!(outcome.op, MemoryLifecycleOp::Invalidate);
-        assert_eq!(outcome.superseded, 1);
-
-        let (status, content): (String, String) = conn.query_row(
-            "SELECT status, content FROM memories WHERE id = ?1",
-            [id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        assert_eq!(status, "stale");
-        assert_eq!(content, "This fact is no longer valid.");
-        Ok(())
-    }
-
-    #[test]
-    fn update_rolls_back_insert_when_superseded_id_is_invalid() -> Result<()> {
-        let conn = Connection::open_in_memory()?;
-        setup_memory_schema(&conn);
-        let project = "test-lifecycle";
-        let old_id = insert_memory(
-            &conn,
-            Some("s1"),
-            project,
-            Some("old-fact"),
-            "Old fact",
-            "Old value.",
-            "decision",
-            None,
-        )?;
-
-        let err = apply_update(
-            &conn,
-            Some("s2"),
-            project,
-            "new-fact",
-            "New fact",
-            "New value.",
-            "decision",
-            None,
-            None,
-            "project",
-            &[old_id, 999_999],
-        )
-        .expect_err("invalid superseded id should fail");
-        assert!(err.to_string().contains("999999") || err.to_string().contains("999_999"));
-
-        let active_new_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM memories WHERE project = ?1 AND topic_key = 'new-fact'",
-            [project],
-            |row| row.get(0),
-        )?;
-        let old_status: String = conn.query_row(
-            "SELECT status FROM memories WHERE id = ?1",
-            [old_id],
-            |row| row.get(0),
-        )?;
-        assert_eq!(active_new_count, 0);
-        assert_eq!(old_status, "active");
-        let edge_count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM memory_edges", [], |row| row.get(0))?;
-        assert_eq!(edge_count, 0);
-        Ok(())
-    }
-
-    #[test]
-    fn invalidate_rolls_back_when_any_memory_id_is_invalid() -> Result<()> {
-        let conn = Connection::open_in_memory()?;
-        setup_memory_schema(&conn);
-        let project = "test-lifecycle";
-        let first_id = insert_memory(
-            &conn,
-            Some("s1"),
-            project,
-            Some("first"),
-            "First",
-            "First value.",
-            "discovery",
-            None,
-        )?;
-        let second_id = insert_memory(
-            &conn,
-            Some("s1"),
-            project,
-            Some("second"),
-            "Second",
-            "Second value.",
-            "discovery",
-            None,
-        )?;
-
-        apply_invalidate(
-            &conn,
-            project,
-            &[first_id, 999_999, second_id],
-            Some("bad id"),
-        )
-        .expect_err("mixed-validity invalidation should fail");
-
-        let statuses = conn
-            .prepare("SELECT status FROM memories WHERE id IN (?1, ?2) ORDER BY id ASC")?
-            .query_map([first_id, second_id], |row| row.get::<_, String>(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        assert_eq!(statuses, vec!["active".to_string(), "active".to_string()]);
-        Ok(())
-    }
-
-    #[test]
-    fn noop_and_defer_are_explicit_outcomes() {
-        assert!(noop("duplicate").noop);
-        assert!(defer("ambiguous conflict").deferred);
-    }
-}

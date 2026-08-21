@@ -495,8 +495,13 @@ Remem is meant for the parts that should not depend on manual upkeep:
   ./remem-memory --project "$PWD"` writes one `.md` file per curated memory to
   an empty directory. After editing those files, `remem import markdown --source
   ./remem-memory` updates existing rows and rebuilds search, entity, embedding,
-  and current-state indexes. Export refuses non-empty directories to avoid
-  overwriting manual edits.
+  and current-state indexes. Active imports are instruction-scanned and
+  transactional, and cannot move an existing memory across project, branch,
+  scope, or owner boundaries. Imported files retain `repo_file` trust rather
+  than being promoted to `user_prompt` merely because a CLI process read them;
+  they stay searchable but do not become CurrentTruth without separately bound
+  review evidence. Export refuses non-empty directories to avoid overwriting
+  manual edits.
 - **A git-diffable project memory pack**: maintainers can run
   `remem export --project "$PWD" --pack .remem-pack` and commit the generated
   `pack.json`, `memories.jsonl`, and `INDEX.md` files for active repo-owned

@@ -6,6 +6,10 @@ use rusqlite::{params, Connection};
 use super::{single_line, LoadedPack, PackImportCategory, PackImportPlan};
 use crate::cli::actions::pack_export::{pack_import_routing_reason, PackMemory};
 use crate::db::{record_captured_event_with_id_and_reference_time, CaptureEventInput};
+use crate::memory::activation::{
+    self, ActivationActorKind, ActivationPoisoningVerdict, ActivationProvenanceKind,
+    ActivationRouteKind, ActiveMemoryRoute, ActiveMemoryWriteRequest,
+};
 
 const PACK_SOURCE_KIND: &str = "pack";
 const PACK_TRUST_CLASS: crate::memory::poisoning::SourceTrustClass =
@@ -144,6 +148,58 @@ fn ensure_project_row(conn: &Connection, target_project: &str) -> Result<i64> {
 }
 
 fn insert_pack_memory(
+    conn: &Connection,
+    target_project: &str,
+    memory: &PackMemory,
+    content_digest: &str,
+) -> Result<i64> {
+    let payload_sha256 = activation::payload_sha256(&[
+        target_project,
+        content_digest,
+        &memory.content_hash,
+        &memory.title,
+        &memory.content,
+        &memory.memory_type,
+        memory.state_key.as_deref().unwrap_or(""),
+    ]);
+    let request = ActiveMemoryWriteRequest {
+        activation_id: activation::activation_id_from_key(
+            "pack-import",
+            &format!("{target_project}:{content_digest}:{}", memory.content_hash),
+        ),
+        route_kind: ActivationRouteKind::PackImport,
+        actor_kind: ActivationActorKind::Operator,
+        source_operation: "pack_import_safe_add".to_string(),
+        source_trust: PACK_TRUST_CLASS,
+        source_project: target_project.to_string(),
+        route: ActiveMemoryRoute {
+            project: target_project.to_string(),
+            branch: None,
+            scope: "project".to_string(),
+            owner_scope: "repo".to_string(),
+            owner_key: target_project.to_string(),
+            target_project: Some(target_project.to_string()),
+        },
+        provenance_kind: ActivationProvenanceKind::Pack,
+        provenance_ref: format!("manifest:{content_digest}:entry:{}", memory.content_hash),
+        payload_sha256,
+        expected_memory: activation::ExpectedActiveMemory::new(
+            &memory.title,
+            &memory.content,
+            &memory.memory_type,
+        )
+        .with_topic_key(memory.state_key.as_deref())
+        .with_candidate_evidence(Some("[]"), None),
+        poisoning_verdict: ActivationPoisoningVerdict::UpstreamValidated,
+        superseded_ids: Vec::new(),
+    };
+    let result = activation::execute_one(conn, &request, |_permit| {
+        insert_pack_memory_activated(conn, target_project, memory, content_digest)
+    })?;
+    Ok(result.memory_id)
+}
+
+fn insert_pack_memory_activated(
     conn: &Connection,
     target_project: &str,
     memory: &PackMemory,

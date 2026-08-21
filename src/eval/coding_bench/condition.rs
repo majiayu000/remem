@@ -211,6 +211,14 @@ fn render_seeded_remem_context(
     let _env_lock = crate::runtime_config::ENV_LOCK.lock().map_err(|error| {
         anyhow::anyhow!("acquire benchmark environment lock before rendering context: {error}")
     })?;
+    render_seeded_remem_context_while_env_locked(data_dir, repo_dir, task)
+}
+
+fn render_seeded_remem_context_while_env_locked(
+    data_dir: &Path,
+    repo_dir: &Path,
+    task: &CodingBenchTask,
+) -> Result<(String, CodingMemoryAttributionInput, RememAuditContract)> {
     fs::create_dir_all(data_dir).context("create benchmark REMEM_DATA_DIR")?;
     let _env = ScopedEnvVars::set_many([
         ("REMEM_DATA_DIR", data_dir.as_os_str().to_os_string()),
@@ -283,7 +291,7 @@ fn save_seed_memory(
     project: &str,
     memory: &SeedMemory,
 ) -> Result<crate::memory::service::SaveMemoryResult> {
-    crate::memory::service::save_memory(
+    crate::memory::service::save_memory_for_benchmark_fixture(
         conn,
         &crate::memory::service::SaveMemoryRequest {
             text: memory.text.clone(),
@@ -481,6 +489,9 @@ mod tests {
         let repo_dir = root.path.join("repo");
         let data_dir = root.path.join("remem-data");
         fs::create_dir_all(&repo_dir)?;
+        let _env_lock = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .map_err(|error| anyhow::anyhow!("acquire test environment lock: {error}"))?;
         let _host_policy = ScopedEnvVars::set_many([
             ("REMEM_CONTEXT_TOTAL_CHAR_LIMIT", OsString::from("1")),
             ("REMEM_CONTEXT_RELEVANCE_K", OsString::from("0")),
@@ -489,7 +500,7 @@ mod tests {
         ]);
 
         let (output, attribution, contract) =
-            render_seeded_remem_context(&data_dir, &repo_dir, task)?;
+            render_seeded_remem_context_while_env_locked(&data_dir, &repo_dir, task)?;
         assert!(output.chars().count() > 1_000, "{output}");
         assert!(!output.contains("truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
         assert_eq!(
@@ -592,10 +603,14 @@ mod tests {
             let repo_dir = root.path.join("repo");
             let data_dir = root.path.join("remem-data");
             fs::create_dir_all(&repo_dir)?;
+            let _env_lock = crate::runtime_config::TEST_ENV_LOCK
+                .lock()
+                .map_err(|error| anyhow::anyhow!("acquire test environment lock: {error}"))?;
             let _ambient_cipher =
                 ScopedEnvVars::set_many([("REMEM_CIPHER_KEY", ambient_key.clone())]);
 
-            let (output, _, contract) = render_seeded_remem_context(&data_dir, &repo_dir, task)?;
+            let (output, _, contract) =
+                render_seeded_remem_context_while_env_locked(&data_dir, &repo_dir, task)?;
 
             assert!(!output.is_empty());
             assert_eq!(

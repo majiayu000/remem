@@ -1,0 +1,775 @@
+use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use anyhow::{bail, Context, Result};
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+
+use super::poisoning::SourceTrustClass;
+
+mod payload;
+pub(crate) use payload::ExpectedActiveMemory;
+
+static ACTIVATION_NONCE: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ActivationRouteKind {
+    RustApi,
+    SupplementalSave,
+    CandidatePromotion,
+    DreamConsolidation,
+    PackImport,
+    BackupImport,
+    ScopeCleanup,
+    WebRestore,
+    ExactRecovery,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ActivationActorKind {
+    RustApi,
+    Agent,
+    AutomaticWorker,
+    Operator,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ActivationProvenanceKind {
+    SupplementalSave,
+    Candidate,
+    Generated,
+    Pack,
+    Backup,
+    ScopePlan,
+    WebArchive,
+    ExactRecovery,
+    RustApi,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ActivationPoisoningVerdict {
+    Clean,
+    Acknowledged,
+    UpstreamValidated,
+    ExactRecovery,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ActiveMemoryRoute {
+    pub project: String,
+    pub branch: Option<String>,
+    pub scope: String,
+    pub owner_scope: String,
+    pub owner_key: String,
+    pub target_project: Option<String>,
+}
+
+impl ActiveMemoryRoute {
+    pub(crate) fn default_for(project: &str, branch: Option<&str>, scope: &str) -> Self {
+        let ownership = super::store::default_ownership(project, scope);
+        Self {
+            project: project.to_string(),
+            branch: branch.map(str::to_string),
+            scope: scope.to_string(),
+            owner_scope: ownership.owner_scope.to_string(),
+            owner_key: ownership.owner_key.to_string(),
+            target_project: ownership.target_project.map(str::to_string),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ActiveMemoryWriteRequest {
+    pub activation_id: String,
+    pub route_kind: ActivationRouteKind,
+    pub actor_kind: ActivationActorKind,
+    pub source_operation: String,
+    pub source_trust: SourceTrustClass,
+    pub source_project: String,
+    pub route: ActiveMemoryRoute,
+    pub provenance_kind: ActivationProvenanceKind,
+    pub provenance_ref: String,
+    pub payload_sha256: String,
+    pub expected_memory: ExpectedActiveMemory,
+    pub poisoning_verdict: ActivationPoisoningVerdict,
+    pub superseded_ids: Vec<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ActiveMemoryWriteResult {
+    pub memory_id: i64,
+    pub replayed: bool,
+}
+
+pub(crate) struct ActiveMemoryWritePermit {
+    _private: (),
+}
+
+#[derive(Serialize)]
+struct RequestFingerprint<'a> {
+    route_kind: ActivationRouteKind,
+    actor_kind: ActivationActorKind,
+    source_operation: &'a str,
+    source_trust_class: &'static str,
+    source_project: &'a str,
+    project: &'a str,
+    branch_present: bool,
+    branch: Option<&'a str>,
+    scope: &'a str,
+    owner_scope: &'a str,
+    owner_key: &'a str,
+    target_project: Option<&'a str>,
+    provenance_kind: ActivationProvenanceKind,
+    provenance_ref: &'a str,
+    payload_sha256: &'a str,
+    expected_memory: &'a ExpectedActiveMemory,
+    poisoning_verdict: ActivationPoisoningVerdict,
+    superseded_ids: &'a [i64],
+}
+
+pub(crate) fn execute_one(
+    conn: &Connection,
+    request: &ActiveMemoryWriteRequest,
+    write: impl FnOnce(&ActiveMemoryWritePermit) -> Result<i64>,
+) -> Result<ActiveMemoryWriteResult> {
+    let normalized_superseded_ids = validate_request(request)?;
+    let request_sha256 = request_sha256(request, &normalized_superseded_ids)?;
+
+    if let Some((stored_sha256, memory_id)) = conn
+        .query_row(
+            "SELECT request_sha256, result_memory_id
+             FROM memory_activation_requests
+             WHERE activation_id = ?1",
+            [&request.activation_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .optional()?
+    {
+        if stored_sha256 != request_sha256 {
+            bail!(
+                "memory activation id reused with different request: {}",
+                request.activation_id
+            );
+        }
+        validate_result_route(conn, memory_id, request, true)?;
+        payload::validate_result_payload(conn, memory_id, request)?;
+        return Ok(ActiveMemoryWriteResult {
+            memory_id,
+            replayed: true,
+        });
+    }
+
+    conn.execute_batch("SAVEPOINT remem_active_memory_boundary")?;
+    let result: Result<ActiveMemoryWriteResult> = (|| {
+        validate_supersede_routes(conn, request, &normalized_superseded_ids)?;
+        let active_before = active_memory_snapshot(conn)?;
+        let permit = ActiveMemoryWritePermit { _private: () };
+        let memory_id = write(&permit)?;
+        validate_result_route(conn, memory_id, request, true)?;
+        let result_sha256 = payload::validate_result_payload(conn, memory_id, request)?;
+        let active_after = active_memory_snapshot(conn)?;
+        validate_active_delta(
+            memory_id,
+            &normalized_superseded_ids,
+            &active_before,
+            &active_after,
+        )?;
+        let superseded_json = serde_json::to_string(&normalized_superseded_ids)
+            .context("serialize activation supersede set")?;
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "INSERT INTO memory_activation_requests
+             (activation_id, request_sha256, route_kind, actor_kind,
+              source_operation, source_trust_class, source_project, project, branch_present,
+              branch, scope, owner_scope, owner_key, target_project,
+              provenance_kind, provenance_ref, payload_sha256, result_sha256,
+              poisoning_verdict, superseded_ids_json, result_memory_id,
+              created_at_epoch)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+                     ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+            params![
+                request.activation_id,
+                request_sha256,
+                enum_json(request.route_kind)?,
+                enum_json(request.actor_kind)?,
+                request.source_operation,
+                request.source_trust.as_str(),
+                request.source_project,
+                request.route.project,
+                i64::from(request.route.branch.is_some()),
+                request.route.branch,
+                request.route.scope,
+                request.route.owner_scope,
+                request.route.owner_key,
+                request.route.target_project,
+                enum_json(request.provenance_kind)?,
+                request.provenance_ref,
+                request.payload_sha256,
+                result_sha256,
+                enum_json(request.poisoning_verdict)?,
+                superseded_json,
+                memory_id,
+                now,
+            ],
+        )?;
+        Ok(ActiveMemoryWriteResult {
+            memory_id,
+            replayed: false,
+        })
+    })();
+
+    match result {
+        Ok(result) => {
+            conn.execute_batch("RELEASE SAVEPOINT remem_active_memory_boundary")?;
+            Ok(result)
+        }
+        Err(error) => {
+            let rollback = conn.execute_batch(
+                "ROLLBACK TO SAVEPOINT remem_active_memory_boundary;
+                 RELEASE SAVEPOINT remem_active_memory_boundary;",
+            );
+            if let Err(rollback_error) = rollback {
+                return Err(error.context(format!(
+                    "memory activation rollback also failed: {rollback_error}"
+                )));
+            }
+            Err(error)
+        }
+    }
+}
+
+pub(crate) fn payload_sha256(parts: &[&str]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"remem-active-memory-payload-v1\0");
+    for part in parts {
+        hasher.update((part.len() as u64).to_be_bytes());
+        hasher.update(part.as_bytes());
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+pub(crate) fn activation_id_from_key(namespace: &str, key: &str) -> String {
+    format!("{namespace}:{}", payload_sha256(&[key]))
+}
+
+pub(crate) fn ephemeral_activation_id(namespace: &str, payload_hash: &str) -> String {
+    let counter = ACTIVATION_NONCE.fetch_add(1, Ordering::Relaxed);
+    let nanos = chrono::Utc::now()
+        .timestamp_nanos_opt()
+        .unwrap_or_else(|| chrono::Utc::now().timestamp() * 1_000_000_000);
+    activation_id_from_key(
+        namespace,
+        &format!("{}:{nanos}:{counter}:{payload_hash}", std::process::id()),
+    )
+}
+
+fn validate_request(request: &ActiveMemoryWriteRequest) -> Result<Vec<i64>> {
+    for (name, value) in [
+        ("activation_id", request.activation_id.as_str()),
+        ("source_operation", request.source_operation.as_str()),
+        ("source_project", request.source_project.as_str()),
+        ("project", request.route.project.as_str()),
+        ("scope", request.route.scope.as_str()),
+        ("owner_scope", request.route.owner_scope.as_str()),
+        ("owner_key", request.route.owner_key.as_str()),
+        ("provenance_ref", request.provenance_ref.as_str()),
+    ] {
+        if value.trim().is_empty() || value.contains('\0') {
+            bail!("memory activation {name} must be nonblank and contain no NUL");
+        }
+    }
+    if request
+        .route
+        .branch
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty() || value.contains('\0'))
+    {
+        bail!("memory activation branch must contain no NUL");
+    }
+    if request
+        .route
+        .target_project
+        .as_deref()
+        .is_some_and(|value| value.trim().is_empty() || value.contains('\0'))
+    {
+        bail!("memory activation target_project must be absent or canonical nonblank text");
+    }
+    if !is_sha256(&request.payload_sha256) {
+        bail!("memory activation payload_sha256 must be lowercase hex64");
+    }
+    validate_route_identity(request)?;
+    validate_route_policy(request)?;
+    if !matches!(
+        request.route.owner_scope.as_str(),
+        "repo" | "user" | "tool" | "domain" | "workstream" | "session" | "workspace"
+    ) {
+        bail!("memory activation owner_scope is not recognized");
+    }
+    if request.route.owner_scope == "repo" && request.route.target_project.is_none() {
+        bail!("repo-owned memory activation requires target_project");
+    }
+    let normalized = request
+        .superseded_ids
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    if normalized.iter().any(|id| *id <= 0) || normalized.len() != request.superseded_ids.len() {
+        bail!("memory activation superseded ids must be unique positive integers");
+    }
+    Ok(normalized.into_iter().collect())
+}
+
+fn request_sha256(request: &ActiveMemoryWriteRequest, superseded_ids: &[i64]) -> Result<String> {
+    let fingerprint = RequestFingerprint {
+        route_kind: request.route_kind,
+        actor_kind: request.actor_kind,
+        source_operation: &request.source_operation,
+        source_trust_class: request.source_trust.as_str(),
+        source_project: &request.source_project,
+        project: &request.route.project,
+        branch_present: request.route.branch.is_some(),
+        branch: request.route.branch.as_deref(),
+        scope: &request.route.scope,
+        owner_scope: &request.route.owner_scope,
+        owner_key: &request.route.owner_key,
+        target_project: request.route.target_project.as_deref(),
+        provenance_kind: request.provenance_kind,
+        provenance_ref: &request.provenance_ref,
+        payload_sha256: &request.payload_sha256,
+        expected_memory: &request.expected_memory,
+        poisoning_verdict: request.poisoning_verdict,
+        superseded_ids,
+    };
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&fingerprint)?)
+    ))
+}
+
+fn enum_json(value: impl Serialize) -> Result<String> {
+    let encoded = serde_json::to_string(&value)?;
+    Ok(encoded.trim_matches('"').to_string())
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn validate_supersede_routes(
+    conn: &Connection,
+    request: &ActiveMemoryWriteRequest,
+    superseded_ids: &[i64],
+) -> Result<()> {
+    for memory_id in superseded_ids {
+        let matches: i64 = conn.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM memories
+                 WHERE id = ?1 AND status = 'active' AND project = ?2
+                   AND branch IS ?3 AND COALESCE(scope, 'project') = ?4
+                   AND COALESCE(owner_scope,
+                       CASE WHEN COALESCE(scope, 'project') = 'global'
+                            THEN 'user' ELSE 'repo' END) = ?5
+                   AND COALESCE(owner_key,
+                       CASE WHEN COALESCE(scope, 'project') = 'global'
+                            THEN 'user:default' ELSE project END) = ?6
+                   AND CASE
+                       WHEN COALESCE(owner_scope,
+                           CASE WHEN COALESCE(scope, 'project') = 'global'
+                                THEN 'user' ELSE 'repo' END) = 'repo'
+                       THEN COALESCE(target_project, project)
+                       ELSE target_project
+                   END IS ?7
+             )",
+            params![
+                memory_id,
+                request.route.project,
+                request.route.branch,
+                request.route.scope,
+                request.route.owner_scope,
+                request.route.owner_key,
+                request.route.target_project,
+            ],
+            |row| row.get(0),
+        )?;
+        if matches != 1 {
+            bail!(
+                "memory activation supersede target is missing, inactive, or outside route: {memory_id}"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_result_route(
+    conn: &Connection,
+    memory_id: i64,
+    request: &ActiveMemoryWriteRequest,
+    require_active: bool,
+) -> Result<()> {
+    let matches: i64 = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM memories
+             WHERE id = ?1 AND project = ?2 AND branch IS ?3
+               AND COALESCE(scope, 'project') = ?4
+               AND COALESCE(owner_scope,
+                   CASE WHEN COALESCE(scope, 'project') = 'global'
+                        THEN 'user' ELSE 'repo' END) = ?5
+               AND COALESCE(owner_key,
+                   CASE WHEN COALESCE(scope, 'project') = 'global'
+                        THEN 'user:default' ELSE project END) = ?6
+               AND CASE
+                   WHEN COALESCE(owner_scope,
+                       CASE WHEN COALESCE(scope, 'project') = 'global'
+                            THEN 'user' ELSE 'repo' END) = 'repo'
+                   THEN COALESCE(target_project, project)
+                   ELSE target_project
+               END IS ?7
+               AND source_trust_class = ?8
+               AND COALESCE(source_project, project) = ?9
+               AND (?10 = 0 OR status = 'active')
+         )",
+        params![
+            memory_id,
+            request.route.project,
+            request.route.branch,
+            request.route.scope,
+            request.route.owner_scope,
+            request.route.owner_key,
+            request.route.target_project,
+            request.source_trust.as_str(),
+            request.source_project,
+            i64::from(require_active),
+        ],
+        |row| row.get(0),
+    )?;
+    if matches != 1 {
+        bail!("memory activation result failed active route/trust postcondition");
+    }
+    Ok(())
+}
+
+fn validate_active_delta(
+    result_memory_id: i64,
+    superseded_ids: &[i64],
+    before: &std::collections::BTreeMap<i64, String>,
+    after: &std::collections::BTreeMap<i64, String>,
+) -> Result<()> {
+    let removed = before
+        .keys()
+        .filter(|id| !after.contains_key(id))
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let declared = superseded_ids.iter().copied().collect::<BTreeSet<_>>();
+    if removed != declared {
+        bail!(
+            "memory activation active-set removal drift: declared={declared:?} actual={removed:?}"
+        );
+    }
+    if declared.contains(&result_memory_id) {
+        bail!("memory activation cannot supersede its result memory");
+    }
+    let added = after
+        .keys()
+        .filter(|id| !before.contains_key(id))
+        .copied()
+        .collect::<BTreeSet<_>>();
+    if added.iter().any(|id| *id != result_memory_id) {
+        bail!("memory activation created or reactivated undeclared active rows: {added:?}");
+    }
+    let changed = before
+        .iter()
+        .filter_map(|(id, digest)| {
+            after
+                .get(id)
+                .filter(|after_digest| *after_digest != digest)
+                .map(|_| *id)
+        })
+        .filter(|id| *id != result_memory_id)
+        .collect::<Vec<_>>();
+    if !changed.is_empty() {
+        bail!("memory activation modified unrelated active rows: {changed:?}");
+    }
+    Ok(())
+}
+
+fn active_memory_snapshot(conn: &Connection) -> Result<std::collections::BTreeMap<i64, String>> {
+    let mut stmt = conn.prepare("SELECT * FROM memories WHERE status = 'active' ORDER BY id")?;
+    let column_count = stmt.column_count();
+    let rows = stmt.query_map([], |row| {
+        let id = row.get::<_, i64>(0)?;
+        let mut hasher = Sha256::new();
+        for index in 0..column_count {
+            match row.get_ref(index)? {
+                rusqlite::types::ValueRef::Null => hasher.update([0]),
+                rusqlite::types::ValueRef::Integer(value) => {
+                    hasher.update([1]);
+                    hasher.update(value.to_be_bytes());
+                }
+                rusqlite::types::ValueRef::Real(value) => {
+                    hasher.update([2]);
+                    hasher.update(value.to_bits().to_be_bytes());
+                }
+                rusqlite::types::ValueRef::Text(value) => {
+                    hasher.update([3]);
+                    hasher.update((value.len() as u64).to_be_bytes());
+                    hasher.update(value);
+                }
+                rusqlite::types::ValueRef::Blob(value) => {
+                    hasher.update([4]);
+                    hasher.update((value.len() as u64).to_be_bytes());
+                    hasher.update(value);
+                }
+            }
+        }
+        Ok((id, format!("{:x}", hasher.finalize())))
+    })?;
+    crate::db::query::collect_rows(rows).map(|rows| rows.into_iter().collect())
+}
+
+fn validate_route_identity(request: &ActiveMemoryWriteRequest) -> Result<()> {
+    match request.route.scope.as_str() {
+        "global"
+            if request.route.owner_scope == "user" && request.route.target_project.is_none() => {}
+        "project" if request.route.owner_scope != "user" => {}
+        _ => bail!("memory activation route has inconsistent scope/owner/target identity"),
+    }
+    match request.route.owner_scope.as_str() {
+        "repo" if request.route.target_project.is_some() => {}
+        "repo" => bail!("repo-owned memory activation must bind a target project"),
+        "user" if request.route.scope == "global" && request.route.target_project.is_none() => {}
+        "tool" | "domain" | "workstream" | "session" | "workspace"
+            if request.route.scope == "project" && request.route.target_project.is_none() => {}
+        _ => bail!("memory activation route has unsupported owner/scope/target combination"),
+    }
+    Ok(())
+}
+
+fn validate_route_policy(request: &ActiveMemoryWriteRequest) -> Result<()> {
+    use ActivationActorKind::{Agent, AutomaticWorker, Operator, RustApi};
+    use ActivationPoisoningVerdict::{Acknowledged, Clean, ExactRecovery, UpstreamValidated};
+    use ActivationProvenanceKind::{
+        Backup, Candidate, Generated, Pack, ScopePlan, SupplementalSave,
+    };
+    use ActivationRouteKind::{CandidatePromotion, DreamConsolidation, PackImport, ScopeCleanup};
+
+    let valid = match request.route_kind {
+        ActivationRouteKind::RustApi => {
+            request.actor_kind == RustApi
+                && request.provenance_kind == ActivationProvenanceKind::RustApi
+                && request.source_trust == SourceTrustClass::LocalToolOutput
+                && request.poisoning_verdict == Clean
+        }
+        ActivationRouteKind::SupplementalSave => match request.actor_kind {
+            Agent => {
+                request.provenance_kind == SupplementalSave
+                    && request.source_trust == SourceTrustClass::ExternalContent
+                    && request.poisoning_verdict == Clean
+            }
+            Operator => {
+                request.provenance_kind == SupplementalSave
+                    && matches!(
+                        request.source_trust,
+                        SourceTrustClass::RepoFile | SourceTrustClass::UserPrompt
+                    )
+                    && matches!(request.poisoning_verdict, Clean | Acknowledged)
+            }
+            RustApi => {
+                request.provenance_kind == SupplementalSave
+                    && request.source_trust == SourceTrustClass::LocalToolOutput
+                    && matches!(request.poisoning_verdict, Clean | Acknowledged)
+            }
+            AutomaticWorker => false,
+        },
+        CandidatePromotion => {
+            request.provenance_kind == Candidate
+                && matches!(request.actor_kind, AutomaticWorker | Operator)
+                && matches!(request.poisoning_verdict, UpstreamValidated | Acknowledged)
+                && (request.actor_kind != AutomaticWorker
+                    || request.source_trust.allows_auto_promote())
+        }
+        DreamConsolidation => {
+            request.actor_kind == AutomaticWorker
+                && request.provenance_kind == Generated
+                && request.source_trust == SourceTrustClass::ExternalContent
+                && request.poisoning_verdict == UpstreamValidated
+        }
+        PackImport => {
+            request.actor_kind == Operator
+                && request.provenance_kind == Pack
+                && request.source_trust == SourceTrustClass::Pack
+                && request.poisoning_verdict == UpstreamValidated
+        }
+        ActivationRouteKind::BackupImport => {
+            request.actor_kind == Operator
+                && request.provenance_kind == Backup
+                && request.source_trust == SourceTrustClass::ExternalContent
+                && request.poisoning_verdict == Clean
+        }
+        ScopeCleanup => {
+            request.actor_kind == Operator
+                && request.provenance_kind == ScopePlan
+                && request.poisoning_verdict == UpstreamValidated
+        }
+        ActivationRouteKind::WebRestore => {
+            request.actor_kind == Operator
+                && request.provenance_kind == ActivationProvenanceKind::WebArchive
+                && request.poisoning_verdict == ExactRecovery
+        }
+        ActivationRouteKind::ExactRecovery => {
+            request.actor_kind == Operator
+                && request.provenance_kind == ActivationProvenanceKind::ExactRecovery
+                && request.poisoning_verdict == ExactRecovery
+        }
+    };
+    if !valid {
+        bail!("memory activation route has invalid actor/trust/provenance/poisoning policy");
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(activation_id: &str, payload: &str) -> ActiveMemoryWriteRequest {
+        ActiveMemoryWriteRequest {
+            activation_id: activation_id.to_string(),
+            route_kind: ActivationRouteKind::SupplementalSave,
+            actor_kind: ActivationActorKind::Agent,
+            source_operation: "save_memory".to_string(),
+            source_trust: SourceTrustClass::ExternalContent,
+            source_project: "/repo".to_string(),
+            route: ActiveMemoryRoute::default_for("/repo", None, "project"),
+            provenance_kind: ActivationProvenanceKind::SupplementalSave,
+            provenance_ref: "mcp:agent".to_string(),
+            payload_sha256: payload_sha256(&[payload]),
+            expected_memory: ExpectedActiveMemory::new("title", payload, "discovery"),
+            poisoning_verdict: ActivationPoisoningVerdict::Clean,
+            superseded_ids: Vec::new(),
+        }
+    }
+
+    fn insert_memory(conn: &Connection, content: &str) -> Result<i64> {
+        conn.execute(
+            "INSERT INTO memories
+             (project, title, content, memory_type, created_at_epoch,
+              updated_at_epoch, status, scope, source_project, target_project,
+              owner_scope, owner_key, context_class, source_trust_class)
+             VALUES ('/repo', 'title', ?1, 'discovery', 1, 1, 'active',
+                     'project', '/repo', '/repo', 'repo', '/repo',
+                     'startup_core', 'external_content')",
+            [content],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    #[test]
+    fn identical_activation_replays_without_running_writer() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        let request = request("save:stable", "same");
+        let first = execute_one(&conn, &request, |_| insert_memory(&conn, "same"))?;
+        let replay = execute_one(&conn, &request, |_| bail!("writer must not replay"))?;
+        assert_eq!(first.memory_id, replay.memory_id);
+        assert!(!first.replayed);
+        assert!(replay.replayed);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row
+                .get::<_, i64>(0))?,
+            1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn changed_payload_cannot_reuse_activation_id() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        execute_one(&conn, &request("save:stable", "first"), |_| {
+            insert_memory(&conn, "first")
+        })?;
+        let err = execute_one(&conn, &request("save:stable", "changed"), |_| {
+            insert_memory(&conn, "changed")
+        })
+        .expect_err("changed payload must fail");
+        assert!(err.to_string().contains("reused with different request"));
+        Ok(())
+    }
+
+    #[test]
+    fn route_mismatch_rolls_back_memory_and_ledger() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        let err = execute_one(&conn, &request("save:wrong-route", "wrong"), |_| {
+            conn.execute(
+                "INSERT INTO memories
+                 (project, title, content, memory_type, created_at_epoch,
+                  updated_at_epoch, status, scope, source_project, target_project,
+                  owner_scope, owner_key, context_class, source_trust_class)
+                 VALUES ('/other', 'title', 'wrong', 'discovery', 1, 1,
+                         'active', 'project', '/other', '/other', 'repo',
+                         '/other', 'startup_core', 'external_content')",
+                [],
+            )?;
+            Ok(conn.last_insert_rowid())
+        })
+        .expect_err("wrong route must fail");
+        assert!(err.to_string().contains("postcondition"));
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row
+                .get::<_, i64>(0))?,
+            0
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_route_and_agent_trust_fail_before_writer() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        let mut invalid = request("save:invalid", "invalid");
+        invalid.route.branch = Some("  ".to_string());
+        invalid.source_trust = SourceTrustClass::UserPrompt;
+        let error = execute_one(&conn, &invalid, |_| bail!("writer must not run"))
+            .expect_err("malformed route/trust must fail");
+        assert!(error.to_string().contains("branch must"));
+        Ok(())
+    }
+
+    #[test]
+    fn undeclared_supersede_rolls_back_the_entire_activation() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        let first = insert_memory(&conn, "first")?;
+        let second = insert_memory(&conn, "second")?;
+        let mut activation = request("save:delta", "replacement");
+        activation.superseded_ids = vec![first];
+        let error = execute_one(&conn, &activation, |_| {
+            let replacement = insert_memory(&conn, "replacement")?;
+            conn.execute(
+                "UPDATE memories SET status = 'stale' WHERE id IN (?1, ?2)",
+                params![first, second],
+            )?;
+            Ok(replacement)
+        })
+        .expect_err("undeclared supersede must fail");
+        assert!(error.to_string().contains("active-set removal drift"));
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM memories WHERE status = 'active'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?,
+            2
+        );
+        Ok(())
+    }
+}

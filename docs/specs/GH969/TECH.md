@@ -1,6 +1,6 @@
 # GH969 Technical Contract — Stabilization And Surface Governance
 
-Status: Current contract; implementation guard slices pending; Issue: #969
+Status: Current contract; activation boundary implemented; later guard slices pending; Issue: #969
 
 Last reconciled against `origin/main`: 2026-08-21 (`86fee409`)
 
@@ -40,11 +40,18 @@ The path intentionally keeps capture cheap but not optional. Capture does not
 create durable active memory directly. LLM output is treated as derived content
 and cannot raise the trust of its sources.
 
-Known transition debt remains: low-level `memory::store::write` helpers can
-still create an active row, and safety policy is partly enforced by callers.
-The first implementation slice after this spec must consolidate production
-activation and add a bypass guard without breaking explicit user save or
-candidate promotion.
+The first implementation slice now consolidates production activation through
+`memory::activation`, backed by the immutable
+`memory_activation_requests` ledger introduced in schema v86. Route adapters
+bind trust, provenance, payload digest, exact supersede targets, and poisoning
+verdict before the active mutation runs in one savepoint. The boundary then
+compares the stored payload/evidence fields to the request, rechecks poisoning,
+and records a result digest; an inactive result cannot satisfy an idempotent
+replay. Best-effort backup normalization uses governed `backup_import` rather
+than claiming `ExactRecovery`. A repository-owned
+CI guard inventories reviewed raw implementations and rejects new production
+bypasses. Later slices still need the surface lifecycle and dependency-direction
+guards described below.
 
 ## Target Module Direction
 
@@ -196,7 +203,7 @@ active row was committed is not an acceptable failure mode.
 
 CI must inventory production call sites that can set `memories.status` to
 `active`, call raw active insert/update helpers, or execute equivalent SQL.
-After the activation service lands:
+With the activation service in place:
 
 - normal production call sites must route through it;
 - non-activating migration DDL, test-only scaffolding, and the activation
@@ -205,6 +212,8 @@ After the activation service lands:
   invoke the boundary with governed import or `ExactRecovery` provenance;
 - a new call site or raw SQL pattern fails with a user-readable error;
 - the guard has positive and negative self-tests;
+- reviewed raw sites are pinned by normalized statement/helper signature and
+  occurrence count, so an allowlisted file cannot silently gain another bypass;
 - dynamic SQL or helper renaming cannot be used to evade review; ambiguous
   matches fail for manual classification rather than passing silently.
 
@@ -344,6 +353,7 @@ After this spec is accepted, create focused implementation issues rather than
 one cross-repository PR:
 
 1. **Active-memory activation boundary and bypass guard**
+   - Status: implemented by #1040 for the v0.6.82 release line.
    - Primary scope: `src/memory/`, candidate promotion callers, direct-save
      callers, and a dedicated CI check.
    - Acceptance: every production activation route is classified; bypass

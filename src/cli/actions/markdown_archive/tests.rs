@@ -191,7 +191,7 @@ fn markdown_import_updates_existing_memory_and_current_state() -> Result<()> {
             ..Default::default()
         },
     )?;
-    assert_eq!(original_as_of.status, "current");
+    assert_eq!(original_as_of.status, "no_current");
 
     let path = only_markdown_file(&export_dir)?;
     let raw = std::fs::read_to_string(&path)?;
@@ -234,11 +234,8 @@ fn markdown_import_updates_existing_memory_and_current_state() -> Result<()> {
             ..Default::default()
         },
     )?;
-    assert_eq!(state.status, "current");
-    assert!(state
-        .current
-        .as_ref()
-        .is_some_and(|memory| memory.text.contains("Edited markdown mirror content")));
+    assert_eq!(state.status, "no_current");
+    assert!(state.current.is_none());
     let before_edit = current_state(
         &target,
         &CurrentStateRequest {
@@ -289,7 +286,8 @@ fn markdown_import_updates_existing_memory_and_current_state() -> Result<()> {
             ..Default::default()
         },
     )?;
-    assert_eq!(renamed_current.status, "current");
+    assert_eq!(renamed_current.status, "no_current");
+    assert!(renamed_current.current.is_none());
     let old_key = current_state(
         &target,
         &CurrentStateRequest {
@@ -369,14 +367,8 @@ fn markdown_import_update_clears_obsolete_current_state_links() -> Result<()> {
             ..Default::default()
         },
     )?;
-    assert_eq!(new_type.status, "current");
-    assert_eq!(
-        new_type
-            .current
-            .as_ref()
-            .map(|memory| memory.memory_type.as_str()),
-        Some("bugfix")
-    );
+    assert_eq!(new_type.status, "no_current");
+    assert!(new_type.current.is_none());
 
     doc.metadata.source_content_hash = Some(super::import_lookup::markdown_source_content_hash(
         &doc.metadata.title,

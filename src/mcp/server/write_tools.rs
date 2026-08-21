@@ -112,11 +112,13 @@ impl MemoryServer {
                     .filter(|source| !source.trim().is_empty())
                     .or_else(|| Some("manual_save".to_string())),
                 acknowledge_pattern: params.acknowledge_pattern.clone(),
+                idempotency_key: params.idempotency_key.clone(),
             };
-            let saved = service::save_memory_with_reference_time(
+            let saved = service::save_memory_from_with_reference_time(
                 conn,
                 &req,
                 params.reference_time_epoch,
+                service::SaveMemoryCaller::McpAgent,
             )
             .map_err(|e| {
                 crate::log::warn("mcp", &format!("save_memory failed: {}", e));

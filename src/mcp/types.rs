@@ -241,6 +241,10 @@ pub(super) struct SaveMemoryParams {
         description = "Explicitly acknowledge an instruction-pattern match in direct save text after human review. Must match the detected pattern id, e.g. override_previous_instructions."
     )]
     pub acknowledge_pattern: Option<String>,
+    #[schemars(
+        description = "Optional retry identity. Repeating the same key and exact request is idempotent; reusing it with changed content, route, trust, or policy fails."
+    )]
+    pub idempotency_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

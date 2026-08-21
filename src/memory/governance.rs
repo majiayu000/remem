@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
@@ -142,7 +142,14 @@ pub fn govern_memory_for_web_in_transaction(
 ) -> Result<WebMemoryGovernanceDecision> {
     let target = conn
         .query_row(
-            "SELECT project, title, status, version, web_archive_operation_id
+            "SELECT project, title, status, version, web_archive_operation_id,
+                    branch, COALESCE(scope, 'project'),
+                    COALESCE(owner_scope,
+                        CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END),
+                    COALESCE(owner_key,
+                        CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user:default' ELSE project END),
+                    target_project, source_trust_class,
+                    COALESCE(source_project, project)
              FROM memories WHERE id = ?1",
             params![req.memory_id],
             |row| {
@@ -152,6 +159,13 @@ pub fn govern_memory_for_web_in_transaction(
                     status: row.get(2)?,
                     version: row.get(3)?,
                     web_archive_operation_id: row.get(4)?,
+                    branch: row.get(5)?,
+                    scope: row.get(6)?,
+                    owner_scope: row.get(7)?,
+                    owner_key: row.get(8)?,
+                    target_project: row.get(9)?,
+                    source_trust_class: row.get(10)?,
+                    source_project: row.get(11)?,
                 })
             },
         )
@@ -179,6 +193,71 @@ pub fn govern_memory_for_web_in_transaction(
         WebMemoryGovernanceAction::Archive => {}
     }
 
+    if req.action == WebMemoryGovernanceAction::Restore {
+        let expected_memory =
+            crate::memory::activation::ExpectedActiveMemory::from_existing(conn, req.memory_id)?;
+        let source_trust =
+            crate::memory::poisoning::SourceTrustClass::parse(&target.source_trust_class)
+                .ok_or_else(|| anyhow!("web restore target has unknown source trust class"))?;
+        let payload_sha256 = crate::memory::activation::payload_sha256(&[
+            &req.memory_id.to_string(),
+            &req.expected_version.to_string(),
+            req.operation_id,
+            req.reason,
+            req.actor,
+            target.web_archive_operation_id.as_deref().unwrap_or(""),
+        ]);
+        let request = crate::memory::activation::ActiveMemoryWriteRequest {
+            activation_id: crate::memory::activation::activation_id_from_key(
+                "web-restore",
+                req.operation_id,
+            ),
+            route_kind: crate::memory::activation::ActivationRouteKind::WebRestore,
+            actor_kind: crate::memory::activation::ActivationActorKind::Operator,
+            source_operation: "web_memory_restore".to_string(),
+            source_trust,
+            source_project: target.source_project.clone(),
+            route: crate::memory::activation::ActiveMemoryRoute {
+                project: target.project.clone(),
+                branch: target.branch.clone(),
+                scope: target.scope.clone(),
+                owner_scope: target.owner_scope.clone(),
+                owner_key: target.owner_key.clone(),
+                target_project: target
+                    .target_project
+                    .clone()
+                    .or_else(|| (target.owner_scope == "repo").then(|| target.project.clone())),
+            },
+            provenance_kind: crate::memory::activation::ActivationProvenanceKind::WebArchive,
+            provenance_ref: format!(
+                "archive-operation:{}",
+                target.web_archive_operation_id.as_deref().unwrap_or("")
+            ),
+            payload_sha256,
+            expected_memory,
+            poisoning_verdict: crate::memory::activation::ActivationPoisoningVerdict::ExactRecovery,
+            superseded_ids: Vec::new(),
+        };
+        let mut decision = None;
+        let result = crate::memory::activation::execute_one(conn, &request, |_permit| {
+            let applied = apply_web_governance_mutation(conn, req, &target)?;
+            decision = Some(applied);
+            Ok(req.memory_id)
+        })?;
+        if result.replayed {
+            bail!("web restore activation replay must be resolved by the API mutation ledger");
+        }
+        return decision.context("web restore activation produced no decision");
+    }
+
+    apply_web_governance_mutation(conn, req, &target)
+}
+
+fn apply_web_governance_mutation(
+    conn: &Connection,
+    req: &WebMemoryGovernanceRequest<'_>,
+    target: &WebGovernanceTarget,
+) -> Result<WebMemoryGovernanceDecision> {
     let occurred_at_epoch = chrono::Utc::now().timestamp();
     let updated = conn.execute(
         "UPDATE memories
@@ -216,12 +295,12 @@ pub fn govern_memory_for_web_in_transaction(
     {
         bail!("web memory governance postcondition failed");
     }
-    let audit_id = insert_web_audit_event(conn, req, &target, &after_status, occurred_at_epoch)?;
+    let audit_id = insert_web_audit_event(conn, req, target, &after_status, occurred_at_epoch)?;
     Ok(WebMemoryGovernanceDecision::Applied(
         WebMemoryGovernanceResult {
             memory_id: req.memory_id,
-            project: target.project,
-            before_status: target.status,
+            project: target.project.clone(),
+            before_status: target.status.clone(),
             after_status,
             version,
             audit_id,
@@ -236,6 +315,13 @@ struct WebGovernanceTarget {
     status: String,
     version: i64,
     web_archive_operation_id: Option<String>,
+    branch: Option<String>,
+    scope: String,
+    owner_scope: String,
+    owner_key: String,
+    target_project: Option<String>,
+    source_trust_class: String,
+    source_project: String,
 }
 
 fn current_web_archive_provenance_is_valid(

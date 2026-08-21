@@ -196,6 +196,8 @@ pub(super) struct SaveMemoryRequest {
     pub claim_source: Option<String>,
     #[serde(default)]
     pub acknowledge_pattern: Option<String>,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
 }
 
 #[derive(Deserialize)]

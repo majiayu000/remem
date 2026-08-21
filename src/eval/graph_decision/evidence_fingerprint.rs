@@ -76,6 +76,7 @@ const IMPLEMENTATION_INPUTS: &[&str] = &[
     "src/migrate/schema_drift/invariants/v084.rs",
     "src/migrate/schema_drift/invariants/v084/shape.rs",
     "src/migrate/schema_drift/invariants/v085.rs",
+    "src/migrate/schema_drift/invariants/v086.rs",
     "src/migrate/state.rs",
     "src/migrate/transition.rs",
     "src/migrate/types.rs",
@@ -244,6 +245,7 @@ const MIGRATION_SQL_INPUTS: &[&str] = &[
     "src/migrations/v083_retrieval_enrichment_budget.sql",
     "src/migrations/v084_session_observatory.sql",
     "src/migrations/v085_legacy_pending_bridge_state.sql",
+    "src/migrations/v086_memory_activation_boundary.sql",
 ];
 
 #[derive(Debug, Clone, Serialize)]

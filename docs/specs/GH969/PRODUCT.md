@@ -59,10 +59,11 @@ following repository-local findings now have landed implementation evidence:
 | CurrentTruth was diagnostic-only | The safe v1 projection is used by the default Context Bundle/SessionStart path; #1019/#1029/#1032 and the #1037/#1038 cross-subject isolation shipped in v0.6.81. Breaking v2 work remains separate under #933. |
 | Retrieval Router was a plan-only concept | Explicit routed MCP search can apply plan effects, but complete plan-controlled execution and default-on evidence remain pending under `GH934/`. |
 
-These landed slices do not close the epic. The remaining material work is the
-single active-memory activation boundary and bypass guard, surface lifecycle
-guard, dependency-direction guard, unified decision/evidence matrix, outcome
-scorecard, and architecture/spec synchronization defined by this contract.
+These landed slices do not close the epic. The #1040 slice implements the
+single active-memory activation boundary and bypass guard for v0.6.82. The
+remaining material work is the surface lifecycle guard, dependency-direction
+guard, unified decision/evidence matrix, outcome scorecard, and final
+architecture/spec synchronization defined by this contract.
 
 ## Active-Memory Safety Boundary
 

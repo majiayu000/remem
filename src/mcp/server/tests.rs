@@ -236,6 +236,7 @@ fn save_memory_local_copy_failures_are_invalid_request() {
         claim_enabled: None,
         claim_source: None,
         acknowledge_pattern: None,
+        idempotency_key: None,
     }));
 
     let err = match outside {
@@ -278,6 +279,7 @@ fn save_memory_local_copy_failures_are_invalid_request() {
         claim_enabled: None,
         claim_source: None,
         acknowledge_pattern: None,
+        idempotency_key: None,
     }));
 
     let err = match write_failure {
@@ -314,6 +316,7 @@ fn save_memory_response_reports_durable_feedback_shape() {
             claim_enabled: None,
             claim_source: None,
             acknowledge_pattern: None,
+            idempotency_key: None,
         }))
         .expect("save_memory should succeed");
     let json: Value = serde_json::from_str(&response).expect("response should be json");

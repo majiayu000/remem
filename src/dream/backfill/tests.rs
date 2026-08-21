@@ -2,7 +2,6 @@ use anyhow::Result;
 use rusqlite::{params, Connection};
 
 use super::{apply_backfill, plan_backfill, run_backfill_with_expected_plan_digest};
-use crate::memory::insert_memory;
 use crate::memory_candidate::review::{approve_candidate_in_transaction, ReviewMeta};
 
 const PROJECT: &str = "/tmp/remem-backfill-test";
@@ -24,24 +23,17 @@ fn insert_stock_with_topic(
     title: &str,
     content: &str,
 ) -> Result<i64> {
-    let id = insert_memory(
-        conn,
-        Some("dream"),
-        PROJECT,
-        Some(topic_key),
-        title,
-        content,
-        "decision",
-        None,
-    )?;
-    // insert_memory on this schema stamps new rows external_content when the
-    // caller marks them; the pre-v076 stock predates that, so reset to the
-    // v060 default the backfill identifies.
     conn.execute(
-        "UPDATE memories SET source_trust_class = 'local_tool_output' WHERE id = ?1",
-        [id],
+        "INSERT INTO memories
+         (session_id, project, topic_key, title, content, memory_type,
+          created_at_epoch, updated_at_epoch, reference_time_epoch, status,
+          scope, source_project, target_project, owner_scope, owner_key,
+          source_trust_class)
+         VALUES ('dream', ?1, ?2, ?3, ?4, 'decision', 1, 1, 1, 'active',
+                 'project', ?1, ?1, 'repo', ?1, 'local_tool_output')",
+        params![PROJECT, topic_key, title, content],
     )?;
-    Ok(id)
+    Ok(conn.last_insert_rowid())
 }
 
 fn memory_row(conn: &Connection, id: i64) -> Result<(String, String, i64)> {

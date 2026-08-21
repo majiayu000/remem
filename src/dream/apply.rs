@@ -44,7 +44,7 @@ fn apply_mutations_in_transaction(
 ) -> Result<ApplyOutcome> {
     let superseded_ids =
         validate_dream_superseded_ids(conn, project, &result.memory_type, &result.superseded_ids)?;
-    validate_dream_target_topic(
+    let existing_target_id = validate_dream_target_topic(
         conn,
         project,
         &result.memory_type,
@@ -72,54 +72,120 @@ fn apply_mutations_in_transaction(
         confidence: None,
     };
 
-    // Upsert the merged memory (reuses existing topic_key upsert logic)
-    let merged_id = crate::memory::insert_memory_full(
-        conn,
-        Some("dream"),
+    let actual_superseded_ids = superseded_ids
+        .into_iter()
+        .filter(|id| Some(*id) != existing_target_id)
+        .collect::<Vec<_>>();
+    if let Some(matched) = crate::memory::poisoning::scan_instruction_pattern(&format!(
+        "{}\n{}",
+        result.title, result.content
+    )) {
+        bail!(
+            "dream generated payload matched instruction-pattern {}@{}",
+            matched.pattern_id,
+            matched.pattern_set_version
+        );
+    }
+    let superseded_json = serde_json::to_string(&actual_superseded_ids)?;
+    let payload_sha256 = crate::memory::activation::payload_sha256(&[
         project,
-        Some(&result.topic_key),
+        &result.topic_key,
         &result.title,
         &result.content,
         &result.memory_type,
-        None,
-        None,
-        "project",
-        None,
-    )?;
-    target_guard.validate_resolution(merged_id)?;
-    trust::mark_dream_generated(conn, merged_id)?;
-    let actual_superseded_ids = superseded_ids
-        .into_iter()
-        .filter(|id| *id != merged_id)
-        .collect::<Vec<_>>();
-
-    crate::memory::lifecycle::soft_supersede(
-        conn,
-        project,
-        &actual_superseded_ids,
-        Some(merged_id),
-    )?;
-    let op = if result.superseded_ids.is_empty() {
-        MemoryLifecycleOp::Add
-    } else {
-        MemoryLifecycleOp::Update
-    };
-    let plan = MemoryOperationPlan::new(op, state_key, "dream consolidation applied")
-        .with_target_memory_id(Some(merged_id))
-        .with_superseded_ids(actual_superseded_ids.clone());
-    let operation_id = insert_operation_log(conn, &operation_input, &plan, Some(merged_id))?;
-    crate::memory::edge::insert_merged_into_edges(
-        conn,
-        &actual_superseded_ids,
-        merged_id,
-        crate::memory::edge::MemoryEdgeWriteContext {
-            source_operation_id: Some(operation_id),
-            reason: Some("dream consolidation merged memories"),
-            ..Default::default()
+        &superseded_json,
+    ]);
+    let request = crate::memory::activation::ActiveMemoryWriteRequest {
+        activation_id: crate::memory::activation::activation_id_from_key(
+            "dream-consolidation",
+            &payload_sha256,
+        ),
+        route_kind: crate::memory::activation::ActivationRouteKind::DreamConsolidation,
+        actor_kind: crate::memory::activation::ActivationActorKind::AutomaticWorker,
+        source_operation: "dream_consolidation".to_string(),
+        source_trust: crate::memory::poisoning::SourceTrustClass::ExternalContent,
+        source_project: project.to_string(),
+        route: crate::memory::activation::ActiveMemoryRoute {
+            project: project.to_string(),
+            branch: None,
+            scope: "project".to_string(),
+            owner_scope: "repo".to_string(),
+            owner_key: project.to_string(),
+            target_project: Some(project.to_string()),
         },
-    )?;
+        provenance_kind: crate::memory::activation::ActivationProvenanceKind::Generated,
+        provenance_ref: format!("dream-generated:{payload_sha256}"),
+        payload_sha256,
+        expected_memory: crate::memory::activation::ExpectedActiveMemory::new(
+            &result.title,
+            &result.content,
+            &result.memory_type,
+        )
+        .with_topic_key(Some(&result.topic_key)),
+        poisoning_verdict: crate::memory::activation::ActivationPoisoningVerdict::UpstreamValidated,
+        superseded_ids: actual_superseded_ids.clone(),
+    };
+    let mut operation_id = None;
+    let activation_result = crate::memory::activation::execute_one(conn, &request, |permit| {
+        let merged_id = crate::memory::store::insert_memory_full_activated(
+            conn,
+            permit,
+            Some("dream"),
+            project,
+            Some(&result.topic_key),
+            &result.title,
+            &result.content,
+            &result.memory_type,
+            None,
+            None,
+            "project",
+            None,
+            None,
+        )?;
+        target_guard.validate_resolution(merged_id)?;
+        trust::mark_dream_generated(conn, merged_id)?;
+        crate::memory::lifecycle::soft_supersede(
+            conn,
+            project,
+            &actual_superseded_ids,
+            Some(merged_id),
+        )?;
+        let op = if result.superseded_ids.is_empty() {
+            MemoryLifecycleOp::Add
+        } else {
+            MemoryLifecycleOp::Update
+        };
+        let plan = MemoryOperationPlan::new(op, state_key, "dream consolidation applied")
+            .with_target_memory_id(Some(merged_id))
+            .with_superseded_ids(actual_superseded_ids.clone());
+        let inserted_operation_id =
+            insert_operation_log(conn, &operation_input, &plan, Some(merged_id))?;
+        crate::memory::edge::insert_merged_into_edges(
+            conn,
+            &actual_superseded_ids,
+            merged_id,
+            crate::memory::edge::MemoryEdgeWriteContext {
+                source_operation_id: Some(inserted_operation_id),
+                reason: Some("dream consolidation merged memories"),
+                ..Default::default()
+            },
+        )?;
+        operation_id = Some(inserted_operation_id);
+        Ok(merged_id)
+    })?;
+    let operation_id = match operation_id {
+        Some(operation_id) => operation_id,
+        None if activation_result.replayed => conn.query_row(
+            "SELECT id FROM memory_operation_log
+             WHERE source = 'dream' AND result_memory_id = ?1
+             ORDER BY id DESC LIMIT 1",
+            [activation_result.memory_id],
+            |row| row.get(0),
+        )?,
+        None => bail!("dream activation produced no operation log"),
+    };
     Ok(ApplyOutcome {
-        merged_id,
+        merged_id: activation_result.memory_id,
         operation_id,
     })
 }
@@ -180,7 +246,7 @@ fn validate_dream_target_topic(
     memory_type: &str,
     topic_key: &str,
     superseded_ids: &[i64],
-) -> Result<()> {
+) -> Result<Option<i64>> {
     let existing_id = conn
         .query_row(
             "SELECT id FROM memories
@@ -204,10 +270,10 @@ fn validate_dream_target_topic(
         )
         .optional()?;
     let Some(existing_id) = existing_id else {
-        return Ok(());
+        return Ok(None);
     };
     if superseded_ids.contains(&existing_id) {
-        return Ok(());
+        return Ok(Some(existing_id));
     }
     bail!(
         "dream target topic_key collides with memory id={existing_id} outside superseded neighborhood"

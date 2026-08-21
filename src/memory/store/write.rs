@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::memory::search_context::build_search_context;
@@ -105,6 +105,107 @@ pub fn insert_memory_full_with_reference_time(
     created_at_override: Option<i64>,
     reference_time_override: Option<i64>,
 ) -> Result<i64> {
+    if let Some(matched) =
+        crate::memory::poisoning::scan_instruction_pattern(&format!("{title}\n{content}"))
+    {
+        bail!(
+            "Rust memory API payload matched instruction-pattern {}@{}",
+            matched.pattern_id,
+            matched.pattern_set_version
+        );
+    }
+    let created_at = created_at_override.map(|value| value.to_string());
+    let reference_time = reference_time_override.map(|value| value.to_string());
+    let payload_sha256 = crate::memory::activation::payload_sha256(&[
+        if session_id.is_some() { "1" } else { "0" },
+        session_id.unwrap_or(""),
+        project,
+        if topic_key.is_some() { "1" } else { "0" },
+        topic_key.unwrap_or(""),
+        title,
+        content,
+        memory_type,
+        if files.is_some() { "1" } else { "0" },
+        files.unwrap_or(""),
+        if branch.is_some() { "1" } else { "0" },
+        branch.unwrap_or(""),
+        scope,
+        if created_at.is_some() { "1" } else { "0" },
+        created_at.as_deref().unwrap_or(""),
+        if reference_time.is_some() { "1" } else { "0" },
+        reference_time.as_deref().unwrap_or(""),
+    ]);
+    let request = crate::memory::activation::ActiveMemoryWriteRequest {
+        activation_id: crate::memory::activation::ephemeral_activation_id(
+            "rust-api",
+            &payload_sha256,
+        ),
+        route_kind: crate::memory::activation::ActivationRouteKind::RustApi,
+        actor_kind: crate::memory::activation::ActivationActorKind::RustApi,
+        source_operation: "insert_memory_full_with_reference_time".to_string(),
+        source_trust: crate::memory::poisoning::SourceTrustClass::LocalToolOutput,
+        source_project: project.to_string(),
+        route: crate::memory::activation::ActiveMemoryRoute::default_for(project, branch, scope),
+        provenance_kind: crate::memory::activation::ActivationProvenanceKind::RustApi,
+        provenance_ref: "rust-api:insert-memory:v1".to_string(),
+        payload_sha256,
+        expected_memory: crate::memory::activation::ExpectedActiveMemory::new(
+            title,
+            content,
+            memory_type,
+        )
+        .with_topic_key(topic_key)
+        .with_files(files),
+        poisoning_verdict: crate::memory::activation::ActivationPoisoningVerdict::Clean,
+        superseded_ids: Vec::new(),
+    };
+    Ok(
+        crate::memory::activation::execute_one(conn, &request, |permit| {
+            let memory_id = insert_memory_full_activated(
+                conn,
+                permit,
+                session_id,
+                project,
+                topic_key,
+                title,
+                content,
+                memory_type,
+                files,
+                branch,
+                scope,
+                created_at_override,
+                reference_time_override,
+            )?;
+            conn.execute(
+                "UPDATE memories
+                 SET source_trust_class = 'local_tool_output',
+                     source_candidate_id = NULL,
+                     evidence_event_ids = NULL
+                 WHERE id = ?1",
+                [memory_id],
+            )?;
+            Ok(memory_id)
+        })?
+        .memory_id,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn insert_memory_full_activated(
+    conn: &Connection,
+    _permit: &crate::memory::activation::ActiveMemoryWritePermit,
+    session_id: Option<&str>,
+    project: &str,
+    topic_key: Option<&str>,
+    title: &str,
+    content: &str,
+    memory_type: &str,
+    files: Option<&str>,
+    branch: Option<&str>,
+    scope: &str,
+    created_at_override: Option<i64>,
+    reference_time_override: Option<i64>,
+) -> Result<i64> {
     let now = chrono::Utc::now().timestamp();
     let created_at = created_at_override.unwrap_or(now);
     let reference_time = reference_time_override
@@ -134,12 +235,31 @@ pub fn insert_memory_full_with_reference_time(
                 .query_row(
                     "SELECT id FROM memories
                      WHERE project = ?1 AND topic_key = ?2 AND scope = ?3
-                       AND memory_type = ?4
+                       AND memory_type = ?4 AND branch IS ?5
+                       AND COALESCE(owner_scope,
+                           CASE WHEN scope = 'global' THEN 'user' ELSE 'repo' END) = ?6
+                       AND COALESCE(owner_key,
+                           CASE WHEN scope = 'global' THEN 'user:default' ELSE project END) = ?7
+                       AND CASE
+                           WHEN COALESCE(owner_scope,
+                               CASE WHEN scope = 'global' THEN 'user' ELSE 'repo' END) = 'repo'
+                           THEN COALESCE(target_project, project)
+                           ELSE target_project
+                       END IS ?8
                      ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END,
                               updated_at_epoch DESC,
                               id DESC
                      LIMIT 1",
-                    params![project, topic_key, scope, memory_type],
+                    params![
+                        project,
+                        topic_key,
+                        scope,
+                        memory_type,
+                        branch,
+                        ownership.owner_scope,
+                        ownership.owner_key,
+                        ownership.target_project,
+                    ],
                     |row| row.get(0),
                 )
                 .optional()?;
@@ -149,7 +269,7 @@ pub fn insert_memory_full_with_reference_time(
     if existing_id.is_none() {
         if let Some(decision) = &state_key {
             if decision.allows_direct_upsert() {
-                existing_id = state_key::current_memory_id(
+                let state_memory_id = state_key::current_memory_id(
                     conn,
                     ownership.owner_scope,
                     ownership.owner_key,
@@ -157,6 +277,16 @@ pub fn insert_memory_full_with_reference_time(
                     &decision.state_key,
                     now,
                 )?;
+                if let Some(id) = state_memory_id {
+                    let same_branch: bool = conn.query_row(
+                        "SELECT branch IS ?2 FROM memories WHERE id = ?1",
+                        params![id, branch],
+                        |row| row.get(0),
+                    )?;
+                    if same_branch {
+                        existing_id = Some(id);
+                    }
+                }
             }
         }
     }
@@ -329,6 +459,69 @@ pub fn insert_memory_full_with_operation_log(
         )?;
         Ok((id, logged_plan.op))
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn insert_memory_full_with_operation_log_activated(
+    conn: &Connection,
+    permit: &crate::memory::activation::ActiveMemoryWritePermit,
+    session_id: Option<&str>,
+    project: &str,
+    topic_key: Option<&str>,
+    title: &str,
+    content: &str,
+    memory_type: &str,
+    files: Option<&str>,
+    branch: Option<&str>,
+    scope: &str,
+    created_at_override: Option<i64>,
+    reference_time_override: Option<i64>,
+    operation_input: &MemoryOperationInput,
+    operation_plan: &MemoryOperationPlan,
+) -> Result<(i64, MemoryLifecycleOp)> {
+    let id = insert_memory_full_activated(
+        conn,
+        permit,
+        session_id,
+        project,
+        topic_key,
+        title,
+        content,
+        memory_type,
+        files,
+        branch,
+        scope,
+        created_at_override,
+        reference_time_override,
+    )?;
+    let mut logged_plan = operation_plan.clone();
+    logged_plan.target_memory_id = Some(id);
+    let operation_id = insert_operation_log(conn, operation_input, &logged_plan, Some(id))?;
+    crate::memory::edge::insert_supersedes_edges(
+        conn,
+        &logged_plan.superseded_ids,
+        id,
+        crate::memory::edge::MemoryEdgeWriteContext {
+            source_candidate_id: operation_input.source_candidate_id,
+            source_operation_id: Some(operation_id),
+            confidence: operation_input.confidence,
+            reason: Some(logged_plan.reason.as_str()),
+            ..Default::default()
+        },
+    )?;
+    crate::memory::edge::insert_conflicts_edges(
+        conn,
+        &logged_plan.conflicting_ids,
+        id,
+        crate::memory::edge::MemoryEdgeWriteContext {
+            source_candidate_id: operation_input.source_candidate_id,
+            source_operation_id: Some(operation_id),
+            confidence: operation_input.confidence,
+            reason: Some(logged_plan.reason.as_str()),
+            ..Default::default()
+        },
+    )?;
+    Ok((id, logged_plan.op))
 }
 
 pub(crate) struct DefaultOwnership<'a> {

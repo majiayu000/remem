@@ -147,117 +147,101 @@ pub fn apply_memory_cleanup_plan(
     let mut edge_count = 0usize;
 
     for group in &plan.groups {
-        let current_ref = ObjectRef::memory(group.current_id);
-        let canonical = load_target(&tx, current_ref)?;
         let current_snapshot = snapshot_for(&group.row_snapshots, group.current_id)?;
-        let merged = group.merged_content.as_deref();
-        let final_text = if let Some(merged) = merged {
-            merged.to_string()
-        } else {
-            tx.query_row(
-                "SELECT content FROM memories WHERE id = ?1",
-                [group.current_id],
-                |row| row.get::<_, String>(0),
-            )?
-        };
-        let affected_ids = std::iter::once(group.current_id)
-            .chain(group.stale_ids.iter().copied())
-            .collect::<Vec<_>>();
-        crate::memory::preference::compilation::enqueue_for_memory_ids(&tx, &affected_ids)?;
-        crate::memory::preference::reinforcement::reconcile_cleanup_preference(
-            &tx,
-            group.current_id,
-            &group.stale_ids,
-            &final_text,
-            now,
+        let (branch, source_trust_class): (Option<String>, String) = tx.query_row(
+            "SELECT branch, source_trust_class FROM memories WHERE id = ?1",
+            [group.current_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
-        let updated = tx.execute(
-            "UPDATE memories
-             SET content = COALESCE(?1, content),
-                 status = 'active',
-                 updated_at_epoch = ?2
-             WHERE id = ?3",
-            params![merged, now, group.current_id],
-        )?;
-        if updated != 1 {
-            bail!(
-                "failed to update cleanup current memory {}",
-                group.current_id
-            );
-        }
-        current_ids.push(group.current_id);
-        affected.push(ObjectMutation {
-            object_ref: current_ref.to_string(),
-            title: canonical.title.clone(),
-            previous_status: canonical.status.clone(),
-            new_status: "active".to_string(),
-            previous_owner: canonical.owner.clone(),
-            new_owner: canonical.owner.clone(),
-        });
-        insert_scope_cleanup_event(
-            &tx,
-            "memory-cleanup",
-            &canonical,
-            "active",
-            &canonical.owner,
-            Some(group.reason.as_str()),
-            now,
-        )?;
-
-        if let Some(state_key_id) = current_snapshot.state_key_id {
-            tx.execute(
-                "UPDATE memory_state_keys
-                 SET current_memory_id = ?1, updated_at_epoch = ?2
-                 WHERE id = ?3",
-                params![group.current_id, now, state_key_id],
-            )?;
-        }
-
-        for stale_id in &group.stale_ids {
-            let stale_ref = ObjectRef::memory(*stale_id);
-            let target = load_target(&tx, stale_ref)?;
-            let updated = tx.execute(
-                "UPDATE memories SET status = 'stale', updated_at_epoch = ?1 WHERE id = ?2",
-                params![now, stale_id],
-            )?;
-            if updated != 1 {
-                bail!("failed to stale cleanup memory {stale_id}");
+        let source_trust = crate::memory::poisoning::SourceTrustClass::parse(&source_trust_class)
+            .context("cleanup current memory has unknown source trust class")?;
+        let scope = current_snapshot
+            .scope
+            .clone()
+            .unwrap_or_else(|| "project".to_string());
+        let owner_scope = current_snapshot.owner_scope.clone().unwrap_or_else(|| {
+            if scope == "global" {
+                "user".to_string()
+            } else {
+                "repo".to_string()
             }
-            stale_ids.push(*stale_id);
-            affected.push(ObjectMutation {
-                object_ref: stale_ref.to_string(),
-                title: target.title.clone(),
-                previous_status: target.status.clone(),
-                new_status: "stale".to_string(),
-                previous_owner: target.owner.clone(),
-                new_owner: target.owner.clone(),
-            });
-            insert_scope_cleanup_event(
-                &tx,
-                "memory-cleanup",
-                &target,
-                "stale",
-                &target.owner,
-                Some("duplicate preference superseded by cleanup plan"),
-                now,
-            )?;
-        }
-
-        let operation_id = insert_cleanup_operation_log(&tx, plan, group)?;
-        operation_ids.push(operation_id);
-        edge_count += crate::memory::edge::insert_replacement_edges(
-            &tx,
-            crate::memory::edge::MemoryEdgeType::Duplicates,
-            &group.stale_ids,
-            group.current_id,
-            crate::memory::edge::MemoryEdgeWriteContext {
-                state_key_id: current_snapshot.state_key_id,
-                source_operation_id: Some(operation_id),
-                confidence: Some(group.confidence),
-                reason: Some(group.reason.as_str()),
-                ..Default::default()
+        });
+        let owner_key = current_snapshot.owner_key.clone().unwrap_or_else(|| {
+            if scope == "global" {
+                "user:default".to_string()
+            } else {
+                current_snapshot.project.clone()
+            }
+        });
+        let source_project = current_snapshot
+            .source_project
+            .clone()
+            .unwrap_or_else(|| current_snapshot.project.clone());
+        let group_json = serde_json::to_string(group)?;
+        let mut expected_memory =
+            crate::memory::activation::ExpectedActiveMemory::from_existing(&tx, group.current_id)?;
+        let expected_memory = match group.merged_content.as_deref() {
+            Some(content) => {
+                if !crate::memory::preference::reinforcement::cleanup_preserves_candidate_provenance(
+                    &expected_memory.content,
+                    content,
+                ) {
+                    expected_memory.source_candidate_id = None;
+                }
+                expected_memory.with_content(content)
+            }
+            None => expected_memory,
+        };
+        let payload_sha256 = crate::memory::activation::payload_sha256(&[
+            &plan.project,
+            &plan.planner_version,
+            &plan.created_at_epoch.to_string(),
+            &group_json,
+        ]);
+        let request = crate::memory::activation::ActiveMemoryWriteRequest {
+            activation_id: crate::memory::activation::activation_id_from_key(
+                "scope-cleanup",
+                &payload_sha256,
+            ),
+            route_kind: crate::memory::activation::ActivationRouteKind::ScopeCleanup,
+            actor_kind: crate::memory::activation::ActivationActorKind::Operator,
+            source_operation: "memory_cleanup".to_string(),
+            source_trust,
+            source_project,
+            route: crate::memory::activation::ActiveMemoryRoute {
+                project: current_snapshot.project.clone(),
+                branch,
+                scope,
+                owner_scope,
+                owner_key,
+                target_project: current_snapshot.target_project.clone(),
             },
-        )?;
+            provenance_kind: crate::memory::activation::ActivationProvenanceKind::ScopePlan,
+            provenance_ref: format!(
+                "{}:{}:{}",
+                plan.planner_version, plan.created_at_epoch, group.cluster_key
+            ),
+            payload_sha256,
+            expected_memory,
+            poisoning_verdict:
+                crate::memory::activation::ActivationPoisoningVerdict::UpstreamValidated,
+            superseded_ids: group.stale_ids.clone(),
+        };
+        let mut group_result = None;
+        let activation_result = crate::memory::activation::execute_one(&tx, &request, |_permit| {
+            let applied = apply_cleanup_group(&tx, plan, group, now)?;
+            group_result = Some(applied);
+            Ok(group.current_id)
+        })?;
+        if activation_result.replayed {
+            bail!("cleanup plan replay must be applied from a fresh validated plan");
+        }
+        let applied = group_result.context("cleanup activation produced no group result")?;
+        current_ids.push(applied.current_id);
+        stale_ids.extend(applied.stale_ids);
+        operation_ids.push(applied.operation_id);
+        edge_count += applied.edge_count;
+        affected.extend(applied.affected);
     }
 
     tx.commit()?;
@@ -268,6 +252,130 @@ pub fn apply_memory_cleanup_plan(
         current_ids,
         stale_ids,
         operation_ids,
+        edge_count,
+        affected,
+    })
+}
+
+struct CleanupGroupApplyResult {
+    current_id: i64,
+    stale_ids: Vec<i64>,
+    operation_id: i64,
+    edge_count: usize,
+    affected: Vec<ObjectMutation>,
+}
+
+fn apply_cleanup_group(
+    conn: &Connection,
+    plan: &MemoryCleanupPlan,
+    group: &MemoryCleanupGroup,
+    now: i64,
+) -> Result<CleanupGroupApplyResult> {
+    let current_ref = ObjectRef::memory(group.current_id);
+    let canonical = load_target(conn, current_ref)?;
+    let current_snapshot = snapshot_for(&group.row_snapshots, group.current_id)?;
+    let merged = group.merged_content.as_deref();
+    let final_text = if let Some(merged) = merged {
+        merged.to_string()
+    } else {
+        conn.query_row(
+            "SELECT content FROM memories WHERE id = ?1",
+            [group.current_id],
+            |row| row.get::<_, String>(0),
+        )?
+    };
+    let affected_ids = std::iter::once(group.current_id)
+        .chain(group.stale_ids.iter().copied())
+        .collect::<Vec<_>>();
+    crate::memory::preference::compilation::enqueue_for_memory_ids(conn, &affected_ids)?;
+    crate::memory::preference::reinforcement::reconcile_cleanup_preference(
+        conn,
+        group.current_id,
+        &group.stale_ids,
+        &final_text,
+        now,
+    )?;
+    let updated = conn.execute(
+        "UPDATE memories
+         SET content = COALESCE(?1, content), status = 'active', updated_at_epoch = ?2
+         WHERE id = ?3",
+        params![merged, now, group.current_id],
+    )?;
+    if updated != 1 {
+        bail!(
+            "failed to update cleanup current memory {}",
+            group.current_id
+        );
+    }
+    let mut affected = vec![ObjectMutation {
+        object_ref: current_ref.to_string(),
+        title: canonical.title.clone(),
+        previous_status: canonical.status.clone(),
+        new_status: "active".to_string(),
+        previous_owner: canonical.owner.clone(),
+        new_owner: canonical.owner.clone(),
+    }];
+    insert_scope_cleanup_event(
+        conn,
+        "memory-cleanup",
+        &canonical,
+        "active",
+        &canonical.owner,
+        Some(group.reason.as_str()),
+        now,
+    )?;
+    if let Some(state_key_id) = current_snapshot.state_key_id {
+        conn.execute(
+            "UPDATE memory_state_keys SET current_memory_id = ?1, updated_at_epoch = ?2 WHERE id = ?3",
+            params![group.current_id, now, state_key_id],
+        )?;
+    }
+    for stale_id in &group.stale_ids {
+        let stale_ref = ObjectRef::memory(*stale_id);
+        let target = load_target(conn, stale_ref)?;
+        let updated = conn.execute(
+            "UPDATE memories SET status = 'stale', updated_at_epoch = ?1 WHERE id = ?2",
+            params![now, stale_id],
+        )?;
+        if updated != 1 {
+            bail!("failed to stale cleanup memory {stale_id}");
+        }
+        affected.push(ObjectMutation {
+            object_ref: stale_ref.to_string(),
+            title: target.title.clone(),
+            previous_status: target.status.clone(),
+            new_status: "stale".to_string(),
+            previous_owner: target.owner.clone(),
+            new_owner: target.owner.clone(),
+        });
+        insert_scope_cleanup_event(
+            conn,
+            "memory-cleanup",
+            &target,
+            "stale",
+            &target.owner,
+            Some("duplicate preference superseded by cleanup plan"),
+            now,
+        )?;
+    }
+    let operation_id = insert_cleanup_operation_log(conn, plan, group)?;
+    let edge_count = crate::memory::edge::insert_replacement_edges(
+        conn,
+        crate::memory::edge::MemoryEdgeType::Duplicates,
+        &group.stale_ids,
+        group.current_id,
+        crate::memory::edge::MemoryEdgeWriteContext {
+            state_key_id: current_snapshot.state_key_id,
+            source_operation_id: Some(operation_id),
+            confidence: Some(group.confidence),
+            reason: Some(group.reason.as_str()),
+            ..Default::default()
+        },
+    )?;
+    Ok(CleanupGroupApplyResult {
+        current_id: group.current_id,
+        stale_ids: group.stale_ids.clone(),
+        operation_id,
         edge_count,
         affected,
     })
