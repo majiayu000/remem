@@ -440,6 +440,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "activation_result_trust",
         sql: include_str!("../migrations/v087_activation_result_trust.sql"),
     },
+    Migration {
+        version: 88,
+        name: "activation_legacy_trust",
+        sql: include_str!("../migrations/v088_activation_legacy_trust.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

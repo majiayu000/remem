@@ -4,12 +4,12 @@ use rusqlite::{params, Connection};
 use super::run_migrations;
 
 #[test]
-fn v087_creates_immutable_activation_ledger_with_result_trust() -> Result<()> {
+fn latest_schema_creates_immutable_activation_ledger_with_result_trust() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
     run_migrations(&conn)?;
 
-    assert_eq!(super::latest_schema_version(), 87);
+    assert_eq!(super::latest_schema_version(), 88);
     for object in [
         "memory_activation_requests",
         "idx_memory_activation_result",
@@ -90,7 +90,7 @@ fn v087_creates_immutable_activation_ledger_with_result_trust() -> Result<()> {
 }
 
 #[test]
-fn v087_upgrades_a_v086_database_without_inventing_result_trust() -> Result<()> {
+fn v088_upgrades_an_already_applied_v087_database_without_current_state_guessing() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
     for migration in &super::MIGRATIONS[..85] {
@@ -111,6 +111,15 @@ fn v087_upgrades_a_v086_database_without_inventing_result_trust() -> Result<()> 
     )?;
     conn.execute_batch(super::MIGRATIONS[86].sql)?;
 
+    let v087_result_trust: String = conn.query_row(
+        "SELECT result_source_trust_class FROM memory_activation_requests
+         WHERE activation_id = 'test:v086'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(v087_result_trust, "legacy_unrecorded");
+    conn.execute_batch(super::MIGRATIONS[87].sql)?;
+
     let (content, result_trust, receipt_rowid_after): (String, String, i64) = conn.query_row(
         "SELECT memory.content, receipt.result_source_trust_class, receipt.rowid
          FROM memories AS memory
@@ -120,7 +129,7 @@ fn v087_upgrades_a_v086_database_without_inventing_result_trust() -> Result<()> 
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
     assert_eq!(content, "existing memory");
-    assert_eq!(result_trust, "legacy_unrecorded");
+    assert_eq!(result_trust, "legacy_v086_source_external_content");
     assert_eq!(receipt_rowid_after, receipt_rowid_before);
 
     let (not_null, default_value): (i64, Option<String>) = conn.query_row(

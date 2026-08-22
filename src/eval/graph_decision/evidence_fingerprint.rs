@@ -248,6 +248,7 @@ const MIGRATION_SQL_INPUTS: &[&str] = &[
     "src/migrations/v085_legacy_pending_bridge_state.sql",
     "src/migrations/v086_memory_activation_boundary.sql",
     "src/migrations/v087_activation_result_trust.sql",
+    "src/migrations/v088_activation_legacy_trust.sql",
 ];
 
 #[derive(Debug, Clone, Serialize)]

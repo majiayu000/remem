@@ -644,6 +644,9 @@ All production paths that leave a curated memory `active` pass through
 actor, trust class, provenance, payload digest, poisoning verdict, exact
 supersede set, resulting memory ID, and a digest recomputed from the stored
 title/content/type/topic/files/evidence payload in `memory_activation_requests`.
+Schema v87 adds result trust to that ledger; v88 upgrades already-recorded v86
+receipts from v87's unknown marker using only the immutable source-trust
+postcondition and preserves receipt rowids for replay chronology.
 The boundary compares those stored fields with the reviewed request and repeats
 the poisoning check as a postcondition. Backup best-effort import is recorded
 as governed `backup_import`; only identity-preserving restore paths use

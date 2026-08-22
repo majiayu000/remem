@@ -43,13 +43,14 @@ and cannot raise the trust of its sources.
 The first implementation slice now consolidates production activation through
 `memory::activation`, backed by the immutable
 `memory_activation_requests` ledger introduced in schema v86. Schema v87 adds
-the activation result's trust class through a forward migration that rebuilds
-the ledger, preserves receipt rowids, marks unavailable historical result trust
-as `legacy_unrecorded`, and restores the immutable-table triggers. It neither
-guesses nor attributes later state to the historical activation; a replay that
-would need an unauthenticated legacy result-trust comparison fails closed and
-must use a new activation id. v086 remains byte-stable for databases that have
-already recorded it. Route adapters
+the activation result's trust class without rewriting the already-applied v86
+migration and initially marks migrated receipts as `legacy_unrecorded`. Schema
+v88 is a second forward migration that preserves receipt rowids and replaces
+that marker with result trust derived from each receipt's historically enforced
+source-trust postcondition before restoring the immutable-table triggers. It
+neither guesses from current state nor attributes later state to the historical
+activation. v86 and v87 remain byte-stable for databases that have already
+recorded them. Route adapters
 bind trust, provenance, payload digest, exact supersede targets, and poisoning
 verdict before the active mutation runs in one savepoint. The boundary then
 compares the stored payload/evidence fields to the request, rechecks poisoning,
@@ -61,7 +62,13 @@ no-op records the weaker incoming caller in activation evidence but never
 relabels the already-active row's trust or acknowledgement metadata. The
 activation request therefore binds incoming source trust separately from the
 expected result-row trust; route policy validates the former while the durable
-postcondition validates the latter. Replay of an older receipt remains valid
+postcondition validates the latter. Supplemental idempotency uses a versioned
+caller-input fingerprint that excludes mutable target provenance and validates
+the result from immutable receipt fields. Migrated v086 and v087 supplemental
+receipts validate the same stable caller fields directly from the immutable
+ledger, including the caller payload digest, instead of reconstructing old
+target provenance from a later memory row; other v086 routes retain an
+explicit legacy-fingerprint validation path. Replay of an older receipt remains valid
 after a later governed in-place activation only when the current row exactly
 matches the latest immutable result receipt, including identity, scope, owner,
 trust, payload digest, and poisoning evidence.

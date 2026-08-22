@@ -664,5 +664,9 @@ pub mod tests_helper {
             "../migrations/v087_activation_result_trust.sql"
         ))
         .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/v088_activation_legacy_trust.sql"
+        ))
+        .unwrap();
     }
 }

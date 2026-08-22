@@ -54,6 +54,92 @@ fn identical_activation_replays_without_running_writer() -> Result<()> {
 }
 
 #[test]
+fn migrated_v086_supplemental_receipt_replays_with_legacy_fingerprint() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    let mut original_request = request("save:v086-supplemental", "legacy");
+    original_request.route_kind = ActivationRouteKind::SupplementalSave;
+    original_request.provenance_kind = ActivationProvenanceKind::SupplementalSave;
+    original_request.provenance_ref = "rust-api:test".to_string();
+    let memory_id = insert_memory(&conn, "legacy")?;
+    let request_sha256 = super::receipt::v086_request_sha256(&original_request, &[])?;
+    conn.execute(
+        "INSERT INTO memory_activation_requests
+         (activation_id, request_sha256, route_kind, actor_kind, source_operation,
+          source_trust_class, result_source_trust_class, source_project, project,
+          branch_present, branch, scope, owner_scope, owner_key, target_project,
+          provenance_kind, provenance_ref, payload_sha256, result_sha256,
+          poisoning_verdict, superseded_ids_json, result_memory_id, claim_status,
+          created_at_epoch)
+         VALUES (?1, ?2, 'supplemental_save', 'rust_api', 'save_memory',
+                 'local_tool_output', 'legacy_v086_source_local_tool_output', '/repo', '/repo', 0,
+                 NULL, 'project', 'repo', '/repo', '/repo', 'supplemental_save',
+                 'rust-api:test', ?3, ?4, 'clean', '[]', ?5, 'disabled', 1)",
+        params![
+            original_request.activation_id,
+            request_sha256,
+            original_request.payload_sha256,
+            original_request.expected_memory.sha256(),
+            memory_id,
+        ],
+    )?;
+
+    conn.execute(
+        "INSERT INTO memory_candidates
+         (id, scope, memory_type, topic_key, text, evidence_event_ids, confidence, risk_class,
+          review_status, created_at_epoch, updated_at_epoch, source_trust_class)
+         VALUES (73, 'project', 'discovery', 'legacy-topic', 'legacy', '[501]', 0.95, 'low',
+                 'approved', 2, 2, 'user_prompt')",
+        [],
+    )?;
+    let candidate_expected = original_request
+        .expected_memory
+        .clone()
+        .with_candidate_evidence(Some("[501]"), Some(73));
+    let mut promotion = request("candidate:replacement-73", "legacy");
+    promotion.route_kind = ActivationRouteKind::CandidatePromotion;
+    promotion.actor_kind = ActivationActorKind::Operator;
+    promotion.source_operation = "candidate_review".to_string();
+    promotion.source_trust = SourceTrustClass::UserPrompt;
+    promotion.result_source_trust = SourceTrustClass::UserPrompt;
+    promotion.provenance_kind = ActivationProvenanceKind::Candidate;
+    promotion.provenance_ref = "candidate:73".to_string();
+    promotion.expected_memory = candidate_expected.clone();
+    promotion.poisoning_verdict = ActivationPoisoningVerdict::UpstreamValidated;
+    promotion.superseded_ids = vec![memory_id];
+    execute_one(&conn, &promotion, |_| {
+        conn.execute(
+            "UPDATE memories SET status = 'stale' WHERE id = ?1",
+            [memory_id],
+        )?;
+        conn.execute(
+            "INSERT INTO memories
+             (project, title, content, memory_type, evidence_event_ids,
+              source_candidate_id, created_at_epoch, updated_at_epoch, status,
+              scope, source_project, target_project, owner_scope, owner_key,
+              context_class, source_trust_class)
+             VALUES ('/repo', 'title', 'legacy', 'discovery', '[501]', 73, 2, 2,
+                     'active', 'project', '/repo', '/repo', 'repo', '/repo',
+                     'startup_core', 'user_prompt')",
+            [],
+        )?;
+        Ok(conn.last_insert_rowid())
+    })?;
+
+    let mut retry = original_request.clone();
+    retry.expected_memory = candidate_expected;
+    retry.result_source_trust = SourceTrustClass::UserPrompt;
+    let replay = execute_supplemental_save(&conn, &retry, |_| bail!("writer must not replay"))?;
+    assert_eq!(replay.memory_id, memory_id);
+    assert!(replay.replayed);
+    assert_eq!(
+        replay.supplemental_receipt,
+        Some(SupplementalSaveReceipt::Disabled)
+    );
+    Ok(())
+}
+
+#[test]
 fn replay_survives_a_later_governed_in_place_update() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     crate::migrate::run_migrations(&conn)?;
@@ -72,6 +158,123 @@ fn replay_survives_a_later_governed_in_place_update() -> Result<()> {
     let replay = execute_one(&conn, &first_request, |_| bail!("writer must not replay"))?;
     assert_eq!(replay.memory_id, first.memory_id);
     assert!(replay.replayed);
+    Ok(())
+}
+
+#[test]
+fn earlier_v086_receipt_replays_after_a_later_v086_same_row_update() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    let first_request = request("save:v086-first", "first");
+    let memory_id = insert_memory(&conn, "first")?;
+    let request_sha256 = super::receipt::v086_request_sha256(&first_request, &[])?;
+    conn.execute(
+        "INSERT INTO memory_activation_requests
+         (activation_id, request_sha256, route_kind, actor_kind, source_operation,
+          source_trust_class, result_source_trust_class, source_project, project,
+          branch_present, branch, scope, owner_scope, owner_key, target_project,
+          provenance_kind, provenance_ref, payload_sha256, result_sha256,
+          poisoning_verdict, superseded_ids_json, result_memory_id, created_at_epoch)
+         VALUES (?1, ?2, 'rust_api', 'rust_api', 'save_memory',
+                 'local_tool_output', 'legacy_v086_source_local_tool_output', '/repo', '/repo', 0,
+                 NULL, 'project', 'repo', '/repo', '/repo', 'rust_api',
+                 'rust-api:test', ?3, ?4, 'clean', '[]', ?5, 1)",
+        params![
+            first_request.activation_id,
+            request_sha256,
+            first_request.payload_sha256,
+            first_request.expected_memory.sha256(),
+            memory_id,
+        ],
+    )?;
+
+    let second_request = request("save:v086-second", "second");
+    let second_request_sha256 = super::receipt::v086_request_sha256(&second_request, &[])?;
+    conn.execute(
+        "UPDATE memories SET content = 'second' WHERE id = ?1",
+        [memory_id],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_activation_requests
+         (activation_id, request_sha256, route_kind, actor_kind, source_operation,
+          source_trust_class, result_source_trust_class, source_project, project,
+          branch_present, branch, scope, owner_scope, owner_key, target_project,
+          provenance_kind, provenance_ref, payload_sha256, result_sha256,
+          poisoning_verdict, superseded_ids_json, result_memory_id, created_at_epoch)
+         VALUES (?1, ?2, 'rust_api', 'rust_api', 'save_memory',
+                 'local_tool_output', 'legacy_v086_source_local_tool_output', '/repo', '/repo', 0,
+                 NULL, 'project', 'repo', '/repo', '/repo', 'rust_api',
+                 'rust-api:test', ?3, ?4, 'clean', '[]', ?5, 2)",
+        params![
+            second_request.activation_id,
+            second_request_sha256,
+            second_request.payload_sha256,
+            second_request.expected_memory.sha256(),
+            memory_id,
+        ],
+    )?;
+
+    let replay = execute_one(&conn, &first_request, |_| bail!("writer must not replay"))?;
+    assert_eq!(replay.memory_id, memory_id);
+    assert!(replay.replayed);
+    Ok(())
+}
+
+#[test]
+fn migrated_v086_supplemental_replay_ignores_later_in_place_result_provenance() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    let mut first_request = request("save:v086-supplemental-in-place", "first");
+    first_request.route_kind = ActivationRouteKind::SupplementalSave;
+    first_request.provenance_kind = ActivationProvenanceKind::SupplementalSave;
+    let memory_id = insert_memory(&conn, "first")?;
+    let request_sha256 = super::receipt::v086_request_sha256(&first_request, &[])?;
+    conn.execute(
+        "INSERT INTO memory_activation_requests
+         (activation_id, request_sha256, route_kind, actor_kind, source_operation,
+          source_trust_class, result_source_trust_class, source_project, project,
+          branch_present, branch, scope, owner_scope, owner_key, target_project,
+          provenance_kind, provenance_ref, payload_sha256, result_sha256,
+          poisoning_verdict, superseded_ids_json, result_memory_id, claim_status,
+          created_at_epoch)
+         VALUES (?1, ?2, 'supplemental_save', 'rust_api', 'save_memory',
+                 'local_tool_output', 'legacy_v086_source_local_tool_output', '/repo', '/repo', 0,
+                 NULL, 'project', 'repo', '/repo', '/repo', 'supplemental_save',
+                 'rust-api:test', ?3, ?4, 'clean', '[]', ?5, 'disabled', 1)",
+        params![
+            first_request.activation_id,
+            request_sha256,
+            first_request.payload_sha256,
+            first_request.expected_memory.sha256(),
+            memory_id,
+        ],
+    )?;
+
+    let second_request = request("save:v087-same-row", "second");
+    execute_one(&conn, &second_request, |_| {
+        conn.execute(
+            "UPDATE memories SET content = 'second' WHERE id = ?1",
+            [memory_id],
+        )?;
+        Ok(memory_id)
+    })?;
+
+    let mut retry = first_request.clone();
+    retry.expected_memory = ExpectedActiveMemory::new("title", "second", "discovery");
+    let mut changed_retry = retry.clone();
+    changed_retry.payload_sha256 = payload_sha256(&["changed caller payload"]);
+    let error = execute_supplemental_save(&conn, &changed_retry, |_| {
+        bail!("writer must not run for a conflicting retry")
+    })
+    .expect_err("changed caller payload must not match the immutable receipt");
+    assert!(error.to_string().contains("reused with different request"));
+    let replay = execute_supplemental_save(&conn, &retry, |_| bail!("writer must not replay"))?;
+    assert_eq!(replay.memory_id, memory_id);
+    assert!(replay.replayed);
+    assert_eq!(
+        replay.supplemental_receipt,
+        Some(SupplementalSaveReceipt::Disabled)
+    );
     Ok(())
 }
 
@@ -106,6 +309,54 @@ fn replay_rejects_route_drift_after_a_later_activation() -> Result<()> {
     let error = execute_one(&conn, &first_request, |_| bail!("writer must not replay"))
         .expect_err("result trust drift after a later activation must fail replay");
     assert!(error.to_string().contains("result trust has drifted"));
+    Ok(())
+}
+
+#[test]
+fn replay_rejects_archive_after_a_later_reactivation() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    let original_request = request("save:original", "original");
+    let original = execute_one(&conn, &original_request, |_| {
+        insert_memory(&conn, "original")
+    })?;
+
+    let mut replacement_request = request("save:replacement", "replacement");
+    replacement_request.superseded_ids = vec![original.memory_id];
+    let replacement = execute_one(&conn, &replacement_request, |_| {
+        let replacement_id = insert_memory(&conn, "replacement")?;
+        conn.execute(
+            "UPDATE memories SET status = 'stale' WHERE id = ?1",
+            [original.memory_id],
+        )?;
+        Ok(replacement_id)
+    })?;
+
+    let mut reactivation_request = request("save:reactivation", "original");
+    reactivation_request.superseded_ids = vec![replacement.memory_id];
+    execute_one(&conn, &reactivation_request, |_| {
+        conn.execute(
+            "UPDATE memories SET status = 'active' WHERE id = ?1",
+            [original.memory_id],
+        )?;
+        conn.execute(
+            "UPDATE memories SET status = 'stale' WHERE id = ?1",
+            [replacement.memory_id],
+        )?;
+        Ok(original.memory_id)
+    })?;
+    conn.execute(
+        "UPDATE memories SET status = 'archived' WHERE id = ?1",
+        [original.memory_id],
+    )?;
+
+    let error = execute_one(&conn, &reactivation_request, |_| {
+        bail!("writer must not replay")
+    })
+    .expect_err("an older supersede receipt must not authorize an archived replay");
+    assert!(error
+        .to_string()
+        .contains("inactive without a superseding receipt"));
     Ok(())
 }
 

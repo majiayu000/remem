@@ -115,29 +115,6 @@ pub(crate) struct ActiveMemoryWritePermit {
     _private: (),
 }
 
-#[derive(Serialize)]
-struct RequestFingerprint<'a> {
-    route_kind: ActivationRouteKind,
-    actor_kind: ActivationActorKind,
-    source_operation: &'a str,
-    source_trust_class: &'static str,
-    result_source_trust_class: &'static str,
-    source_project: &'a str,
-    project: &'a str,
-    branch_present: bool,
-    branch: Option<&'a str>,
-    scope: &'a str,
-    owner_scope: &'a str,
-    owner_key: &'a str,
-    target_project: Option<&'a str>,
-    provenance_kind: ActivationProvenanceKind,
-    provenance_ref: &'a str,
-    payload_sha256: &'a str,
-    expected_memory: &'a ExpectedActiveMemory,
-    poisoning_verdict: ActivationPoisoningVerdict,
-    superseded_ids: &'a [i64],
-}
-
 pub(crate) fn execute_one(
     conn: &Connection,
     request: &ActiveMemoryWriteRequest,
@@ -174,19 +151,20 @@ fn execute_one_inner(
     write: impl FnOnce(&ActiveMemoryWritePermit) -> Result<(i64, Option<SupplementalSaveReceipt>)>,
 ) -> Result<ActiveMemoryWriteResult> {
     let normalized_superseded_ids = validate_request(request)?;
-    let request_sha256 = request_sha256(request, &normalized_superseded_ids)?;
+    let request_sha256 = receipt::current_request_sha256(request, &normalized_superseded_ids)?;
 
     if let Some((
         stored_sha256,
         stored_result_sha256,
         memory_id,
+        stored_result_trust_class,
         claim_status,
         claim_id,
         claim_error,
     )) = conn
         .query_row(
             "SELECT request_sha256, result_sha256, result_memory_id,
-                    claim_status, claim_id, claim_error
+                    result_source_trust_class, claim_status, claim_id, claim_error
              FROM memory_activation_requests
              WHERE activation_id = ?1",
             [&request.activation_id],
@@ -195,31 +173,43 @@ fn execute_one_inner(
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, i64>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                    row.get::<_, Option<i64>>(4)?,
-                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<i64>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
                 ))
             },
         )
         .optional()?
     {
         if stored_sha256 != request_sha256 {
-            bail!(
-                "memory activation id reused with different request: {}",
-                request.activation_id
-            );
+            let is_v086 = stored_result_trust_class.starts_with("legacy_v086_source_");
+            let matches_legacy_request = if request.route_kind
+                == ActivationRouteKind::SupplementalSave
+            {
+                receipt::supplemental_request_matches_receipt(
+                    conn,
+                    request,
+                    &normalized_superseded_ids,
+                )?
+            } else if is_v086 {
+                stored_sha256 == receipt::v086_request_sha256(request, &normalized_superseded_ids)?
+            } else {
+                false
+            };
+            if !matches_legacy_request {
+                bail!(
+                    "memory activation id reused with different request: {}",
+                    request.activation_id
+                );
+            }
         }
-        if !replay::validate_later_activation_result(
+        replay::validate_replayed_result(
             conn,
             &request.activation_id,
             memory_id,
-            request,
             &stored_result_sha256,
-        )? {
-            let require_active = !replay::result_was_superseded(conn, memory_id)?;
-            validate_result_route(conn, memory_id, request, require_active)?;
-            payload::validate_result_payload(conn, memory_id, request)?;
-        }
+        )?;
         let supplemental_receipt =
             SupplementalSaveReceipt::from_columns(claim_status, claim_id, claim_error)?;
         return Ok(ActiveMemoryWriteResult {
@@ -403,34 +393,6 @@ fn validate_request(request: &ActiveMemoryWriteRequest) -> Result<Vec<i64>> {
         bail!("memory activation superseded ids must be unique positive integers");
     }
     Ok(normalized.into_iter().collect())
-}
-
-fn request_sha256(request: &ActiveMemoryWriteRequest, superseded_ids: &[i64]) -> Result<String> {
-    let fingerprint = RequestFingerprint {
-        route_kind: request.route_kind,
-        actor_kind: request.actor_kind,
-        source_operation: &request.source_operation,
-        source_trust_class: request.source_trust.as_str(),
-        result_source_trust_class: request.result_source_trust.as_str(),
-        source_project: &request.source_project,
-        project: &request.route.project,
-        branch_present: request.route.branch.is_some(),
-        branch: request.route.branch.as_deref(),
-        scope: &request.route.scope,
-        owner_scope: &request.route.owner_scope,
-        owner_key: &request.route.owner_key,
-        target_project: request.route.target_project.as_deref(),
-        provenance_kind: request.provenance_kind,
-        provenance_ref: &request.provenance_ref,
-        payload_sha256: &request.payload_sha256,
-        expected_memory: &request.expected_memory,
-        poisoning_verdict: request.poisoning_verdict,
-        superseded_ids,
-    };
-    Ok(format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(&fingerprint)?)
-    ))
 }
 
 fn enum_json(value: impl Serialize) -> Result<String> {

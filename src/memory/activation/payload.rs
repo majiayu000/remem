@@ -280,7 +280,9 @@ mod tests {
         )?;
         let error = execute_one(&conn, &request, |_| bail!("writer must not replay"))
             .expect_err("inactive result must not replay as a save success");
-        assert!(error.to_string().contains("postcondition"));
+        assert!(error
+            .to_string()
+            .contains("inactive without a superseding receipt"));
         Ok(())
     }
 }

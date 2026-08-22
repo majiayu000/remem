@@ -1,9 +1,11 @@
 use anyhow::{bail, ensure, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
-use super::{ActivationPoisoningVerdict, ActiveMemoryWriteRequest, ExpectedActiveMemory};
+use super::{ActivationPoisoningVerdict, ExpectedActiveMemory};
+use crate::memory::poisoning::SourceTrustClass;
 
-struct LaterReceipt {
+struct ActivationReceipt {
+    rowid: i64,
     result_sha256: String,
     project: String,
     branch_present: bool,
@@ -17,81 +19,96 @@ struct LaterReceipt {
     poisoning_verdict: ActivationPoisoningVerdict,
 }
 
-pub(super) fn validate_later_activation_result(
+pub(super) fn validate_replayed_result(
     conn: &Connection,
     activation_id: &str,
     memory_id: i64,
-    historical_request: &ActiveMemoryWriteRequest,
     historical_result_sha256: &str,
-) -> Result<bool> {
-    let Some(latest) = later_receipt(conn, activation_id, memory_id)? else {
-        return Ok(false);
-    };
+) -> Result<()> {
+    let historical = receipt_by_activation(conn, activation_id, memory_id)?;
     ensure!(
-        historical_result_sha256 == historical_request.expected_memory.sha256(),
-        "memory activation historical result digest does not match its request"
+        historical.result_sha256 == historical_result_sha256,
+        "memory activation historical result digest does not match its receipt"
     );
+    let later = later_receipt(conn, historical.rowid, memory_id)?;
+    let latest = later.as_ref().unwrap_or(&historical);
     let current = ExpectedActiveMemory::from_existing(conn, memory_id)?;
     ensure!(
         current.sha256() == latest.result_sha256,
         "memory activation latest result payload has drifted"
     );
-    validate_latest_route(conn, memory_id, &latest)?;
+    validate_latest_route(conn, memory_id, latest)?;
     super::payload::validate_poisoning_verdict(
         conn,
         memory_id,
         &current,
         latest.poisoning_verdict,
     )?;
-    Ok(true)
+    Ok(())
+}
+
+fn receipt_by_activation(
+    conn: &Connection,
+    activation_id: &str,
+    memory_id: i64,
+) -> Result<ActivationReceipt> {
+    conn.query_row(
+        "SELECT rowid, result_sha256, project, branch_present, branch, scope,
+                owner_scope, owner_key, target_project, source_project,
+                result_source_trust_class, poisoning_verdict
+         FROM memory_activation_requests
+         WHERE result_memory_id = ?1 AND activation_id = ?2",
+        params![memory_id, activation_id],
+        map_receipt,
+    )
+    .map_err(Into::into)
 }
 
 fn later_receipt(
     conn: &Connection,
-    activation_id: &str,
+    after_rowid: i64,
     memory_id: i64,
-) -> Result<Option<LaterReceipt>> {
+) -> Result<Option<ActivationReceipt>> {
     conn.query_row(
-        "SELECT later.result_sha256, later.project, later.branch_present, later.branch,
-                later.scope, later.owner_scope, later.owner_key, later.target_project,
-                later.source_project, later.result_source_trust_class, later.poisoning_verdict
-         FROM memory_activation_requests later
-         WHERE later.result_memory_id = ?1
-           AND later.rowid > (
-               SELECT current.rowid FROM memory_activation_requests current
-               WHERE current.activation_id = ?2
-           )
-         ORDER BY later.rowid DESC
+        "SELECT rowid, result_sha256, project, branch_present, branch, scope,
+                owner_scope, owner_key, target_project, source_project,
+                result_source_trust_class, poisoning_verdict
+         FROM memory_activation_requests
+         WHERE result_memory_id = ?1 AND rowid > ?2
+         ORDER BY rowid DESC
          LIMIT 1",
-        params![memory_id, activation_id],
-        |row| {
-            let verdict = parse_verdict(&row.get::<_, String>(10)?).map_err(|error| {
-                rusqlite::Error::FromSqlConversionFailure(
-                    10,
-                    rusqlite::types::Type::Text,
-                    error.into(),
-                )
-            })?;
-            Ok(LaterReceipt {
-                result_sha256: row.get(0)?,
-                project: row.get(1)?,
-                branch_present: row.get::<_, i64>(2)? == 1,
-                branch: row.get(3)?,
-                scope: row.get(4)?,
-                owner_scope: row.get(5)?,
-                owner_key: row.get(6)?,
-                target_project: row.get(7)?,
-                source_project: row.get(8)?,
-                result_source_trust_class: row.get(9)?,
-                poisoning_verdict: verdict,
-            })
-        },
+        params![memory_id, after_rowid],
+        map_receipt,
     )
     .optional()
     .map_err(Into::into)
 }
 
-fn validate_latest_route(conn: &Connection, memory_id: i64, latest: &LaterReceipt) -> Result<()> {
+fn map_receipt(row: &rusqlite::Row<'_>) -> rusqlite::Result<ActivationReceipt> {
+    let verdict = parse_verdict(&row.get::<_, String>(11)?).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(11, rusqlite::types::Type::Text, error.into())
+    })?;
+    Ok(ActivationReceipt {
+        rowid: row.get(0)?,
+        result_sha256: row.get(1)?,
+        project: row.get(2)?,
+        branch_present: row.get::<_, i64>(3)? == 1,
+        branch: row.get(4)?,
+        scope: row.get(5)?,
+        owner_scope: row.get(6)?,
+        owner_key: row.get(7)?,
+        target_project: row.get(8)?,
+        source_project: row.get(9)?,
+        result_source_trust_class: row.get(10)?,
+        poisoning_verdict: verdict,
+    })
+}
+
+fn validate_latest_route(
+    conn: &Connection,
+    memory_id: i64,
+    latest: &ActivationReceipt,
+) -> Result<()> {
     let (project, branch, scope, owner_scope, owner_key, target_project, source_project, trust, status): (
         String,
         Option<String>,
@@ -154,19 +171,22 @@ fn validate_latest_route(conn: &Connection, memory_id: i64, latest: &LaterReceip
     );
     let current_trust = crate::memory::poisoning::SourceTrustClass::parse(&trust)
         .context("memory activation latest result trust is invalid")?;
-    ensure!(
-        latest.result_source_trust_class != "legacy_unrecorded",
-        "memory activation latest receipt predates authenticated result trust; replay under a new activation id"
-    );
-    let expected_trust =
-        crate::memory::poisoning::SourceTrustClass::parse(&latest.result_source_trust_class)
-            .context("memory activation latest receipt result trust is invalid")?;
+    let expected_trust = if let Some(recorded) = latest
+        .result_source_trust_class
+        .strip_prefix("legacy_v086_source_")
+    {
+        SourceTrustClass::parse(recorded)
+            .context("v086 activation receipt source trust is invalid")?
+    } else {
+        SourceTrustClass::parse(&latest.result_source_trust_class)
+            .context("memory activation latest receipt result trust is invalid")?
+    };
     ensure!(
         current_trust == expected_trust,
         "memory activation latest result trust has drifted"
     );
     ensure!(
-        status == "active" || result_was_superseded(conn, memory_id)?,
+        status == "active" || result_was_superseded_after(conn, memory_id, latest.rowid)?,
         "memory activation latest result is inactive without a superseding receipt"
     );
     Ok(())
@@ -182,15 +202,19 @@ fn parse_verdict(value: &str) -> Result<ActivationPoisoningVerdict> {
     }
 }
 
-pub(super) fn result_was_superseded(conn: &Connection, memory_id: i64) -> Result<bool> {
+fn result_was_superseded_after(
+    conn: &Connection,
+    memory_id: i64,
+    after_rowid: i64,
+) -> Result<bool> {
     conn.query_row(
         "SELECT EXISTS(
              SELECT 1
              FROM memory_activation_requests later,
                   json_each(later.superseded_ids_json) superseded
-             WHERE superseded.value = ?1
+             WHERE later.rowid > ?2 AND superseded.value = ?1
          )",
-        [memory_id],
+        params![memory_id, after_rowid],
         |row| row.get::<_, i64>(0),
     )
     .map(|superseded| superseded == 1)

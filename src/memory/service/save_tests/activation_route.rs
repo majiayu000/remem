@@ -110,3 +110,103 @@ fn agent_direct_save_update_preserves_candidate_provenance_in_receipt() -> anyho
     assert_eq!(stored_result_sha256, actual.sha256());
     Ok(())
 }
+
+#[test]
+fn direct_save_replays_original_receipt_after_equivalent_candidate_replacement(
+) -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("save-replay-candidate-replacement");
+    let conn = db::open_db()?;
+    let request = SaveMemoryRequest {
+        text: "Stable represented fact.".to_string(),
+        title: Some("Stable fact".to_string()),
+        project: Some("proj".to_string()),
+        topic_key: Some("stable-replay-target".to_string()),
+        memory_type: Some("discovery".to_string()),
+        scope: Some("project".to_string()),
+        local_copy_enabled: Some(false),
+        claim_enabled: Some(false),
+        idempotency_key: Some("stable-replay-key".to_string()),
+        ..SaveMemoryRequest::default()
+    };
+    let original = save_memory(&conn, &request)?;
+    let conflict = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: "Changed caller payload.".to_string(),
+            ..request.clone()
+        },
+    )
+    .expect_err("same key with changed caller payload must conflict");
+    assert!(conflict
+        .to_string()
+        .contains("reused with different request"));
+
+    conn.execute(
+        "INSERT INTO memory_candidates
+         (id, scope, memory_type, topic_key, text, evidence_event_ids,
+          confidence, risk_class, review_status, created_at_epoch, updated_at_epoch,
+          source_trust_class)
+         VALUES (73, 'project', 'discovery', 'stable-replay-target',
+                 'Stable represented fact.', '[501]', 0.95, 'low', 'approved',
+                 2, 2, 'user_prompt')",
+        [],
+    )?;
+    let expected = crate::memory::activation::ExpectedActiveMemory::new(
+        "Stable fact",
+        "Stable represented fact.",
+        "discovery",
+    )
+    .with_topic_key(Some("stable-replay-target"))
+    .with_candidate_evidence(Some("[501]"), Some(73));
+    let promotion = crate::memory::activation::ActiveMemoryWriteRequest {
+        activation_id: "candidate:replacement-73".to_string(),
+        route_kind: crate::memory::activation::ActivationRouteKind::CandidatePromotion,
+        actor_kind: crate::memory::activation::ActivationActorKind::Operator,
+        source_operation: "candidate_review".to_string(),
+        source_trust: crate::memory::poisoning::SourceTrustClass::UserPrompt,
+        result_source_trust: crate::memory::poisoning::SourceTrustClass::UserPrompt,
+        source_project: "proj".to_string(),
+        route: crate::memory::activation::ActiveMemoryRoute::default_for("proj", None, "project"),
+        provenance_kind: crate::memory::activation::ActivationProvenanceKind::Candidate,
+        provenance_ref: "candidate:73".to_string(),
+        payload_sha256: crate::memory::activation::payload_sha256(&[
+            "candidate:73",
+            "Stable represented fact.",
+        ]),
+        expected_memory: expected,
+        poisoning_verdict: crate::memory::activation::ActivationPoisoningVerdict::UpstreamValidated,
+        superseded_ids: vec![original.id],
+    };
+    let replacement = crate::memory::activation::execute_one(&conn, &promotion, |_permit| {
+        conn.execute(
+            "UPDATE memories SET status = 'stale' WHERE id = ?1",
+            [original.id],
+        )?;
+        conn.execute(
+            "INSERT INTO memories
+             (project, topic_key, title, content, memory_type, evidence_event_ids,
+              source_candidate_id, created_at_epoch, updated_at_epoch, status, scope,
+              source_project, target_project, owner_scope, owner_key, context_class,
+              source_trust_class)
+             VALUES ('proj', 'stable-replay-target', 'Stable fact',
+                     'Stable represented fact.', 'discovery', '[501]', 73, 2, 2,
+                     'active', 'project', 'proj', 'proj', 'repo', 'proj',
+                     'startup_core', 'user_prompt')",
+            [],
+        )?;
+        Ok(conn.last_insert_rowid())
+    })?;
+    let replay = save_memory(&conn, &request)?;
+    assert_eq!(replay.id, original.id);
+    assert_eq!(replay.operation, "noop");
+    assert_eq!(replay.claim_status, "disabled");
+    let statuses: (String, String) = conn.query_row(
+        "SELECT old.status, replacement.status
+         FROM memories AS old, memories AS replacement
+         WHERE old.id = ?1 AND replacement.id = ?2",
+        rusqlite::params![original.id, replacement.memory_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(statuses, ("stale".to_string(), "active".to_string()));
+    Ok(())
+}
