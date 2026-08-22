@@ -153,6 +153,9 @@ pub struct SaveMemoryRequest {
     pub claim_enabled: Option<bool>,
     pub claim_source: Option<String>,
     pub acknowledge_pattern: Option<String>,
+    /// Optional caller-supplied retry identity. Reuse with changed activation
+    /// input fails closed; omission preserves compatibility with one-shot saves.
+    pub idempotency_key: Option<String>,
 }
 
 #[derive(Debug, Clone)]

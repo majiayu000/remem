@@ -27,6 +27,7 @@ pub(super) fn validate_cluster_snapshot(
                AND {current_filter}
                AND {state_filter}
                AND {policy_filter}
+               AND m.branch IS NULL
                AND m.version = ?3
                AND m.updated_at_epoch = ?4
                AND m.topic_key IS ?5

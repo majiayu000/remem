@@ -2,7 +2,7 @@ use super::MemoryServer;
 use super::{assert_mcp_error, McpErrorCode};
 use crate::db::test_support::ScopedTestDataDir;
 use crate::mcp::types::{
-    GetObservationsParams, SearchParams, TimelineParams, TimelineReportParams,
+    GetObservationsParams, SaveMemoryParams, SearchParams, TimelineParams, TimelineReportParams,
     UpdateWorkStreamParams, WorkStreamsParams,
 };
 use rmcp::handler::server::wrapper::Parameters;
@@ -267,6 +267,28 @@ fn public_tool_metadata_matches_the_contract_matrix() -> anyhow::Result<()> {
         );
     }
 
+    Ok(())
+}
+
+#[test]
+fn save_memory_input_schema_does_not_advertise_human_acknowledgement() -> anyhow::Result<()> {
+    let server = MemoryServer::new()?;
+    let wire = serde_json::to_value(registered_tool(&server, "save_memory"))?;
+    let properties = wire["inputSchema"]["properties"]
+        .as_object()
+        .expect("save_memory input schema should expose object properties");
+
+    assert!(!properties.contains_key("acknowledge_pattern"));
+    assert_eq!(wire["inputSchema"]["additionalProperties"], false);
+    let legacy_input = serde_json::json!({
+        "text": "safe content",
+        "acknowledge_pattern": "override_previous_instructions"
+    });
+    let error = serde_json::from_value::<SaveMemoryParams>(legacy_input)
+        .expect_err("closed MCP save input must reject legacy acknowledgement");
+    assert!(error
+        .to_string()
+        .contains("unknown field `acknowledge_pattern`"));
     Ok(())
 }
 

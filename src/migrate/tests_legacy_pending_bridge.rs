@@ -16,7 +16,7 @@ fn v085_marks_empty_store_exhausted() -> Result<()> {
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
     run_migrations(&conn)?;
 
-    assert_eq!(super::latest_schema_version(), 85);
+    assert_eq!(super::latest_schema_version(), 87);
     let (state, residual): (String, i64) = conn.query_row(
         "SELECT state, residual_count FROM legacy_surface_state
          WHERE surface = 'pending_observations'",

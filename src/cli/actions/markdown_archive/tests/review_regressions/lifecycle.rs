@@ -118,13 +118,9 @@ fn markdown_round_trip_preserves_memory_edges_with_remapped_memory_ids() -> Resu
             ..Default::default()
         },
     )?;
-    assert_eq!(state.status, "current");
-    assert_eq!(state.history.len(), 1);
-    assert_eq!(state.history[0].relation.as_deref(), Some("supersedes"));
-    assert_eq!(
-        state.history[0].reason.as_deref(),
-        Some("current replaces old edge decision")
-    );
+    assert_eq!(state.status, "no_current");
+    assert!(state.current.is_none());
+    assert!(state.history.is_empty());
 
     std::fs::remove_dir_all(&export_dir)
         .with_context(|| format!("remove {}", export_dir.display()))?;
@@ -371,8 +367,8 @@ fn markdown_import_preserves_inactive_state_key_history() -> Result<()> {
             ..Default::default()
         },
     )?;
-    assert_eq!(historical.status, "current");
-    assert!(historical.current.is_some());
+    assert_eq!(historical.status, "no_current");
+    assert!(historical.current.is_none());
     let current = current_state(
         &target,
         &CurrentStateRequest {
@@ -495,8 +491,8 @@ fn markdown_import_extends_existing_state_key_to_older_inactive_history() -> Res
             ..Default::default()
         },
     )?;
-    assert_eq!(historical.status, "current");
-    assert_eq!(historical.current.as_ref().map(|memory| memory.id), Some(1));
+    assert_eq!(historical.status, "no_current");
+    assert!(historical.current.is_none());
 
     std::fs::remove_dir_all(&export_dir)
         .with_context(|| format!("remove {}", export_dir.display()))?;

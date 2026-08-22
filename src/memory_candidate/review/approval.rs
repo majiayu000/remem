@@ -302,6 +302,87 @@ fn restore_backfill_memory(
         bail!("dream_backfill_restore_target_not_archived");
     }
 
+    let (branch, scope, owner_scope, owner_key, target_project) = conn.query_row(
+        "SELECT branch, COALESCE(scope, 'project'),
+                COALESCE(owner_scope,
+                    CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END),
+                COALESCE(owner_key,
+                    CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user:default' ELSE project END),
+                target_project
+         FROM memories WHERE id = ?1",
+        [restore.memory_id],
+        |r| {
+            Ok((
+                r.get::<_, Option<String>>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, Option<String>>(4)?,
+            ))
+        },
+    )?;
+    let acknowledgement_ref = acknowledgement
+        .map(|value| format!("{}@{}", value.pattern_id, value.pattern_version))
+        .unwrap_or_else(|| "none".to_string());
+    let expected_memory =
+        crate::memory::activation::ExpectedActiveMemory::from_existing(conn, restore.memory_id)?;
+    let payload_sha256 = crate::memory::activation::payload_sha256(&[
+        &row.id.to_string(),
+        &restore.memory_id.to_string(),
+        &project,
+        &restore.merge_payload.memory_type,
+        &restore.merge_payload.topic_key,
+        &restore.merge_payload.title,
+        &restore.merge_payload.content,
+        &meta.actor,
+        meta.action_source.as_str(),
+        meta.batch_id.as_deref().unwrap_or(""),
+        meta.reason.as_deref().unwrap_or(""),
+        &acknowledgement_ref,
+    ]);
+    let request = crate::memory::activation::ActiveMemoryWriteRequest {
+        activation_id: crate::memory::activation::activation_id_from_key(
+            "dream-backfill-restore",
+            &format!("{}:{}", row.id, restore.memory_id),
+        ),
+        route_kind: crate::memory::activation::ActivationRouteKind::ExactRecovery,
+        actor_kind: crate::memory::activation::ActivationActorKind::Operator,
+        source_operation: "dream_backfill_restore".to_string(),
+        source_trust: SourceTrustClass::ExternalContent,
+        result_source_trust: SourceTrustClass::ExternalContent,
+        source_project: project.clone(),
+        route: crate::memory::activation::ActiveMemoryRoute {
+            project: project.clone(),
+            branch,
+            scope,
+            owner_scope,
+            owner_key,
+            target_project,
+        },
+        provenance_kind: crate::memory::activation::ActivationProvenanceKind::ExactRecovery,
+        provenance_ref: format!(
+            "candidate:{}:prior-memory:{}:{acknowledgement_ref}",
+            row.id, restore.memory_id
+        ),
+        payload_sha256,
+        expected_memory,
+        poisoning_verdict: crate::memory::activation::ActivationPoisoningVerdict::ExactRecovery,
+        superseded_ids: Vec::new(),
+    };
+    let result = crate::memory::activation::execute_one(conn, &request, |_permit| {
+        apply_backfill_restore_mutation(conn, row, meta, restore, acknowledgement, &project)
+    })?;
+    Ok(result.memory_id)
+}
+
+fn apply_backfill_restore_mutation(
+    conn: &Connection,
+    row: &CandidateRow,
+    meta: &ReviewMeta,
+    restore: &DreamBackfillRestore,
+    acknowledgement: Option<&PatternAcknowledgement>,
+    project: &str,
+) -> Result<i64> {
     let now = chrono::Utc::now().timestamp();
     let restored = conn.execute(
         "UPDATE memories SET status = 'active', updated_at_epoch = ?2
@@ -534,6 +615,20 @@ pub(super) fn promote_row(
         route.topic_domain = pack_route.topic_domain;
         route.routing_reason = pack_route.routing_reason;
     }
+    let review_binding = crate::memory::activation::payload_sha256(&[
+        &meta.actor,
+        meta.action_source.as_str(),
+        meta.batch_id.as_deref().unwrap_or(""),
+        meta.reason.as_deref().unwrap_or(""),
+        review_status,
+        acknowledgement
+            .map(|value| value.pattern_id.as_str())
+            .unwrap_or(""),
+        &acknowledgement
+            .map(|value| value.pattern_version)
+            .unwrap_or_default()
+            .to_string(),
+    ]);
     let outcome = promote_candidate_to_memory_with_route_and_policy(
         conn,
         None,
@@ -544,6 +639,8 @@ pub(super) fn promote_row(
         &route,
         parse_row_trust(row)?,
         supersede_policy,
+        &review_binding,
+        acknowledgement.map(|value| (value.pattern_id.as_str(), value.pattern_version)),
     )?;
     let status = outcome.review_status_for(review_status);
     let now = chrono::Utc::now().timestamp();

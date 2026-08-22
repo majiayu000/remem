@@ -1,9 +1,14 @@
 use anyhow::{anyhow, Context, Result};
-use rusqlite::{types::ValueRef, Connection, OpenFlags, Row};
+use rusqlite::{types::ValueRef, Connection, Row};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::cli::types::ImportAction;
+
+mod acknowledgement;
+mod backup_snapshot;
+#[cfg(test)]
+mod review_tests;
 
 pub(in crate::cli) fn run_import(
     action: Option<ImportAction>,
@@ -79,16 +84,7 @@ fn import_memories_into_runtime(
             source_path.display()
         ));
     }
-
-    let mut source = Connection::open_with_flags(source_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .with_context(|| format!("open source {}", source_path.display()))?;
-    let has_cipher_key = crate::db::apply_cipher_key_if_available(&source)
-        .with_context(|| format!("unlock source {}", source_path.display()))?;
-    if has_cipher_key && !crate::db::can_read_schema(&source) {
-        drop(source);
-        source = Connection::open_with_flags(source_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .with_context(|| format!("reopen unencrypted source {}", source_path.display()))?;
-    }
+    let (source, source_sha256) = backup_snapshot::open_consistent_snapshot(source_path)?;
 
     let columns = table_columns(&source, "memories")?;
     let session_expr = optional_column_or_literal(&columns, "session_id", "NULL");
@@ -97,10 +93,17 @@ fn import_memories_into_runtime(
     let scope_expr = optional_column_or_literal(&columns, "scope", "'project'");
     let status_expr = optional_column_or_literal(&columns, "status", "'active'");
     let reference_time_expr = optional_column_or_literal(&columns, "reference_time_epoch", "NULL");
+    let acknowledged_pattern_expr =
+        optional_column_or_literal(&columns, "acknowledged_pattern_id", "NULL");
+    let acknowledged_version_expr =
+        optional_column_or_literal(&columns, "acknowledged_pattern_version", "NULL");
+    let acknowledged_at_expr =
+        optional_column_or_literal(&columns, "acknowledged_at_epoch", "NULL");
     let query = format!(
         "SELECT id, {session_expr}, project, topic_key, title, content, memory_type, {files_expr},
                 created_at_epoch, updated_at_epoch, {status_expr}, {branch_expr}, {scope_expr},
-                {reference_time_expr}
+                {reference_time_expr}, {acknowledged_pattern_expr},
+                {acknowledged_version_expr}, {acknowledged_at_expr}
          FROM memories"
     );
     let mut stmt = source.prepare(&query)?;
@@ -126,6 +129,11 @@ fn import_memories_into_runtime(
             .get::<_, Option<String>>(12)?
             .unwrap_or_else(|| "project".to_string());
         let reference_time = row.get::<_, Option<i64>>(13)?.or(Some(created_at));
+        let acknowledgement = acknowledgement::BackupAcknowledgement {
+            pattern_id: row.get(14)?,
+            pattern_version: row.get(15)?,
+            acknowledged_at_epoch: row.get(16)?,
+        };
         let topic_key = topic_key.unwrap_or_else(|| format!("imported-{source_id}"));
 
         if title.is_empty() && content.is_empty() {
@@ -139,12 +147,14 @@ fn import_memories_into_runtime(
             stats.memories_skipped += 1;
             continue;
         }
-        if runtime_memory_exists(conn, &project, &topic_key, &scope)? {
+        if runtime_memory_exists(conn, &project, &topic_key, &scope, branch.as_deref())? {
             stats.memories_skipped += 1;
             continue;
         }
         let result = insert_imported_memory(
             conn,
+            source_id,
+            &source_sha256,
             session_id,
             &project,
             &topic_key,
@@ -158,6 +168,7 @@ fn import_memories_into_runtime(
             &status,
             branch,
             &scope,
+            acknowledgement,
         );
         match result {
             Ok(_memory_id) => {
@@ -247,12 +258,34 @@ fn runtime_memory_exists(
     project: &str,
     topic_key: &str,
     scope: &str,
+    branch: Option<&str>,
 ) -> Result<bool> {
+    let owner_scope = if scope == "global" { "user" } else { "repo" };
+    let owner_key = if scope == "global" {
+        "user:default"
+    } else {
+        project
+    };
+    let target_project = (scope != "global").then_some(project);
     let result = conn.query_row(
         "SELECT id FROM memories
-         WHERE project = ?1 AND topic_key = ?2 AND scope = ?3
+         WHERE project = ?1 AND topic_key = ?2 AND COALESCE(scope, 'project') = ?3
+           AND branch IS ?4
+           AND COALESCE(owner_scope,
+               CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END) = ?5
+           AND COALESCE(owner_key,
+               CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user:default' ELSE project END) = ?6
+           AND target_project IS ?7
          LIMIT 1",
-        rusqlite::params![project, topic_key, scope],
+        rusqlite::params![
+            project,
+            topic_key,
+            scope,
+            branch,
+            owner_scope,
+            owner_key,
+            target_project
+        ],
         |row| row.get::<_, i64>(0),
     );
     match result {
@@ -264,6 +297,138 @@ fn runtime_memory_exists(
 
 #[allow(clippy::too_many_arguments)]
 fn insert_imported_memory(
+    conn: &Connection,
+    source_id: i64,
+    source_sha256: &str,
+    session_id: Option<String>,
+    project: &str,
+    topic_key: &str,
+    title: &str,
+    content: &str,
+    memory_type: &str,
+    files: Option<String>,
+    created_at: i64,
+    updated_at: i64,
+    reference_time_epoch: i64,
+    status: &str,
+    branch: Option<String>,
+    scope: &str,
+    acknowledgement: acknowledgement::BackupAcknowledgement,
+) -> Result<i64> {
+    acknowledgement.validate_metadata()?;
+    if status != "active" {
+        return insert_imported_memory_row(
+            conn,
+            session_id,
+            project,
+            topic_key,
+            title,
+            content,
+            memory_type,
+            files,
+            created_at,
+            updated_at,
+            reference_time_epoch,
+            status,
+            branch,
+            scope,
+            &acknowledgement,
+        );
+    }
+    let exact_recovery = acknowledgement.validate_for_payload(title, content)?;
+    let payload_sha256 = crate::memory::activation::payload_sha256(&[
+        source_sha256,
+        &source_id.to_string(),
+        project,
+        topic_key,
+        title,
+        content,
+        memory_type,
+        files.as_deref().unwrap_or(""),
+        branch.as_deref().unwrap_or(""),
+        scope,
+        &created_at.to_string(),
+        &updated_at.to_string(),
+        &reference_time_epoch.to_string(),
+        acknowledgement.pattern_id.as_deref().unwrap_or(""),
+        &acknowledgement
+            .pattern_version
+            .unwrap_or_default()
+            .to_string(),
+        &acknowledgement
+            .acknowledged_at_epoch
+            .unwrap_or_default()
+            .to_string(),
+    ]);
+    let request = crate::memory::activation::ActiveMemoryWriteRequest {
+        activation_id: crate::memory::activation::activation_id_from_key(
+            "backup-import",
+            &format!("v1:{source_sha256}:{source_id}"),
+        ),
+        route_kind: if exact_recovery {
+            crate::memory::activation::ActivationRouteKind::ExactRecovery
+        } else {
+            crate::memory::activation::ActivationRouteKind::BackupImport
+        },
+        actor_kind: crate::memory::activation::ActivationActorKind::Operator,
+        source_operation: "backup_import".to_string(),
+        source_trust: crate::memory::poisoning::SourceTrustClass::ExternalContent,
+        result_source_trust: crate::memory::poisoning::SourceTrustClass::ExternalContent,
+        source_project: project.to_string(),
+        route: crate::memory::activation::ActiveMemoryRoute::default_for(
+            project,
+            branch.as_deref(),
+            scope,
+        ),
+        provenance_kind: if exact_recovery {
+            crate::memory::activation::ActivationProvenanceKind::ExactRecovery
+        } else {
+            crate::memory::activation::ActivationProvenanceKind::Backup
+        },
+        provenance_ref: format!(
+            "backup-plan:v1:source:{source_sha256}:row:{source_id}:payload:{payload_sha256}"
+        ),
+        payload_sha256,
+        expected_memory: crate::memory::activation::ExpectedActiveMemory::new(
+            title,
+            content,
+            memory_type,
+        )
+        .with_topic_key(Some(topic_key))
+        .with_files(files.as_deref()),
+        poisoning_verdict: if exact_recovery {
+            crate::memory::activation::ActivationPoisoningVerdict::ExactRecovery
+        } else {
+            crate::memory::activation::ActivationPoisoningVerdict::Clean
+        },
+        superseded_ids: Vec::new(),
+    };
+    Ok(
+        crate::memory::activation::execute_one(conn, &request, |_permit| {
+            insert_imported_memory_row(
+                conn,
+                session_id,
+                project,
+                topic_key,
+                title,
+                content,
+                memory_type,
+                files,
+                created_at,
+                updated_at,
+                reference_time_epoch,
+                status,
+                branch,
+                scope,
+                &acknowledgement,
+            )
+        })?
+        .memory_id,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_imported_memory_row(
     conn: &Connection,
     session_id: Option<String>,
     project: &str,
@@ -278,6 +443,7 @@ fn insert_imported_memory(
     status: &str,
     branch: Option<String>,
     scope: &str,
+    acknowledgement: &acknowledgement::BackupAcknowledgement,
 ) -> Result<i64> {
     conn.execute_batch("SAVEPOINT remem_import_memory")?;
     let result = (|| -> Result<i64> {
@@ -290,8 +456,14 @@ fn insert_imported_memory(
         conn.execute(
             "INSERT INTO memories
              (session_id, project, topic_key, title, content, memory_type, files, search_context,
-              created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+              created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope,
+              source_project, target_project, owner_scope, owner_key, source_trust_class,
+              acknowledged_pattern_id, acknowledged_pattern_version, acknowledged_at_epoch)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                     ?2, CASE WHEN ?14 = 'global' THEN NULL ELSE ?2 END,
+                     CASE WHEN ?14 = 'global' THEN 'user' ELSE 'repo' END,
+                     CASE WHEN ?14 = 'global' THEN 'user:default' ELSE ?2 END,
+                     'external_content', ?15, ?16, ?17)",
             rusqlite::params![
                 session_id,
                 project,
@@ -306,7 +478,10 @@ fn insert_imported_memory(
                 reference_time_epoch,
                 status,
                 branch,
-                scope
+                scope,
+                acknowledgement.pattern_id,
+                acknowledgement.pattern_version,
+                acknowledgement.acknowledged_at_epoch
             ],
         )?;
         let memory_id = conn.last_insert_rowid();

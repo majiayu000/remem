@@ -495,8 +495,13 @@ Remem is meant for the parts that should not depend on manual upkeep:
   ./remem-memory --project "$PWD"` writes one `.md` file per curated memory to
   an empty directory. After editing those files, `remem import markdown --source
   ./remem-memory` updates existing rows and rebuilds search, entity, embedding,
-  and current-state indexes. Export refuses non-empty directories to avoid
-  overwriting manual edits.
+  and current-state indexes. Active imports are instruction-scanned and
+  transactional, and cannot move an existing memory across project, branch,
+  scope, or owner boundaries. Imported files retain `repo_file` trust rather
+  than being promoted to `user_prompt` merely because a CLI process read them;
+  they stay searchable but do not become CurrentTruth without separately bound
+  review evidence. Export refuses non-empty directories to avoid overwriting
+  manual edits.
 - **A git-diffable project memory pack**: maintainers can run
   `remem export --project "$PWD" --pack .remem-pack` and commit the generated
   `pack.json`, `memories.jsonl`, and `INDEX.md` files for active repo-owned
@@ -1438,7 +1443,7 @@ frequently than the returned `cache.ttl_secs`; use
 | `/api/v1/memory?id=&include_suppressed=` | GET | Get one memory |
 | `/api/v1/memories?project=&type=&scope=&status=&branch=&q=&limit=&offset=&include_suppressed=` | GET | Canonical memory browse endpoint |
 | `/api/v1/memories/{id}?include_suppressed=` | GET | Rich memory detail with entities and edges |
-| `/api/v1/memories` | POST | Save memory |
+| `/api/v1/memories` | POST | Save agent-authored memory; exact idempotent replay preserves the original claim outcome, while instruction-pattern acknowledgement remains on reviewed candidate-governance endpoints |
 | `/api/v1/user/recall` | POST | Task-aware user-context recall with source and drop reasons |
 
 ### Web read-model endpoints

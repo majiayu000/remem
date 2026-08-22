@@ -162,6 +162,7 @@ pub(super) struct HealthResponse {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct SaveMemoryRequest {
     pub text: String,
     #[serde(default)]
@@ -195,7 +196,7 @@ pub(super) struct SaveMemoryRequest {
     #[serde(default)]
     pub claim_source: Option<String>,
     #[serde(default)]
-    pub acknowledge_pattern: Option<String>,
+    pub idempotency_key: Option<String>,
 }
 
 #[derive(Deserialize)]

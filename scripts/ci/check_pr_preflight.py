@@ -113,6 +113,14 @@ def fast_steps(base: str, head: str) -> list[tuple[str, list[str]]]:
         ("Check public benchmark claims", ["python3", "scripts/ci/check_public_claims.py"]),
         ("Check source file size guard", ["python3", "scripts/ci/check_file_size.py"]),
         (
+            "Check active-memory write boundary",
+            ["python3", "scripts/ci/check_active_memory_writes.py"],
+        ),
+        (
+            "Self-test active-memory write boundary",
+            ["python3", "scripts/ci/check_active_memory_writes.py", "--self-test"],
+        ),
+        (
             "Check migration concerns",
             ["python3", "scripts/ci/check_migration_concerns.py"],
         ),

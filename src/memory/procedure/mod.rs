@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 mod evidence;
@@ -19,6 +19,8 @@ pub(crate) use registry::{
     procedure_export_registry_exists, record_procedure_export, ProcedureExportRecordRequest,
 };
 
+#[cfg(test)]
+mod activation_tests;
 #[cfg(test)]
 mod incremental_tests;
 
@@ -147,33 +149,150 @@ fn confidence_for_verified_runs(verified_runs: usize) -> f64 {
 }
 
 pub fn promote_procedure_memory(conn: &Connection, candidate: &ProcedureCandidate) -> Result<i64> {
+    promote_procedure_memory_with_policy(conn, candidate, &ProcedurePromotionPolicy::default())
+}
+
+fn promote_procedure_memory_with_policy(
+    conn: &Connection,
+    candidate: &ProcedureCandidate,
+    policy: &ProcedurePromotionPolicy,
+) -> Result<i64> {
     let tx = conn.unchecked_transaction()?;
+    evidence::validate_promotion_candidate(&tx, candidate, policy)?;
     let files_json = (!candidate.files.is_empty())
         .then(|| serde_json::to_string(&candidate.files))
         .transpose()?;
     let source_events_json = serde_json::to_string(&candidate.source_event_ids)?;
-    let memory_id = crate::memory::insert_memory_full(
+    let existing_id = procedure_memory_id(
         &tx,
-        None,
         &candidate.project,
-        Some(&candidate.topic_key),
+        &candidate.topic_key,
+        candidate.branch.as_deref(),
+    )?;
+    let branch_present = if candidate.branch.is_some() { "1" } else { "0" };
+    let confidence_bits = candidate.confidence.to_bits().to_string();
+    let verified_at_epoch = candidate.verified_at_epoch.to_string();
+    let payload_sha256 = crate::memory::activation::payload_sha256(&[
+        &candidate.project,
+        branch_present,
+        candidate.branch.as_deref().unwrap_or(""),
+        &candidate.topic_key,
+        &candidate.title,
+        &candidate.content,
+        files_json.as_deref().unwrap_or(""),
+        &source_events_json,
+        &confidence_bits,
+        &verified_at_epoch,
+    ]);
+    let activation_id =
+        crate::memory::activation::activation_id_from_key("procedure-promotion", &payload_sha256);
+    let replay_binding = tx
+        .query_row(
+            "SELECT result_memory_id, superseded_ids_json
+             FROM memory_activation_requests WHERE activation_id = ?1",
+            [&activation_id],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?
+        .map(|(memory_id, superseded_json)| {
+            serde_json::from_str::<Vec<i64>>(&superseded_json)
+                .map(|superseded_ids| (memory_id, superseded_ids))
+                .context("invalid procedure activation superseded ids")
+        })
+        .transpose()?;
+    let binding_id = replay_binding
+        .as_ref()
+        .map(|(memory_id, _)| *memory_id)
+        .or(existing_id);
+    let retained_provenance = binding_id
+        .map(|memory_id| {
+            crate::memory::activation::ExpectedActiveMemory::from_existing(&tx, memory_id)
+        })
+        .transpose()?;
+    let result_source_trust = binding_id
+        .map(|memory_id| {
+            tx.query_row(
+                "SELECT source_trust_class FROM memories WHERE id = ?1",
+                [memory_id],
+                |row| row.get::<_, String>(0),
+            )
+        })
+        .transpose()?
+        .map(|trust| {
+            crate::memory::poisoning::SourceTrustClass::parse(&trust).ok_or_else(|| {
+                anyhow::anyhow!("existing procedure memory has invalid source trust: {trust}")
+            })
+        })
+        .transpose()?
+        .unwrap_or(crate::memory::poisoning::SourceTrustClass::LocalToolOutput);
+    let retained_candidate_id = retained_provenance
+        .as_ref()
+        .and_then(|memory| memory.source_candidate_id);
+    let expected_memory = crate::memory::activation::ExpectedActiveMemory::new(
         &candidate.title,
         &candidate.content,
         "procedure",
-        files_json.as_deref(),
-        candidate.branch.as_deref(),
-        "project",
-        Some(candidate.verified_at_epoch),
-    )?;
-    tx.execute(
-        "UPDATE memories
-         SET evidence_event_ids = ?1,
-             confidence = ?2
-         WHERE id = ?3",
-        params![source_events_json, candidate.confidence, memory_id],
-    )?;
+    )
+    .with_topic_key(Some(&candidate.topic_key))
+    .with_files(files_json.as_deref())
+    .with_candidate_evidence(Some(&source_events_json), retained_candidate_id);
+    let superseded_ids = replay_binding
+        .map(|(_, superseded_ids)| superseded_ids)
+        .unwrap_or_else(|| existing_id.into_iter().collect());
+    let request = crate::memory::activation::ActiveMemoryWriteRequest {
+        activation_id,
+        route_kind: crate::memory::activation::ActivationRouteKind::CandidatePromotion,
+        actor_kind: crate::memory::activation::ActivationActorKind::AutomaticWorker,
+        source_operation: "procedure_promotion".to_string(),
+        source_trust: crate::memory::poisoning::SourceTrustClass::LocalToolOutput,
+        result_source_trust,
+        source_project: candidate.project.clone(),
+        route: crate::memory::activation::ActiveMemoryRoute::default_for(
+            &candidate.project,
+            candidate.branch.as_deref(),
+            "project",
+        ),
+        provenance_kind: crate::memory::activation::ActivationProvenanceKind::Candidate,
+        provenance_ref: format!("verified-procedure:{payload_sha256}"),
+        payload_sha256,
+        expected_memory,
+        poisoning_verdict: crate::memory::activation::ActivationPoisoningVerdict::UpstreamValidated,
+        superseded_ids,
+    };
+    let activation = crate::memory::activation::execute_one(&tx, &request, |permit| {
+        let memory_id = crate::memory::store::insert_memory_replacement_activated(
+            &tx,
+            permit,
+            existing_id,
+            None,
+            &candidate.project,
+            Some(&candidate.topic_key),
+            &candidate.title,
+            &candidate.content,
+            "procedure",
+            files_json.as_deref(),
+            candidate.branch.as_deref(),
+            "project",
+            Some(candidate.verified_at_epoch),
+            Some(candidate.verified_at_epoch),
+        )?;
+        tx.execute(
+            "UPDATE memories
+             SET evidence_event_ids = ?1,
+                 confidence = ?2,
+                 source_candidate_id = ?3
+             WHERE id = ?4",
+            params![
+                source_events_json,
+                candidate.confidence,
+                retained_candidate_id,
+                memory_id
+            ],
+        )?;
+        Ok(memory_id)
+    })?;
     tx.commit()?;
-    Ok(memory_id)
+    Ok(activation.memory_id)
 }
 
 pub(crate) fn promote_verified_procedures_for_task(
@@ -202,8 +321,13 @@ pub(crate) fn promote_verified_procedures_for_task(
         let Some(candidate) = build_procedure_candidate(&traces, now_epoch, policy) else {
             continue;
         };
-        let existed = procedure_memory_exists(conn, &candidate.project, &candidate.topic_key)?;
-        promote_procedure_memory(conn, &candidate)?;
+        let existed = procedure_memory_exists(
+            conn,
+            &candidate.project,
+            &candidate.topic_key,
+            candidate.branch.as_deref(),
+        )?;
+        promote_procedure_memory_with_policy(conn, &candidate, policy)?;
         if !existed {
             promoted += 1;
         }
@@ -223,19 +347,39 @@ fn procedure_topic_key(trace: &ProcedureTrace) -> String {
     )
 }
 
-fn procedure_memory_exists(conn: &Connection, project: &str, topic_key: &str) -> Result<bool> {
-    let existing: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM memories
+fn procedure_memory_id(
+    conn: &Connection,
+    project: &str,
+    topic_key: &str,
+    branch: Option<&str>,
+) -> Result<Option<i64>> {
+    conn.query_row(
+        "SELECT id FROM memories
              WHERE project = ?1
                AND topic_key = ?2
                AND scope = 'project'
+               AND memory_type = 'procedure'
+               AND status = 'active'
+               AND branch IS ?3
+               AND COALESCE(owner_scope, 'repo') = 'repo'
+               AND COALESCE(owner_key, project) = ?1
+               AND COALESCE(target_project, project) = ?1
+             ORDER BY updated_at_epoch DESC, id DESC
              LIMIT 1",
-            params![project, topic_key],
-            |row| row.get(0),
-        )
-        .optional()?;
-    Ok(existing.is_some())
+        params![project, topic_key, branch],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+fn procedure_memory_exists(
+    conn: &Connection,
+    project: &str,
+    topic_key: &str,
+    branch: Option<&str>,
+) -> Result<bool> {
+    Ok(procedure_memory_id(conn, project, topic_key, branch)?.is_some())
 }
 
 fn render_procedure_content(
@@ -284,9 +428,6 @@ mod tests {
 
     #[test]
     fn repeated_verified_workflow_promotes_procedure_memory() -> Result<()> {
-        let conn = Connection::open_in_memory()?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-        crate::migrate::run_migrations(&conn)?;
         let policy = ProcedurePromotionPolicy::default();
         let candidate =
             build_procedure_candidate(&[trace(10, 1_000), trace(11, 1_100)], 1_200, &policy)
@@ -299,15 +440,6 @@ mod tests {
         assert!(candidate.topic_key.contains("branch-main"));
         assert!(candidate.topic_key.contains("command-cargo-test"));
 
-        let memory_id = promote_procedure_memory(&conn, &candidate)?;
-        let (memory_type, branch, evidence): (String, Option<String>, String) = conn.query_row(
-            "SELECT memory_type, branch, evidence_event_ids FROM memories WHERE id = ?1",
-            [memory_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )?;
-        assert_eq!(memory_type, "procedure");
-        assert_eq!(branch.as_deref(), Some("main"));
-        assert_eq!(serde_json::from_str::<Vec<i64>>(&evidence)?, vec![10, 11]);
         Ok(())
     }
 

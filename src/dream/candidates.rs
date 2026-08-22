@@ -38,6 +38,7 @@ pub(super) fn load_clusters(conn: &Connection, project: &str) -> Result<Vec<Clus
            AND {current_filter}
            AND {state_filter}
            AND {policy_filter}
+           AND m.branch IS NULL
            AND m.updated_at_epoch < ?2
            AND COALESCE(
                 m.owner_scope,
@@ -199,6 +200,7 @@ mod tests {
                  version      INTEGER NOT NULL DEFAULT 1,
                  project      TEXT,
                  status       TEXT,
+                 branch       TEXT,
                  scope        TEXT DEFAULT 'project',
                  owner_scope  TEXT,
                  owner_key    TEXT,
@@ -301,6 +303,29 @@ mod tests {
             clusters.is_empty(),
             "dream should not create repo merge clusters from global/user-owned memories"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_clusters_excludes_branch_scoped_memories() -> anyhow::Result<()> {
+        let conn = Connection::open_in_memory()?;
+        setup_memories_table(&conn);
+        for id in 1..=2 {
+            conn.execute(
+                "INSERT INTO memories
+                 (id, project, status, branch, topic_key, title, content,
+                  memory_type, updated_at_epoch)
+                 VALUES (?1, 'test-project', 'active', 'feature/branch',
+                         'branch-topic-shared', ?2, ?3, 'decision', 0)",
+                rusqlite::params![
+                    id,
+                    format!("branch title {id}"),
+                    format!("branch content {id}")
+                ],
+            )?;
+        }
+
+        assert!(load_clusters(&conn, "test-project")?.is_empty());
         Ok(())
     }
 }

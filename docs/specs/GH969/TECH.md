@@ -1,6 +1,6 @@
 # GH969 Technical Contract — Stabilization And Surface Governance
 
-Status: Current contract; implementation guard slices pending; Issue: #969
+Status: Current contract; activation boundary implemented; later guard slices pending; Issue: #969
 
 Last reconciled against `origin/main`: 2026-08-21 (`86fee409`)
 
@@ -40,11 +40,39 @@ The path intentionally keeps capture cheap but not optional. Capture does not
 create durable active memory directly. LLM output is treated as derived content
 and cannot raise the trust of its sources.
 
-Known transition debt remains: low-level `memory::store::write` helpers can
-still create an active row, and safety policy is partly enforced by callers.
-The first implementation slice after this spec must consolidate production
-activation and add a bypass guard without breaking explicit user save or
-candidate promotion.
+The first implementation slice now consolidates production activation through
+`memory::activation`, backed by the immutable
+`memory_activation_requests` ledger introduced in schema v86. Schema v87 adds
+the activation result's trust class through a forward migration that rebuilds
+the ledger, preserves receipt rowids, marks unavailable historical result trust
+as `legacy_unrecorded`, and restores the immutable-table triggers. It neither
+guesses nor attributes later state to the historical activation; a replay that
+would need an unauthenticated legacy result-trust comparison fails closed and
+must use a new activation id. v086 remains byte-stable for databases that have
+already recorded it. Route adapters
+bind trust, provenance, payload digest, exact supersede targets, and poisoning
+verdict before the active mutation runs in one savepoint. The boundary then
+compares the stored payload/evidence fields to the request, rechecks poisoning,
+and records a result digest; an inactive result cannot satisfy an idempotent
+replay. Supplemental saves also bind an immutable claim receipt (`saved` with
+the original claim id, `disabled`, or `failed` with its diagnostic) into the
+same ledger insert so retries reproduce the first durable outcome. A semantic
+no-op records the weaker incoming caller in activation evidence but never
+relabels the already-active row's trust or acknowledgement metadata. The
+activation request therefore binds incoming source trust separately from the
+expected result-row trust; route policy validates the former while the durable
+postcondition validates the latter. Replay of an older receipt remains valid
+after a later governed in-place activation only when the current row exactly
+matches the latest immutable result receipt, including identity, scope, owner,
+trust, payload digest, and poisoning evidence.
+Best-effort backup normalization uses governed `backup_import` rather
+than claiming `ExactRecovery`. Backup import hashes and reads one SQLite backup
+snapshot so WAL-visible state cannot diverge from its provenance digest; a
+complete, payload-matching acknowledgement is preserved as exact recovery,
+while partial or mismatched acknowledgement evidence fails closed. A repository-owned
+CI guard inventories reviewed raw implementations and rejects new production
+bypasses. Later slices still need the surface lifecycle and dependency-direction
+guards described below.
 
 ## Target Module Direction
 
@@ -175,7 +203,8 @@ The boundary must, in one transaction/savepoint:
 6. calculate and validate the exact supersede/no-op set;
 7. create/update the active row and derived indexes;
 8. persist source trust, provenance, operation log, and lifecycle changes;
-9. make the same `operation_id` idempotent and reject a conflicting replay.
+9. persist any route-specific response receipt in the same savepoint;
+10. make the same `operation_id` idempotent and reject a conflicting replay.
 
 An error rolls back every activation side effect. Logging an error after an
 active row was committed is not an acceptable failure mode.
@@ -184,7 +213,7 @@ active row was committed is not an acceptable failure mode.
 
 | Route | Required proof | Forbidden behavior |
 |---|---|---|
-| Supplemental save | Exact payload scan, server-constructed caller evidence, and trust derived from authenticated/bound evidence | Treating a request field or MCP/agent call as user attestation; absent verifiable evidence uses `external_content` rather than inventing user provenance |
+| Supplemental save | Exact payload scan, server-constructed caller evidence, trust derived from authenticated/bound evidence, and an immutable claim receipt for exact replay | Treating a request field or MCP/agent call as user attestation; weakening an existing row on semantic no-op; exposing human acknowledgement through an agent save schema; or fabricating a replay response when the original receipt is missing |
 | Candidate auto-promotion | Current auto-promotion decision, evidence binding, trust at or above the current policy threshold, no poison hit | Bypassing candidate policy through `insert_memory*` |
 | Candidate manual approval | Review identity/token and immutable candidate/provenance digest | Approval of a changed candidate or unbounded Dream supersede set |
 | Dream | Candidate plus exact source-memory provenance and generated-surface verdict | Direct active insert/update or superseding source rows on quarantine/failure |
@@ -196,7 +225,7 @@ active row was committed is not an acceptable failure mode.
 
 CI must inventory production call sites that can set `memories.status` to
 `active`, call raw active insert/update helpers, or execute equivalent SQL.
-After the activation service lands:
+With the activation service in place:
 
 - normal production call sites must route through it;
 - non-activating migration DDL, test-only scaffolding, and the activation
@@ -205,6 +234,8 @@ After the activation service lands:
   invoke the boundary with governed import or `ExactRecovery` provenance;
 - a new call site or raw SQL pattern fails with a user-readable error;
 - the guard has positive and negative self-tests;
+- reviewed raw sites are pinned by normalized statement/helper signature and
+  occurrence count, so an allowlisted file cannot silently gain another bypass;
 - dynamic SQL or helper renaming cannot be used to evade review; ambiguous
   matches fail for manual classification rather than passing silently.
 
@@ -344,6 +375,7 @@ After this spec is accepted, create focused implementation issues rather than
 one cross-repository PR:
 
 1. **Active-memory activation boundary and bypass guard**
+   - Status: implemented by #1040 for the v0.6.82 release line.
    - Primary scope: `src/memory/`, candidate promotion callers, direct-save
      callers, and a dedicated CI check.
    - Acceptance: every production activation route is classified; bypass

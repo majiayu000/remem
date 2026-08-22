@@ -237,7 +237,7 @@ fn load_trace_history(
     Ok(traces)
 }
 
-fn parse_procedure_trace(
+pub(super) fn parse_procedure_trace(
     event_id: i64,
     project: String,
     content: &str,

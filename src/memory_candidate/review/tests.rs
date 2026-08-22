@@ -326,6 +326,18 @@ fn review_approve_supersedes_duplicate_topic_memory() -> Result<()> {
         "project",
         None,
     )?;
+    conn.execute(
+        "INSERT INTO memories
+         (project, topic_key, title, content, memory_type, created_at_epoch,
+          updated_at_epoch, status, scope, source_project, target_project,
+          owner_scope, owner_key, source_trust_class)
+         VALUES ('/tmp/remem', 'review-dup', 'Unlinked duplicate',
+                 'Duplicate without a state-key link', 'decision', 1, 2,
+                 'active', 'project', '/tmp/remem', '/tmp/remem',
+                 'repo', '/tmp/remem', 'local_tool_output')",
+        [],
+    )?;
+    let unlinked_id = conn.last_insert_rowid();
     let id = insert_pending_candidate(&mut conn, "review-dup", "Updated memory")?;
 
     approve_candidate(&mut conn, id)?.expect("candidate should approve");
@@ -343,9 +355,15 @@ fn review_approve_supersedes_duplicate_topic_memory() -> Result<()> {
         params![old_id],
         |row| row.get(0),
     )?;
-    assert_eq!(memory_count, 2);
+    assert_eq!(memory_count, 3);
     assert_eq!(content, "Updated memory");
     assert_eq!(old_status, "stale");
+    let unlinked_status: String = conn.query_row(
+        "SELECT status FROM memories WHERE id = ?1",
+        [unlinked_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(unlinked_status, "stale");
     assert_eq!(owner_scope, "repo");
     assert_eq!(owner_key, "/tmp/remem");
     Ok(())

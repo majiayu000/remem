@@ -94,7 +94,14 @@ pub fn setup_memory_schema(conn: &Connection) -> Result<()> {
             expires_at_epoch INTEGER,
             valid_from_epoch INTEGER,
             valid_to_epoch INTEGER,
-            state_key_id INTEGER
+            state_key_id INTEGER,
+            evidence_event_ids TEXT,
+            source_candidate_id INTEGER,
+            confidence REAL,
+            source_trust_class TEXT NOT NULL DEFAULT 'local_tool_output',
+            acknowledged_pattern_id TEXT,
+            acknowledged_pattern_version INTEGER,
+            acknowledged_at_epoch INTEGER
         );
         CREATE TABLE memory_state_keys (
             id INTEGER PRIMARY KEY,
@@ -181,6 +188,12 @@ pub fn setup_memory_schema(conn: &Connection) -> Result<()> {
     // the canonical memories_au trigger used by production writers.
     conn.execute_batch(include_str!(
         "../../src/migrations/v072_memory_retrieval_enrichment.sql"
+    ))?;
+    conn.execute_batch(include_str!(
+        "../../src/migrations/v086_memory_activation_boundary.sql"
+    ))?;
+    conn.execute_batch(include_str!(
+        "../../src/migrations/v087_activation_result_trust.sql"
     ))?;
     Ok(())
 }
