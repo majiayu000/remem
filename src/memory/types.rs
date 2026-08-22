@@ -660,5 +660,9 @@ pub mod tests_helper {
             "../migrations/v086_memory_activation_boundary.sql"
         ))
         .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/v087_activation_result_trust.sql"
+        ))
+        .unwrap();
     }
 }

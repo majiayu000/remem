@@ -35,9 +35,7 @@ CREATE TABLE memory_activation_requests (
     result_source_trust_class TEXT NOT NULL CHECK (
         result_source_trust_class IN (
             'external_content', 'pack', 'local_tool_output', 'repo_file', 'user_prompt',
-            'legacy_observed_external_content', 'legacy_observed_pack',
-            'legacy_observed_local_tool_output', 'legacy_observed_repo_file',
-            'legacy_observed_user_prompt'
+            'legacy_unrecorded'
         )
     ),
     source_project TEXT NOT NULL CHECK (
@@ -125,16 +123,14 @@ INSERT INTO memory_activation_requests (
 SELECT
     receipt.rowid, receipt.activation_id, receipt.request_sha256, receipt.route_kind,
     receipt.actor_kind, receipt.source_operation, receipt.source_trust_class,
-    'legacy_observed_' || memory.source_trust_class,
-    receipt.source_project, receipt.project,
+    'legacy_unrecorded', receipt.source_project, receipt.project,
     receipt.branch_present, receipt.branch, receipt.scope, receipt.owner_scope,
     receipt.owner_key, receipt.target_project, receipt.provenance_kind,
     receipt.provenance_ref, receipt.payload_sha256, receipt.result_sha256,
     receipt.poisoning_verdict, receipt.superseded_ids_json,
     receipt.result_memory_id, receipt.claim_status, receipt.claim_id,
     receipt.claim_error, receipt.created_at_epoch
-FROM memory_activation_requests_v086 AS receipt
-JOIN memories AS memory ON memory.id = receipt.result_memory_id;
+FROM memory_activation_requests_v086 AS receipt;
 
 DROP TABLE memory_activation_requests_v086;
 

@@ -44,10 +44,11 @@ The first implementation slice now consolidates production activation through
 `memory::activation`, backed by the immutable
 `memory_activation_requests` ledger introduced in schema v86. Schema v87 adds
 the activation result's trust class through a forward migration that rebuilds
-the ledger, preserves receipt rowids, records the referenced row's
-migration-observed trust with an explicit legacy marker, and restores the
-immutable-table triggers; it does not attribute that later observation to the
-historical activation, and v086 remains byte-stable for databases that have
+the ledger, preserves receipt rowids, marks unavailable historical result trust
+as `legacy_unrecorded`, and restores the immutable-table triggers. It neither
+guesses nor attributes later state to the historical activation; a replay that
+would need an unauthenticated legacy result-trust comparison fails closed and
+must use a new activation id. v086 remains byte-stable for databases that have
 already recorded it. Route adapters
 bind trust, provenance, payload digest, exact supersede targets, and poisoning
 verdict before the active mutation runs in one savepoint. The boundary then

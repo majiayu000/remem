@@ -192,5 +192,8 @@ pub fn setup_memory_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(include_str!(
         "../../src/migrations/v086_memory_activation_boundary.sql"
     ))?;
+    conn.execute_batch(include_str!(
+        "../../src/migrations/v087_activation_result_trust.sql"
+    ))?;
     Ok(())
 }

@@ -90,7 +90,7 @@ fn v087_creates_immutable_activation_ledger_with_result_trust() -> Result<()> {
 }
 
 #[test]
-fn v087_upgrades_a_v086_database_and_backfills_result_trust() -> Result<()> {
+fn v087_upgrades_a_v086_database_without_inventing_result_trust() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
     for migration in &super::MIGRATIONS[..85] {
@@ -120,7 +120,7 @@ fn v087_upgrades_a_v086_database_and_backfills_result_trust() -> Result<()> {
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
     assert_eq!(content, "existing memory");
-    assert_eq!(result_trust, "legacy_observed_repo_file");
+    assert_eq!(result_trust, "legacy_unrecorded");
     assert_eq!(receipt_rowid_after, receipt_rowid_before);
 
     let (not_null, default_value): (i64, Option<String>) = conn.query_row(

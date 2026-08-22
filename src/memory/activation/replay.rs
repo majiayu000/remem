@@ -154,12 +154,13 @@ fn validate_latest_route(conn: &Connection, memory_id: i64, latest: &LaterReceip
     );
     let current_trust = crate::memory::poisoning::SourceTrustClass::parse(&trust)
         .context("memory activation latest result trust is invalid")?;
-    let recorded_trust = latest
-        .result_source_trust_class
-        .strip_prefix("legacy_observed_")
-        .unwrap_or(&latest.result_source_trust_class);
-    let expected_trust = crate::memory::poisoning::SourceTrustClass::parse(recorded_trust)
-        .context("memory activation latest receipt result trust is invalid")?;
+    ensure!(
+        latest.result_source_trust_class != "legacy_unrecorded",
+        "memory activation latest receipt predates authenticated result trust; replay under a new activation id"
+    );
+    let expected_trust =
+        crate::memory::poisoning::SourceTrustClass::parse(&latest.result_source_trust_class)
+            .context("memory activation latest receipt result trust is invalid")?;
     ensure!(
         current_trust == expected_trust,
         "memory activation latest result trust has drifted"
