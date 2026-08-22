@@ -104,6 +104,7 @@ fn apply_mutations_in_transaction(
         actor_kind: crate::memory::activation::ActivationActorKind::AutomaticWorker,
         source_operation: "dream_consolidation".to_string(),
         source_trust: crate::memory::poisoning::SourceTrustClass::ExternalContent,
+        result_source_trust: crate::memory::poisoning::SourceTrustClass::ExternalContent,
         source_project: project.to_string(),
         route: crate::memory::activation::ActiveMemoryRoute {
             project: project.to_string(),

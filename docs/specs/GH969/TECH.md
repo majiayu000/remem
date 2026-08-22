@@ -47,7 +47,15 @@ bind trust, provenance, payload digest, exact supersede targets, and poisoning
 verdict before the active mutation runs in one savepoint. The boundary then
 compares the stored payload/evidence fields to the request, rechecks poisoning,
 and records a result digest; an inactive result cannot satisfy an idempotent
-replay. Best-effort backup normalization uses governed `backup_import` rather
+replay. Supplemental saves also bind an immutable claim receipt (`saved` with
+the original claim id, `disabled`, or `failed` with its diagnostic) into the
+same ledger insert so retries reproduce the first durable outcome. A semantic
+no-op records the weaker incoming caller in activation evidence but never
+relabels the already-active row's trust or acknowledgement metadata. The
+activation request therefore binds incoming source trust separately from the
+expected result-row trust; route policy validates the former while the durable
+postcondition validates the latter.
+Best-effort backup normalization uses governed `backup_import` rather
 than claiming `ExactRecovery`. A repository-owned
 CI guard inventories reviewed raw implementations and rejects new production
 bypasses. Later slices still need the surface lifecycle and dependency-direction
@@ -182,7 +190,8 @@ The boundary must, in one transaction/savepoint:
 6. calculate and validate the exact supersede/no-op set;
 7. create/update the active row and derived indexes;
 8. persist source trust, provenance, operation log, and lifecycle changes;
-9. make the same `operation_id` idempotent and reject a conflicting replay.
+9. persist any route-specific response receipt in the same savepoint;
+10. make the same `operation_id` idempotent and reject a conflicting replay.
 
 An error rolls back every activation side effect. Logging an error after an
 active row was committed is not an acceptable failure mode.
@@ -191,7 +200,7 @@ active row was committed is not an acceptable failure mode.
 
 | Route | Required proof | Forbidden behavior |
 |---|---|---|
-| Supplemental save | Exact payload scan, server-constructed caller evidence, and trust derived from authenticated/bound evidence | Treating a request field or MCP/agent call as user attestation; absent verifiable evidence uses `external_content` rather than inventing user provenance |
+| Supplemental save | Exact payload scan, server-constructed caller evidence, trust derived from authenticated/bound evidence, and an immutable claim receipt for exact replay | Treating a request field or MCP/agent call as user attestation; weakening an existing row on semantic no-op; exposing human acknowledgement through an agent save schema; or fabricating a replay response when the original receipt is missing |
 | Candidate auto-promotion | Current auto-promotion decision, evidence binding, trust at or above the current policy threshold, no poison hit | Bypassing candidate policy through `insert_memory*` |
 | Candidate manual approval | Review identity/token and immutable candidate/provenance digest | Approval of a changed candidate or unbounded Dream supersede set |
 | Dream | Candidate plus exact source-memory provenance and generated-surface verdict | Direct active insert/update or superseding source rows on quarantine/failure |

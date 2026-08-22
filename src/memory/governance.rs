@@ -216,6 +216,7 @@ pub fn govern_memory_for_web_in_transaction(
             actor_kind: crate::memory::activation::ActivationActorKind::Operator,
             source_operation: "web_memory_restore".to_string(),
             source_trust,
+            result_source_trust: source_trust,
             source_project: target.source_project.clone(),
             route: crate::memory::activation::ActiveMemoryRoute {
                 project: target.project.clone(),

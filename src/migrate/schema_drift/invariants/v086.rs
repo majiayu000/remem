@@ -24,6 +24,24 @@ pub(in crate::migrate) const V086_SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
         "memory_activation_requests",
         "source_project",
     ),
+    SchemaInvariant::column(
+        86,
+        "memory_activation_boundary",
+        "memory_activation_requests",
+        "claim_status",
+    ),
+    SchemaInvariant::column(
+        86,
+        "memory_activation_boundary",
+        "memory_activation_requests",
+        "claim_id",
+    ),
+    SchemaInvariant::column(
+        86,
+        "memory_activation_boundary",
+        "memory_activation_requests",
+        "claim_error",
+    ),
     SchemaInvariant::index(
         86,
         "memory_activation_boundary",

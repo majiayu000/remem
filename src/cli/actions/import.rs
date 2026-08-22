@@ -359,6 +359,7 @@ fn insert_imported_memory(
         actor_kind: crate::memory::activation::ActivationActorKind::Operator,
         source_operation: "backup_import".to_string(),
         source_trust: crate::memory::poisoning::SourceTrustClass::ExternalContent,
+        result_source_trust: crate::memory::poisoning::SourceTrustClass::ExternalContent,
         source_project: project.to_string(),
         route: crate::memory::activation::ActiveMemoryRoute::default_for(
             project,

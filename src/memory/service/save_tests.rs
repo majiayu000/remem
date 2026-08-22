@@ -741,10 +741,12 @@ fn save_memory_claim_write_failure_is_reported_not_silent() -> anyhow::Result<()
         session_id: Some("session-claim-failure".to_string()),
         memory_type: Some("discovery".to_string()),
         local_copy_enabled: Some(false),
+        idempotency_key: Some("claim-failure-replay".to_string()),
         ..SaveMemoryRequest::default()
     };
 
     let saved = save_memory(&conn, &req)?;
+    let replay = save_memory(&conn, &req)?;
 
     assert_eq!(saved.status, "saved");
     assert_eq!(saved.claim_status, "failed");
@@ -753,6 +755,9 @@ fn save_memory_claim_write_failure_is_reported_not_silent() -> anyhow::Result<()
         .claim_error
         .as_deref()
         .is_some_and(|error| error.contains("memory_claims")));
+    assert_eq!(replay.claim_status, saved.claim_status);
+    assert_eq!(replay.claim_id, saved.claim_id);
+    assert_eq!(replay.claim_error, saved.claim_error);
     let memory_count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM memories WHERE id = ?1",
         [saved.id],

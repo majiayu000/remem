@@ -26,6 +26,49 @@ fn v086_creates_immutable_activation_ledger() -> Result<()> {
 
     let memory_id = insert_fixture_memory(&conn)?;
     insert_activation(&conn, memory_id)?;
+    conn.execute(
+        "INSERT INTO memory_activation_requests
+         (activation_id, request_sha256, route_kind, actor_kind, source_operation,
+          source_trust_class, source_project, project, branch_present, branch, scope, owner_scope,
+          owner_key, target_project, provenance_kind, provenance_ref, payload_sha256,
+          result_sha256, poisoning_verdict, superseded_ids_json, result_memory_id,
+          claim_status, claim_id, claim_error, created_at_epoch)
+         VALUES ('test:receipt', ?1, 'supplemental_save', 'agent', 'save_memory',
+                 'external_content', '/repo', '/repo', 0, NULL, 'project', 'repo',
+                 '/repo', '/repo', 'supplemental_save', 'mcp:test', ?1, ?1,
+                 'clean', '[]', ?2, 'saved', 42, NULL, 1)",
+        params!["b".repeat(64), memory_id],
+    )?;
+    assert!(conn
+        .execute(
+            "INSERT INTO memory_activation_requests
+             (activation_id, request_sha256, route_kind, actor_kind, source_operation,
+              source_trust_class, source_project, project, branch_present, branch, scope,
+              owner_scope, owner_key, provenance_kind, provenance_ref, payload_sha256,
+              result_sha256, poisoning_verdict, superseded_ids_json, result_memory_id,
+              claim_status, claim_id, claim_error, created_at_epoch)
+             VALUES ('test:invalid-receipt', ?1, 'supplemental_save', 'agent',
+                     'save_memory', 'external_content', '/repo', '/repo', 0, NULL,
+                     'project', 'repo', '/repo', 'supplemental_save', 'mcp:test',
+                     ?1, ?1, 'clean', '[]', ?2, 'saved', NULL, NULL, 1)",
+            params!["c".repeat(64), memory_id],
+        )
+        .is_err());
+    assert!(conn
+        .execute(
+            "INSERT INTO memory_activation_requests
+             (activation_id, request_sha256, route_kind, actor_kind, source_operation,
+              source_trust_class, source_project, project, branch_present, branch, scope,
+              owner_scope, owner_key, provenance_kind, provenance_ref, payload_sha256,
+              result_sha256, poisoning_verdict, superseded_ids_json, result_memory_id,
+              claim_status, claim_id, claim_error, created_at_epoch)
+             VALUES ('test:zero-claim', ?1, 'supplemental_save', 'agent',
+                     'save_memory', 'external_content', '/repo', '/repo', 0, NULL,
+                     'project', 'repo', '/repo', 'supplemental_save', 'mcp:test',
+                     ?1, ?1, 'clean', '[]', ?2, 'saved', 0, NULL, 1)",
+            params!["d".repeat(64), memory_id],
+        )
+        .is_err());
     assert!(conn
         .execute(
             "UPDATE memory_activation_requests SET source_operation = 'changed' WHERE activation_id = 'test:1'",

@@ -125,7 +125,9 @@ fn model_facing_save_is_external_content_and_records_agent_caller() -> anyhow::R
     let replay =
         save_memory_from_with_reference_time(&conn, &req, None, SaveMemoryCaller::McpAgent)?;
     assert_eq!(replay.id, saved.id);
-    assert_eq!(replay.claim_status, "unchanged");
+    assert_eq!(replay.claim_status, saved.claim_status);
+    assert_eq!(replay.claim_id, saved.claim_id);
+    assert_eq!(replay.claim_error, saved.claim_error);
     assert_eq!(
         conn.query_row("SELECT COUNT(*) FROM memory_claims", [], |row| row
             .get::<_, i64>(0))?,
@@ -139,6 +141,75 @@ fn model_facing_save_is_external_content_and_records_agent_caller() -> anyhow::R
         save_memory_from_with_reference_time(&conn, &changed, None, SaveMemoryCaller::McpAgent)
             .expect_err("behavior-changing replay must fail");
     assert!(error.to_string().contains("reused with different request"));
+    Ok(())
+}
+
+#[test]
+fn model_facing_noop_preserves_verified_memory_trust_and_visibility() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("save-agent-noop-preserves-trust");
+    let conn = db::open_db()?;
+    conn.execute(
+        "INSERT INTO memories
+         (project, topic_key, title, content, memory_type, created_at_epoch,
+          updated_at_epoch, status, scope, source_project, target_project,
+          owner_scope, owner_key, context_class, source_trust_class)
+         VALUES ('proj', 'verified-noop', 'Verified memory',
+                 'The user explicitly chose the verified workflow.', 'decision',
+                 1, 1, 'active', 'project', 'proj', 'proj', 'repo', 'proj',
+                 'startup_core', 'user_prompt')",
+        [],
+    )?;
+    let memory_id = conn.last_insert_rowid();
+    let request = SaveMemoryRequest {
+        text: "The user explicitly chose the verified workflow.".to_string(),
+        title: Some("Verified memory".to_string()),
+        project: Some("proj".to_string()),
+        topic_key: Some("verified-noop".to_string()),
+        memory_type: Some("decision".to_string()),
+        local_copy_enabled: Some(false),
+        claim_enabled: Some(false),
+        ..SaveMemoryRequest::default()
+    };
+
+    for caller in [SaveMemoryCaller::McpAgent, SaveMemoryCaller::RestAgent] {
+        let saved = save_memory_from_with_reference_time(&conn, &request, None, caller)?;
+        assert_eq!(saved.id, memory_id);
+        assert_eq!(saved.operation, "noop");
+    }
+
+    let trust: String = conn.query_row(
+        "SELECT source_trust_class FROM memories WHERE id = ?1",
+        [memory_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(trust, "user_prompt");
+    let visibility = crate::truth::classify_memory(&conn, memory_id, 2)?;
+    assert!(visibility.current_context_eligible);
+    Ok(())
+}
+
+#[test]
+fn disabled_claim_receipt_replays_exactly() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("save-disabled-claim-replay");
+    let conn = db::open_db()?;
+    let request = SaveMemoryRequest {
+        text: "Disabled claim replay keeps its original outcome.".to_string(),
+        project: Some("proj".to_string()),
+        local_copy_enabled: Some(false),
+        claim_enabled: Some(false),
+        idempotency_key: Some("disabled-claim-replay".to_string()),
+        ..SaveMemoryRequest::default()
+    };
+
+    let first =
+        save_memory_from_with_reference_time(&conn, &request, None, SaveMemoryCaller::RestAgent)?;
+    let replay =
+        save_memory_from_with_reference_time(&conn, &request, None, SaveMemoryCaller::RestAgent)?;
+
+    assert_eq!(replay.claim_status, first.claim_status);
+    assert_eq!(replay.claim_id, first.claim_id);
+    assert_eq!(replay.claim_error, first.claim_error);
+    assert_eq!(replay.claim_status, "disabled");
     Ok(())
 }
 

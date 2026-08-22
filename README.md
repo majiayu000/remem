@@ -1443,7 +1443,7 @@ frequently than the returned `cache.ttl_secs`; use
 | `/api/v1/memory?id=&include_suppressed=` | GET | Get one memory |
 | `/api/v1/memories?project=&type=&scope=&status=&branch=&q=&limit=&offset=&include_suppressed=` | GET | Canonical memory browse endpoint |
 | `/api/v1/memories/{id}?include_suppressed=` | GET | Rich memory detail with entities and edges |
-| `/api/v1/memories` | POST | Save memory |
+| `/api/v1/memories` | POST | Save agent-authored memory; exact idempotent replay preserves the original claim outcome, while instruction-pattern acknowledgement remains on reviewed candidate-governance endpoints |
 | `/api/v1/user/recall` | POST | Task-aware user-context recall with source and drop reasons |
 
 ### Web read-model endpoints

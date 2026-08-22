@@ -38,7 +38,7 @@ bounded activity statistics, and explicit exact-tuple projection in schema 84.
 | GET | `/api/v1/memory?id=&include_suppressed=` | Legacy compact single-memory endpoint. |
 | GET | `/api/v1/memories?project=&type=&scope=&status=&branch=&q=&limit=&offset=&include_suppressed=` | Canonical browse endpoint. |
 | GET | `/api/v1/memories/{id}?include_suppressed=` | Rich detail with entities and memory edges. |
-| POST | `/api/v1/memories` | Explicit durable memory save. |
+| POST | `/api/v1/memories` | Explicit durable agent memory save. Instruction-pattern acknowledgement is intentionally unavailable here; use candidate review for reviewed quarantine approval. Exact `idempotency_key` replay returns the original claim outcome. |
 | POST | `/api/v1/user/recall` | Task-aware user-context recall with source and drop reasons. |
 
 ### Web Read Model

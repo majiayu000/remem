@@ -55,6 +55,7 @@ pub(super) fn build(
         actor_kind,
         source_operation: "candidate_promotion".to_string(),
         source_trust,
+        result_source_trust: source_trust,
         source_project: source_project.to_string(),
         route: ActiveMemoryRoute {
             project: memory_project.to_string(),

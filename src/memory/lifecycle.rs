@@ -136,6 +136,7 @@ pub fn apply_update(
         actor_kind: crate::memory::activation::ActivationActorKind::RustApi,
         source_operation: "memory_lifecycle_update".to_string(),
         source_trust: crate::memory::poisoning::SourceTrustClass::LocalToolOutput,
+        result_source_trust: crate::memory::poisoning::SourceTrustClass::LocalToolOutput,
         source_project: ownership.source_project.to_string(),
         route: crate::memory::activation::ActiveMemoryRoute {
             project: project.to_string(),

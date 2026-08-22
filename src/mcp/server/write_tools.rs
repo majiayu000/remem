@@ -111,7 +111,7 @@ impl MemoryServer {
                     .clone()
                     .filter(|source| !source.trim().is_empty())
                     .or_else(|| Some("manual_save".to_string())),
-                acknowledge_pattern: params.acknowledge_pattern.clone(),
+                acknowledge_pattern: None,
                 idempotency_key: params.idempotency_key.clone(),
             };
             let saved = service::save_memory_from_with_reference_time(

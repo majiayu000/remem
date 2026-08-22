@@ -182,6 +182,7 @@ pub(super) struct SessionCommitsParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(super) struct SaveMemoryParams {
     #[schemars(description = "Memory text content")]
     pub text: String,
@@ -237,10 +238,6 @@ pub(super) struct SaveMemoryParams {
         description = "Optional claim source label. Defaults to manual_save for MCP calls."
     )]
     pub claim_source: Option<String>,
-    #[schemars(
-        description = "Explicitly acknowledge an instruction-pattern match in direct save text after human review. Must match the detected pattern id, e.g. override_previous_instructions."
-    )]
-    pub acknowledge_pattern: Option<String>,
     #[schemars(
         description = "Optional retry identity. Repeating the same key and exact request is idempotent; reusing it with changed content, route, trust, or policy fails."
     )]

@@ -194,14 +194,15 @@ mod tests {
     fn request(id: &str, content: &str) -> ActiveMemoryWriteRequest {
         ActiveMemoryWriteRequest {
             activation_id: id.to_string(),
-            route_kind: ActivationRouteKind::SupplementalSave,
-            actor_kind: ActivationActorKind::Agent,
+            route_kind: ActivationRouteKind::RustApi,
+            actor_kind: ActivationActorKind::RustApi,
             source_operation: "save_memory".to_string(),
-            source_trust: SourceTrustClass::ExternalContent,
+            source_trust: SourceTrustClass::LocalToolOutput,
+            result_source_trust: SourceTrustClass::LocalToolOutput,
             source_project: "/repo".to_string(),
             route: ActiveMemoryRoute::default_for("/repo", None, "project"),
-            provenance_kind: ActivationProvenanceKind::SupplementalSave,
-            provenance_ref: "mcp:agent".to_string(),
+            provenance_kind: ActivationProvenanceKind::RustApi,
+            provenance_ref: "rust-api:test".to_string(),
             payload_sha256: payload_sha256(&[content]),
             expected_memory: ExpectedActiveMemory::new("title", content, "discovery"),
             poisoning_verdict: ActivationPoisoningVerdict::Clean,
@@ -217,7 +218,7 @@ mod tests {
               owner_scope, owner_key, context_class, source_trust_class)
              VALUES ('/repo', 'title', ?1, 'discovery', 1, 1, 'active',
                      'project', '/repo', '/repo', 'repo', '/repo',
-                     'startup_core', 'external_content')",
+                     'startup_core', 'local_tool_output')",
             [content],
         )?;
         Ok(conn.last_insert_rowid())

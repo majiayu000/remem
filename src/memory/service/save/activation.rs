@@ -121,6 +121,7 @@ pub(super) fn build_request(
         actor_kind: caller.actor_kind(),
         source_operation: "save_memory".to_string(),
         source_trust: caller.source_trust(),
+        result_source_trust: caller.source_trust(),
         source_project: project.to_string(),
         route: ActiveMemoryRoute::default_for(project, req.branch.as_deref(), scope),
         provenance_kind: ActivationProvenanceKind::SupplementalSave,

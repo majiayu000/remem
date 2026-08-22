@@ -88,7 +88,7 @@ Allowed activation routes are:
 
 | Route | Minimum rule |
 |---|---|
-| Supplemental manual save | Preserve MCP and REST direct save for both people and agents, scan the exact payload, and persist the real caller plus evidence-derived trust. An agent call or shared API token is not user attestation; any future human attestation surface is separately reviewed. |
+| Supplemental manual save | Preserve MCP and REST direct save for both people and agents, scan the exact payload, and persist the real caller plus evidence-derived trust. An agent call or shared API token is not user attestation; any future human attestation surface is separately reviewed. A semantic no-op must not weaken the existing row's trust or acknowledgement evidence, and an idempotent replay returns the original durable claim outcome rather than synthesizing a new response. Agent-facing save schemas do not expose human acknowledgement; quarantined content uses the reviewed candidate-governance surface. |
 | Governed candidate promotion | Candidate identity, evidence, trust, route, review decision, and supersede policy are mandatory. Auto-promotion remains limited by the current candidate contracts. |
 | Generated consolidation | Never activates directly. Clean output enters the same governed promotion boundary; risky output remains quarantined and cannot supersede active rows. |
 | Import or host-native memory | Enters review candidates unless a narrower current contract proves an equivalent digest-bound governed route. The current safe-add project pack import is such a route and remains supported. |

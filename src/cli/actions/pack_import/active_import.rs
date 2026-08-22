@@ -171,6 +171,7 @@ fn insert_pack_memory(
         actor_kind: ActivationActorKind::Operator,
         source_operation: "pack_import_safe_add".to_string(),
         source_trust: PACK_TRUST_CLASS,
+        result_source_trust: PACK_TRUST_CLASS,
         source_project: target_project.to_string(),
         route: ActiveMemoryRoute {
             project: target_project.to_string(),

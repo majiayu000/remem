@@ -235,7 +235,6 @@ fn save_memory_local_copy_failures_are_invalid_request() {
         local_copy_enabled: Some(true),
         claim_enabled: None,
         claim_source: None,
-        acknowledge_pattern: None,
         idempotency_key: None,
     }));
 
@@ -278,7 +277,6 @@ fn save_memory_local_copy_failures_are_invalid_request() {
         local_copy_enabled: Some(true),
         claim_enabled: None,
         claim_source: None,
-        acknowledge_pattern: None,
         idempotency_key: None,
     }));
 
@@ -315,7 +313,6 @@ fn save_memory_response_reports_durable_feedback_shape() {
             local_copy_enabled: Some(false),
             claim_enabled: None,
             claim_source: None,
-            acknowledge_pattern: None,
             idempotency_key: None,
         }))
         .expect("save_memory should succeed");

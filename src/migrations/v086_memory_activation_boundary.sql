@@ -67,6 +67,9 @@ CREATE TABLE memory_activation_requests (
         AND json_type(superseded_ids_json) = 'array'
     ),
     result_memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE RESTRICT,
+    claim_status TEXT CHECK (claim_status IN ('saved', 'disabled', 'failed')),
+    claim_id INTEGER,
+    claim_error TEXT,
     created_at_epoch INTEGER NOT NULL,
     CHECK (
         (branch_present = 0 AND branch IS NULL)
@@ -75,6 +78,26 @@ CREATE TABLE memory_activation_requests (
     CHECK (
         (scope = 'global' AND owner_scope = 'user' AND target_project IS NULL)
         OR scope = 'project'
+    ),
+    CHECK (
+        (
+            route_kind = 'supplemental_save'
+            AND (
+                (claim_status = 'saved' AND claim_id IS NOT NULL
+                 AND claim_id > 0 AND claim_error IS NULL)
+                OR (claim_status = 'disabled' AND claim_id IS NULL AND claim_error IS NULL)
+                OR (
+                    claim_status = 'failed' AND claim_id IS NULL
+                    AND typeof(claim_error) = 'text'
+                    AND length(trim(claim_error)) > 0
+                    AND instr(claim_error, char(0)) = 0
+                )
+            )
+        )
+        OR (
+            route_kind <> 'supplemental_save'
+            AND claim_status IS NULL AND claim_id IS NULL AND claim_error IS NULL
+        )
     )
 );
 

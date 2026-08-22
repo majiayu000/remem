@@ -144,6 +144,7 @@ pub fn insert_memory_full_with_reference_time(
         actor_kind: crate::memory::activation::ActivationActorKind::RustApi,
         source_operation: "insert_memory_full_with_reference_time".to_string(),
         source_trust: crate::memory::poisoning::SourceTrustClass::LocalToolOutput,
+        result_source_trust: crate::memory::poisoning::SourceTrustClass::LocalToolOutput,
         source_project: project.to_string(),
         route: crate::memory::activation::ActiveMemoryRoute::default_for(project, branch, scope),
         provenance_kind: crate::memory::activation::ActivationProvenanceKind::RustApi,

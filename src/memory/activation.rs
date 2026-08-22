@@ -9,7 +9,9 @@ use sha2::{Digest, Sha256};
 use super::poisoning::SourceTrustClass;
 
 mod payload;
+mod receipt;
 pub(crate) use payload::ExpectedActiveMemory;
+pub(crate) use receipt::SupplementalSaveReceipt;
 
 static ACTIVATION_NONCE: AtomicU64 = AtomicU64::new(1);
 
@@ -90,6 +92,7 @@ pub(crate) struct ActiveMemoryWriteRequest {
     pub actor_kind: ActivationActorKind,
     pub source_operation: String,
     pub source_trust: SourceTrustClass,
+    pub result_source_trust: SourceTrustClass,
     pub source_project: String,
     pub route: ActiveMemoryRoute,
     pub provenance_kind: ActivationProvenanceKind,
@@ -100,10 +103,11 @@ pub(crate) struct ActiveMemoryWriteRequest {
     pub superseded_ids: Vec<i64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ActiveMemoryWriteResult {
     pub memory_id: i64,
     pub replayed: bool,
+    pub supplemental_receipt: Option<SupplementalSaveReceipt>,
 }
 
 pub(crate) struct ActiveMemoryWritePermit {
@@ -116,6 +120,7 @@ struct RequestFingerprint<'a> {
     actor_kind: ActivationActorKind,
     source_operation: &'a str,
     source_trust_class: &'static str,
+    result_source_trust_class: &'static str,
     source_project: &'a str,
     project: &'a str,
     branch_present: bool,
@@ -137,16 +142,54 @@ pub(crate) fn execute_one(
     request: &ActiveMemoryWriteRequest,
     write: impl FnOnce(&ActiveMemoryWritePermit) -> Result<i64>,
 ) -> Result<ActiveMemoryWriteResult> {
+    if request.route_kind == ActivationRouteKind::SupplementalSave {
+        bail!("supplemental_save activations must use the durable receipt path");
+    }
+    execute_one_inner(conn, request, |permit| {
+        write(permit).map(|memory_id| (memory_id, None))
+    })
+}
+
+pub(crate) fn execute_supplemental_save(
+    conn: &Connection,
+    request: &ActiveMemoryWriteRequest,
+    write: impl FnOnce(&ActiveMemoryWritePermit) -> Result<(i64, SupplementalSaveReceipt)>,
+) -> Result<ActiveMemoryWriteResult> {
+    if request.route_kind != ActivationRouteKind::SupplementalSave {
+        bail!("supplemental save receipt requires the supplemental_save route");
+    }
+    let result = execute_one_inner(conn, request, |permit| {
+        write(permit).map(|(memory_id, receipt)| (memory_id, Some(receipt)))
+    })?;
+    if result.supplemental_receipt.is_none() {
+        bail!("supplemental save activation is missing its durable claim receipt");
+    }
+    Ok(result)
+}
+
+fn execute_one_inner(
+    conn: &Connection,
+    request: &ActiveMemoryWriteRequest,
+    write: impl FnOnce(&ActiveMemoryWritePermit) -> Result<(i64, Option<SupplementalSaveReceipt>)>,
+) -> Result<ActiveMemoryWriteResult> {
     let normalized_superseded_ids = validate_request(request)?;
     let request_sha256 = request_sha256(request, &normalized_superseded_ids)?;
 
-    if let Some((stored_sha256, memory_id)) = conn
+    if let Some((stored_sha256, memory_id, claim_status, claim_id, claim_error)) = conn
         .query_row(
-            "SELECT request_sha256, result_memory_id
+            "SELECT request_sha256, result_memory_id, claim_status, claim_id, claim_error
              FROM memory_activation_requests
              WHERE activation_id = ?1",
             [&request.activation_id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            },
         )
         .optional()?
     {
@@ -158,9 +201,12 @@ pub(crate) fn execute_one(
         }
         validate_result_route(conn, memory_id, request, true)?;
         payload::validate_result_payload(conn, memory_id, request)?;
+        let supplemental_receipt =
+            SupplementalSaveReceipt::from_columns(claim_status, claim_id, claim_error)?;
         return Ok(ActiveMemoryWriteResult {
             memory_id,
             replayed: true,
+            supplemental_receipt,
         });
     }
 
@@ -169,7 +215,7 @@ pub(crate) fn execute_one(
         validate_supersede_routes(conn, request, &normalized_superseded_ids)?;
         let active_before = active_memory_snapshot(conn)?;
         let permit = ActiveMemoryWritePermit { _private: () };
-        let memory_id = write(&permit)?;
+        let (memory_id, supplemental_receipt) = write(&permit)?;
         validate_result_route(conn, memory_id, request, true)?;
         let result_sha256 = payload::validate_result_payload(conn, memory_id, request)?;
         let active_after = active_memory_snapshot(conn)?;
@@ -181,6 +227,15 @@ pub(crate) fn execute_one(
         )?;
         let superseded_json = serde_json::to_string(&normalized_superseded_ids)
             .context("serialize activation supersede set")?;
+        let claim_status = supplemental_receipt
+            .as_ref()
+            .map(SupplementalSaveReceipt::status);
+        let claim_id = supplemental_receipt
+            .as_ref()
+            .and_then(SupplementalSaveReceipt::claim_id);
+        let claim_error = supplemental_receipt
+            .as_ref()
+            .and_then(SupplementalSaveReceipt::error);
         let now = chrono::Utc::now().timestamp();
         conn.execute(
             "INSERT INTO memory_activation_requests
@@ -189,9 +244,10 @@ pub(crate) fn execute_one(
               branch, scope, owner_scope, owner_key, target_project,
               provenance_kind, provenance_ref, payload_sha256, result_sha256,
               poisoning_verdict, superseded_ids_json, result_memory_id,
-              created_at_epoch)
+              claim_status, claim_id, claim_error, created_at_epoch)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-                     ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+                     ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21,
+                     ?22, ?23, ?24, ?25)",
             params![
                 request.activation_id,
                 request_sha256,
@@ -214,12 +270,16 @@ pub(crate) fn execute_one(
                 enum_json(request.poisoning_verdict)?,
                 superseded_json,
                 memory_id,
+                claim_status,
+                claim_id,
+                claim_error,
                 now,
             ],
         )?;
         Ok(ActiveMemoryWriteResult {
             memory_id,
             replayed: false,
+            supplemental_receipt,
         })
     })();
 
@@ -330,6 +390,7 @@ fn request_sha256(request: &ActiveMemoryWriteRequest, superseded_ids: &[i64]) ->
         actor_kind: request.actor_kind,
         source_operation: &request.source_operation,
         source_trust_class: request.source_trust.as_str(),
+        result_source_trust_class: request.result_source_trust.as_str(),
         source_project: &request.source_project,
         project: &request.route.project,
         branch_present: request.route.branch.is_some(),
@@ -444,7 +505,7 @@ fn validate_result_route(
             request.route.owner_scope,
             request.route.owner_key,
             request.route.target_project,
-            request.source_trust.as_str(),
+            request.result_source_trust.as_str(),
             request.source_project,
             i64::from(require_active),
         ],
@@ -610,7 +671,10 @@ fn validate_route_policy(request: &ActiveMemoryWriteRequest) -> Result<()> {
         ActivationRouteKind::BackupImport => {
             request.actor_kind == Operator
                 && request.provenance_kind == Backup
-                && request.source_trust == SourceTrustClass::ExternalContent
+                && matches!(
+                    request.source_trust,
+                    SourceTrustClass::ExternalContent | SourceTrustClass::RepoFile
+                )
                 && request.poisoning_verdict == Clean
         }
         ScopeCleanup => {
@@ -636,140 +700,4 @@ fn validate_route_policy(request: &ActiveMemoryWriteRequest) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn request(activation_id: &str, payload: &str) -> ActiveMemoryWriteRequest {
-        ActiveMemoryWriteRequest {
-            activation_id: activation_id.to_string(),
-            route_kind: ActivationRouteKind::SupplementalSave,
-            actor_kind: ActivationActorKind::Agent,
-            source_operation: "save_memory".to_string(),
-            source_trust: SourceTrustClass::ExternalContent,
-            source_project: "/repo".to_string(),
-            route: ActiveMemoryRoute::default_for("/repo", None, "project"),
-            provenance_kind: ActivationProvenanceKind::SupplementalSave,
-            provenance_ref: "mcp:agent".to_string(),
-            payload_sha256: payload_sha256(&[payload]),
-            expected_memory: ExpectedActiveMemory::new("title", payload, "discovery"),
-            poisoning_verdict: ActivationPoisoningVerdict::Clean,
-            superseded_ids: Vec::new(),
-        }
-    }
-
-    fn insert_memory(conn: &Connection, content: &str) -> Result<i64> {
-        conn.execute(
-            "INSERT INTO memories
-             (project, title, content, memory_type, created_at_epoch,
-              updated_at_epoch, status, scope, source_project, target_project,
-              owner_scope, owner_key, context_class, source_trust_class)
-             VALUES ('/repo', 'title', ?1, 'discovery', 1, 1, 'active',
-                     'project', '/repo', '/repo', 'repo', '/repo',
-                     'startup_core', 'external_content')",
-            [content],
-        )?;
-        Ok(conn.last_insert_rowid())
-    }
-
-    #[test]
-    fn identical_activation_replays_without_running_writer() -> Result<()> {
-        let conn = Connection::open_in_memory()?;
-        crate::migrate::run_migrations(&conn)?;
-        let request = request("save:stable", "same");
-        let first = execute_one(&conn, &request, |_| insert_memory(&conn, "same"))?;
-        let replay = execute_one(&conn, &request, |_| bail!("writer must not replay"))?;
-        assert_eq!(first.memory_id, replay.memory_id);
-        assert!(!first.replayed);
-        assert!(replay.replayed);
-        assert_eq!(
-            conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row
-                .get::<_, i64>(0))?,
-            1
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn changed_payload_cannot_reuse_activation_id() -> Result<()> {
-        let conn = Connection::open_in_memory()?;
-        crate::migrate::run_migrations(&conn)?;
-        execute_one(&conn, &request("save:stable", "first"), |_| {
-            insert_memory(&conn, "first")
-        })?;
-        let err = execute_one(&conn, &request("save:stable", "changed"), |_| {
-            insert_memory(&conn, "changed")
-        })
-        .expect_err("changed payload must fail");
-        assert!(err.to_string().contains("reused with different request"));
-        Ok(())
-    }
-
-    #[test]
-    fn route_mismatch_rolls_back_memory_and_ledger() -> Result<()> {
-        let conn = Connection::open_in_memory()?;
-        crate::migrate::run_migrations(&conn)?;
-        let err = execute_one(&conn, &request("save:wrong-route", "wrong"), |_| {
-            conn.execute(
-                "INSERT INTO memories
-                 (project, title, content, memory_type, created_at_epoch,
-                  updated_at_epoch, status, scope, source_project, target_project,
-                  owner_scope, owner_key, context_class, source_trust_class)
-                 VALUES ('/other', 'title', 'wrong', 'discovery', 1, 1,
-                         'active', 'project', '/other', '/other', 'repo',
-                         '/other', 'startup_core', 'external_content')",
-                [],
-            )?;
-            Ok(conn.last_insert_rowid())
-        })
-        .expect_err("wrong route must fail");
-        assert!(err.to_string().contains("postcondition"));
-        assert_eq!(
-            conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row
-                .get::<_, i64>(0))?,
-            0
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn malformed_route_and_agent_trust_fail_before_writer() -> Result<()> {
-        let conn = Connection::open_in_memory()?;
-        crate::migrate::run_migrations(&conn)?;
-        let mut invalid = request("save:invalid", "invalid");
-        invalid.route.branch = Some("  ".to_string());
-        invalid.source_trust = SourceTrustClass::UserPrompt;
-        let error = execute_one(&conn, &invalid, |_| bail!("writer must not run"))
-            .expect_err("malformed route/trust must fail");
-        assert!(error.to_string().contains("branch must"));
-        Ok(())
-    }
-
-    #[test]
-    fn undeclared_supersede_rolls_back_the_entire_activation() -> Result<()> {
-        let conn = Connection::open_in_memory()?;
-        crate::migrate::run_migrations(&conn)?;
-        let first = insert_memory(&conn, "first")?;
-        let second = insert_memory(&conn, "second")?;
-        let mut activation = request("save:delta", "replacement");
-        activation.superseded_ids = vec![first];
-        let error = execute_one(&conn, &activation, |_| {
-            let replacement = insert_memory(&conn, "replacement")?;
-            conn.execute(
-                "UPDATE memories SET status = 'stale' WHERE id IN (?1, ?2)",
-                params![first, second],
-            )?;
-            Ok(replacement)
-        })
-        .expect_err("undeclared supersede must fail");
-        assert!(error.to_string().contains("active-set removal drift"));
-        assert_eq!(
-            conn.query_row(
-                "SELECT COUNT(*) FROM memories WHERE status = 'active'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )?,
-            2
-        );
-        Ok(())
-    }
-}
+mod tests;

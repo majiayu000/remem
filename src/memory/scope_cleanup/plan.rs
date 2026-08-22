@@ -207,6 +207,7 @@ pub fn apply_memory_cleanup_plan(
             actor_kind: crate::memory::activation::ActivationActorKind::Operator,
             source_operation: "memory_cleanup".to_string(),
             source_trust,
+            result_source_trust: source_trust,
             source_project,
             route: crate::memory::activation::ActiveMemoryRoute {
                 project: current_snapshot.project.clone(),

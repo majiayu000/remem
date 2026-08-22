@@ -349,6 +349,7 @@ fn restore_backfill_memory(
         actor_kind: crate::memory::activation::ActivationActorKind::Operator,
         source_operation: "dream_backfill_restore".to_string(),
         source_trust: SourceTrustClass::ExternalContent,
+        result_source_trust: SourceTrustClass::ExternalContent,
         source_project: project.clone(),
         route: crate::memory::activation::ActiveMemoryRoute {
             project: project.clone(),

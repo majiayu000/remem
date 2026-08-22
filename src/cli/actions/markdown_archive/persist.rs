@@ -106,10 +106,11 @@ fn markdown_activation_request(
             operation,
             &payload_sha256,
         ),
-        route_kind: crate::memory::activation::ActivationRouteKind::SupplementalSave,
+        route_kind: crate::memory::activation::ActivationRouteKind::BackupImport,
         actor_kind: crate::memory::activation::ActivationActorKind::Operator,
         source_operation: operation.to_string(),
         source_trust: crate::memory::poisoning::SourceTrustClass::RepoFile,
+        result_source_trust: crate::memory::poisoning::SourceTrustClass::RepoFile,
         source_project: ownership.source_project.to_string(),
         route: crate::memory::activation::ActiveMemoryRoute {
             project: doc.metadata.project.clone(),
@@ -119,7 +120,7 @@ fn markdown_activation_request(
             owner_key: ownership.owner_key.to_string(),
             target_project: ownership.target_project.map(str::to_string),
         },
-        provenance_kind: crate::memory::activation::ActivationProvenanceKind::SupplementalSave,
+        provenance_kind: crate::memory::activation::ActivationProvenanceKind::Backup,
         provenance_ref: format!(
             "operator:markdown:{identity}:source-hash:{}",
             doc.metadata
