@@ -18,49 +18,9 @@ use crate::memory::poisoning::{
 use crate::memory::{MemoryType, MEMORY_TYPES};
 
 mod activation;
+mod errors;
 pub use activation::SaveMemoryCaller;
-
-#[derive(Debug)]
-pub struct LocalCopyError {
-    message: String,
-}
-
-impl From<anyhow::Error> for LocalCopyError {
-    fn from(err: anyhow::Error) -> Self {
-        Self {
-            message: err.to_string(),
-        }
-    }
-}
-
-impl std::fmt::Display for LocalCopyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for LocalCopyError {}
-
-#[derive(Debug)]
-pub struct SaveMemoryValidationError {
-    message: String,
-}
-
-impl SaveMemoryValidationError {
-    pub(crate) fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
-    }
-}
-
-impl std::fmt::Display for SaveMemoryValidationError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for SaveMemoryValidationError {}
+pub use errors::{LocalCopyError, SaveMemoryIdempotencyConflictError, SaveMemoryValidationError};
 
 pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMemoryResult> {
     save_memory_from_with_reference_time(conn, req, req.created_at_epoch, SaveMemoryCaller::RustApi)
@@ -326,6 +286,12 @@ fn save_memory_inner(
     let activation = match save_result {
         Ok(result) => result,
         Err(err) => {
+            let err: anyhow::Error =
+                if err.is::<crate::memory::activation::ActivationIdConflictError>() {
+                    SaveMemoryIdempotencyConflictError::new(err.to_string()).into()
+                } else {
+                    err
+                };
             if let Err(cleanup_err) = cleanup_local_copy(&local_copy) {
                 return Err(err.context(format!(
                     "database save failed and local copy cleanup failed: {cleanup_err}"

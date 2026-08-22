@@ -273,6 +273,7 @@ fn promote_procedure_memory_with_policy(
             files_json.as_deref(),
             candidate.branch.as_deref(),
             "project",
+            result_source_trust,
             Some(candidate.verified_at_epoch),
             Some(candidate.verified_at_epoch),
         )?;

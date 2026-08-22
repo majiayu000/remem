@@ -111,6 +111,23 @@ pub(crate) struct ActiveMemoryWriteResult {
     pub supplemental_receipt: Option<SupplementalSaveReceipt>,
 }
 
+#[derive(Debug)]
+pub(crate) struct ActivationIdConflictError {
+    activation_id: String,
+}
+
+impl std::fmt::Display for ActivationIdConflictError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "memory activation id reused with different request: {}",
+            self.activation_id
+        )
+    }
+}
+
+impl std::error::Error for ActivationIdConflictError {}
+
 pub(crate) struct ActiveMemoryWritePermit {
     _private: (),
 }
@@ -198,10 +215,10 @@ fn execute_one_inner(
                 false
             };
             if !matches_legacy_request {
-                bail!(
-                    "memory activation id reused with different request: {}",
-                    request.activation_id
-                );
+                return Err(ActivationIdConflictError {
+                    activation_id: request.activation_id.clone(),
+                }
+                .into());
             }
         }
         replay::validate_replayed_result(

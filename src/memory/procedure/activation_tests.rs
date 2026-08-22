@@ -119,7 +119,7 @@ fn procedure_promotion_binds_verified_evidence_before_activation_receipt() -> Re
           source_project, target_project, owner_scope, owner_key, context_class,
           source_trust_class, source_candidate_id)
          VALUES (?1, ?2, ?3, ?4, 'procedure', ?5, 1, 1, 1, 'active', 'main', 'project',
-                 ?1, ?1, 'repo', ?1, 'startup_core', 'local_tool_output', 901)",
+                 ?1, ?1, 'repo', ?1, 'startup_core', 'external_content', 901)",
         params![
             candidate.project,
             candidate.topic_key,
@@ -155,6 +155,12 @@ fn procedure_promotion_binds_verified_evidence_before_activation_receipt() -> Re
         candidate.source_event_ids
     );
     assert_eq!(result_sha256, actual.sha256());
+    let retained_trust: String = conn.query_row(
+        "SELECT source_trust_class FROM memories WHERE id = ?1",
+        [memory_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(retained_trust, "external_content");
 
     let replacement_id = promote_procedure_memory(&conn, &expanded)?;
     assert_ne!(replacement_id, memory_id);
@@ -184,6 +190,12 @@ fn procedure_promotion_binds_verified_evidence_before_activation_receipt() -> Re
         assert_eq!(stored_sha, row.sha256());
     }
     assert_eq!(promote_procedure_memory(&conn, &candidate)?, memory_id);
+    let replacement_trust: String = conn.query_row(
+        "SELECT source_trust_class FROM memories WHERE id = ?1",
+        [replacement_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(replacement_trust, "external_content");
     Ok(())
 }
 

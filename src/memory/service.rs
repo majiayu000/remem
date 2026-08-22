@@ -16,7 +16,8 @@ pub use local_copy::{resolve_local_note_path, sanitize_segment};
 pub(crate) use save::save_memory_for_benchmark_fixture;
 pub use save::{
     save_memory, save_memory_from_with_reference_time, save_memory_with_reference_time,
-    LocalCopyError, SaveMemoryCaller, SaveMemoryValidationError,
+    LocalCopyError, SaveMemoryCaller, SaveMemoryIdempotencyConflictError,
+    SaveMemoryValidationError,
 };
 pub use search::search_memories;
 pub(crate) use search::{

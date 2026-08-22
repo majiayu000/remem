@@ -179,21 +179,33 @@ fn markdown_import_topic_fallback_prefers_active_memory() -> Result<()> {
                  60, 120, 80, 'active', 'main', 'project')",
         [project],
     )?;
+    target.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files, search_context,
+          created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope)
+         VALUES (3, 'other-branch-session', ?1, 'shared-topic', 'Other branch decision',
+                 'Other branch content must not be overwritten.',
+                 'decision', NULL, 'other branch search context',
+                 70, 300, 90, 'active', 'dev', 'project')",
+        [project],
+    )?;
 
     let stats = import_markdown_archive(&target, &export_dir, false)?;
     assert_eq!(stats.imported, 0);
     assert_eq!(stats.updated, 1);
-    let rows: (String, String, String) = target.query_row(
-        "SELECT stale.content, active.content, active.session_id
+    let rows: (String, String, String, String) = target.query_row(
+        "SELECT stale.content, active.content, active.session_id, other_branch.content
          FROM memories stale
          JOIN memories active ON active.id = 2
+         JOIN memories other_branch ON other_branch.id = 3
          WHERE stale.id = 1",
         [],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     )?;
     assert_eq!(rows.0, "Stale content should stay stale.");
     assert_eq!(rows.1, "Imported content should update the active row.");
     assert_eq!(rows.2, "active-session");
+    assert_eq!(rows.3, "Other branch content must not be overwritten.");
 
     std::fs::remove_dir_all(&export_dir)
         .with_context(|| format!("remove {}", export_dir.display()))?;

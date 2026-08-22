@@ -80,7 +80,7 @@ EXPECTED_ALLOWED_FINDINGS = {
         "memory_insert:91495e4782c3bb3f": 1,
         "raw_active_helper_call:61be54b164a77baa": 2,
     },
-    "src/memory/store/write/activation.rs": {"memory_insert:91495e4782c3bb3f": 1},
+    "src/memory/store/write/activation.rs": {"memory_insert:901ea26ce30face5": 1},
     "src/memory_candidate/apply/write.rs": {"memory_insert:f55659946a93087e": 1},
     "src/memory_candidate/review/approval.rs": {"active_status_update:61bbe5295f20e99c": 1},
     "src/worker/tests/rule_compilation.rs": {"memory_insert:d3403c9d24c34a46": 1},

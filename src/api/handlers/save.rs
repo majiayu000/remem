@@ -89,6 +89,9 @@ fn map_save_memory_error(err: anyhow::Error) -> impl IntoResponse {
     if err.is::<service::LocalCopyError>() {
         return error_response(StatusCode::BAD_REQUEST, "save_local_copy_failed", &msg);
     }
+    if err.is::<service::SaveMemoryIdempotencyConflictError>() {
+        return error_response(StatusCode::CONFLICT, "idempotency_conflict", &msg);
+    }
     error_response(StatusCode::INTERNAL_SERVER_ERROR, "save_failed", &msg)
 }
 
@@ -152,5 +155,40 @@ mod tests {
             };
             assert_eq!(payload["error"]["code"], "save_validation_failed");
         }
+    }
+
+    #[tokio::test]
+    async fn changed_idempotent_save_returns_conflict() {
+        let _dir = ScopedTestDataDir::new("api-save-idempotency-conflict");
+        let mut first = request_with_invalid_shape(Some("decision"), Some("project"));
+        first.text = "Original durable decision.".to_string();
+        first.title = Some("Durable decision".to_string());
+        first.topic_key = Some("api-idempotency-conflict".to_string());
+        first.idempotency_key = Some("api-save-conflict-key".to_string());
+        first.claim_enabled = Some(false);
+        let first_response = handle_save_memory(State(DbState), Json(first))
+            .await
+            .into_response();
+        assert_eq!(first_response.status(), StatusCode::CREATED);
+
+        let mut changed = request_with_invalid_shape(Some("decision"), Some("project"));
+        changed.text = "Changed durable decision.".to_string();
+        changed.title = Some("Durable decision".to_string());
+        changed.topic_key = Some("api-idempotency-conflict".to_string());
+        changed.idempotency_key = Some("api-save-conflict-key".to_string());
+        changed.claim_enabled = Some(false);
+        let response = handle_save_memory(State(DbState), Json(changed))
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = match to_bytes(response.into_body(), usize::MAX).await {
+            Ok(body) => body,
+            Err(error) => panic!("response body should read: {error}"),
+        };
+        let payload: Value = match serde_json::from_slice(&body) {
+            Ok(payload) => payload,
+            Err(error) => panic!("save response should be valid json: {error}"),
+        };
+        assert_eq!(payload["error"]["code"], "idempotency_conflict");
     }
 }

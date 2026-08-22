@@ -21,7 +21,13 @@ pub(super) fn matches_active_route(
                AND COALESCE(owner_key,
                    CASE WHEN COALESCE(scope, 'project') = 'global'
                         THEN 'user:default' ELSE project END) = ?5
-               AND target_project IS ?6
+               AND CASE
+                   WHEN COALESCE(owner_scope,
+                       CASE WHEN COALESCE(scope, 'project') = 'global'
+                            THEN 'user' ELSE 'repo' END) = 'repo'
+                   THEN COALESCE(target_project, project)
+                   ELSE target_project
+               END IS ?6
          )",
         params![
             memory_id,
@@ -74,6 +80,7 @@ mod tests {
                 params![project, branch],
             )?;
         }
+        conn.execute("UPDATE memories SET target_project = NULL WHERE id = 1", [])?;
         let route = CandidateRoute {
             owner_scope: "repo".to_string(),
             owner_key: "/repo".to_string(),

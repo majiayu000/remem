@@ -603,7 +603,13 @@ fn find_active_same_topic(
                 owner_key,
                 CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user:default' ELSE project END
            ) = ?6
-           AND target_project IS ?7
+           AND CASE
+               WHEN COALESCE(owner_scope,
+                   CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END
+               ) = 'repo'
+               THEN COALESCE(target_project, project)
+               ELSE target_project
+           END IS ?7
          ORDER BY updated_at_epoch DESC, id DESC",
     )?;
     let rows = stmt.query_map(

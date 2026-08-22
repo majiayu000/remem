@@ -90,8 +90,9 @@ pub(super) fn runtime_memory_id(
            AND topic_key = ?2
            AND COALESCE(scope, 'project') = ?3
            AND memory_type = ?4
-           AND COALESCE(owner_scope, ?5) = ?5
-           AND COALESCE(owner_key, ?6) = ?6
+           AND branch IS ?5
+           AND COALESCE(owner_scope, ?6) = ?6
+           AND COALESCE(owner_key, ?7) = ?7
          ORDER BY CASE status
              WHEN 'active' THEN 0
              WHEN 'stale' THEN 1
@@ -106,6 +107,7 @@ pub(super) fn runtime_memory_id(
             topic_key,
             doc.metadata.scope,
             doc.metadata.memory_type,
+            doc.metadata.branch,
             ownership.owner_scope,
             ownership.owner_key,
         ],
@@ -130,8 +132,9 @@ fn runtime_global_memory_id(
            AND topic_key = ?2
            AND COALESCE(scope, 'project') = 'global'
            AND memory_type = ?3
-           AND COALESCE(owner_scope, ?4) = ?4
-           AND COALESCE(owner_key, ?5) = ?5
+           AND branch IS ?4
+           AND COALESCE(owner_scope, ?5) = ?5
+           AND COALESCE(owner_key, ?6) = ?6
          ORDER BY CASE status
              WHEN 'active' THEN 0
              WHEN 'stale' THEN 1
@@ -145,6 +148,7 @@ fn runtime_global_memory_id(
             doc.metadata.project,
             topic_key,
             doc.metadata.memory_type,
+            doc.metadata.branch,
             ownership.owner_scope,
             ownership.owner_key,
         ],

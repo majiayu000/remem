@@ -14,6 +14,7 @@ pub(crate) fn insert_memory_replacement_activated(
     files: Option<&str>,
     branch: Option<&str>,
     scope: &str,
+    source_trust: crate::memory::poisoning::SourceTrustClass,
     created_at_override: Option<i64>,
     reference_time_override: Option<i64>,
 ) -> Result<i64> {
@@ -54,9 +55,9 @@ pub(crate) fn insert_memory_replacement_activated(
               search_context_fallback_source_hash,
               created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope,
               source_project, target_project, owner_scope, owner_key, context_class,
-              expires_at_epoch, valid_from_epoch)
+              source_trust_class, expires_at_epoch, valid_from_epoch)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'active', ?13, ?14,
-                     ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+                     ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
             params![
                 session_id,
                 project,
@@ -77,6 +78,7 @@ pub(crate) fn insert_memory_replacement_activated(
                 ownership.owner_scope,
                 ownership.owner_key,
                 ownership.context_class,
+                source_trust.as_str(),
                 expires_at_epoch,
                 valid_from_epoch
             ],

@@ -14,7 +14,7 @@ async fn memory_candidate_existing_same_topic_same_text_becomes_noop() -> Result
     let task = setup_task(&mut conn, "sess-candidate-noop")?;
     let text = "Use the worker loop to process extraction tasks after observation extraction.";
     insert_source_observation(&conn, &task, text)?;
-    crate::memory::insert_memory_full(
+    let existing_id = crate::memory::insert_memory_full(
         &conn,
         None,
         "/tmp/remem",
@@ -26,6 +26,10 @@ async fn memory_candidate_existing_same_topic_same_text_becomes_noop() -> Result
         None,
         "project",
         None,
+    )?;
+    conn.execute(
+        "UPDATE memories SET target_project = NULL WHERE id = ?1",
+        [existing_id],
     )?;
 
     let result = process_with_generator(&mut conn, &task, |_prompt| async {
