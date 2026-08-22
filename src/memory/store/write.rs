@@ -11,6 +11,9 @@ use crate::memory::{
     preference::consolidation::PreferenceConsolidationKind,
 };
 
+mod activation;
+pub(crate) use activation::insert_memory_replacement_activated;
+
 pub fn insert_memory(
     conn: &Connection,
     session_id: Option<&str>,

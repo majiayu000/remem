@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # ordinary caller must construct ActiveMemoryWriteRequest and call execute_one.
 ALLOWED_PRODUCTION_FILES = {
     "src/memory/store/write.rs": "permit-gated canonical row writer",
+    "src/memory/store/write/activation.rs": "permit-gated immutable replacement writer",
     "src/memory_candidate/apply/write.rs": "candidate promotion writer called inside execute_one",
     "src/cli/actions/pack_import/active_import.rs": "governed pack safe-add closure",
     "src/memory/scope_cleanup/plan.rs": "validated cleanup-plan activation closure",
@@ -27,6 +28,7 @@ ALLOWED_PRODUCTION_FILES = {
     "src/memory/lifecycle.rs": "Rust lifecycle replacement activation closure",
     "src/dream/apply.rs": "Dream consolidation calls the permit-gated canonical writer",
     "src/memory/lesson.rs": "lesson save calls the permit-gated canonical writer",
+    "src/memory/procedure/mod.rs": "verified procedure promotion calls the permit-gated canonical writer",
     "src/cli/actions/import.rs": "governed best-effort backup import closure",
     "src/cli/actions/markdown_archive/persist.rs": "operator markdown activation closure",
     "src/memory/scope_cleanup/mutate.rs": "archive-only dynamic status helper cannot receive active",
@@ -78,6 +80,7 @@ EXPECTED_ALLOWED_FINDINGS = {
         "memory_insert:91495e4782c3bb3f": 1,
         "raw_active_helper_call:61be54b164a77baa": 2,
     },
+    "src/memory/store/write/activation.rs": {"memory_insert:91495e4782c3bb3f": 1},
     "src/memory_candidate/apply/write.rs": {"memory_insert:f55659946a93087e": 1},
     "src/memory_candidate/review/approval.rs": {"active_status_update:61bbe5295f20e99c": 1},
     "src/worker/tests/rule_compilation.rs": {"memory_insert:d3403c9d24c34a46": 1},

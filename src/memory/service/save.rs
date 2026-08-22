@@ -166,12 +166,17 @@ fn save_memory_inner(
         activation_request.source_operation = "coding_bench_fixture_seed".to_string();
         activation_request.provenance_ref = "coding-bench:curated-fixture".to_string();
     }
+    activation::bind_existing_target_provenance(
+        conn,
+        &mut activation_request,
+        &operation_plan,
+        memory_type,
+        &req.text,
+    )?;
     if memory_type != "lesson" && operation_plan.op == MemoryLifecycleOp::Noop {
         let memory_id = operation_plan
             .target_memory_id
             .ok_or_else(|| anyhow!("noop memory operation missing existing memory id"))?;
-        activation_request.expected_memory =
-            crate::memory::activation::ExpectedActiveMemory::from_existing(conn, memory_id)?;
         let stored_trust: String = conn.query_row(
             "SELECT source_trust_class FROM memories WHERE id = ?1",
             [memory_id],

@@ -95,6 +95,25 @@ fn apply_mutations_in_transaction(
         &result.memory_type,
         &superseded_json,
     ]);
+    let retained_provenance = existing_target_id
+        .map(|memory_id| {
+            crate::memory::activation::ExpectedActiveMemory::from_existing(conn, memory_id)
+        })
+        .transpose()?;
+    let expected_memory = crate::memory::activation::ExpectedActiveMemory::new(
+        &result.title,
+        &result.content,
+        &result.memory_type,
+    )
+    .with_topic_key(Some(&result.topic_key))
+    .with_candidate_evidence(
+        retained_provenance
+            .as_ref()
+            .and_then(|memory| memory.evidence_event_ids.as_deref()),
+        retained_provenance
+            .as_ref()
+            .and_then(|memory| memory.source_candidate_id),
+    );
     let request = crate::memory::activation::ActiveMemoryWriteRequest {
         activation_id: crate::memory::activation::activation_id_from_key(
             "dream-consolidation",
@@ -117,12 +136,7 @@ fn apply_mutations_in_transaction(
         provenance_kind: crate::memory::activation::ActivationProvenanceKind::Generated,
         provenance_ref: format!("dream-generated:{payload_sha256}"),
         payload_sha256,
-        expected_memory: crate::memory::activation::ExpectedActiveMemory::new(
-            &result.title,
-            &result.content,
-            &result.memory_type,
-        )
-        .with_topic_key(Some(&result.topic_key)),
+        expected_memory,
         poisoning_verdict: crate::memory::activation::ActivationPoisoningVerdict::UpstreamValidated,
         superseded_ids: actual_superseded_ids.clone(),
     };
@@ -254,6 +268,7 @@ fn validate_dream_target_topic(
              WHERE project = ?1
                AND memory_type = ?2
                AND topic_key = ?3
+               AND branch IS NULL
                AND COALESCE(
                     owner_scope,
                     CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END

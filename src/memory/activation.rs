@@ -199,7 +199,8 @@ fn execute_one_inner(
                 request.activation_id
             );
         }
-        validate_result_route(conn, memory_id, request, true)?;
+        let require_active = !result_was_superseded(conn, memory_id)?;
+        validate_result_route(conn, memory_id, request, require_active)?;
         payload::validate_result_payload(conn, memory_id, request)?;
         let supplemental_receipt =
             SupplementalSaveReceipt::from_columns(claim_status, claim_id, claim_error)?;
@@ -301,6 +302,21 @@ fn execute_one_inner(
             Err(error)
         }
     }
+}
+
+fn result_was_superseded(conn: &Connection, memory_id: i64) -> Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1
+             FROM memory_activation_requests later,
+                  json_each(later.superseded_ids_json) superseded
+             WHERE superseded.value = ?1
+         )",
+        [memory_id],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|superseded| superseded == 1)
+    .map_err(Into::into)
 }
 
 pub(crate) fn payload_sha256(parts: &[&str]) -> String {

@@ -4,6 +4,9 @@ use crate::memory::activation::{
     ActiveMemoryWriteRequest,
 };
 use crate::memory::poisoning::SourceTrustClass;
+use crate::memory::{lifecycle::MemoryLifecycleOp, operation::MemoryOperationPlan};
+use anyhow::Result;
+use rusqlite::Connection;
 
 use super::super::types::SaveMemoryRequest;
 
@@ -141,4 +144,33 @@ pub(super) fn build_request(
         },
         superseded_ids: Vec::new(),
     }
+}
+
+pub(super) fn bind_existing_target_provenance(
+    conn: &Connection,
+    request: &mut ActiveMemoryWriteRequest,
+    plan: &MemoryOperationPlan,
+    memory_type: &str,
+    incoming_text: &str,
+) -> Result<()> {
+    let Some(memory_id) = plan.target_memory_id else {
+        return Ok(());
+    };
+    let existing = crate::memory::activation::ExpectedActiveMemory::from_existing(conn, memory_id)?;
+    if plan.op == MemoryLifecycleOp::Noop {
+        request.expected_memory = existing;
+        return Ok(());
+    }
+    let source_candidate_id = if memory_type == "preference"
+        && !crate::memory::preference::reinforcement::cleanup_preserves_candidate_provenance(
+            &existing.content,
+            incoming_text,
+        ) {
+        None
+    } else {
+        existing.source_candidate_id
+    };
+    request.expected_memory.evidence_event_ids = existing.evidence_event_ids;
+    request.expected_memory.source_candidate_id = source_candidate_id;
+    Ok(())
 }

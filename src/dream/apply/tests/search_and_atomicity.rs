@@ -108,3 +108,105 @@ fn apply_is_atomic_on_invalid_superseded_id() {
         .unwrap();
     assert_eq!(count, 0, "upsert must be rolled back when stale-mark fails");
 }
+
+#[test]
+fn apply_reused_topic_preserves_candidate_provenance_in_receipt() -> Result<()> {
+    let (mut conn, project) = setup();
+    conn.execute(
+        "INSERT INTO memory_candidates
+         (id, scope, memory_type, topic_key, text, evidence_event_ids,
+          confidence, risk_class, review_status, created_at_epoch, updated_at_epoch)
+         VALUES (77, 'project', 'decision', 'reused-provenance',
+                 'candidate source', '[501,502]', 0.9, 'low', 'approved', 1, 1)",
+        [],
+    )?;
+    let old_id = insert_memory(
+        &conn,
+        Some("sess-1"),
+        &project,
+        Some("reused-provenance"),
+        "Old title",
+        "Old content",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories
+         SET evidence_event_ids = '[501,502]', source_candidate_id = 77
+         WHERE id = ?1",
+        [old_id],
+    )?;
+
+    apply(
+        &mut conn,
+        &project,
+        &MergeResult {
+            topic_key: "reused-provenance".to_string(),
+            memory_type: "decision".to_string(),
+            title: "Consolidated title".to_string(),
+            content: "Consolidated content".to_string(),
+            superseded_ids: vec![old_id],
+        },
+    )?;
+
+    let (evidence, candidate_id): (String, Option<i64>) = conn.query_row(
+        "SELECT evidence_event_ids, source_candidate_id FROM memories WHERE id = ?1",
+        [old_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(evidence, "[501,502]");
+    assert_eq!(candidate_id, Some(77));
+    let stored_result_sha256: String = conn.query_row(
+        "SELECT result_sha256 FROM memory_activation_requests
+         WHERE result_memory_id = ?1 AND route_kind = 'dream_consolidation'",
+        [old_id],
+        |row| row.get(0),
+    )?;
+    let actual = crate::memory::activation::ExpectedActiveMemory::from_existing(&conn, old_id)?;
+    assert_eq!(stored_result_sha256, actual.sha256());
+    Ok(())
+}
+
+#[test]
+fn branch_scoped_topic_fails_closed_under_unscoped_dream_route() -> Result<()> {
+    let (mut conn, project) = setup();
+    let branch_id = crate::memory::insert_memory_with_branch(
+        &conn,
+        Some("sess-branch"),
+        &project,
+        Some("branch-scoped-topic"),
+        "Branch-scoped title",
+        "Branch-scoped content",
+        "decision",
+        None,
+        Some("feature/branch"),
+    )?;
+
+    let error = apply(
+        &mut conn,
+        &project,
+        &MergeResult {
+            topic_key: "branch-scoped-topic".to_string(),
+            memory_type: "decision".to_string(),
+            title: "Unscoped consolidated title".to_string(),
+            content: "Unscoped consolidated content".to_string(),
+            superseded_ids: vec![branch_id],
+        },
+    )
+    .expect_err("unscoped Dream must not supersede a branch-scoped source");
+    assert_eq!(
+        error.to_string(),
+        format!("memory activation supersede target is missing, inactive, or outside route: {branch_id}")
+    );
+    assert_eq!(status_for_id(&conn, branch_id), "active");
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM memory_activation_requests",
+            [],
+            |row| { row.get::<_, i64>(0) }
+        )?,
+        1,
+        "only the Rust API receipt that seeded the branch row should remain"
+    );
+    Ok(())
+}
