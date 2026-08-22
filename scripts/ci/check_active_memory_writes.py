@@ -47,7 +47,7 @@ ALLOWED_FIXTURE_FILES = {
 # source literals. Counts are part of the baseline so copying an allowed write
 # elsewhere in the same file still fails review.
 EXPECTED_ALLOWED_FINDINGS = {
-    "src/cli/actions/import.rs": {"memory_insert:f6fc1a365a953ad1": 1},
+    "src/cli/actions/import.rs": {"memory_insert:8c332be8a69cc638": 1},
     "src/cli/actions/markdown_archive/persist.rs": {
         "active_status_update:cefa82c27f14e112": 1,
         "memory_insert:3b2c23d4790ac4d5": 1,

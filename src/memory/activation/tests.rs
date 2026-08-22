@@ -54,6 +54,62 @@ fn identical_activation_replays_without_running_writer() -> Result<()> {
 }
 
 #[test]
+fn replay_survives_a_later_governed_in_place_update() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    let first_request = request("save:first", "first");
+    let first = execute_one(&conn, &first_request, |_| insert_memory(&conn, "first"))?;
+    let second_request = request("save:second", "second");
+    let second = execute_one(&conn, &second_request, |_| {
+        conn.execute(
+            "UPDATE memories SET content = 'second' WHERE id = ?1",
+            [first.memory_id],
+        )?;
+        Ok(first.memory_id)
+    })?;
+    assert_eq!(second.memory_id, first.memory_id);
+
+    let replay = execute_one(&conn, &first_request, |_| bail!("writer must not replay"))?;
+    assert_eq!(replay.memory_id, first.memory_id);
+    assert!(replay.replayed);
+    Ok(())
+}
+
+#[test]
+fn replay_rejects_route_drift_after_a_later_activation() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    let first_request = request("save:first-route", "first");
+    let first = execute_one(&conn, &first_request, |_| insert_memory(&conn, "first"))?;
+    let second_request = request("save:second-route", "second");
+    execute_one(&conn, &second_request, |_| {
+        conn.execute(
+            "UPDATE memories SET content = 'second' WHERE id = ?1",
+            [first.memory_id],
+        )?;
+        Ok(first.memory_id)
+    })?;
+    conn.execute(
+        "UPDATE memories SET owner_key = '/tampered' WHERE id = ?1",
+        [first.memory_id],
+    )?;
+
+    let error = execute_one(&conn, &first_request, |_| bail!("writer must not replay"))
+        .expect_err("route drift after a later activation must fail replay");
+    assert!(error.to_string().contains("owner key has drifted"));
+    conn.execute(
+        "UPDATE memories
+         SET owner_key = '/repo', source_trust_class = 'external_content'
+         WHERE id = ?1",
+        [first.memory_id],
+    )?;
+    let error = execute_one(&conn, &first_request, |_| bail!("writer must not replay"))
+        .expect_err("result trust drift after a later activation must fail replay");
+    assert!(error.to_string().contains("result trust has drifted"));
+    Ok(())
+}
+
+#[test]
 fn supplemental_save_cannot_use_generic_activation_without_receipt() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     crate::migrate::run_migrations(&conn)?;

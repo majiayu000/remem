@@ -134,18 +134,31 @@ pub(super) fn validate_result_payload(
         );
     }
 
-    let (acknowledged_pattern_id, acknowledged_pattern_version): (Option<String>, Option<i64>) =
-        conn.query_row(
-            "SELECT acknowledged_pattern_id, acknowledged_pattern_version
+    validate_poisoning_verdict(conn, memory_id, &actual, request.poisoning_verdict)?;
+    Ok(actual.sha256())
+}
+
+pub(super) fn validate_poisoning_verdict(
+    conn: &Connection,
+    memory_id: i64,
+    actual: &ExpectedActiveMemory,
+    verdict: ActivationPoisoningVerdict,
+) -> Result<()> {
+    let (acknowledged_pattern_id, acknowledged_pattern_version, acknowledged_at_epoch): (
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+    ) = conn.query_row(
+        "SELECT acknowledged_pattern_id, acknowledged_pattern_version, acknowledged_at_epoch
              FROM memories WHERE id = ?1",
-            [memory_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
+        [memory_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
     let matched = crate::memory::poisoning::scan_instruction_pattern(&format!(
         "{}\n{}",
         actual.title, actual.content
     ));
-    match request.poisoning_verdict {
+    match verdict {
         ActivationPoisoningVerdict::Clean | ActivationPoisoningVerdict::UpstreamValidated => {
             if let Some(matched) = matched {
                 bail!(
@@ -156,7 +169,10 @@ pub(super) fn validate_result_payload(
             }
         }
         ActivationPoisoningVerdict::Acknowledged => {
-            if acknowledged_pattern_id.is_none() || acknowledged_pattern_version.is_none() {
+            if acknowledged_pattern_id.as_deref().is_none_or(str::is_empty)
+                || acknowledged_pattern_version.is_none_or(|version| version <= 0)
+                || acknowledged_at_epoch.is_none_or(|epoch| epoch <= 0)
+            {
                 bail!("acknowledged activation did not persist acknowledgement evidence");
             }
             if matched.is_some_and(|matched| {
@@ -167,6 +183,17 @@ pub(super) fn validate_result_payload(
             }
         }
         ActivationPoisoningVerdict::ExactRecovery => {
+            let acknowledgement_absent = acknowledged_pattern_id.is_none()
+                && acknowledged_pattern_version.is_none()
+                && acknowledged_at_epoch.is_none();
+            let acknowledgement_complete = acknowledged_pattern_id
+                .as_deref()
+                .is_some_and(|pattern_id| !pattern_id.is_empty())
+                && acknowledged_pattern_version.is_some_and(|version| version > 0)
+                && acknowledged_at_epoch.is_some_and(|epoch| epoch > 0);
+            if !acknowledgement_absent && !acknowledgement_complete {
+                bail!("exact recovery restored incomplete acknowledgement evidence");
+            }
             if let Some(matched) = matched {
                 if acknowledged_pattern_id.as_deref() != Some(matched.pattern_id)
                     || acknowledged_pattern_version != Some(matched.pattern_set_version)
@@ -176,7 +203,7 @@ pub(super) fn validate_result_payload(
             }
         }
     }
-    Ok(actual.sha256())
+    Ok(())
 }
 
 #[cfg(test)]

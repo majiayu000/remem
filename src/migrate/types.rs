@@ -435,6 +435,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "memory_activation_boundary",
         sql: include_str!("../migrations/v086_memory_activation_boundary.sql"),
     },
+    Migration {
+        version: 87,
+        name: "activation_result_trust",
+        sql: include_str!("../migrations/v087_activation_result_trust.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

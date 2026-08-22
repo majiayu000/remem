@@ -92,7 +92,7 @@ Allowed activation routes are:
 | Governed candidate promotion | Candidate identity, evidence, trust, route, review decision, and supersede policy are mandatory. Auto-promotion remains limited by the current candidate contracts. |
 | Generated consolidation | Never activates directly. Clean output enters the same governed promotion boundary; risky output remains quarantined and cannot supersede active rows. |
 | Import or host-native memory | Enters review candidates unless a narrower current contract proves an equivalent digest-bound governed route. The current safe-add project pack import is such a route and remains supported. |
-| Migration or recovery | May restore an exact previously active row only with a versioned plan, immutable evidence binding, explicit acknowledgement where required, and idempotent apply. It cannot invent a new active claim. |
+| Migration or recovery | May restore an exact previously active row only with a versioned plan, immutable evidence binding, explicit acknowledgement where required, and idempotent apply. Backup evidence must cover the same consistent database snapshot that is read, and restored acknowledgement metadata must be complete and match the restored payload. It cannot invent a new active claim. |
 
 Direct SQL, test helpers, migration DDL, and compatibility writers are not new
 production activation routes. The implementation guard may allow them only in

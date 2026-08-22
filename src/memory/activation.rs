@@ -10,6 +10,7 @@ use super::poisoning::SourceTrustClass;
 
 mod payload;
 mod receipt;
+mod replay;
 pub(crate) use payload::ExpectedActiveMemory;
 pub(crate) use receipt::SupplementalSaveReceipt;
 
@@ -175,19 +176,28 @@ fn execute_one_inner(
     let normalized_superseded_ids = validate_request(request)?;
     let request_sha256 = request_sha256(request, &normalized_superseded_ids)?;
 
-    if let Some((stored_sha256, memory_id, claim_status, claim_id, claim_error)) = conn
+    if let Some((
+        stored_sha256,
+        stored_result_sha256,
+        memory_id,
+        claim_status,
+        claim_id,
+        claim_error,
+    )) = conn
         .query_row(
-            "SELECT request_sha256, result_memory_id, claim_status, claim_id, claim_error
+            "SELECT request_sha256, result_sha256, result_memory_id,
+                    claim_status, claim_id, claim_error
              FROM memory_activation_requests
              WHERE activation_id = ?1",
             [&request.activation_id],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, Option<i64>>(3)?,
-                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
                 ))
             },
         )
@@ -199,9 +209,17 @@ fn execute_one_inner(
                 request.activation_id
             );
         }
-        let require_active = !result_was_superseded(conn, memory_id)?;
-        validate_result_route(conn, memory_id, request, require_active)?;
-        payload::validate_result_payload(conn, memory_id, request)?;
+        if !replay::validate_later_activation_result(
+            conn,
+            &request.activation_id,
+            memory_id,
+            request,
+            &stored_result_sha256,
+        )? {
+            let require_active = !replay::result_was_superseded(conn, memory_id)?;
+            validate_result_route(conn, memory_id, request, require_active)?;
+            payload::validate_result_payload(conn, memory_id, request)?;
+        }
         let supplemental_receipt =
             SupplementalSaveReceipt::from_columns(claim_status, claim_id, claim_error)?;
         return Ok(ActiveMemoryWriteResult {
@@ -241,14 +259,15 @@ fn execute_one_inner(
         conn.execute(
             "INSERT INTO memory_activation_requests
              (activation_id, request_sha256, route_kind, actor_kind,
-              source_operation, source_trust_class, source_project, project, branch_present,
+              source_operation, source_trust_class, result_source_trust_class,
+              source_project, project, branch_present,
               branch, scope, owner_scope, owner_key, target_project,
               provenance_kind, provenance_ref, payload_sha256, result_sha256,
               poisoning_verdict, superseded_ids_json, result_memory_id,
               claim_status, claim_id, claim_error, created_at_epoch)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
                      ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21,
-                     ?22, ?23, ?24, ?25)",
+                     ?22, ?23, ?24, ?25, ?26)",
             params![
                 request.activation_id,
                 request_sha256,
@@ -256,6 +275,7 @@ fn execute_one_inner(
                 enum_json(request.actor_kind)?,
                 request.source_operation,
                 request.source_trust.as_str(),
+                request.result_source_trust.as_str(),
                 request.source_project,
                 request.route.project,
                 i64::from(request.route.branch.is_some()),
@@ -302,21 +322,6 @@ fn execute_one_inner(
             Err(error)
         }
     }
-}
-
-fn result_was_superseded(conn: &Connection, memory_id: i64) -> Result<bool> {
-    conn.query_row(
-        "SELECT EXISTS(
-             SELECT 1
-             FROM memory_activation_requests later,
-                  json_each(later.superseded_ids_json) superseded
-             WHERE superseded.value = ?1
-         )",
-        [memory_id],
-        |row| row.get::<_, i64>(0),
-    )
-    .map(|superseded| superseded == 1)
-    .map_err(Into::into)
 }
 
 pub(crate) fn payload_sha256(parts: &[&str]) -> String {

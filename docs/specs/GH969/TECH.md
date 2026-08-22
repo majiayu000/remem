@@ -42,7 +42,13 @@ and cannot raise the trust of its sources.
 
 The first implementation slice now consolidates production activation through
 `memory::activation`, backed by the immutable
-`memory_activation_requests` ledger introduced in schema v86. Route adapters
+`memory_activation_requests` ledger introduced in schema v86. Schema v87 adds
+the activation result's trust class through a forward migration that rebuilds
+the ledger, preserves receipt rowids, records the referenced row's
+migration-observed trust with an explicit legacy marker, and restores the
+immutable-table triggers; it does not attribute that later observation to the
+historical activation, and v086 remains byte-stable for databases that have
+already recorded it. Route adapters
 bind trust, provenance, payload digest, exact supersede targets, and poisoning
 verdict before the active mutation runs in one savepoint. The boundary then
 compares the stored payload/evidence fields to the request, rechecks poisoning,
@@ -54,9 +60,15 @@ no-op records the weaker incoming caller in activation evidence but never
 relabels the already-active row's trust or acknowledgement metadata. The
 activation request therefore binds incoming source trust separately from the
 expected result-row trust; route policy validates the former while the durable
-postcondition validates the latter.
+postcondition validates the latter. Replay of an older receipt remains valid
+after a later governed in-place activation only when the current row exactly
+matches the latest immutable result receipt, including identity, scope, owner,
+trust, payload digest, and poisoning evidence.
 Best-effort backup normalization uses governed `backup_import` rather
-than claiming `ExactRecovery`. A repository-owned
+than claiming `ExactRecovery`. Backup import hashes and reads one SQLite backup
+snapshot so WAL-visible state cannot diverge from its provenance digest; a
+complete, payload-matching acknowledgement is preserved as exact recovery,
+while partial or mismatched acknowledgement evidence fails closed. A repository-owned
 CI guard inventories reviewed raw implementations and rejects new production
 bypasses. Later slices still need the surface lifecycle and dependency-direction
 guards described below.
