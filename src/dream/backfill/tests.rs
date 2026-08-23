@@ -279,6 +279,10 @@ fn approve_with_token(
 fn approval_restores_the_same_memory() -> Result<()> {
     let mut conn = open_db()?;
     let (id, candidate_id) = quarantine_one(&mut conn)?;
+    conn.execute(
+        "UPDATE memories SET target_project = NULL WHERE id = ?1",
+        [id],
+    )?;
 
     let outcome = approve_with_token(&conn, candidate_id)?;
     assert_eq!(
@@ -295,6 +299,15 @@ fn approval_restores_the_same_memory() -> Result<()> {
         |row| row.get(0),
     )?;
     assert_eq!(review_status, "approved");
+    assert_eq!(
+        conn.query_row(
+            "SELECT target_project FROM memory_activation_requests
+             WHERE result_memory_id = ?1 AND route_kind = 'exact_recovery'",
+            [id],
+            |row| row.get::<_, String>(0),
+        )?,
+        PROJECT
+    );
     assert_eq!(
         op_log_operations(&conn, id)?,
         vec![

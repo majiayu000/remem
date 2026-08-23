@@ -156,6 +156,9 @@ pub(super) fn bind_existing_target_provenance(
     let Some(memory_id) = plan.target_memory_id else {
         return Ok(());
     };
+    let existing_route = crate::memory::activation::load_existing_route(conn, memory_id)?;
+    request.route = existing_route.route;
+    request.source_project = existing_route.source_project;
     let existing = crate::memory::activation::ExpectedActiveMemory::from_existing(conn, memory_id)?;
     if plan.op == MemoryLifecycleOp::Noop && memory_type != "lesson" {
         request.expected_memory = existing;

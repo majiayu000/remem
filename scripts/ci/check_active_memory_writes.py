@@ -12,13 +12,13 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 # Raw SQL is permitted only in these reviewed boundary implementations. Every
 # ordinary caller must construct ActiveMemoryWriteRequest and call execute_one.
 ALLOWED_PRODUCTION_FILES = {
     "src/memory/store/write.rs": "permit-gated canonical row writer",
+    "src/memory/store/write/rust_api.rs": "governed Rust API activation closure",
     "src/memory/store/write/activation.rs": "permit-gated immutable replacement writer",
     "src/memory_candidate/apply/write.rs": "candidate promotion writer called inside execute_one",
     "src/cli/actions/pack_import/active_import.rs": "governed pack safe-add closure",
@@ -99,9 +99,9 @@ EXPECTED_ALLOWED_FINDINGS = {
     "src/memory/store/write.rs": {
         "update_existing_memory:active_status_update:d60fd43cc23c0d09": 1,
         "insert_memory_full_activated:memory_insert:91495e4782c3bb3f": 1,
-        "insert_memory_full_with_reference_time:raw_active_helper_call:61be54b164a77baa": 1,
         "insert_memory_full_with_operation_log_activated:raw_active_helper_call:61be54b164a77baa": 1,
     },
+    "src/memory/store/write/rust_api.rs": {"insert_memory_full_with_reference_time:raw_active_helper_call:61be54b164a77baa": 1},
     "src/memory/store/write/activation.rs": {
         "insert_memory_replacement_activated:memory_insert:901ea26ce30face5": 1
     },

@@ -162,6 +162,51 @@ fn procedure_promotion_binds_verified_evidence_before_activation_receipt() -> Re
     )?;
     assert_eq!(retained_trust, "external_content");
 
+    let markdown_content = format!("{}\nMarkdown clarification.", candidate.content);
+    let route = crate::memory::activation::load_existing_route(&conn, memory_id)?;
+    let markdown_request = crate::memory::activation::ActiveMemoryWriteRequest {
+        activation_id: "markdown:procedure-provenance-update".to_string(),
+        route_kind: crate::memory::activation::ActivationRouteKind::BackupImport,
+        actor_kind: crate::memory::activation::ActivationActorKind::Operator,
+        source_operation: "markdown_update".to_string(),
+        source_trust: crate::memory::poisoning::SourceTrustClass::RepoFile,
+        result_source_trust: crate::memory::poisoning::SourceTrustClass::RepoFile,
+        source_project: route.source_project,
+        route: route.route,
+        provenance_kind: crate::memory::activation::ActivationProvenanceKind::Backup,
+        provenance_ref: "operator:markdown:procedure-provenance".to_string(),
+        payload_sha256: crate::memory::activation::payload_sha256(&[
+            "procedure-provenance-update",
+            &markdown_content,
+        ]),
+        expected_memory: crate::memory::activation::ExpectedActiveMemory::new(
+            &candidate.title,
+            &markdown_content,
+            "procedure",
+        )
+        .with_topic_key(Some(&candidate.topic_key))
+        .with_files(Some(&serde_json::to_string(&candidate.files)?)),
+        poisoning_verdict: crate::memory::activation::ActivationPoisoningVerdict::Clean,
+        superseded_ids: Vec::new(),
+    };
+    crate::memory::activation::execute_one(&conn, &markdown_request, |_permit| {
+        conn.execute(
+            "UPDATE memories
+             SET content = ?1, source_trust_class = 'repo_file',
+                 source_candidate_id = NULL, evidence_event_ids = NULL
+             WHERE id = ?2",
+            params![markdown_content, memory_id],
+        )?;
+        Ok(memory_id)
+    })?;
+    conn.execute(
+        "UPDATE memory_candidates
+         SET topic_key = 'retagged-procedure', memory_type = 'discovery'
+         WHERE id = 901",
+        [],
+    )?;
+    assert_eq!(promote_procedure_memory(&conn, &candidate)?, memory_id);
+
     let replacement_id = promote_procedure_memory(&conn, &expanded)?;
     assert_ne!(replacement_id, memory_id);
     assert_eq!(
@@ -178,11 +223,12 @@ fn procedure_promotion_binds_verified_evidence_before_activation_receipt() -> Re
             [],
             |row| row.get::<_, i64>(0),
         )?,
-        2
+        3
     );
     for id in [memory_id, replacement_id] {
         let stored_sha: String = conn.query_row(
-            "SELECT result_sha256 FROM memory_activation_requests WHERE result_memory_id = ?1",
+            "SELECT result_sha256 FROM memory_activation_requests
+             WHERE result_memory_id = ?1 ORDER BY rowid DESC LIMIT 1",
             [id],
             |row| row.get(0),
         )?;
@@ -195,7 +241,7 @@ fn procedure_promotion_binds_verified_evidence_before_activation_receipt() -> Re
         [replacement_id],
         |row| row.get(0),
     )?;
-    assert_eq!(replacement_trust, "external_content");
+    assert_eq!(replacement_trust, "repo_file");
     Ok(())
 }
 

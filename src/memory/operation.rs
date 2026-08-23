@@ -341,7 +341,7 @@ fn existing_memory_for_direct_save(
         let existing = conn
             .query_row(
                 "SELECT id, title, content, status, files, branch, expires_at_epoch FROM memories
-                 WHERE project = ?1 AND topic_key = ?2 AND scope = ?3
+                 WHERE (?3 = 'global' OR project = ?1) AND topic_key = ?2 AND scope = ?3
                    AND memory_type = ?4 AND branch IS ?5
                    AND COALESCE(owner_scope,
                        CASE WHEN scope = 'global' THEN 'user' ELSE 'repo' END) = ?6

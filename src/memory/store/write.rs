@@ -12,7 +12,9 @@ use crate::memory::{
 };
 
 mod activation;
+mod rust_api;
 pub(crate) use activation::insert_memory_replacement_activated;
+pub use rust_api::insert_memory_full_with_reference_time;
 
 pub fn insert_memory(
     conn: &Connection,
@@ -94,107 +96,6 @@ pub fn insert_memory_full(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn insert_memory_full_with_reference_time(
-    conn: &Connection,
-    session_id: Option<&str>,
-    project: &str,
-    topic_key: Option<&str>,
-    title: &str,
-    content: &str,
-    memory_type: &str,
-    files: Option<&str>,
-    branch: Option<&str>,
-    scope: &str,
-    created_at_override: Option<i64>,
-    reference_time_override: Option<i64>,
-) -> Result<i64> {
-    if let Some(matched) =
-        crate::memory::poisoning::scan_instruction_pattern(&format!("{title}\n{content}"))
-    {
-        bail!(
-            "Rust memory API payload matched instruction-pattern {}@{}",
-            matched.pattern_id,
-            matched.pattern_set_version
-        );
-    }
-    let created_at = created_at_override.map(|value| value.to_string());
-    let reference_time = reference_time_override.map(|value| value.to_string());
-    let payload_sha256 = crate::memory::activation::payload_sha256(&[
-        if session_id.is_some() { "1" } else { "0" },
-        session_id.unwrap_or(""),
-        project,
-        if topic_key.is_some() { "1" } else { "0" },
-        topic_key.unwrap_or(""),
-        title,
-        content,
-        memory_type,
-        if files.is_some() { "1" } else { "0" },
-        files.unwrap_or(""),
-        if branch.is_some() { "1" } else { "0" },
-        branch.unwrap_or(""),
-        scope,
-        if created_at.is_some() { "1" } else { "0" },
-        created_at.as_deref().unwrap_or(""),
-        if reference_time.is_some() { "1" } else { "0" },
-        reference_time.as_deref().unwrap_or(""),
-    ]);
-    let request = crate::memory::activation::ActiveMemoryWriteRequest {
-        activation_id: crate::memory::activation::ephemeral_activation_id(
-            "rust-api",
-            &payload_sha256,
-        ),
-        route_kind: crate::memory::activation::ActivationRouteKind::RustApi,
-        actor_kind: crate::memory::activation::ActivationActorKind::RustApi,
-        source_operation: "insert_memory_full_with_reference_time".to_string(),
-        source_trust: crate::memory::poisoning::SourceTrustClass::LocalToolOutput,
-        result_source_trust: crate::memory::poisoning::SourceTrustClass::LocalToolOutput,
-        source_project: project.to_string(),
-        route: crate::memory::activation::ActiveMemoryRoute::default_for(project, branch, scope),
-        provenance_kind: crate::memory::activation::ActivationProvenanceKind::RustApi,
-        provenance_ref: "rust-api:insert-memory:v1".to_string(),
-        payload_sha256,
-        expected_memory: crate::memory::activation::ExpectedActiveMemory::new(
-            title,
-            content,
-            memory_type,
-        )
-        .with_topic_key(topic_key)
-        .with_files(files),
-        poisoning_verdict: crate::memory::activation::ActivationPoisoningVerdict::Clean,
-        superseded_ids: Vec::new(),
-    };
-    Ok(
-        crate::memory::activation::execute_one(conn, &request, |permit| {
-            let memory_id = insert_memory_full_activated(
-                conn,
-                permit,
-                session_id,
-                project,
-                topic_key,
-                title,
-                content,
-                memory_type,
-                files,
-                branch,
-                scope,
-                created_at_override,
-                reference_time_override,
-            )?;
-            conn.execute(
-                "UPDATE memories
-                 SET source_trust_class = 'local_tool_output',
-                     source_candidate_id = NULL,
-                     evidence_event_ids = NULL
-                 WHERE id = ?1",
-                [memory_id],
-            )?;
-            Ok(memory_id)
-        })?
-        .memory_id,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn insert_memory_full_activated(
     conn: &Connection,
     _permit: &crate::memory::activation::ActiveMemoryWritePermit,
@@ -238,7 +139,7 @@ pub(crate) fn insert_memory_full_activated(
             existing_id = conn
                 .query_row(
                     "SELECT id FROM memories
-                     WHERE project = ?1 AND topic_key = ?2 AND scope = ?3
+                     WHERE (?3 = 'global' OR project = ?1) AND topic_key = ?2 AND scope = ?3
                        AND memory_type = ?4 AND branch IS ?5
                        AND COALESCE(owner_scope,
                            CASE WHEN scope = 'global' THEN 'user' ELSE 'repo' END) = ?6

@@ -277,6 +277,146 @@ fn test_hash_like_ascii_preference_uses_existing_state_memory() -> anyhow::Resul
 }
 
 #[test]
+fn rust_api_repeat_preserves_verified_provenance() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+    conn.execute(
+        "INSERT INTO memory_candidates
+         (id, scope, memory_type, topic_key, text, evidence_event_ids, confidence,
+          risk_class, review_status, created_at_epoch, updated_at_epoch)
+         VALUES (501, 'global', 'preference', 'verified-repeat',
+                 'Prefer concise verified progress updates.', '[]', 0.95,
+                 'low', 'approved', 1, 1)",
+        [],
+    )?;
+    let memory_id = insert_memory_full(
+        &conn,
+        None,
+        "project-a",
+        Some("verified-repeat"),
+        "Verified preference",
+        "Prefer concise verified progress updates.",
+        "preference",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories
+         SET source_trust_class = 'user_prompt', source_candidate_id = 501,
+             evidence_event_ids = '[]'
+         WHERE id = ?1",
+        [memory_id],
+    )?;
+
+    let repeated_id = insert_memory_full(
+        &conn,
+        None,
+        "project-a",
+        Some("verified-repeat"),
+        "Verified preference",
+        "  prefer concise VERIFIED progress updates.  ",
+        "preference",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+    assert_eq!(repeated_id, memory_id);
+    assert_eq!(
+        conn.query_row(
+            "SELECT source_trust_class, source_candidate_id, evidence_event_ids
+             FROM memories WHERE id = ?1",
+            [memory_id],
+            |row| Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?
+            )),
+        )?,
+        ("user_prompt".to_string(), 501, "[]".to_string())
+    );
+
+    let rewritten_id = insert_memory_full(
+        &conn,
+        None,
+        "project-a",
+        Some("verified-repeat"),
+        "Changed identity",
+        "prefer concise verified progress updates.",
+        "preference",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+    assert_eq!(rewritten_id, memory_id);
+    assert_eq!(
+        conn.query_row(
+            "SELECT source_trust_class, source_candidate_id, evidence_event_ids
+             FROM memories WHERE id = ?1",
+            [memory_id],
+            |row| Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<i64>>(1)?,
+                row.get::<_, Option<String>>(2)?
+            )),
+        )?,
+        ("local_tool_output".to_string(), None, None)
+    );
+    Ok(())
+}
+
+#[test]
+fn rust_api_global_repeat_binds_the_existing_source_project_route() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+    conn.execute(
+        "INSERT INTO memories
+         (project, topic_key, title, content, memory_type, created_at_epoch,
+          updated_at_epoch, status, scope, source_project, owner_scope, owner_key,
+          context_class, source_trust_class)
+         VALUES ('project-a', 'legacy-global-topic', 'Legacy global fact',
+                 'A shared global fact.', 'discovery', 1, 1, 'active', 'global',
+                 'project-a', 'user', 'user:default', 'startup_core', 'local_tool_output')",
+        [],
+    )?;
+    let first_id = conn.last_insert_rowid();
+    let second_id = insert_memory_full(
+        &conn,
+        None,
+        "project-b",
+        Some("legacy-global-topic"),
+        "Legacy global fact",
+        "A shared global fact.",
+        "discovery",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+    assert_eq!(second_id, first_id);
+    assert_eq!(
+        conn.query_row(
+            "SELECT project, source_project FROM memories WHERE id = ?1",
+            [first_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )?,
+        ("project-a".to_string(), "project-a".to_string())
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM memories WHERE scope = 'global' AND topic_key = 'legacy-global-topic'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
 fn test_hash_like_preference_upsert_clears_obsolete_state_keys() -> anyhow::Result<()> {
     let conn = Connection::open_in_memory()?;
     setup_memory_schema(&conn);

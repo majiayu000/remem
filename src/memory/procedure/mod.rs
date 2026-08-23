@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 mod evidence;
@@ -188,7 +188,8 @@ fn promote_procedure_memory_with_policy(
         crate::memory::activation::activation_id_from_key("procedure-promotion", &payload_sha256);
     let replay_binding = tx
         .query_row(
-            "SELECT result_memory_id, superseded_ids_json, result_source_trust_class
+            "SELECT result_memory_id, superseded_ids_json, result_source_trust_class,
+                    result_sha256
              FROM memory_activation_requests WHERE activation_id = ?1",
             [&activation_id],
             |row| {
@@ -196,19 +197,29 @@ fn promote_procedure_memory_with_policy(
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
                 ))
             },
         )
         .optional()?
-        .map(|(memory_id, superseded_json, result_source_trust)| {
-            serde_json::from_str::<Vec<i64>>(&superseded_json)
-                .map(|superseded_ids| (memory_id, superseded_ids, result_source_trust))
-                .context("invalid procedure activation superseded ids")
-        })
+        .map(
+            |(memory_id, superseded_json, result_source_trust, result_sha256)| {
+                serde_json::from_str::<Vec<i64>>(&superseded_json)
+                    .map(|superseded_ids| {
+                        (
+                            memory_id,
+                            superseded_ids,
+                            result_source_trust,
+                            result_sha256,
+                        )
+                    })
+                    .context("invalid procedure activation superseded ids")
+            },
+        )
         .transpose()?;
     let binding_id = replay_binding
         .as_ref()
-        .map(|(memory_id, _, _)| *memory_id)
+        .map(|(memory_id, _, _, _)| *memory_id)
         .or(existing_id);
     let retained_provenance = binding_id
         .map(|memory_id| {
@@ -217,7 +228,7 @@ fn promote_procedure_memory_with_policy(
         .transpose()?;
     let result_source_trust = replay_binding
         .as_ref()
-        .map(|(_, _, trust)| Ok(trust.clone()))
+        .map(|(_, _, trust, _)| Ok(trust.clone()))
         .or_else(|| {
             binding_id.map(|memory_id| {
                 tx.query_row(
@@ -237,19 +248,24 @@ fn promote_procedure_memory_with_policy(
         })
         .transpose()?
         .unwrap_or(crate::memory::poisoning::SourceTrustClass::LocalToolOutput);
-    let retained_candidate_id = retained_provenance
-        .as_ref()
-        .and_then(|memory| memory.source_candidate_id);
-    let expected_memory = crate::memory::activation::ExpectedActiveMemory::new(
+    let mut expected_memory = crate::memory::activation::ExpectedActiveMemory::new(
         &candidate.title,
         &candidate.content,
         "procedure",
     )
     .with_topic_key(Some(&candidate.topic_key))
     .with_files(files_json.as_deref())
-    .with_candidate_evidence(Some(&source_events_json), retained_candidate_id);
+    .with_candidate_evidence(Some(&source_events_json), None);
+    let retained_candidate_id = if let Some((_, _, _, result_sha256)) = &replay_binding {
+        procedure_candidate_id_for_receipt(&tx, &expected_memory, result_sha256)?
+    } else {
+        retained_provenance
+            .as_ref()
+            .and_then(|memory| memory.source_candidate_id)
+    };
+    expected_memory.source_candidate_id = retained_candidate_id;
     let superseded_ids = replay_binding
-        .map(|(_, superseded_ids, _)| superseded_ids)
+        .map(|(_, superseded_ids, _, _)| superseded_ids)
         .unwrap_or_else(|| existing_id.into_iter().collect());
     let request = crate::memory::activation::ActiveMemoryWriteRequest {
         activation_id,
@@ -306,6 +322,28 @@ fn promote_procedure_memory_with_policy(
     })?;
     tx.commit()?;
     Ok(activation.memory_id)
+}
+
+fn procedure_candidate_id_for_receipt(
+    conn: &Connection,
+    expected: &crate::memory::activation::ExpectedActiveMemory,
+    result_sha256: &str,
+) -> Result<Option<i64>> {
+    if expected.sha256() == result_sha256 {
+        return Ok(None);
+    }
+    let mut stmt = conn.prepare("SELECT id FROM memory_candidates ORDER BY id ASC")?;
+    let candidate_ids = stmt
+        .query_map([], |row| row.get::<_, i64>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    for candidate_id in candidate_ids {
+        let mut candidate_expected = expected.clone();
+        candidate_expected.source_candidate_id = Some(candidate_id);
+        if candidate_expected.sha256() == result_sha256 {
+            return Ok(Some(candidate_id));
+        }
+    }
+    bail!("procedure activation receipt provenance cannot be reconstructed")
 }
 
 pub(crate) fn promote_verified_procedures_for_task(

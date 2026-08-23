@@ -308,7 +308,12 @@ fn restore_backfill_memory(
                     CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END),
                 COALESCE(owner_key,
                     CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user:default' ELSE project END),
-                target_project
+                CASE
+                    WHEN COALESCE(owner_scope,
+                        CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END) = 'repo'
+                    THEN COALESCE(target_project, project)
+                    ELSE target_project
+                END
          FROM memories WHERE id = ?1",
         [restore.memory_id],
         |r| {

@@ -12,9 +12,11 @@ mod batch;
 mod payload;
 mod receipt;
 mod replay;
+mod route;
 pub(crate) use batch::execute_add_batch;
 pub(crate) use payload::ExpectedActiveMemory;
 pub(crate) use receipt::SupplementalSaveReceipt;
+pub(crate) use route::load_existing_route;
 
 static ACTIVATION_NONCE: AtomicU64 = AtomicU64::new(1);
 

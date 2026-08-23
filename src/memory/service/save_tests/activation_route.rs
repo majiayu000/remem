@@ -247,3 +247,43 @@ fn semantic_noop_lesson_reinforcement_validates_the_rewritten_payload() -> anyho
     );
     Ok(())
 }
+
+#[test]
+fn global_save_from_another_project_binds_the_shared_existing_route() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("save-global-existing-route");
+    let conn = db::open_db()?;
+    conn.execute(
+        "INSERT INTO memories
+         (project, topic_key, title, content, memory_type, created_at_epoch,
+          updated_at_epoch, status, scope, source_project, owner_scope, owner_key,
+          context_class, source_trust_class)
+         VALUES ('project-a', 'legacy-global-topic', 'Legacy global fact',
+                 'A shared global fact.', 'discovery', 1, 1, 'active', 'global',
+                 'project-a', 'user', 'user:default', 'startup_core', 'local_tool_output')",
+        [],
+    )?;
+    let first_id = conn.last_insert_rowid();
+    let request = SaveMemoryRequest {
+        text: "A shared global fact.".to_string(),
+        title: Some("Legacy global fact".to_string()),
+        project: Some("project-b".to_string()),
+        topic_key: Some("legacy-global-topic".to_string()),
+        memory_type: Some("discovery".to_string()),
+        scope: Some("global".to_string()),
+        local_copy_enabled: Some(false),
+        claim_enabled: Some(false),
+        ..SaveMemoryRequest::default()
+    };
+    let second = save_memory(&conn, &request)?;
+
+    assert_eq!(second.id, first_id);
+    assert_eq!(
+        conn.query_row(
+            "SELECT project, source_project FROM memories WHERE id = ?1",
+            [first_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )?,
+        ("project-a".to_string(), "project-a".to_string())
+    );
+    Ok(())
+}
