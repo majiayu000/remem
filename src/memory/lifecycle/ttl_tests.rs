@@ -256,6 +256,10 @@ fn state_key_update_inserts_replacement_and_stales_old_fact() -> Result<()> {
         "discovery",
         None,
     )?;
+    conn.execute(
+        "UPDATE memories SET target_project = NULL WHERE id = ?1",
+        [old_id],
+    )?;
 
     let outcome = apply_update(
         &conn,
@@ -317,7 +321,7 @@ fn exact_topic_update_still_replaces_legacy_memory_without_state_key() -> Result
         None,
     )?;
     conn.execute(
-        "UPDATE memories SET state_key_id = NULL WHERE id = ?1",
+        "UPDATE memories SET state_key_id = NULL, target_project = NULL WHERE id = ?1",
         [old_id],
     )?;
     conn.execute("DELETE FROM memory_state_keys", [])?;

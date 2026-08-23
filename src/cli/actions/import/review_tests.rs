@@ -134,3 +134,52 @@ fn backup_import_restores_acknowledged_instruction_pattern() -> Result<()> {
     cleanup_temp_db_files(&source_path);
     Ok(())
 }
+
+#[test]
+fn backup_import_deduplicates_legacy_repo_target_without_target_project() -> Result<()> {
+    let _data_dir = ScopedTestDataDir::new("import-legacy-null-target-project");
+    let source_path = unique_temp_db_path("runtime-import-legacy-null-target-project");
+    let source = create_review_source(&source_path)?;
+    let project = "/tmp/remem-import-legacy-null-target-project";
+    source.execute(
+        "INSERT INTO memories
+         (id, project, topic_key, title, content, memory_type,
+          created_at_epoch, updated_at_epoch)
+         VALUES (1, ?1, 'legacy-topic', 'Backup copy', 'same identity',
+                 'decision', 100, 200)",
+        [project],
+    )?;
+    drop(source);
+
+    let runtime = crate::db::open_db()?;
+    let existing_id = crate::memory::insert_memory(
+        &runtime,
+        Some("runtime"),
+        project,
+        Some("legacy-topic"),
+        "Existing copy",
+        "existing runtime value",
+        "decision",
+        None,
+    )?;
+    runtime.execute(
+        "UPDATE memories SET target_project = NULL WHERE id = ?1",
+        [existing_id],
+    )?;
+
+    let stats = import_memories_into_runtime(&source_path, &runtime)?;
+    assert_eq!(stats.memories_imported, 0);
+    assert_eq!(stats.memories_skipped, 1);
+    assert_eq!(
+        runtime.query_row(
+            "SELECT COUNT(*) FROM memories
+             WHERE project = ?1 AND topic_key = 'legacy-topic' AND status = 'active'",
+            [project],
+            |row| row.get::<_, i64>(0),
+        )?,
+        1
+    );
+
+    cleanup_temp_db_files(&source_path);
+    Ok(())
+}

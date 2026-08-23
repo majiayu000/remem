@@ -38,12 +38,30 @@ pub(super) fn apply_loaded_pack(
     let plan = super::plan_loaded_pack(Some(&tx), target_project, loaded)?;
     let mut applied = PackImportApplyStats::default();
 
+    let additions = plan
+        .entries
+        .iter()
+        .filter(|entry| entry.category == PackImportCategory::Add)
+        .map(|entry| &entry.memory)
+        .collect::<Vec<_>>();
+    let add_requests = additions
+        .iter()
+        .map(|memory| pack_memory_request(target_project, memory, &plan.content_digest))
+        .collect::<Vec<_>>();
+    let add_results = activation::execute_add_batch(&tx, &add_requests, |index, permit| {
+        insert_pack_memory_activated(
+            &tx,
+            permit,
+            target_project,
+            additions[index],
+            &plan.content_digest,
+        )
+    })?;
+    applied.added_memories = add_results.iter().filter(|result| !result.replayed).count();
+
     for entry in &plan.entries {
         match entry.category {
-            PackImportCategory::Add => {
-                insert_pack_memory(&tx, target_project, &entry.memory, &plan.content_digest)?;
-                applied.added_memories += 1;
-            }
+            PackImportCategory::Add => {}
             PackImportCategory::Conflict => {
                 let candidate_id = insert_pack_candidate(
                     &tx,
@@ -147,12 +165,11 @@ fn ensure_project_row(conn: &Connection, target_project: &str) -> Result<i64> {
     .map_err(Into::into)
 }
 
-fn insert_pack_memory(
-    conn: &Connection,
+fn pack_memory_request(
     target_project: &str,
     memory: &PackMemory,
     content_digest: &str,
-) -> Result<i64> {
+) -> ActiveMemoryWriteRequest {
     let payload_sha256 = activation::payload_sha256(&[
         target_project,
         content_digest,
@@ -162,7 +179,7 @@ fn insert_pack_memory(
         &memory.memory_type,
         memory.state_key.as_deref().unwrap_or(""),
     ]);
-    let request = ActiveMemoryWriteRequest {
+    ActiveMemoryWriteRequest {
         activation_id: activation::activation_id_from_key(
             "pack-import",
             &format!("{target_project}:{content_digest}:{}", memory.content_hash),
@@ -193,15 +210,12 @@ fn insert_pack_memory(
         .with_candidate_evidence(Some("[]"), None),
         poisoning_verdict: ActivationPoisoningVerdict::UpstreamValidated,
         superseded_ids: Vec::new(),
-    };
-    let result = activation::execute_one(conn, &request, |_permit| {
-        insert_pack_memory_activated(conn, target_project, memory, content_digest)
-    })?;
-    Ok(result.memory_id)
+    }
 }
 
 fn insert_pack_memory_activated(
     conn: &Connection,
+    _permit: &crate::memory::activation::ActiveMemoryWritePermit,
     target_project: &str,
     memory: &PackMemory,
     content_digest: &str,

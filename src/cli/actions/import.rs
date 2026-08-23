@@ -275,7 +275,12 @@ fn runtime_memory_exists(
                CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END) = ?5
            AND COALESCE(owner_key,
                CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user:default' ELSE project END) = ?6
-           AND target_project IS ?7
+           AND CASE
+               WHEN COALESCE(owner_scope,
+                   CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END) = 'repo'
+               THEN COALESCE(target_project, project)
+               ELSE target_project
+           END IS ?7
          LIMIT 1",
         rusqlite::params![
             project,

@@ -43,47 +43,77 @@ ALLOWED_FIXTURE_FILES = {
     "src/worker/tests/rule_compilation.rs": "standalone worker test fixture",
 }
 
-# Statement/helper signatures are SHA-256 prefixes of normalized reviewed
-# source literals. Counts are part of the baseline so copying an allowed write
-# elsewhere in the same file still fails review.
+# Each reviewed site is pinned to its enclosing function plus a SHA-256 prefix
+# of the normalized statement/helper signature. Counts remain part of the
+# baseline, so moving or copying an allowed write fails review even when the
+# file path and SQL text stay unchanged.
 EXPECTED_ALLOWED_FINDINGS = {
-    "src/cli/actions/import.rs": {"memory_insert:8c332be8a69cc638": 1},
+    "src/cli/actions/import.rs": {
+        "insert_imported_memory_row:memory_insert:8c332be8a69cc638": 1
+    },
     "src/cli/actions/markdown_archive/persist.rs": {
-        "active_status_update:cefa82c27f14e112": 1,
-        "memory_insert:3b2c23d4790ac4d5": 1,
+        "update_markdown_memory_row:active_status_update:cefa82c27f14e112": 1,
+        "insert_markdown_memory_row:memory_insert:3b2c23d4790ac4d5": 1,
     },
-    "src/cli/actions/pack_import/active_import.rs": {"memory_insert:b32f083c20611900": 1},
-    "src/dream/apply.rs": {"raw_active_helper_call:61be54b164a77baa": 1},
+    "src/cli/actions/pack_import/active_import.rs": {
+        "insert_pack_memory_activated:memory_insert:b32f083c20611900": 1
+    },
+    "src/dream/apply.rs": {
+        "apply_mutations_in_transaction:raw_active_helper_call:61be54b164a77baa": 1
+    },
     "src/eval/current_memory_contracts/fixture.rs": {
-        "memory_insert:5aaf4428641cac9e": 1,
-        "memory_insert:c96fd8deada30f23": 1,
+        "insert_current_state_memory_at:memory_insert:5aaf4428641cac9e": 1,
+        "seed_prompt_memory:memory_insert:c96fd8deada30f23": 1,
     },
-    "src/eval/golden/run.rs": {"active_status_update:17305831b37dc716": 1},
-    "src/eval/governance/fixture.rs": {"active_status_update:1e35d404730bc56c": 1},
+    "src/eval/golden/run.rs": {
+        "seed_fixture_corpus:active_status_update:17305831b37dc716": 1
+    },
+    "src/eval/governance/fixture.rs": {
+        "insert_fixture_memory:active_status_update:1e35d404730bc56c": 1
+    },
     "src/eval/injection/run.rs": {
-        "memory_insert:34c775f6927e7a3e": 1,
-        "memory_insert:e5bb2169da4f9fe2": 1,
-        "memory_insert:eedce613d0319c52": 1,
-        "memory_insert:fb8cd2c3717625eb": 1,
+        "seed_fixture:memory_insert:34c775f6927e7a3e": 1,
+        "seed_rank_signal_fixture:memory_insert:e5bb2169da4f9fe2": 1,
+        "insert_one_added_memory:memory_insert:eedce613d0319c52": 1,
+        "seed_rank_signal_fixture:memory_insert:fb8cd2c3717625eb": 1,
     },
-    "src/eval/memory_bench/runner.rs": {"active_status_update:17305831b37dc716": 1},
+    "src/eval/memory_bench/runner.rs": {
+        "retrieve_with_remem_search:active_status_update:17305831b37dc716": 1
+    },
     "src/memory/governance.rs": {
-        "active_status_update:286bbbd2d3737bf8": 1,
-        "active_status_update:d0ee564fdbd933ea": 1,
+        "apply_web_governance_mutation:active_status_update:286bbbd2d3737bf8": 1,
+        "govern_memories:active_status_update:d0ee564fdbd933ea": 1,
     },
-    "src/memory/lesson.rs": {"raw_active_helper_call:61be54b164a77baa": 1},
-    "src/memory/lifecycle.rs": {"memory_insert:cdd0c80c9f639249": 1},
-    "src/memory/scope_cleanup/mutate.rs": {"active_status_update:8ff17e02fe62e4da": 1},
-    "src/memory/scope_cleanup/plan.rs": {"active_status_update:4834b85f590b6a90": 1},
+    "src/memory/lesson.rs": {
+        "save_lesson_with_reference_time_and_outcome_inner:raw_active_helper_call:61be54b164a77baa": 1
+    },
+    "src/memory/lifecycle.rs": {
+        "insert_replacement_memory:memory_insert:cdd0c80c9f639249": 1
+    },
+    "src/memory/scope_cleanup/mutate.rs": {
+        "update_status:active_status_update:8ff17e02fe62e4da": 1
+    },
+    "src/memory/scope_cleanup/plan.rs": {
+        "apply_cleanup_group:active_status_update:4834b85f590b6a90": 1
+    },
     "src/memory/store/write.rs": {
-        "active_status_update:d60fd43cc23c0d09": 1,
-        "memory_insert:91495e4782c3bb3f": 1,
-        "raw_active_helper_call:61be54b164a77baa": 2,
+        "update_existing_memory:active_status_update:d60fd43cc23c0d09": 1,
+        "insert_memory_full_activated:memory_insert:91495e4782c3bb3f": 1,
+        "insert_memory_full_with_reference_time:raw_active_helper_call:61be54b164a77baa": 1,
+        "insert_memory_full_with_operation_log_activated:raw_active_helper_call:61be54b164a77baa": 1,
     },
-    "src/memory/store/write/activation.rs": {"memory_insert:901ea26ce30face5": 1},
-    "src/memory_candidate/apply/write.rs": {"memory_insert:f55659946a93087e": 1},
-    "src/memory_candidate/review/approval.rs": {"active_status_update:61bbe5295f20e99c": 1},
-    "src/worker/tests/rule_compilation.rs": {"memory_insert:d3403c9d24c34a46": 1},
+    "src/memory/store/write/activation.rs": {
+        "insert_memory_replacement_activated:memory_insert:901ea26ce30face5": 1
+    },
+    "src/memory_candidate/apply/write.rs": {
+        "insert_routed_memory:memory_insert:f55659946a93087e": 1
+    },
+    "src/memory_candidate/review/approval.rs": {
+        "apply_backfill_restore_mutation:active_status_update:61bbe5295f20e99c": 1
+    },
+    "src/worker/tests/rule_compilation.rs": {
+        "worker_sweep_builds_existing_rules_and_removes_deleted_sources:memory_insert:d3403c9d24c34a46": 1
+    },
 }
 
 STRING_RE = re.compile(
@@ -95,15 +125,7 @@ ACTIVE_UPDATE_RE = re.compile(
     r'''\bUPDATE\s+memories\b(?:(?!\bWHERE\b).)*?\bstatus\s*=\s*(?:[\"']active[\"']|\?\d*|:\w+)''',
     re.I | re.S,
 )
-RAW_HELPER_RE = re.compile(r"\binsert_memory_full_activated\s*\(")
-RAW_HELPER_ALIAS_RE = re.compile(
-    r"\binsert_memory_full_activated\s+as\s+([A-Za-z_][A-Za-z0-9_]*)"
-)
-RAW_HELPER_BIND_RE = re.compile(
-    r"\blet\s+(?:mut\s+)?\(*\s*(?P<alias>[A-Za-z_][A-Za-z0-9_]*)\s*\)*"
-    r"(?:\s*:[^=;]+)?\s*=\s*\(*\s*(?:[A-Za-z_][A-Za-z0-9_]*::)*"
-    r"insert_memory_full_activated\b\s*\)*(?!\s*\()"
-)
+RAW_HELPER_RE = re.compile(r"\binsert_memory_full_activated\b")
 COMPOSED_SQL_RE = re.compile(r"\b(?:concat|format)\s*!\s*\((?P<body>[^;]*)\)", re.S)
 CFG_TEST_MOD_RE = re.compile(r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*]\s*mod\s+\w+\s*\{")
 MOD_RE = re.compile(
@@ -111,6 +133,11 @@ MOD_RE = re.compile(
     r"(?:pub(?:\s*\([^)]*\))?\s+)?mod\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*;"
     , re.M
 )
+FUNCTION_RE = re.compile(r"\bfn\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b")
+INLINE_MOD_RE = re.compile(r"\bmod\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\{")
+IMPL_RE = re.compile(r"\bimpl\b")
+TRAIT_RE = re.compile(r"\btrait\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b")
+CHAR_RE = re.compile(r"'(?:\\.|[^'\\])'")
 
 
 @dataclass(frozen=True)
@@ -119,12 +146,17 @@ class Finding:
     line: int
     kind: str
     signature: str
+    enclosing_function: str
 
 
 def finding_signature(kind: str, value: str) -> str:
     normalized = re.sub(r"\s+", " ", value).strip().lower()
     digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
     return f"{kind}:{digest}"
+
+
+def reviewed_site(finding: Finding) -> str:
+    return f"{finding.enclosing_function}:{finding.signature}"
 
 
 def matching_brace(text: str, opening: int) -> int | None:
@@ -201,6 +233,133 @@ def mask_rust_comments(text: str) -> str:
             continue
         index += 1
     return "".join(chars)
+
+
+def mask_rust_structure(text: str) -> str:
+    """Erase comments and literals so structural braces remain unambiguous."""
+    chars = list(mask_rust_comments(text))
+    for match in STRING_RE.finditer(text):
+        for offset in range(match.start(), match.end()):
+            if chars[offset] != "\n":
+                chars[offset] = " "
+    structure = "".join(chars)
+    for match in CHAR_RE.finditer(structure):
+        for offset in range(match.start(), match.end()):
+            chars[offset] = " "
+    return "".join(chars)
+
+
+def function_body_opening(structure: str, start: int) -> int | None:
+    """Find a function body while skipping delimiters in its signature."""
+    paren_depth = 0
+    bracket_depth = 0
+    angle_depth = 0
+    expression_brace_depth = 0
+    index = start
+    while index < len(structure):
+        char = structure[index]
+        if expression_brace_depth:
+            if char == "{":
+                expression_brace_depth += 1
+            elif char == "}":
+                expression_brace_depth -= 1
+        elif char == "(":
+            paren_depth += 1
+        elif char == ")" and paren_depth:
+            paren_depth -= 1
+        elif char == "[":
+            bracket_depth += 1
+        elif char == "]" and bracket_depth:
+            bracket_depth -= 1
+        elif char == "<":
+            previous = structure[index - 1] if index else " "
+            if angle_depth or (not previous.isspace() and (previous.isalnum() or previous in "_:>")):
+                angle_depth += 1
+        elif char == ">" and angle_depth:
+            angle_depth -= 1
+        elif char == "{":
+            if paren_depth == bracket_depth == angle_depth == 0:
+                return index
+            expression_brace_depth = 1
+        elif char == ";" and paren_depth == bracket_depth == angle_depth == 0:
+            return None
+        index += 1
+    return None
+
+
+def impl_declaration(structure: str, offset: int) -> bool:
+    prefix = structure[:offset].rstrip()
+    return (
+        not prefix
+        or prefix[-1] in "{;}]"
+        or re.search(r"\bunsafe$", prefix) is not None
+    )
+
+
+def structural_header_digest(header: str) -> str:
+    normalized = re.sub(r"\s+", " ", header).strip()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
+
+
+def enclosing_function(text: str, offset: int) -> str:
+    """Return a unique inline-module/function path containing an offset."""
+    structure = mask_rust_structure(text)
+    function_spans: list[tuple[int, int, int, str]] = []
+    name_counts: Counter[str] = Counter()
+    for match in FUNCTION_RE.finditer(structure):
+        opening = function_body_opening(structure, match.end())
+        if opening is None:
+            continue
+        closing = matching_brace(structure, opening)
+        if closing is None:
+            continue
+        name = match.group("name")
+        name_counts[name] += 1
+        function_spans.append((match.start(), opening, closing, name))
+
+    name_ordinals: Counter[str] = Counter()
+    scopes: list[tuple[int, str]] = []
+    for match in INLINE_MOD_RE.finditer(structure, 0, offset + 1):
+        opening = match.end() - 1
+        closing = matching_brace(structure, opening)
+        if closing is not None and opening < offset < closing:
+            scopes.append((opening, match.group("name")))
+    for match in IMPL_RE.finditer(structure, 0, offset + 1):
+        if not impl_declaration(structure, match.start()):
+            continue
+        opening = function_body_opening(structure, match.end())
+        if opening is None:
+            continue
+        closing = matching_brace(structure, opening)
+        if closing is not None and opening < offset < closing:
+            header = structure[match.end() : opening]
+            scopes.append((opening, f"impl@{structural_header_digest(header)}"))
+    for match in TRAIT_RE.finditer(structure, 0, offset + 1):
+        opening = function_body_opening(structure, match.end())
+        if opening is None:
+            continue
+        closing = matching_brace(structure, opening)
+        if closing is not None and opening < offset < closing:
+            scopes.append((opening, f"trait:{match.group('name')}"))
+    for _, opening, closing, name in function_spans:
+        name_ordinals[name] += 1
+        if opening < offset < closing:
+            label = name
+            if name_counts[name] > 1:
+                label = f"{name}#{name_ordinals[name]}"
+            scopes.append((opening, label))
+    scopes.sort()
+    return "::".join(label for _, label in scopes) or "<module>"
+
+
+def make_finding(rel: str, text: str, offset: int, kind: str, value: str) -> Finding:
+    return Finding(
+        rel,
+        text.count("\n", 0, offset) + 1,
+        kind,
+        finding_signature(kind, value),
+        enclosing_function(text, offset),
+    )
 
 
 def erase_inline_test_modules(text: str) -> str:
@@ -304,6 +463,12 @@ def array_concat_spans(text: str) -> list[tuple[int, int]]:
 
 def scan_rust(path: Path, rel: str) -> list[Finding]:
     text = erase_inline_test_modules(path.read_text(encoding="utf-8"))
+    structure = mask_rust_structure(text)
+    helper_declarations = {
+        match.start("name")
+        for match in FUNCTION_RE.finditer(structure)
+        if match.group("name") == "insert_memory_full_activated"
+    }
     findings: list[Finding] = []
     for match in STRING_RE.finditer(text):
         literal = normalize_sql(decoded_literal(match))
@@ -313,45 +478,17 @@ def scan_rust(path: Path, rel: str) -> list[Finding]:
         elif ACTIVE_UPDATE_RE.search(literal):
             kind = "active_status_update"
         if kind:
-            findings.append(
-                Finding(
-                    rel,
-                    text.count("\n", 0, match.start()) + 1,
-                    kind,
-                    finding_signature(kind, literal),
-                )
-            )
-    for match in RAW_HELPER_RE.finditer(text):
-        prefix = text[max(0, match.start() - 20) : match.start()]
-        if "fn " in prefix:
+            findings.append(make_finding(rel, text, match.start(), kind, literal))
+    for match in RAW_HELPER_RE.finditer(structure):
+        if match.start() in helper_declarations:
             continue
         findings.append(
-            Finding(
+            make_finding(
                 rel,
-                text.count("\n", 0, match.start()) + 1,
+                text,
+                match.start(),
                 "raw_active_helper_call",
-                finding_signature("raw_active_helper_call", "insert_memory_full_activated"),
-            )
-        )
-    for alias_match in RAW_HELPER_ALIAS_RE.finditer(text):
-        alias = alias_match.group(1)
-        for call in re.finditer(rf"\b{re.escape(alias)}\s*\(", text[alias_match.end() :]):
-            start = alias_match.end() + call.start()
-            findings.append(
-                Finding(
-                    rel,
-                    text.count("\n", 0, start) + 1,
-                    "raw_active_helper_call",
-                    finding_signature("raw_active_helper_call", "insert_memory_full_activated"),
-                )
-            )
-    for bind_match in RAW_HELPER_BIND_RE.finditer(text):
-        findings.append(
-            Finding(
-                rel,
-                text.count("\n", 0, bind_match.start()) + 1,
-                "raw_active_helper_call",
-                finding_signature("raw_active_helper_call", "insert_memory_full_activated"),
+                "insert_memory_full_activated",
             )
         )
     for composed in COMPOSED_SQL_RE.finditer(text):
@@ -366,14 +503,7 @@ def scan_rust(path: Path, rel: str) -> list[Finding]:
             finding.line == text.count("\n", 0, composed.start()) + 1 and finding.kind == kind
             for finding in findings
         ):
-            findings.append(
-                Finding(
-                    rel,
-                    text.count("\n", 0, composed.start()) + 1,
-                    kind,
-                    finding_signature(kind, joined),
-                )
-            )
+            findings.append(make_finding(rel, text, composed.start(), kind, joined))
     structure = mask_rust_comments(text)
     for start, end in array_concat_spans(structure):
         fragments = [decoded_literal(match) for match in STRING_RE.finditer(text[start:end])]
@@ -384,14 +514,7 @@ def scan_rust(path: Path, rel: str) -> list[Finding]:
         elif ACTIVE_UPDATE_RE.search(joined):
             kind = "active_status_update"
         if kind:
-            findings.append(
-                Finding(
-                    rel,
-                    text.count("\n", 0, start) + 1,
-                    kind,
-                    finding_signature(kind, joined),
-                )
-            )
+            findings.append(make_finding(rel, text, start, kind, joined))
     return findings
 
 
@@ -413,7 +536,8 @@ def check(root: Path = ROOT) -> list[str]:
     if root != ROOT:
         for finding in findings:
             errors.append(
-                f"{finding.path}:{finding.line}: {finding.kind} bypasses ActiveMemoryWriteRequest; "
+                f"{finding.path}:{finding.line}: {finding.kind} in "
+                f"{finding.enclosing_function} bypasses ActiveMemoryWriteRequest; "
                 "route the operation through memory::activation::execute_one"
             )
         return errors
@@ -421,10 +545,11 @@ def check(root: Path = ROOT) -> list[str]:
     actual_allowed: dict[str, Counter[str]] = defaultdict(Counter)
     for finding in findings:
         if finding.path in allowed:
-            actual_allowed[finding.path][finding.signature] += 1
+            actual_allowed[finding.path][reviewed_site(finding)] += 1
             continue
         errors.append(
-            f"{finding.path}:{finding.line}: {finding.kind} bypasses ActiveMemoryWriteRequest; "
+            f"{finding.path}:{finding.line}: {finding.kind} in "
+            f"{finding.enclosing_function} bypasses ActiveMemoryWriteRequest; "
             "route the operation through memory::activation::execute_one"
         )
     for path in sorted(allowed):
@@ -479,6 +604,85 @@ def self_test() -> int:
             'fn seed() { let _ = "INSERT INTO memories (status) VALUES (\'active\')"; }\n',
             encoding="utf-8",
         )
+        site_fixture = root / "site_fixture.rs"
+        site_fixture.write_text(
+            'mod first { fn same() { let _ = "INSERT INTO memories (status) VALUES (\'active\')"; } }\n'
+            'mod second { fn same() { let _ = "INSERT INTO memories (status) VALUES (\'active\')"; } }\n'
+            'fn outer() { fn same() { let _ = "INSERT INTO memories (status) VALUES (\'active\')"; } }\n'
+            'fn const_generic<const N: usize>() -> Foo<{N<4}> {\n'
+            ' let _ = "INSERT INTO memories (status) VALUES (\'active\')";\n'
+            '}\n',
+            encoding="utf-8",
+        )
+        site_findings = scan_rust(site_fixture, "site_fixture.rs")
+        site_signatures = [reviewed_site(finding) for finding in site_findings]
+        if site_signatures != [
+            "first::same#1:memory_insert:ca1ac9404b0cbb1d",
+            "second::same#2:memory_insert:ca1ac9404b0cbb1d",
+            "outer::same#3:memory_insert:ca1ac9404b0cbb1d",
+            "const_generic:memory_insert:ca1ac9404b0cbb1d",
+        ]:
+            print(
+                f"active-memory guard function pinning self-test failed: {site_signatures}",
+                file=sys.stderr,
+            )
+            return 1
+        short_helper = root / "short_helper.rs"
+        short_helper.write_text(
+            "fn f() { insert_memory_full_activated(); }\n", encoding="utf-8"
+        )
+        short_sites = [reviewed_site(finding) for finding in scan_rust(short_helper, "short.rs")]
+        if short_sites != ["f:raw_active_helper_call:61be54b164a77baa"]:
+            print(
+                f"active-memory guard short-helper self-test failed: {short_sites}",
+                file=sys.stderr,
+            )
+            return 1
+        helper_indirection = root / "helper_indirection.rs"
+        helper_indirection.write_text(
+            "fn bypass() { let writer = { crate::writer::insert_memory_full_activated }; writer(); }\n",
+            encoding="utf-8",
+        )
+        indirection_sites = [
+            reviewed_site(finding)
+            for finding in scan_rust(helper_indirection, "helper_indirection.rs")
+        ]
+        if indirection_sites != ["bypass:raw_active_helper_call:61be54b164a77baa"]:
+            print(
+                f"active-memory guard helper-indirection self-test failed: {indirection_sites}",
+                file=sys.stderr,
+            )
+            return 1
+        helper_noise = root / "helper_noise.rs"
+        helper_noise.write_text(
+            'fn safe() { /* insert_memory_full_activated(); */ let _ = "insert_memory_full_activated"; }\n',
+            encoding="utf-8",
+        )
+        noise_sites = scan_rust(helper_noise, "helper_noise.rs")
+        if noise_sites:
+            print(
+                f"active-memory guard helper-noise self-test failed: {noise_sites}",
+                file=sys.stderr,
+            )
+            return 1
+        impl_a = root / "impl_a.rs"
+        impl_b = root / "impl_b.rs"
+        impl_a.write_text(
+            'struct A; impl A { fn write() { let _ = "INSERT INTO memories(status) VALUES (1)"; } }',
+            encoding="utf-8",
+        )
+        impl_b.write_text(
+            'struct B; impl B { fn write() { let _ = "INSERT INTO memories(status) VALUES (1)"; } }',
+            encoding="utf-8",
+        )
+        impl_a_sites = [reviewed_site(finding) for finding in scan_rust(impl_a, "impl.rs")]
+        impl_b_sites = [reviewed_site(finding) for finding in scan_rust(impl_b, "impl.rs")]
+        if not impl_a_sites or not impl_b_sites or impl_a_sites == impl_b_sites:
+            print(
+                f"active-memory guard impl pinning self-test failed: {impl_a_sites} {impl_b_sites}",
+                file=sys.stderr,
+            )
+            return 1
         errors = check(root)
         direct_errors = [error for error in errors if "src/direct.rs" in error]
         dynamic_errors = [error for error in errors if "src/dynamic.rs" in error]

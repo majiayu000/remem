@@ -8,9 +8,11 @@ use sha2::{Digest, Sha256};
 
 use super::poisoning::SourceTrustClass;
 
+mod batch;
 mod payload;
 mod receipt;
 mod replay;
+pub(crate) use batch::execute_add_batch;
 pub(crate) use payload::ExpectedActiveMemory;
 pub(crate) use receipt::SupplementalSaveReceipt;
 
@@ -251,58 +253,14 @@ fn execute_one_inner(
             &active_before,
             &active_after,
         )?;
-        let superseded_json = serde_json::to_string(&normalized_superseded_ids)
-            .context("serialize activation supersede set")?;
-        let claim_status = supplemental_receipt
-            .as_ref()
-            .map(SupplementalSaveReceipt::status);
-        let claim_id = supplemental_receipt
-            .as_ref()
-            .and_then(SupplementalSaveReceipt::claim_id);
-        let claim_error = supplemental_receipt
-            .as_ref()
-            .and_then(SupplementalSaveReceipt::error);
-        let now = chrono::Utc::now().timestamp();
-        conn.execute(
-            "INSERT INTO memory_activation_requests
-             (activation_id, request_sha256, route_kind, actor_kind,
-              source_operation, source_trust_class, result_source_trust_class,
-              source_project, project, branch_present,
-              branch, scope, owner_scope, owner_key, target_project,
-              provenance_kind, provenance_ref, payload_sha256, result_sha256,
-              poisoning_verdict, superseded_ids_json, result_memory_id,
-              claim_status, claim_id, claim_error, created_at_epoch)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
-                     ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21,
-                     ?22, ?23, ?24, ?25, ?26)",
-            params![
-                request.activation_id,
-                request_sha256,
-                enum_json(request.route_kind)?,
-                enum_json(request.actor_kind)?,
-                request.source_operation,
-                request.source_trust.as_str(),
-                request.result_source_trust.as_str(),
-                request.source_project,
-                request.route.project,
-                i64::from(request.route.branch.is_some()),
-                request.route.branch,
-                request.route.scope,
-                request.route.owner_scope,
-                request.route.owner_key,
-                request.route.target_project,
-                enum_json(request.provenance_kind)?,
-                request.provenance_ref,
-                request.payload_sha256,
-                result_sha256,
-                enum_json(request.poisoning_verdict)?,
-                superseded_json,
-                memory_id,
-                claim_status,
-                claim_id,
-                claim_error,
-                now,
-            ],
+        record_activation_receipt(
+            conn,
+            request,
+            &normalized_superseded_ids,
+            &request_sha256,
+            &result_sha256,
+            memory_id,
+            supplemental_receipt.as_ref(),
         )?;
         Ok(ActiveMemoryWriteResult {
             memory_id,
@@ -329,6 +287,65 @@ fn execute_one_inner(
             Err(error)
         }
     }
+}
+
+fn record_activation_receipt(
+    conn: &Connection,
+    request: &ActiveMemoryWriteRequest,
+    normalized_superseded_ids: &[i64],
+    request_sha256: &str,
+    result_sha256: &str,
+    memory_id: i64,
+    supplemental_receipt: Option<&SupplementalSaveReceipt>,
+) -> Result<()> {
+    let superseded_json = serde_json::to_string(normalized_superseded_ids)
+        .context("serialize activation supersede set")?;
+    let claim_status = supplemental_receipt.map(SupplementalSaveReceipt::status);
+    let claim_id = supplemental_receipt.and_then(SupplementalSaveReceipt::claim_id);
+    let claim_error = supplemental_receipt.and_then(SupplementalSaveReceipt::error);
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO memory_activation_requests
+         (activation_id, request_sha256, route_kind, actor_kind,
+          source_operation, source_trust_class, result_source_trust_class,
+          source_project, project, branch_present,
+          branch, scope, owner_scope, owner_key, target_project,
+          provenance_kind, provenance_ref, payload_sha256, result_sha256,
+          poisoning_verdict, superseded_ids_json, result_memory_id,
+          claim_status, claim_id, claim_error, created_at_epoch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+                 ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21,
+                 ?22, ?23, ?24, ?25, ?26)",
+        params![
+            request.activation_id,
+            request_sha256,
+            enum_json(request.route_kind)?,
+            enum_json(request.actor_kind)?,
+            request.source_operation,
+            request.source_trust.as_str(),
+            request.result_source_trust.as_str(),
+            request.source_project,
+            request.route.project,
+            i64::from(request.route.branch.is_some()),
+            request.route.branch,
+            request.route.scope,
+            request.route.owner_scope,
+            request.route.owner_key,
+            request.route.target_project,
+            enum_json(request.provenance_kind)?,
+            request.provenance_ref,
+            request.payload_sha256,
+            result_sha256,
+            enum_json(request.poisoning_verdict)?,
+            superseded_json,
+            memory_id,
+            claim_status,
+            claim_id,
+            claim_error,
+            now,
+        ],
+    )?;
+    Ok(())
 }
 
 pub(crate) fn payload_sha256(parts: &[&str]) -> String {
@@ -699,5 +716,7 @@ fn validate_route_policy(request: &ActiveMemoryWriteRequest) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod batch_tests;
 #[cfg(test)]
 mod tests;

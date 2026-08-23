@@ -387,7 +387,12 @@ fn find_active_same_topic_key(
                 CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END) = ?6
            AND COALESCE(owner_key,
                 CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user:default' ELSE project END) = ?7
-           AND target_project IS ?8
+           AND CASE
+               WHEN COALESCE(owner_scope,
+                   CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END) = 'repo'
+               THEN COALESCE(target_project, project)
+               ELSE target_project
+           END IS ?8
            AND status = 'active'",
     )?;
     let rows = stmt.query_map(
@@ -425,7 +430,13 @@ fn matches_lifecycle_route(
                AND COALESCE(owner_key,
                    CASE WHEN COALESCE(scope, 'project') = 'global'
                         THEN 'user:default' ELSE project END) = ?6
-               AND target_project IS ?7
+               AND CASE
+                   WHEN COALESCE(owner_scope,
+                       CASE WHEN COALESCE(scope, 'project') = 'global'
+                            THEN 'user' ELSE 'repo' END) = 'repo'
+                   THEN COALESCE(target_project, project)
+                   ELSE target_project
+               END IS ?7
          )",
         params![
             memory_id,
