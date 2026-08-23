@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use rusqlite::{params, Connection};
 
 use super::CandidateRoute;
@@ -13,7 +13,8 @@ pub(super) fn matches_active_route(
     conn.query_row(
         "SELECT EXISTS(
              SELECT 1 FROM memories
-             WHERE id = ?1 AND status = 'active' AND project = ?2
+             WHERE id = ?1 AND status = 'active'
+               AND (?3 = 'global' OR project = ?2)
                AND branch IS NULL AND COALESCE(scope, 'project') = ?3
                AND COALESCE(owner_scope,
                    CASE WHEN COALESCE(scope, 'project') = 'global'
@@ -40,6 +41,39 @@ pub(super) fn matches_active_route(
         |row| row.get(0),
     )
     .map_err(Into::into)
+}
+
+pub(super) fn bound_memory_project(
+    conn: &Connection,
+    source_project: &str,
+    scope: &str,
+    route: &CandidateRoute,
+    active: &[super::ActiveTopicMemory],
+) -> Result<String> {
+    let fallback = route.memory_project(source_project);
+    if scope != "global" {
+        return Ok(fallback);
+    }
+    let mut bound_project = None;
+    for existing in active {
+        let existing_route = crate::memory::activation::load_existing_route(conn, existing.id)?;
+        ensure!(
+            existing_route.route.scope == scope
+                && existing_route.route.owner_scope == route.owner_scope
+                && existing_route.route.owner_key == route.owner_key
+                && existing_route.route.target_project == route.target_project,
+            "global candidate match escaped its owner route"
+        );
+        if let Some(project) = &bound_project {
+            ensure!(
+                project == &existing_route.route.project,
+                "global candidate matches span incompatible stored projects"
+            );
+        } else {
+            bound_project = Some(existing_route.route.project);
+        }
+    }
+    Ok(bound_project.unwrap_or(fallback))
 }
 
 pub(super) fn ids(

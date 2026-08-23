@@ -3,6 +3,24 @@ use std::collections::HashSet;
 use anyhow::{bail, Result};
 use rusqlite::Connection;
 
+pub(super) fn validate_cluster_superseded_ids(
+    cluster: &super::super::Cluster,
+    superseded_ids: &[i64],
+) -> Result<()> {
+    let member_ids = cluster
+        .members
+        .iter()
+        .map(|member| member.id)
+        .collect::<HashSet<_>>();
+    if superseded_ids.is_empty() {
+        bail!("dream merge requires at least one superseded cluster member");
+    }
+    if let Some(id) = superseded_ids.iter().find(|id| !member_ids.contains(id)) {
+        bail!("dream superseded memory id={id} is outside cluster snapshot");
+    }
+    Ok(())
+}
+
 pub(super) struct TargetResolutionGuard {
     preexisting_ids: HashSet<i64>,
     allowed_ids: HashSet<i64>,

@@ -152,9 +152,9 @@ pub(super) fn bind_existing_target_provenance(
     plan: &MemoryOperationPlan,
     memory_type: &str,
     incoming_text: &str,
-) -> Result<()> {
+) -> Result<bool> {
     let Some(memory_id) = plan.target_memory_id else {
-        return Ok(());
+        return Ok(true);
     };
     let existing_route = crate::memory::activation::load_existing_route(conn, memory_id)?;
     request.route = existing_route.route;
@@ -162,18 +162,21 @@ pub(super) fn bind_existing_target_provenance(
     let existing = crate::memory::activation::ExpectedActiveMemory::from_existing(conn, memory_id)?;
     if plan.op == MemoryLifecycleOp::Noop && memory_type != "lesson" {
         request.expected_memory = existing;
-        return Ok(());
+        return Ok(true);
     }
-    let source_candidate_id = if memory_type == "preference"
-        && !crate::memory::preference::reinforcement::cleanup_preserves_candidate_provenance(
-            &existing.content,
-            incoming_text,
-        ) {
-        None
-    } else {
-        existing.source_candidate_id
-    };
-    request.expected_memory.evidence_event_ids = existing.evidence_event_ids;
-    request.expected_memory.source_candidate_id = source_candidate_id;
-    Ok(())
+    let preserves_provenance = existing.title == request.expected_memory.title
+        && existing.memory_type == request.expected_memory.memory_type
+        && existing.topic_key == request.expected_memory.topic_key
+        && existing.files == request.expected_memory.files
+        && (crate::memory::operation::same_memory_text(&existing.content, incoming_text)
+            || (memory_type == "preference"
+                && crate::memory::preference::reinforcement::cleanup_preserves_candidate_provenance(
+                    &existing.content,
+                    incoming_text,
+                )));
+    if preserves_provenance {
+        request.expected_memory.evidence_event_ids = existing.evidence_event_ids;
+        request.expected_memory.source_candidate_id = existing.source_candidate_id;
+    }
+    Ok(preserves_provenance)
 }

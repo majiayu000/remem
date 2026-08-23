@@ -242,6 +242,11 @@ fn procedure_promotion_binds_verified_evidence_before_activation_receipt() -> Re
         |row| row.get(0),
     )?;
     assert_eq!(replacement_trust, "repo_file");
+    conn.execute(
+        "UPDATE procedure_verifications SET verified_at_epoch = 1",
+        [],
+    )?;
+    assert_eq!(promote_procedure_memory(&conn, &candidate)?, memory_id);
     Ok(())
 }
 

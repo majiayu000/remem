@@ -126,7 +126,7 @@ fn save_memory_inner(
         activation_request.source_operation = "coding_bench_fixture_seed".to_string();
         activation_request.provenance_ref = "coding-bench:curated-fixture".to_string();
     }
-    activation::bind_existing_target_provenance(
+    let preserves_existing_provenance = activation::bind_existing_target_provenance(
         conn,
         &mut activation_request,
         &operation_plan,
@@ -277,6 +277,15 @@ fn save_memory_inner(
                     Ok(result)
                 })
             }?;
+            if !preserves_existing_provenance {
+                conn.execute(
+                    "UPDATE memories
+                     SET evidence_event_ids = NULL, source_candidate_id = NULL,
+                         confidence = NULL
+                     WHERE id = ?1",
+                    [result.0],
+                )?;
+            }
             applied_operation = Some(result.1);
             let claim_receipt = write_claim_after_durable_save(conn, result.0, req)?;
             Ok((result.0, claim_receipt))

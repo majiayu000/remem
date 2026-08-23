@@ -19,6 +19,9 @@ mod dream_supersede;
 mod route_filter;
 mod write;
 
+#[cfg(test)]
+mod global_route_tests;
+
 use write::{
     evidence_valid_from_epoch, insert_candidate_event_time_fact, insert_routed_memory,
     soft_supersede_routed,
@@ -163,7 +166,7 @@ fn promote_candidate_to_memory_inner(
     acknowledged_pattern: Option<(&str, i64)>,
 ) -> Result<CandidateApplyOutcome> {
     let title = candidate_title(candidate);
-    let memory_project = route.memory_project(source_project);
+    let mut memory_project = route.memory_project(source_project);
     let memory_scope = route.memory_scope();
 
     with_operation_savepoint(conn, || {
@@ -272,6 +275,8 @@ fn promote_candidate_to_memory_inner(
                 }
             }
         }
+        memory_project =
+            route_filter::bound_memory_project(conn, source_project, memory_scope, route, &active)?;
         if let Some(existing) = supersede_policy
             .is_unrestricted()
             .then(|| {
@@ -592,7 +597,7 @@ fn find_active_same_topic(
          WHERE status = 'active'
            AND memory_type = ?1
            AND topic_key = ?2
-           AND project = ?3
+           AND (?4 = 'global' OR project = ?3)
            AND branch IS NULL
            AND COALESCE(scope, 'project') = ?4
            AND COALESCE(

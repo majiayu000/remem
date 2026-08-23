@@ -54,6 +54,12 @@ struct MarkdownMemoryMetadata {
     valid_to_epoch: Option<i64>,
     evidence_event_ids: Option<String>,
     source_candidate_id: Option<i64>,
+    #[serde(default)]
+    acknowledged_pattern_id: Option<String>,
+    #[serde(default)]
+    acknowledged_pattern_version: Option<i64>,
+    #[serde(default)]
+    acknowledged_at_epoch: Option<i64>,
     lesson: Option<MarkdownLessonMetadata>,
     #[serde(default)]
     facts: Option<Vec<MarkdownMemoryFactMetadata>>,
@@ -385,7 +391,9 @@ fn load_export_memories(
                 status, branch, scope, source_project, target_project,
                 owner_scope, owner_key, topic_domain, routing_confidence,
                 routing_reason, context_class, expires_at_epoch, valid_from_epoch,
-                valid_to_epoch, {evidence_expr}, {source_candidate_expr}
+                valid_to_epoch, {evidence_expr}, {source_candidate_expr},
+                acknowledged_pattern_id, acknowledged_pattern_version,
+                acknowledged_at_epoch
          FROM memories
          WHERE ((owner_scope = 'repo' AND (owner_key = ?1 OR target_project = ?1))
                 OR (owner_scope IS NULL
@@ -440,6 +448,9 @@ fn load_export_memories(
                 valid_to_epoch: row.get(23)?,
                 evidence_event_ids: row.get(24)?,
                 source_candidate_id: row.get(25)?,
+                acknowledged_pattern_id: row.get(26)?,
+                acknowledged_pattern_version: row.get(27)?,
+                acknowledged_at_epoch: row.get(28)?,
                 lesson: None,
                 facts: Some(Vec::new()),
                 edges: Some(Vec::new()),

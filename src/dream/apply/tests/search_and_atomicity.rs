@@ -210,3 +210,43 @@ fn branch_scoped_topic_fails_closed_under_unscoped_dream_route() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn replay_returns_the_operation_bound_to_the_original_activation() -> Result<()> {
+    let (mut conn, project) = setup();
+    let memory_id = insert_memory(
+        &conn,
+        Some("dream-operation-replay"),
+        &project,
+        Some("dream-operation-replay"),
+        "Original title",
+        "Original content",
+        "decision",
+        None,
+    )?;
+    let first = MergeResult {
+        topic_key: "dream-operation-replay".to_string(),
+        memory_type: "decision".to_string(),
+        title: "First consolidation".to_string(),
+        content: "First consolidated value.".to_string(),
+        superseded_ids: vec![memory_id],
+    };
+    let first_outcome = apply(&mut conn, &project, &first)?;
+    let second = MergeResult {
+        topic_key: "dream-operation-replay".to_string(),
+        memory_type: "decision".to_string(),
+        title: "Second consolidation".to_string(),
+        content: "Second consolidated value.".to_string(),
+        superseded_ids: vec![memory_id],
+    };
+    let second_outcome = apply(&mut conn, &project, &second)?;
+    assert_eq!(first_outcome.merged_id, memory_id);
+    assert_eq!(second_outcome.merged_id, memory_id);
+    assert_ne!(first_outcome.operation_id, second_outcome.operation_id);
+
+    let replay = apply(&mut conn, &project, &first)?;
+    assert_eq!(replay.merged_id, memory_id);
+    assert_eq!(replay.operation_id, first_outcome.operation_id);
+    assert_ne!(replay.operation_id, second_outcome.operation_id);
+    Ok(())
+}

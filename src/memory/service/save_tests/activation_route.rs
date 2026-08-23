@@ -47,7 +47,7 @@ fn direct_save_topic_match_ignores_newer_row_outside_repo_owner_route() -> anyho
 }
 
 #[test]
-fn agent_direct_save_update_preserves_candidate_provenance_in_receipt() -> anyhow::Result<()> {
+fn agent_direct_save_incompatible_update_clears_candidate_provenance() -> anyhow::Result<()> {
     let _dir = ScopedTestDataDir::new("save-update-candidate-provenance");
     let conn = db::open_db()?;
     conn.execute(
@@ -63,11 +63,12 @@ fn agent_direct_save_update_preserves_candidate_provenance_in_receipt() -> anyho
     conn.execute(
         "INSERT INTO memories
          (project, topic_key, title, content, memory_type, evidence_event_ids,
-          source_candidate_id, created_at_epoch, updated_at_epoch, status, scope,
+          source_candidate_id, confidence, valid_from_epoch,
+          created_at_epoch, updated_at_epoch, status, scope,
           source_project, target_project, owner_scope, owner_key, context_class,
           source_trust_class)
          VALUES ('proj', 'captured-target', 'Captured target',
-                 'Automatically captured fact.', 'discovery', '[101,102]', 41,
+                 'Automatically captured fact.', 'discovery', '[101,102]', 41, 0.9, 1,
                  1, 1, 'active', 'project', 'proj', 'proj', 'repo', 'proj',
                  'startup_core', 'user_prompt')",
         [],
@@ -94,13 +95,21 @@ fn agent_direct_save_update_preserves_candidate_provenance_in_receipt() -> anyho
 
     assert_eq!(saved.id, memory_id);
     assert_eq!(saved.operation, "update");
-    let (evidence, candidate_id): (String, Option<i64>) = conn.query_row(
-        "SELECT evidence_event_ids, source_candidate_id FROM memories WHERE id = ?1",
+    let (evidence, candidate_id, confidence, valid_from): (
+        Option<String>,
+        Option<i64>,
+        Option<f64>,
+        Option<i64>,
+    ) = conn.query_row(
+        "SELECT evidence_event_ids, source_candidate_id, confidence, valid_from_epoch
+         FROM memories WHERE id = ?1",
         [memory_id],
-        |row| Ok((row.get(0)?, row.get(1)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     )?;
-    assert_eq!(evidence, "[101,102]");
-    assert_eq!(candidate_id, Some(41));
+    assert_eq!(
+        (evidence, candidate_id, confidence, valid_from),
+        (None, None, None, None)
+    );
     let stored_result_sha256: String = conn.query_row(
         "SELECT result_sha256 FROM memory_activation_requests WHERE result_memory_id = ?1",
         [memory_id],

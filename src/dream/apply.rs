@@ -5,6 +5,7 @@ use super::merge::MergeResult;
 use crate::memory::lifecycle::MemoryLifecycleOp;
 use crate::memory::operation::{insert_operation_log, MemoryOperationInput, MemoryOperationPlan};
 
+mod operation;
 mod target_guard;
 mod trust;
 
@@ -33,7 +34,7 @@ pub(super) fn apply_in_transaction(
     result: &MergeResult,
 ) -> Result<ApplyOutcome> {
     super::freshness::validate_cluster_snapshot(conn, project, cluster)?;
-    validate_cluster_superseded_ids(cluster, &result.superseded_ids)?;
+    target_guard::validate_cluster_superseded_ids(cluster, &result.superseded_ids)?;
     apply_mutations_in_transaction(conn, project, result)
 }
 
@@ -170,9 +171,10 @@ fn apply_mutations_in_transaction(
         } else {
             MemoryLifecycleOp::Update
         };
-        let plan = MemoryOperationPlan::new(op, state_key, "dream consolidation applied")
-            .with_target_memory_id(Some(merged_id))
-            .with_superseded_ids(actual_superseded_ids.clone());
+        let plan =
+            MemoryOperationPlan::new(op, state_key, operation::reason(&request.activation_id))
+                .with_target_memory_id(Some(merged_id))
+                .with_superseded_ids(actual_superseded_ids.clone());
         let inserted_operation_id =
             insert_operation_log(conn, &operation_input, &plan, Some(merged_id))?;
         crate::memory::edge::insert_merged_into_edges(
@@ -190,34 +192,15 @@ fn apply_mutations_in_transaction(
     })?;
     let operation_id = match operation_id {
         Some(operation_id) => operation_id,
-        None if activation_result.replayed => conn.query_row(
-            "SELECT id FROM memory_operation_log
-             WHERE source = 'dream' AND result_memory_id = ?1
-             ORDER BY id DESC LIMIT 1",
-            [activation_result.memory_id],
-            |row| row.get(0),
-        )?,
+        None if activation_result.replayed => {
+            operation::id_for_activation(conn, activation_result.memory_id, &request.activation_id)?
+        }
         None => bail!("dream activation produced no operation log"),
     };
     Ok(ApplyOutcome {
         merged_id: activation_result.memory_id,
         operation_id,
     })
-}
-
-fn validate_cluster_superseded_ids(cluster: &super::Cluster, superseded_ids: &[i64]) -> Result<()> {
-    let member_ids = cluster
-        .members
-        .iter()
-        .map(|member| member.id)
-        .collect::<std::collections::HashSet<_>>();
-    if superseded_ids.is_empty() {
-        bail!("dream merge requires at least one superseded cluster member");
-    }
-    if let Some(id) = superseded_ids.iter().find(|id| !member_ids.contains(id)) {
-        bail!("dream superseded memory id={id} is outside cluster snapshot");
-    }
-    Ok(())
 }
 
 fn validate_dream_superseded_ids(

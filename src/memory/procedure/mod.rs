@@ -158,7 +158,6 @@ fn promote_procedure_memory_with_policy(
     policy: &ProcedurePromotionPolicy,
 ) -> Result<i64> {
     let tx = conn.unchecked_transaction()?;
-    evidence::validate_promotion_candidate(&tx, candidate, policy)?;
     let files_json = (!candidate.files.is_empty())
         .then(|| serde_json::to_string(&candidate.files))
         .transpose()?;
@@ -217,6 +216,9 @@ fn promote_procedure_memory_with_policy(
             },
         )
         .transpose()?;
+    if replay_binding.is_none() {
+        evidence::validate_promotion_candidate(&tx, candidate, policy)?;
+    }
     let binding_id = replay_binding
         .as_ref()
         .map(|(memory_id, _, _, _)| *memory_id)

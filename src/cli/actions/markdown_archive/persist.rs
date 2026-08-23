@@ -48,6 +48,7 @@ pub(super) fn update_markdown_memory(
     doc: &MarkdownMemoryDocument,
     topic_key: Option<&str>,
 ) -> Result<()> {
+    validate_markdown_acknowledgement_metadata(doc)?;
     if doc.metadata.status != "active" {
         return update_markdown_memory_row(conn, memory_id, doc, topic_key);
     }
@@ -70,6 +71,7 @@ pub(super) fn insert_markdown_memory(
     doc: &MarkdownMemoryDocument,
     topic_key: Option<&str>,
 ) -> Result<i64> {
+    validate_markdown_acknowledgement_metadata(doc)?;
     if doc.metadata.status != "active" {
         return insert_markdown_memory_row(conn, doc, topic_key);
     }
@@ -88,16 +90,7 @@ fn markdown_activation_request(
     operation: &str,
     identity: &str,
 ) -> Result<crate::memory::activation::ActiveMemoryWriteRequest> {
-    if let Some(matched) = crate::memory::poisoning::scan_instruction_pattern(&format!(
-        "{}\n{}",
-        doc.metadata.title, doc.content
-    )) {
-        bail!(
-            "markdown import payload matched instruction-pattern {}@{}",
-            matched.pattern_id,
-            matched.pattern_set_version
-        );
-    }
+    let exact_recovery = validate_markdown_acknowledgement(doc)?;
     let ownership = markdown_ownership(doc);
     let serialized = serde_json::to_string(&(&doc.metadata, &doc.content, topic_key))?;
     let payload_sha256 = crate::memory::activation::payload_sha256(&[&serialized]);
@@ -106,7 +99,11 @@ fn markdown_activation_request(
             operation,
             &payload_sha256,
         ),
-        route_kind: crate::memory::activation::ActivationRouteKind::BackupImport,
+        route_kind: if exact_recovery {
+            crate::memory::activation::ActivationRouteKind::ExactRecovery
+        } else {
+            crate::memory::activation::ActivationRouteKind::BackupImport
+        },
         actor_kind: crate::memory::activation::ActivationActorKind::Operator,
         source_operation: operation.to_string(),
         source_trust: crate::memory::poisoning::SourceTrustClass::RepoFile,
@@ -120,7 +117,11 @@ fn markdown_activation_request(
             owner_key: ownership.owner_key.to_string(),
             target_project: ownership.target_project.map(str::to_string),
         },
-        provenance_kind: crate::memory::activation::ActivationProvenanceKind::Backup,
+        provenance_kind: if exact_recovery {
+            crate::memory::activation::ActivationProvenanceKind::ExactRecovery
+        } else {
+            crate::memory::activation::ActivationProvenanceKind::Backup
+        },
         provenance_ref: format!(
             "operator:markdown:{identity}:source-hash:{}",
             doc.metadata
@@ -136,9 +137,57 @@ fn markdown_activation_request(
         )
         .with_topic_key(topic_key)
         .with_files(doc.metadata.files.as_deref()),
-        poisoning_verdict: crate::memory::activation::ActivationPoisoningVerdict::Clean,
+        poisoning_verdict: if exact_recovery {
+            crate::memory::activation::ActivationPoisoningVerdict::ExactRecovery
+        } else {
+            crate::memory::activation::ActivationPoisoningVerdict::Clean
+        },
         superseded_ids: Vec::new(),
     })
+}
+
+fn validate_markdown_acknowledgement(doc: &MarkdownMemoryDocument) -> Result<bool> {
+    let metadata_complete = validate_markdown_acknowledgement_metadata(doc)?;
+    let matched = crate::memory::poisoning::scan_instruction_pattern(&format!(
+        "{}\n{}",
+        doc.metadata.title, doc.content
+    ));
+    match (matched, metadata_complete) {
+        (Some(matched), true)
+            if doc.metadata.acknowledged_pattern_id.as_deref() == Some(matched.pattern_id)
+                && doc.metadata.acknowledged_pattern_version
+                    == Some(matched.pattern_set_version) =>
+        {
+            Ok(true)
+        }
+        (Some(matched), true) => bail!(
+            "markdown import acknowledgement does not match instruction-pattern {}@{}",
+            matched.pattern_id,
+            matched.pattern_set_version
+        ),
+        (Some(matched), false) => bail!(
+            "markdown import payload matched instruction-pattern {}@{}",
+            matched.pattern_id,
+            matched.pattern_set_version
+        ),
+        (None, present) => Ok(present),
+    }
+}
+
+fn validate_markdown_acknowledgement_metadata(doc: &MarkdownMemoryDocument) -> Result<bool> {
+    match (
+        doc.metadata.acknowledged_pattern_id.as_deref(),
+        doc.metadata.acknowledged_pattern_version,
+        doc.metadata.acknowledged_at_epoch,
+    ) {
+        (None, None, None) => Ok(false),
+        (Some(pattern_id), Some(version), Some(epoch))
+            if !pattern_id.trim().is_empty() && version > 0 && epoch > 0 =>
+        {
+            Ok(true)
+        }
+        _ => bail!("markdown import acknowledgement metadata is incomplete"),
+    }
 }
 
 fn validate_active_markdown_route(
@@ -342,7 +391,7 @@ fn finish_savepoint<T>(conn: &Connection, name: &str, result: Result<T>) -> Resu
 pub(super) fn update_optional_memory_provenance(
     conn: &Connection,
     memory_id: i64,
-    _doc: &MarkdownMemoryDocument,
+    doc: &MarkdownMemoryDocument,
 ) -> Result<()> {
     if column_exists(conn, "memories", "evidence_event_ids")? {
         conn.execute(
@@ -360,6 +409,20 @@ pub(super) fn update_optional_memory_provenance(
         conn.execute(
             "UPDATE memories SET source_trust_class = 'repo_file' WHERE id = ?1",
             [memory_id],
+        )?;
+    }
+    if column_exists(conn, "memories", "acknowledged_pattern_id")? {
+        conn.execute(
+            "UPDATE memories
+             SET acknowledged_pattern_id = ?1, acknowledged_pattern_version = ?2,
+                 acknowledged_at_epoch = ?3
+             WHERE id = ?4",
+            rusqlite::params![
+                doc.metadata.acknowledged_pattern_id,
+                doc.metadata.acknowledged_pattern_version,
+                doc.metadata.acknowledged_at_epoch,
+                memory_id
+            ],
         )?;
     }
     Ok(())
