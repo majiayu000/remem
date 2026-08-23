@@ -177,6 +177,16 @@ pub fn apply_memory_cleanup_plan(
             .source_project
             .clone()
             .unwrap_or_else(|| current_snapshot.project.clone());
+        let target_project = if owner_scope == "repo" {
+            Some(
+                current_snapshot
+                    .target_project
+                    .clone()
+                    .unwrap_or_else(|| current_snapshot.project.clone()),
+            )
+        } else {
+            current_snapshot.target_project.clone()
+        };
         let group_json = serde_json::to_string(group)?;
         let mut expected_memory =
             crate::memory::activation::ExpectedActiveMemory::from_existing(&tx, group.current_id)?;
@@ -215,7 +225,7 @@ pub fn apply_memory_cleanup_plan(
                 scope,
                 owner_scope,
                 owner_key,
-                target_project: current_snapshot.target_project.clone(),
+                target_project,
             },
             provenance_kind: crate::memory::activation::ActivationProvenanceKind::ScopePlan,
             provenance_ref: format!(

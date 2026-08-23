@@ -188,38 +188,50 @@ fn promote_procedure_memory_with_policy(
         crate::memory::activation::activation_id_from_key("procedure-promotion", &payload_sha256);
     let replay_binding = tx
         .query_row(
-            "SELECT result_memory_id, superseded_ids_json
+            "SELECT result_memory_id, superseded_ids_json, result_source_trust_class
              FROM memory_activation_requests WHERE activation_id = ?1",
             [&activation_id],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
         )
         .optional()?
-        .map(|(memory_id, superseded_json)| {
+        .map(|(memory_id, superseded_json, result_source_trust)| {
             serde_json::from_str::<Vec<i64>>(&superseded_json)
-                .map(|superseded_ids| (memory_id, superseded_ids))
+                .map(|superseded_ids| (memory_id, superseded_ids, result_source_trust))
                 .context("invalid procedure activation superseded ids")
         })
         .transpose()?;
     let binding_id = replay_binding
         .as_ref()
-        .map(|(memory_id, _)| *memory_id)
+        .map(|(memory_id, _, _)| *memory_id)
         .or(existing_id);
     let retained_provenance = binding_id
         .map(|memory_id| {
             crate::memory::activation::ExpectedActiveMemory::from_existing(&tx, memory_id)
         })
         .transpose()?;
-    let result_source_trust = binding_id
-        .map(|memory_id| {
-            tx.query_row(
-                "SELECT source_trust_class FROM memories WHERE id = ?1",
-                [memory_id],
-                |row| row.get::<_, String>(0),
-            )
+    let result_source_trust = replay_binding
+        .as_ref()
+        .map(|(_, _, trust)| Ok(trust.clone()))
+        .or_else(|| {
+            binding_id.map(|memory_id| {
+                tx.query_row(
+                    "SELECT source_trust_class FROM memories WHERE id = ?1",
+                    [memory_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(anyhow::Error::from)
+            })
         })
         .transpose()?
         .map(|trust| {
-            crate::memory::poisoning::SourceTrustClass::parse(&trust).ok_or_else(|| {
+            let normalized = trust.strip_prefix("legacy_v086_source_").unwrap_or(&trust);
+            crate::memory::poisoning::SourceTrustClass::parse(normalized).ok_or_else(|| {
                 anyhow::anyhow!("existing procedure memory has invalid source trust: {trust}")
             })
         })
@@ -237,7 +249,7 @@ fn promote_procedure_memory_with_policy(
     .with_files(files_json.as_deref())
     .with_candidate_evidence(Some(&source_events_json), retained_candidate_id);
     let superseded_ids = replay_binding
-        .map(|(_, superseded_ids)| superseded_ids)
+        .map(|(_, superseded_ids, _)| superseded_ids)
         .unwrap_or_else(|| existing_id.into_iter().collect());
     let request = crate::memory::activation::ActiveMemoryWriteRequest {
         activation_id,

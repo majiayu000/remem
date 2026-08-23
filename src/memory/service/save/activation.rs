@@ -157,7 +157,7 @@ pub(super) fn bind_existing_target_provenance(
         return Ok(());
     };
     let existing = crate::memory::activation::ExpectedActiveMemory::from_existing(conn, memory_id)?;
-    if plan.op == MemoryLifecycleOp::Noop {
+    if plan.op == MemoryLifecycleOp::Noop && memory_type != "lesson" {
         request.expected_memory = existing;
         return Ok(());
     }

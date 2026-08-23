@@ -433,8 +433,8 @@ def normalize_sql(value: str) -> str:
     return value
 
 
-def array_concat_spans(text: str) -> list[tuple[int, int]]:
-    """Return array-expression spans immediately consumed by `.concat()`.
+def array_composition_spans(text: str) -> list[tuple[int, int]]:
+    """Return array-expression spans immediately consumed by `.concat()` or `.join()`.
 
     The small scanner skips Rust string literals, so punctuation such as `;`
     and `]` inside SQL fragments cannot hide an array concatenation.
@@ -453,12 +453,74 @@ def array_concat_spans(text: str) -> list[tuple[int, int]]:
             elif text[index] == "]":
                 depth -= 1
                 if depth == 0:
-                    tail = re.match(r"\s*\)*\s*\.concat\s*\(\s*\)", text[index + 1 :])
+                    tail = re.match(
+                        r"\s*\)*\s*\.(?:concat\s*\(\s*\)|join\s*\()",
+                        text[index + 1 :],
+                    )
                     if tail:
                         spans.append((opening, index + 1))
                     break
             index += 1
     return spans
+
+
+def push_str_compositions(text: str) -> list[tuple[int, str]]:
+    """Reconstruct literal SQL assembled through a local string builder."""
+    structure = mask_rust_structure(text)
+    let_re = re.compile(
+        r"\blet\s+(?:mut\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+        r"(?:\s*:[^=;]+)?\s*=\s*(?P<body>[^;]*);",
+        re.S,
+    )
+    push_re = re.compile(
+        r"\b(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*push_str\s*"
+        r"\((?P<body>[^;]*)\)\s*;",
+        re.S,
+    )
+    operations = [
+        (match.start(), "let", match) for match in let_re.finditer(structure)
+    ] + [(match.start(), "push", match) for match in push_re.finditer(structure)]
+    builders: dict[tuple[tuple[int, ...], str], tuple[int, list[str]]] = {}
+    compositions: list[tuple[int, str]] = []
+    brace_stack: list[int] = []
+    cursor = 0
+    for offset, operation, match in sorted(operations, key=lambda item: item[0]):
+        while cursor < offset:
+            if structure[cursor] == "{":
+                brace_stack.append(cursor)
+            elif structure[cursor] == "}" and brace_stack:
+                brace_stack.pop()
+            cursor += 1
+        scope = tuple(brace_stack)
+        key = (scope, match.group("name"))
+        body_end = match.end("body")
+        conditional = re.search(
+            r"\b(?:if|while)\s*$",
+            structure[max(0, match.start() - 32) : match.start()],
+        )
+        if operation == "let" and conditional:
+            opening = structure.find("{", match.start("body"), body_end)
+            if opening != -1:
+                scope += (opening,)
+                key = (scope, match.group("name"))
+                body_end = opening
+        body = text[match.start("body") : body_end]
+        fragments = [decoded_literal(literal) for literal in STRING_RE.finditer(body)]
+        if operation == "let":
+            builders[key] = (offset, fragments)
+            continue
+        candidates = [
+            candidate
+            for candidate in builders
+            if candidate[1] == key[1] and scope[: len(candidate[0])] == candidate[0]
+        ]
+        if not candidates:
+            continue
+        key = max(candidates, key=lambda candidate: len(candidate[0]))
+        start, accumulated = builders[key]
+        accumulated.extend(fragments)
+        compositions.append((start, "".join(accumulated)))
+    return compositions
 
 
 def scan_rust(path: Path, rel: str) -> list[Finding]:
@@ -505,7 +567,7 @@ def scan_rust(path: Path, rel: str) -> list[Finding]:
         ):
             findings.append(make_finding(rel, text, composed.start(), kind, joined))
     structure = mask_rust_comments(text)
-    for start, end in array_concat_spans(structure):
+    for start, end in array_composition_spans(structure):
         fragments = [decoded_literal(match) for match in STRING_RE.finditer(text[start:end])]
         joined = normalize_sql("".join(fragments))
         kind = None
@@ -514,6 +576,20 @@ def scan_rust(path: Path, rel: str) -> list[Finding]:
         elif ACTIVE_UPDATE_RE.search(joined):
             kind = "active_status_update"
         if kind:
+            findings.append(make_finding(rel, text, start, kind, joined))
+    for start, composed in push_str_compositions(text):
+        joined = normalize_sql(composed)
+        kind = None
+        if INSERT_RE.search(joined):
+            kind = "memory_insert"
+        elif ACTIVE_UPDATE_RE.search(joined):
+            kind = "active_status_update"
+        if kind and not any(
+            finding.kind == kind
+            and finding.enclosing_function == enclosing_function(text, start)
+            and finding.signature == finding_signature(kind, joined)
+            for finding in findings
+        ):
             findings.append(make_finding(rel, text, start, kind, joined))
     return findings
 
@@ -588,6 +664,11 @@ def self_test() -> int:
             ' let _ = ["INSERT INTO ", "memories (status) VALUES (\'active\')"].concat();\n'
             ' let _ = [r#"INSERT INTO "#, r#"memories(status) VALUES (1);"#].concat();\n'
             ' let _ = (["INSERT INTO ", "memories(status) VALUES (]);"]).concat();\n'
+            ' let _ = ["UPDATE memories SET ", "status = ?1 WHERE id = ?2"].join({ let sep = ""; sep });\n'
+            ' let mut sql = String::new();\n'
+            ' sql.push_str("UPDATE memories SET ");\n'
+            ' if let sql = other { sql.push_str("harmless"); }\n'
+            ' if true { sql.push_str("status = :status WHERE id = ?2"); }\n'
             ' let _ = r##########"UPDATE memories SET status = "active" WHERE id = 1"##########;\n'
             '}\n',
             encoding="utf-8",
@@ -688,9 +769,9 @@ def self_test() -> int:
         dynamic_errors = [error for error in errors if "src/dynamic.rs" in error]
         commented_errors = [error for error in errors if "src/commented.rs" in error]
         if (
-            len(errors) != 13
+            len(errors) != 15
             or len(direct_errors) != 2
-            or len(dynamic_errors) != 10
+            or len(dynamic_errors) != 12
             or len(commented_errors) != 1
         ):
             print(f"active-memory guard self-test failed: {errors}", file=sys.stderr)

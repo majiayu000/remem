@@ -681,6 +681,41 @@ fn merge_preferences_keeps_one_active_preference_with_merged_content() -> Result
 }
 
 #[test]
+fn cleanup_plan_normalizes_legacy_repo_target_in_activation_receipt() -> Result<()> {
+    let conn = setup_conn();
+    seed_stash_pollution(&conn);
+    conn.execute(
+        "UPDATE memories SET target_project = NULL WHERE id IN (1030, 1031, 1032)",
+        [],
+    )?;
+
+    let plan = build_preference_cleanup_plan(&conn, STASH)?;
+    assert_eq!(plan.groups.len(), 1);
+    let current_id = plan.groups[0].current_id;
+    let applied = apply_memory_cleanup_plan(&conn, &plan)?;
+    assert_eq!(applied.groups_applied, 1);
+    assert_eq!(applied.current_ids, vec![current_id]);
+    assert_eq!(
+        conn.query_row(
+            "SELECT target_project FROM memory_activation_requests
+             WHERE result_memory_id = ?1 AND route_kind = 'scope_cleanup'",
+            [current_id],
+            |row| row.get::<_, String>(0),
+        )?,
+        STASH
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT target_project FROM memories WHERE id = ?1",
+            [current_id],
+            |row| row.get::<_, Option<String>>(0),
+        )?,
+        None
+    );
+    Ok(())
+}
+
+#[test]
 fn object_ref_parser_requires_explicit_kind_and_dedupes() -> Result<()> {
     let parsed = parse_object_refs(&refs(&["memory:1, workstream:2", "memory:1"]))?;
     assert_eq!(

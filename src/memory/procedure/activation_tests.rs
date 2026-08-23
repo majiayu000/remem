@@ -224,3 +224,51 @@ fn procedure_evidence_must_match_the_captured_success_event() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn procedure_replay_uses_original_receipt_trust_after_agent_update() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    crate::migrate::run_migrations(&conn)?;
+    let (candidate, _) = verified_candidates(&conn)?;
+
+    let memory_id = promote_procedure_memory(&conn, &candidate)?;
+    let updated = crate::memory::service::save_memory_from_with_reference_time(
+        &conn,
+        &crate::memory::service::SaveMemoryRequest {
+            text: format!("{}\nAgent clarification.", candidate.content),
+            title: Some(candidate.title.clone()),
+            project: Some(candidate.project.clone()),
+            topic_key: Some(candidate.topic_key.clone()),
+            memory_type: Some("procedure".to_string()),
+            branch: candidate.branch.clone(),
+            scope: Some("project".to_string()),
+            local_copy_enabled: Some(false),
+            claim_enabled: Some(false),
+            idempotency_key: Some("procedure-agent-update".to_string()),
+            ..crate::memory::service::SaveMemoryRequest::default()
+        },
+        None,
+        crate::memory::service::SaveMemoryCaller::McpAgent,
+    )?;
+    assert_eq!(updated.id, memory_id);
+    assert_eq!(
+        conn.query_row(
+            "SELECT source_trust_class FROM memories WHERE id = ?1",
+            [memory_id],
+            |row| row.get::<_, String>(0),
+        )?,
+        "external_content"
+    );
+
+    assert_eq!(promote_procedure_memory(&conn, &candidate)?, memory_id);
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM memory_activation_requests WHERE result_memory_id = ?1",
+            [memory_id],
+            |row| row.get::<_, i64>(0),
+        )?,
+        2
+    );
+    Ok(())
+}

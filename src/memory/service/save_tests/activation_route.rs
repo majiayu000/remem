@@ -210,3 +210,40 @@ fn direct_save_replays_original_receipt_after_equivalent_candidate_replacement(
     assert_eq!(statuses, ("stale".to_string(), "active".to_string()));
     Ok(())
 }
+
+#[test]
+fn semantic_noop_lesson_reinforcement_validates_the_rewritten_payload() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("lesson-semantic-noop-payload");
+    let conn = db::open_db()?;
+    let request = SaveMemoryRequest {
+        text: "Lesson: Preserve the exact reinforced payload.".to_string(),
+        title: Some("Lesson payload".to_string()),
+        project: Some("proj".to_string()),
+        topic_key: Some("lesson-payload".to_string()),
+        memory_type: Some("lesson".to_string()),
+        local_copy_enabled: Some(false),
+        claim_enabled: Some(false),
+        ..SaveMemoryRequest::default()
+    };
+    let first = save_memory(&conn, &request)?;
+    let incoming = "  lesson: preserve   the exact reinforced payload.  ";
+    let second = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: incoming.to_string(),
+            ..request
+        },
+    )?;
+
+    assert_eq!(second.id, first.id);
+    assert_eq!(second.operation, "update");
+    assert_eq!(
+        conn.query_row(
+            "SELECT content FROM memories WHERE id = ?1",
+            [first.id],
+            |row| row.get::<_, String>(0),
+        )?,
+        incoming
+    );
+    Ok(())
+}
