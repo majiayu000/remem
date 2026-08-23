@@ -40,6 +40,7 @@ const IMPLEMENTATION_INPUTS: &[&str] = &[
     "src/memory.rs",
     "src/memory/activation.rs",
     "src/memory/activation/batch.rs",
+    "src/memory/activation/execute.rs",
     "src/memory/activation/payload.rs",
     "src/memory/activation/receipt.rs",
     "src/memory/activation/replay.rs",
