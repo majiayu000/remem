@@ -4,6 +4,60 @@ use rusqlite::{params, Connection, OptionalExtension};
 use super::{ActivationPoisoningVerdict, ExpectedActiveMemory};
 use crate::memory::poisoning::SourceTrustClass;
 
+pub(crate) fn replay_dream_if_present(
+    conn: &Connection,
+    request: &super::ActiveMemoryWriteRequest,
+) -> Result<Option<super::ActiveMemoryWriteResult>> {
+    if request.route_kind != super::ActivationRouteKind::DreamConsolidation {
+        bail!("early Dream replay requires the dream_consolidation route");
+    }
+    let normalized_superseded_ids = super::validate_request(request)?;
+    let existing = conn
+        .query_row(
+            "SELECT request_sha256, result_sha256, result_memory_id
+             FROM memory_activation_requests
+             WHERE activation_id = ?1",
+            [&request.activation_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((stored_request_sha256, stored_result_sha256, memory_id)) = existing else {
+        return Ok(None);
+    };
+    let current_request_sha256 =
+        super::receipt::current_request_sha256(request, &normalized_superseded_ids)?;
+    if stored_request_sha256 != current_request_sha256
+        && !super::receipt::request_identity_matches_receipt(
+            conn,
+            request,
+            &normalized_superseded_ids,
+        )?
+    {
+        return Err(super::ActivationIdConflictError {
+            activation_id: request.activation_id.clone(),
+        }
+        .into());
+    }
+    validate_replayed_result(
+        conn,
+        &request.activation_id,
+        memory_id,
+        &stored_result_sha256,
+    )?;
+    Ok(Some(super::ActiveMemoryWriteResult {
+        memory_id,
+        replayed: true,
+        supplemental_receipt: None,
+        supplemental_local_copy_receipt: None,
+    }))
+}
+
 struct ActivationReceipt {
     rowid: i64,
     result_sha256: String,

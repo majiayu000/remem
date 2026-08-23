@@ -1,6 +1,46 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
+use crate::memory::activation::{
+    ActivationActorKind, ActivationPoisoningVerdict, ActivationProvenanceKind, ActivationRouteKind,
+    ActiveMemoryRoute, ActiveMemoryWriteRequest, ExpectedActiveMemory,
+};
+use crate::memory::poisoning::SourceTrustClass;
+
+pub(super) fn activation_request(
+    project: &str,
+    payload_sha256: String,
+    expected_memory: ExpectedActiveMemory,
+    superseded_ids: Vec<i64>,
+) -> ActiveMemoryWriteRequest {
+    ActiveMemoryWriteRequest {
+        activation_id: crate::memory::activation::activation_id_from_key(
+            "dream-consolidation",
+            &payload_sha256,
+        ),
+        route_kind: ActivationRouteKind::DreamConsolidation,
+        actor_kind: ActivationActorKind::AutomaticWorker,
+        source_operation: "dream_consolidation".to_string(),
+        source_trust: SourceTrustClass::ExternalContent,
+        result_source_trust: SourceTrustClass::ExternalContent,
+        source_project: project.to_string(),
+        route: ActiveMemoryRoute {
+            project: project.to_string(),
+            branch: None,
+            scope: "project".to_string(),
+            owner_scope: "repo".to_string(),
+            owner_key: project.to_string(),
+            target_project: Some(project.to_string()),
+        },
+        provenance_kind: ActivationProvenanceKind::Generated,
+        provenance_ref: format!("dream-generated:{payload_sha256}"),
+        payload_sha256,
+        expected_memory,
+        poisoning_verdict: ActivationPoisoningVerdict::UpstreamValidated,
+        superseded_ids,
+    }
+}
+
 pub(super) fn reason(activation_id: &str) -> String {
     format!("dream consolidation applied activation={activation_id}")
 }

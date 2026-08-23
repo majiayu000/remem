@@ -22,7 +22,7 @@ pub(super) fn apply(
     result: &MergeResult,
 ) -> Result<ApplyOutcome> {
     let tx = conn.transaction()?;
-    let outcome = apply_mutations_in_transaction(&tx, project, result)?;
+    let outcome = apply_mutations_in_transaction(&tx, project, None, result)?;
     tx.commit()?;
     Ok(outcome)
 }
@@ -33,18 +33,86 @@ pub(super) fn apply_in_transaction(
     cluster: &super::Cluster,
     result: &MergeResult,
 ) -> Result<ApplyOutcome> {
-    super::freshness::validate_cluster_snapshot(conn, project, cluster)?;
-    target_guard::validate_cluster_superseded_ids(cluster, &result.superseded_ids)?;
-    apply_mutations_in_transaction(conn, project, result)
+    apply_mutations_in_transaction(conn, project, Some(cluster), result)
 }
 
 fn apply_mutations_in_transaction(
     conn: &Connection,
     project: &str,
+    cluster: Option<&super::Cluster>,
     result: &MergeResult,
 ) -> Result<ApplyOutcome> {
     let superseded_ids =
         validate_dream_superseded_ids(conn, project, &result.memory_type, &result.superseded_ids)?;
+    let original_target_id = target_guard::superseded_topic_target(
+        conn,
+        &superseded_ids,
+        &result.memory_type,
+        &result.topic_key,
+    )?;
+    let actual_superseded_ids = superseded_ids
+        .iter()
+        .copied()
+        .filter(|id| Some(*id) != original_target_id)
+        .collect::<Vec<_>>();
+    let superseded_json = serde_json::to_string(&actual_superseded_ids)?;
+    let payload_sha256 = crate::memory::activation::payload_sha256(&[
+        project,
+        &result.topic_key,
+        &result.title,
+        &result.content,
+        &result.memory_type,
+        &superseded_json,
+    ]);
+    let retained_provenance = original_target_id
+        .map(|memory_id| {
+            crate::memory::activation::ExpectedActiveMemory::from_existing(conn, memory_id)
+        })
+        .transpose()?;
+    let expected_memory = crate::memory::activation::ExpectedActiveMemory::new(
+        &result.title,
+        &result.content,
+        &result.memory_type,
+    )
+    .with_topic_key(Some(&result.topic_key))
+    .with_candidate_evidence(
+        retained_provenance
+            .as_ref()
+            .and_then(|memory| memory.evidence_event_ids.as_deref()),
+        retained_provenance
+            .as_ref()
+            .and_then(|memory| memory.source_candidate_id),
+    );
+    let request = operation::activation_request(
+        project,
+        payload_sha256,
+        expected_memory,
+        actual_superseded_ids.clone(),
+    );
+    if let Some(replay) = crate::memory::activation::replay_dream_if_present(conn, &request)? {
+        return Ok(ApplyOutcome {
+            merged_id: replay.memory_id,
+            operation_id: operation::id_for_activation(
+                conn,
+                replay.memory_id,
+                &request.activation_id,
+            )?,
+        });
+    }
+    if let Some(cluster) = cluster {
+        super::freshness::validate_cluster_snapshot(conn, project, cluster)?;
+        target_guard::validate_cluster_superseded_ids(cluster, &result.superseded_ids)?;
+    }
+    if let Some(matched) = crate::memory::poisoning::scan_instruction_pattern(&format!(
+        "{}\n{}",
+        result.title, result.content
+    )) {
+        bail!(
+            "dream generated payload matched instruction-pattern {}@{}",
+            matched.pattern_id,
+            matched.pattern_set_version
+        );
+    }
     let existing_target_id = validate_dream_target_topic(
         conn,
         project,
@@ -52,6 +120,9 @@ fn apply_mutations_in_transaction(
         &result.topic_key,
         &superseded_ids,
     )?;
+    if existing_target_id != original_target_id {
+        bail!("dream target changed while preparing a fresh activation");
+    }
     let target_guard = target_guard::TargetResolutionGuard::capture(conn, &superseded_ids)?;
     let state_key = crate::memory::state_key::derive_state_key(
         &result.memory_type,
@@ -71,75 +142,6 @@ fn apply_mutations_in_transaction(
         state_key: state_key.clone(),
         source_candidate_id: None,
         confidence: None,
-    };
-
-    let actual_superseded_ids = superseded_ids
-        .into_iter()
-        .filter(|id| Some(*id) != existing_target_id)
-        .collect::<Vec<_>>();
-    if let Some(matched) = crate::memory::poisoning::scan_instruction_pattern(&format!(
-        "{}\n{}",
-        result.title, result.content
-    )) {
-        bail!(
-            "dream generated payload matched instruction-pattern {}@{}",
-            matched.pattern_id,
-            matched.pattern_set_version
-        );
-    }
-    let superseded_json = serde_json::to_string(&actual_superseded_ids)?;
-    let payload_sha256 = crate::memory::activation::payload_sha256(&[
-        project,
-        &result.topic_key,
-        &result.title,
-        &result.content,
-        &result.memory_type,
-        &superseded_json,
-    ]);
-    let retained_provenance = existing_target_id
-        .map(|memory_id| {
-            crate::memory::activation::ExpectedActiveMemory::from_existing(conn, memory_id)
-        })
-        .transpose()?;
-    let expected_memory = crate::memory::activation::ExpectedActiveMemory::new(
-        &result.title,
-        &result.content,
-        &result.memory_type,
-    )
-    .with_topic_key(Some(&result.topic_key))
-    .with_candidate_evidence(
-        retained_provenance
-            .as_ref()
-            .and_then(|memory| memory.evidence_event_ids.as_deref()),
-        retained_provenance
-            .as_ref()
-            .and_then(|memory| memory.source_candidate_id),
-    );
-    let request = crate::memory::activation::ActiveMemoryWriteRequest {
-        activation_id: crate::memory::activation::activation_id_from_key(
-            "dream-consolidation",
-            &payload_sha256,
-        ),
-        route_kind: crate::memory::activation::ActivationRouteKind::DreamConsolidation,
-        actor_kind: crate::memory::activation::ActivationActorKind::AutomaticWorker,
-        source_operation: "dream_consolidation".to_string(),
-        source_trust: crate::memory::poisoning::SourceTrustClass::ExternalContent,
-        result_source_trust: crate::memory::poisoning::SourceTrustClass::ExternalContent,
-        source_project: project.to_string(),
-        route: crate::memory::activation::ActiveMemoryRoute {
-            project: project.to_string(),
-            branch: None,
-            scope: "project".to_string(),
-            owner_scope: "repo".to_string(),
-            owner_key: project.to_string(),
-            target_project: Some(project.to_string()),
-        },
-        provenance_kind: crate::memory::activation::ActivationProvenanceKind::Generated,
-        provenance_ref: format!("dream-generated:{payload_sha256}"),
-        payload_sha256,
-        expected_memory,
-        poisoning_verdict: crate::memory::activation::ActivationPoisoningVerdict::UpstreamValidated,
-        superseded_ids: actual_superseded_ids.clone(),
     };
     let mut operation_id = None;
     let activation_result = crate::memory::activation::execute_one(conn, &request, |permit| {

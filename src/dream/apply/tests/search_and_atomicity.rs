@@ -250,3 +250,112 @@ fn replay_returns_the_operation_bound_to_the_original_activation() -> Result<()>
     assert_ne!(replay.operation_id, second_outcome.operation_id);
     Ok(())
 }
+
+#[test]
+fn replay_precedes_a_later_replacement_topic_collision() -> Result<()> {
+    let (mut conn, project) = setup();
+    let source_id = insert_memory(
+        &conn,
+        Some("dream-replaced-replay"),
+        &project,
+        Some("source-topic"),
+        "Source title",
+        "Source content",
+        "decision",
+        None,
+    )?;
+    let original = MergeResult {
+        topic_key: "stable-dream-topic".to_string(),
+        memory_type: "decision".to_string(),
+        title: "Original consolidation".to_string(),
+        content: "Original consolidated value.".to_string(),
+        superseded_ids: vec![source_id],
+    };
+    let original_outcome = apply(&mut conn, &project, &original)?;
+
+    let replacement = crate::memory::lifecycle::apply_update(
+        &conn,
+        Some("later-governed-replacement"),
+        &project,
+        "stable-dream-topic",
+        "Later replacement",
+        "Later governed value.",
+        "decision",
+        None,
+        None,
+        "project",
+        &[original_outcome.merged_id],
+    )?;
+    let replacement_id = replacement.memory_id.expect("replacement id");
+    assert_ne!(replacement_id, original_outcome.merged_id);
+
+    let replay = apply(&mut conn, &project, &original)?;
+    assert_eq!(replay.merged_id, original_outcome.merged_id);
+    assert_eq!(replay.operation_id, original_outcome.operation_id);
+    assert_eq!(status_for_id(&conn, original_outcome.merged_id), "stale");
+    assert_eq!(status_for_id(&conn, replacement_id), "active");
+    Ok(())
+}
+
+#[test]
+fn replay_uses_receipt_identity_after_same_row_provenance_is_cleared() -> Result<()> {
+    let (mut conn, project) = setup();
+    conn.execute(
+        "INSERT INTO memory_candidates
+         (id, scope, memory_type, topic_key, text, evidence_event_ids,
+          confidence, risk_class, review_status, created_at_epoch, updated_at_epoch)
+         VALUES (88, 'project', 'decision', 'dream-provenance-replay',
+                 'candidate source', '[601]', 0.9, 'low', 'approved', 1, 1)",
+        [],
+    )?;
+    let memory_id = insert_memory(
+        &conn,
+        Some("dream-provenance-replay"),
+        &project,
+        Some("dream-provenance-replay"),
+        "Seed title",
+        "Seed content",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories
+         SET evidence_event_ids = '[601]', source_candidate_id = 88
+         WHERE id = ?1",
+        [memory_id],
+    )?;
+    let original = MergeResult {
+        topic_key: "dream-provenance-replay".to_string(),
+        memory_type: "decision".to_string(),
+        title: "Dream consolidated title".to_string(),
+        content: "Dream consolidated value.".to_string(),
+        superseded_ids: vec![memory_id],
+    };
+    let original_outcome = apply(&mut conn, &project, &original)?;
+
+    let later_id = crate::memory::insert_memory_full(
+        &conn,
+        Some("later-direct-update"),
+        &project,
+        Some("dream-provenance-replay"),
+        "Later direct title",
+        "Later direct value.",
+        "decision",
+        None,
+        None,
+        "project",
+        None,
+    )?;
+    assert_eq!(later_id, memory_id, "later update must reuse the Dream row");
+    let candidate_id: Option<i64> = conn.query_row(
+        "SELECT source_candidate_id FROM memories WHERE id = ?1",
+        [memory_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(candidate_id, None);
+
+    let replay = apply(&mut conn, &project, &original)?;
+    assert_eq!(replay.merged_id, original_outcome.merged_id);
+    assert_eq!(replay.operation_id, original_outcome.operation_id);
+    Ok(())
+}

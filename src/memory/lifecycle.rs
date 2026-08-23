@@ -176,7 +176,15 @@ pub fn apply_update(
             &ownership,
             state_key.as_ref(),
         )?;
-        let count = soft_supersede(&tx, project, &superseded_targets, Some(memory_id))?;
+        let count = soft_supersede_lifecycle(
+            &tx,
+            project,
+            branch,
+            scope,
+            &ownership,
+            &superseded_targets,
+            Some(memory_id),
+        )?;
         crate::memory::edge::insert_supersedes_edges(
             &tx,
             &superseded_targets,
@@ -382,7 +390,8 @@ fn find_active_same_topic_key(
     let mut stmt = conn.prepare(
         "SELECT id FROM memories
          WHERE memory_type = ?1 AND topic_key = ?2
-           AND project = ?3 AND branch IS ?4 AND COALESCE(scope, 'project') = ?5
+           AND (?5 = 'global' OR project = ?3)
+           AND branch IS ?4 AND COALESCE(scope, 'project') = ?5
            AND COALESCE(owner_scope,
                 CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END) = ?6
            AND COALESCE(owner_key,
@@ -422,7 +431,8 @@ fn matches_lifecycle_route(
     conn.query_row(
         "SELECT EXISTS(
              SELECT 1 FROM memories
-             WHERE id = ?1 AND status = 'active' AND project = ?2
+             WHERE id = ?1 AND status = 'active'
+               AND (?4 = 'global' OR project = ?2)
                AND branch IS ?3 AND COALESCE(scope, 'project') = ?4
                AND COALESCE(owner_scope,
                    CASE WHEN COALESCE(scope, 'project') = 'global'
@@ -450,6 +460,49 @@ fn matches_lifecycle_route(
         |row| row.get(0),
     )
     .map_err(Into::into)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn soft_supersede_lifecycle(
+    conn: &Connection,
+    project: &str,
+    branch: Option<&str>,
+    scope: &str,
+    ownership: &LifecycleOwnership<'_>,
+    memory_ids: &[i64],
+    replacement_id: Option<i64>,
+) -> Result<usize> {
+    let mut seen = std::collections::HashSet::with_capacity(memory_ids.len());
+    let targets = memory_ids
+        .iter()
+        .copied()
+        .filter(|id| Some(*id) != replacement_id && seen.insert(*id))
+        .collect::<Vec<_>>();
+    for memory_id in &targets {
+        if !matches_lifecycle_route(conn, *memory_id, project, branch, scope, ownership)? {
+            return Err(anyhow!(
+                "failed to mark lifecycle memory stale outside owner route: id={memory_id}"
+            ));
+        }
+    }
+    crate::memory::preference::compilation::enqueue_for_memory_ids(conn, &targets)?;
+
+    let now = chrono::Utc::now().timestamp();
+    for memory_id in &targets {
+        let updated = conn.execute(
+            "UPDATE memories
+             SET status = 'stale',
+                 valid_to_epoch = COALESCE(valid_to_epoch, ?2)
+             WHERE id = ?1 AND status = 'active'",
+            params![memory_id, now],
+        )?;
+        if updated != 1 {
+            return Err(anyhow!(
+                "failed to mark lifecycle memory stale: id={memory_id}"
+            ));
+        }
+    }
+    Ok(targets.len())
 }
 
 pub fn noop(reason: impl Into<String>) -> LifecycleOutcome {

@@ -185,6 +185,76 @@ fn replay_survives_a_later_governed_in_place_update() -> Result<()> {
 }
 
 #[test]
+fn legacy_dream_receipt_replays_after_same_row_provenance_drift() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    let mut original = request("dream:legacy-provenance", "legacy-dream");
+    original.route_kind = ActivationRouteKind::DreamConsolidation;
+    original.actor_kind = ActivationActorKind::AutomaticWorker;
+    original.source_operation = "dream_consolidation".to_string();
+    original.source_trust = SourceTrustClass::ExternalContent;
+    original.result_source_trust = SourceTrustClass::ExternalContent;
+    original.provenance_kind = ActivationProvenanceKind::Generated;
+    original.provenance_ref = "dream-generated:legacy-provenance".to_string();
+    original.poisoning_verdict = ActivationPoisoningVerdict::UpstreamValidated;
+    original.expected_memory = original
+        .expected_memory
+        .clone()
+        .with_candidate_evidence(Some("[701]"), None);
+    let memory_id = conn.query_row(
+        "INSERT INTO memories
+         (project, title, content, memory_type, evidence_event_ids,
+          created_at_epoch, updated_at_epoch, status, scope, source_project,
+          target_project, owner_scope, owner_key, context_class, source_trust_class)
+         VALUES ('/repo', 'title', 'legacy-dream', 'discovery', '[701]',
+                 1, 1, 'active', 'project', '/repo', '/repo', 'repo', '/repo',
+                 'startup_core', 'external_content')
+         RETURNING id",
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+    let legacy_request_sha256 = super::receipt::v086_request_sha256(&original, &[])?;
+    conn.execute(
+        "INSERT INTO memory_activation_requests
+         (activation_id, request_sha256, route_kind, actor_kind, source_operation,
+          source_trust_class, result_source_trust_class, source_project, project,
+          branch_present, branch, scope, owner_scope, owner_key, target_project,
+          provenance_kind, provenance_ref, payload_sha256, result_sha256,
+          poisoning_verdict, superseded_ids_json, result_memory_id, created_at_epoch)
+         VALUES (?1, ?2, 'dream_consolidation', 'automatic_worker', 'dream_consolidation',
+                 'external_content', 'legacy_v086_source_external_content', '/repo', '/repo',
+                 0, NULL, 'project', 'repo', '/repo', '/repo', 'generated', ?3,
+                 ?4, ?5, 'upstream_validated', '[]', ?6, 1)",
+        params![
+            original.activation_id,
+            legacy_request_sha256,
+            original.provenance_ref,
+            original.payload_sha256,
+            original.expected_memory.sha256(),
+            memory_id,
+        ],
+    )?;
+
+    let later = request("save:later-provenance-clear", "later");
+    execute_one(&conn, &later, |_| {
+        conn.execute(
+            "UPDATE memories
+             SET content = 'later', evidence_event_ids = NULL,
+                 source_trust_class = 'local_tool_output'
+             WHERE id = ?1",
+            [memory_id],
+        )?;
+        Ok(memory_id)
+    })?;
+    let mut retry = original.clone();
+    retry.expected_memory.evidence_event_ids = None;
+    let replay = replay_dream_if_present(&conn, &retry)?.expect("legacy Dream replay");
+    assert!(replay.replayed);
+    assert_eq!(replay.memory_id, memory_id);
+    Ok(())
+}
+
+#[test]
 fn earlier_v086_receipt_replays_after_a_later_v086_same_row_update() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     crate::migrate::run_migrations(&conn)?;

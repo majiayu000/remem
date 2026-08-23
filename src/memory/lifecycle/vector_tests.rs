@@ -292,3 +292,149 @@ fn invalidate_remains_atomic_for_mixed_validity_ids() -> Result<()> {
     assert_eq!(active, 2);
     Ok(())
 }
+
+#[test]
+fn global_update_supersedes_same_owner_claim_across_source_projects() -> Result<()> {
+    let _embedding_provider = ScopedEmbeddingProvider::feature_hash();
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+    let old_id = crate::memory::insert_memory_full(
+        &conn,
+        None,
+        "/project-a",
+        Some("shared-editor"),
+        "Shared editor",
+        "Use Vim everywhere.",
+        "decision",
+        None,
+        None,
+        "global",
+        None,
+    )?;
+
+    let outcome = apply_update(
+        &conn,
+        None,
+        "/project-b",
+        "shared-editor",
+        "Shared editor updated",
+        "Use Helix everywhere.",
+        "decision",
+        None,
+        None,
+        "global",
+        &[],
+    )?;
+    let replacement_id = outcome.memory_id.context("global replacement id")?;
+    assert_eq!(outcome.superseded, 1);
+    assert_eq!(
+        conn.query_row(
+            "SELECT status FROM memories WHERE id = ?1",
+            [old_id],
+            |row| row.get::<_, String>(0),
+        )?,
+        "stale"
+    );
+    let replacement: (String, String, String, Option<String>, String) = conn.query_row(
+        "SELECT status, project, owner_key, target_project, source_project
+         FROM memories WHERE id = ?1",
+        [replacement_id],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
+    )?;
+    assert_eq!(
+        replacement,
+        (
+            "active".to_string(),
+            "/project-b".to_string(),
+            "user:default".to_string(),
+            None,
+            "/project-b".to_string(),
+        )
+    );
+    let active_shared: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories
+         WHERE status = 'active' AND topic_key = 'shared-editor'
+           AND owner_scope = 'user' AND owner_key = 'user:default'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(active_shared, 1);
+    Ok(())
+}
+
+#[test]
+fn project_update_cannot_supersede_another_repo_owner() -> Result<()> {
+    let _embedding_provider = ScopedEmbeddingProvider::feature_hash();
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+    let old_id = insert_memory(
+        &conn,
+        None,
+        "/project-a",
+        Some("private-deploy"),
+        "Private deploy",
+        "Project A deploys to staging.",
+        "decision",
+        None,
+    )?;
+    let receipts_before: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_activation_requests",
+        [],
+        |row| row.get(0),
+    )?;
+
+    let error = apply_update(
+        &conn,
+        None,
+        "/project-b",
+        "private-deploy",
+        "Cross-project overwrite",
+        "Project B tries to replace project A.",
+        "decision",
+        None,
+        None,
+        "project",
+        &[old_id],
+    )
+    .expect_err("repo-owned supersede must remain project-isolated");
+    assert!(error.to_string().contains("outside route"));
+    assert_eq!(
+        conn.query_row(
+            "SELECT status FROM memories WHERE id = ?1",
+            [old_id],
+            |row| row.get::<_, String>(0),
+        )?,
+        "active"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM memories WHERE project = '/project-b'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?,
+        0
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM memory_activation_requests",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?,
+        receipts_before
+    );
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM memory_edges", [], |row| {
+            row.get::<_, i64>(0)
+        })?,
+        0
+    );
+    Ok(())
+}

@@ -206,6 +206,53 @@ pub(super) fn supplemental_request_matches_receipt(
     .map_err(Into::into)
 }
 
+pub(super) fn request_identity_matches_receipt(
+    conn: &Connection,
+    request: &ActiveMemoryWriteRequest,
+    superseded_ids: &[i64],
+) -> Result<bool> {
+    let superseded_ids_json = serde_json::to_string(superseded_ids)?;
+    conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM memory_activation_requests
+             WHERE activation_id = ?1 AND route_kind = ?2 AND actor_kind = ?3
+               AND source_operation = ?4 AND source_trust_class = ?5
+               AND (result_source_trust_class = ?6
+                    OR result_source_trust_class = 'legacy_v086_source_' || ?6)
+               AND source_project = ?7 AND project = ?8
+               AND branch_present = ?9 AND branch IS ?10 AND scope = ?11
+               AND owner_scope = ?12 AND owner_key = ?13 AND target_project IS ?14
+               AND provenance_kind = ?15 AND provenance_ref = ?16
+               AND payload_sha256 = ?17 AND poisoning_verdict = ?18
+               AND superseded_ids_json = ?19
+         )",
+        params![
+            request.activation_id,
+            super::enum_json(request.route_kind)?,
+            super::enum_json(request.actor_kind)?,
+            request.source_operation,
+            request.source_trust.as_str(),
+            request.result_source_trust.as_str(),
+            request.source_project,
+            request.route.project,
+            i64::from(request.route.branch.is_some()),
+            request.route.branch,
+            request.route.scope,
+            request.route.owner_scope,
+            request.route.owner_key,
+            request.route.target_project,
+            super::enum_json(request.provenance_kind)?,
+            request.provenance_ref,
+            request.payload_sha256,
+            super::enum_json(request.poisoning_verdict)?,
+            superseded_ids_json,
+        ],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|matches| matches == 1)
+    .map_err(Into::into)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SupplementalSaveReceipt {
     Saved { claim_id: i64 },

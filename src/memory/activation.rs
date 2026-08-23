@@ -12,6 +12,7 @@ mod batch;
 mod payload;
 mod receipt;
 mod replay;
+pub(crate) use replay::replay_dream_if_present;
 mod route;
 pub(crate) use batch::execute_add_batch;
 pub(crate) use payload::ExpectedActiveMemory;
@@ -501,7 +502,8 @@ fn validate_supersede_routes(
         let matches: i64 = conn.query_row(
             "SELECT EXISTS(
                  SELECT 1 FROM memories
-                 WHERE id = ?1 AND status = 'active' AND project = ?2
+                 WHERE id = ?1 AND status = 'active'
+                   AND (?5 = 'user' OR project = ?2)
                    AND branch IS ?3 AND COALESCE(scope, 'project') = ?4
                    AND COALESCE(owner_scope,
                        CASE WHEN COALESCE(scope, 'project') = 'global'
