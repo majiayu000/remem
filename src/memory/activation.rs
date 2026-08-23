@@ -12,7 +12,7 @@ mod batch;
 mod payload;
 mod receipt;
 mod replay;
-pub(crate) use replay::replay_dream_if_present;
+pub(crate) use replay::{replay_dream_if_present, replay_scope_cleanup_if_present};
 mod route;
 pub(crate) use batch::execute_add_batch;
 pub(crate) use payload::ExpectedActiveMemory;
@@ -750,7 +750,7 @@ fn validate_route_policy(request: &ActiveMemoryWriteRequest) -> Result<()> {
         ScopeCleanup => {
             request.actor_kind == Operator
                 && request.provenance_kind == ScopePlan
-                && request.poisoning_verdict == UpstreamValidated
+                && matches!(request.poisoning_verdict, UpstreamValidated | Acknowledged)
         }
         ActivationRouteKind::WebRestore => {
             request.actor_kind == Operator

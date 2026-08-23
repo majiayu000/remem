@@ -190,6 +190,10 @@ pub fn setup_memory_schema(conn: &Connection) -> Result<()> {
         "../../src/migrations/v072_memory_retrieval_enrichment.sql"
     ))?;
     conn.execute_batch(include_str!(
+        "../../src/migrations/v024_memory_operation_log.sql"
+    ))?;
+    conn.execute_batch(include_str!("../../src/migrations/v025_memory_edges.sql"))?;
+    conn.execute_batch(include_str!(
         "../../src/migrations/v086_memory_activation_boundary.sql"
     ))?;
     conn.execute_batch(include_str!(
@@ -200,6 +204,9 @@ pub fn setup_memory_schema(conn: &Connection) -> Result<()> {
     ))?;
     conn.execute_batch(include_str!(
         "../../src/migrations/v089_supplemental_local_copy_receipt.sql"
+    ))?;
+    conn.execute_batch(include_str!(
+        "../../src/migrations/v090_scope_cleanup_receipt.sql"
     ))?;
     Ok(())
 }

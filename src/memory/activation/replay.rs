@@ -4,6 +4,79 @@ use rusqlite::{params, Connection, OptionalExtension};
 use super::{ActivationPoisoningVerdict, ExpectedActiveMemory};
 use crate::memory::poisoning::SourceTrustClass;
 
+pub(crate) fn replay_scope_cleanup_if_present(
+    conn: &Connection,
+    activation_id: &str,
+    payload_sha256: &str,
+    provenance_ref: &str,
+    superseded_ids: &[i64],
+) -> Result<Option<super::ActiveMemoryWriteResult>> {
+    let normalized = superseded_ids
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    if normalized.iter().any(|id| *id <= 0) || normalized.len() != superseded_ids.len() {
+        bail!("memory activation superseded ids must be unique positive integers");
+    }
+    let superseded_ids_json = serde_json::to_string(&normalized.into_iter().collect::<Vec<_>>())?;
+    let existing = conn
+        .query_row(
+            "SELECT result_sha256, result_memory_id, route_kind, actor_kind,
+                    source_operation, provenance_kind, provenance_ref, payload_sha256,
+                    superseded_ids_json
+             FROM memory_activation_requests WHERE activation_id = ?1",
+            [activation_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((
+        result_sha256,
+        memory_id,
+        route_kind,
+        actor_kind,
+        source_operation,
+        provenance_kind,
+        stored_provenance_ref,
+        stored_payload_sha256,
+        stored_superseded_ids,
+    )) = existing
+    else {
+        return Ok(None);
+    };
+    if route_kind != "scope_cleanup"
+        || actor_kind != "operator"
+        || source_operation != "memory_cleanup"
+        || provenance_kind != "scope_plan"
+        || stored_provenance_ref != provenance_ref
+        || stored_payload_sha256 != payload_sha256
+        || stored_superseded_ids != superseded_ids_json
+    {
+        return Err(super::ActivationIdConflictError {
+            activation_id: activation_id.to_string(),
+        }
+        .into());
+    }
+    validate_scope_cleanup_replayed_result(conn, activation_id, memory_id, &result_sha256)?;
+    Ok(Some(super::ActiveMemoryWriteResult {
+        memory_id,
+        replayed: true,
+        supplemental_receipt: None,
+        supplemental_local_copy_receipt: None,
+    }))
+}
+
 pub(crate) fn replay_dream_if_present(
     conn: &Connection,
     request: &super::ActiveMemoryWriteRequest,
@@ -79,6 +152,37 @@ pub(super) fn validate_replayed_result(
     memory_id: i64,
     historical_result_sha256: &str,
 ) -> Result<()> {
+    validate_replayed_result_inner(
+        conn,
+        activation_id,
+        memory_id,
+        historical_result_sha256,
+        false,
+    )
+}
+
+fn validate_scope_cleanup_replayed_result(
+    conn: &Connection,
+    activation_id: &str,
+    memory_id: i64,
+    historical_result_sha256: &str,
+) -> Result<()> {
+    validate_replayed_result_inner(
+        conn,
+        activation_id,
+        memory_id,
+        historical_result_sha256,
+        true,
+    )
+}
+
+fn validate_replayed_result_inner(
+    conn: &Connection,
+    activation_id: &str,
+    memory_id: i64,
+    historical_result_sha256: &str,
+    require_current_pattern_match: bool,
+) -> Result<()> {
     let historical = receipt_by_activation(conn, activation_id, memory_id)?;
     ensure!(
         historical.result_sha256 == historical_result_sha256,
@@ -92,7 +196,19 @@ pub(super) fn validate_replayed_result(
         "memory activation latest result payload has drifted"
     );
     validate_latest_route(conn, memory_id, latest)?;
-    super::payload::validate_replayed_poisoning_verdict(conn, memory_id, latest.poisoning_verdict)?;
+    if require_current_pattern_match {
+        super::payload::validate_scope_cleanup_replayed_poisoning_verdict(
+            conn,
+            memory_id,
+            latest.poisoning_verdict,
+        )?;
+    } else {
+        super::payload::validate_replayed_poisoning_verdict(
+            conn,
+            memory_id,
+            latest.poisoning_verdict,
+        )?;
+    }
     Ok(())
 }
 

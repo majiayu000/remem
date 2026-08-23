@@ -82,6 +82,17 @@ explicit legacy-fingerprint validation path. Replay of an older receipt remains 
 after a later governed in-place activation only when the current row exactly
 matches the latest immutable result receipt, including identity, scope, owner,
 trust, payload digest, and poisoning evidence.
+Schema v90 adds an immutable, activation-id-keyed scope-cleanup response receipt
+containing the exact serialized group result and operation id. Its bound
+operation log and duplicate edges become immutable with the receipt. The receipt is
+inserted after the activation ledger row but inside the same outer cleanup
+transaction. A retry resolves and validates the activation receipt before
+consulting mutable plan-row snapshots, then returns the stored cleanup result;
+missing, conflicting, or mutable cleanup evidence fails visibly. Cleanup may
+carry a human poisoning acknowledgement only when the final title and content
+are byte-identical to the reviewed canonical payload and the stored pattern
+metadata still matches. Merged or otherwise changed instruction-like content
+requires a new acknowledgement and cannot inherit one from a cluster member.
 Best-effort backup normalization uses governed `backup_import` rather
 than claiming `ExactRecovery`. Backup import hashes and reads one SQLite backup
 snapshot so WAL-visible state cannot diverge from its provenance digest; a
@@ -234,6 +245,7 @@ active row was committed is not an acceptable failure mode.
 | Candidate auto-promotion | Current auto-promotion decision, evidence binding, trust at or above the current policy threshold, no poison hit | Bypassing candidate policy through `insert_memory*` |
 | Candidate manual approval | Review identity/token and immutable candidate/provenance digest | Approval of a changed candidate or unbounded Dream supersede set |
 | Dream | Candidate plus exact source-memory provenance and generated-surface verdict | Direct active insert/update or superseding source rows on quarantine/failure |
+| Scope cleanup | Immutable plan/group digest, exact supersede set, unchanged matching acknowledgement when required, and an activation-bound response receipt | Revalidating already-applied stale snapshots before replay; inheriting acknowledgement across changed payloads; or reconstructing replay output from mutable operation/current-row state |
 | Governed pack import | Verified manifest/content/entry digests, instruction scan, `pack` trust, target repo ownership, and the safe-add/no-resurrection decision from `project-memory-pack/` | Activating a conflict, quarantined row, changed plan entry, or locally suppressed/invalidated identity |
 | Other import | Import plan/digest and candidate route unless its current contract proves an equivalent governed activation | Direct activation based only on file ownership or format validity |
 | Recovery | Exact prior row identity, plan/apply digest, acknowledgement where required | Creating a semantically new claim or raising trust |

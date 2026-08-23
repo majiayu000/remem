@@ -3,6 +3,7 @@ mod merge;
 mod mutate;
 mod plan;
 mod preference_cluster;
+mod receipt;
 mod refs;
 
 pub use audit::{audit_scope, AuditItem, DuplicateCluster, ScopeAuditReport, ScopeAuditRequest};

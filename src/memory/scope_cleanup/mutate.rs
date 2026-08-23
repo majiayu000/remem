@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail, Result};
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::{ObjectRef, ScopeObjectKind};
 
@@ -42,7 +42,7 @@ pub struct ScopeMutationResult {
     pub affected: Vec<ObjectMutation>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObjectMutation {
     pub object_ref: String,
     pub title: String,
@@ -52,7 +52,7 @@ pub struct ObjectMutation {
     pub new_owner: OwnerSnapshot,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OwnerSnapshot {
     pub source_project: Option<String>,
     pub target_project: Option<String>,

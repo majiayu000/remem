@@ -672,5 +672,7 @@ pub mod tests_helper {
             "../migrations/v089_supplemental_local_copy_receipt.sql"
         ))
         .unwrap();
+        conn.execute_batch(include_str!("../migrations/v090_scope_cleanup_receipt.sql"))
+            .unwrap();
     }
 }

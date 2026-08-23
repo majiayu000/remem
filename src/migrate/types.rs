@@ -450,6 +450,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "supplemental_local_copy_receipt",
         sql: include_str!("../migrations/v089_supplemental_local_copy_receipt.sql"),
     },
+    Migration {
+        version: 90,
+        name: "scope_cleanup_receipt",
+        sql: include_str!("../migrations/v090_scope_cleanup_receipt.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

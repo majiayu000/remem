@@ -274,6 +274,7 @@ const MIGRATION_SQL_INPUTS: &[&str] = &[
     "src/migrations/v087_activation_result_trust.sql",
     "src/migrations/v088_activation_legacy_trust.sql",
     "src/migrations/v089_supplemental_local_copy_receipt.sql",
+    "src/migrations/v090_scope_cleanup_receipt.sql",
 ];
 
 #[derive(Debug, Clone, Serialize)]
