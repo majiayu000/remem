@@ -49,15 +49,25 @@ v88 is a second forward migration that preserves receipt rowids and replaces
 that marker with result trust derived from each receipt's historically enforced
 source-trust postcondition before restoring the immutable-table triggers. It
 neither guesses from current state nor attributes later state to the historical
-activation. v86 and v87 remain byte-stable for databases that have already
-recorded them. Route adapters
+activation. Schema v89 adds a supplemental-save local-copy receipt: disabled
+copies record that outcome, while saved copies bind the original confined path,
+render timestamp, and content digest so retries verify or repair the exact same
+artifact. Unix repair walks and reconstructs parent directories through
+no-follow directory descriptors and atomically publishes inside the anchored
+parent. On non-Unix platforms, an intact artifact can be verified, but a
+missing or changed artifact fails visibly instead of using a race-prone
+path-based repair. Older receipts remain explicitly `legacy_unknown` rather than
+fabricating a successful local-copy response. v86 through v88 remain
+byte-stable for databases that have already recorded them. Route adapters
 bind trust, provenance, payload digest, exact supersede targets, and poisoning
 verdict before the active mutation runs in one savepoint. The boundary then
 compares the stored payload/evidence fields to the request, rechecks poisoning,
 and records a result digest; an inactive result cannot satisfy an idempotent
 replay. Supplemental saves also bind an immutable claim receipt (`saved` with
 the original claim id, `disabled`, or `failed` with its diagnostic) into the
-same ledger insert so retries reproduce the first durable outcome. A semantic
+same ledger insert so retries reproduce the first durable outcome. Their
+local-copy receipt is written in that same activation transaction; replay never
+derives a new timestamped default path. A semantic
 no-op records the weaker incoming caller in activation evidence but never
 relabels the already-active row's trust or acknowledgement metadata. The
 activation request therefore binds incoming source trust separately from the

@@ -54,6 +54,28 @@ fn identical_activation_replays_without_running_writer() -> Result<()> {
 }
 
 #[test]
+fn replay_rejects_partial_acknowledgement_metadata_for_clean_receipt() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    let request = request("save:partial-replay-ack", "same");
+    let first = execute_one(&conn, &request, |_| insert_memory(&conn, "same"))?;
+    conn.execute(
+        "UPDATE memories
+         SET acknowledged_pattern_id = 'override_previous_instructions',
+             acknowledged_pattern_version = 1,
+             acknowledged_at_epoch = NULL
+         WHERE id = ?1",
+        [first.memory_id],
+    )?;
+
+    let error = execute_one(&conn, &request, |_| bail!("writer must not replay"))
+        .expect_err("partial acknowledgement evidence must fail closed");
+
+    assert!(error.to_string().contains("incomplete acknowledgement"));
+    Ok(())
+}
+
+#[test]
 fn migrated_v086_supplemental_receipt_replays_with_legacy_fingerprint() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     crate::migrate::run_migrations(&conn)?;
@@ -70,11 +92,12 @@ fn migrated_v086_supplemental_receipt_replays_with_legacy_fingerprint() -> Resul
           branch_present, branch, scope, owner_scope, owner_key, target_project,
           provenance_kind, provenance_ref, payload_sha256, result_sha256,
           poisoning_verdict, superseded_ids_json, result_memory_id, claim_status,
-          created_at_epoch)
+          local_copy_status, created_at_epoch)
          VALUES (?1, ?2, 'supplemental_save', 'rust_api', 'save_memory',
                  'local_tool_output', 'legacy_v086_source_local_tool_output', '/repo', '/repo', 0,
                  NULL, 'project', 'repo', '/repo', '/repo', 'supplemental_save',
-                 'rust-api:test', ?3, ?4, 'clean', '[]', ?5, 'disabled', 1)",
+                 'rust-api:test', ?3, ?4, 'clean', '[]', ?5, 'disabled',
+                 'disabled', 1)",
         params![
             original_request.activation_id,
             request_sha256,
@@ -236,11 +259,12 @@ fn migrated_v086_supplemental_replay_ignores_later_in_place_result_provenance() 
           branch_present, branch, scope, owner_scope, owner_key, target_project,
           provenance_kind, provenance_ref, payload_sha256, result_sha256,
           poisoning_verdict, superseded_ids_json, result_memory_id, claim_status,
-          created_at_epoch)
+          local_copy_status, created_at_epoch)
          VALUES (?1, ?2, 'supplemental_save', 'rust_api', 'save_memory',
                  'local_tool_output', 'legacy_v086_source_local_tool_output', '/repo', '/repo', 0,
                  NULL, 'project', 'repo', '/repo', '/repo', 'supplemental_save',
-                 'rust-api:test', ?3, ?4, 'clean', '[]', ?5, 'disabled', 1)",
+                 'rust-api:test', ?3, ?4, 'clean', '[]', ?5, 'disabled',
+                 'disabled', 1)",
         params![
             first_request.activation_id,
             request_sha256,

@@ -14,7 +14,10 @@ fn detect_branch_from_cwd() -> Option<String> {
 }
 
 fn map_save_memory_error(tool: &'static str, err: anyhow::Error) -> McpToolError {
-    if err.is::<service::SaveMemoryValidationError>() || err.is::<service::LocalCopyError>() {
+    if err.is::<service::SaveMemoryValidationError>()
+        || err.is::<service::LocalCopyError>()
+        || err.is::<service::SaveMemoryIdempotencyConflictError>()
+    {
         McpToolError::invalid_request(tool, err.to_string())
     } else {
         McpToolError::db_query(tool, err)

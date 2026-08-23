@@ -2,6 +2,7 @@ use anyhow::{bail, Result};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::path::Path;
 
 use super::{
     ActivationActorKind, ActivationPoisoningVerdict, ActivationProvenanceKind, ActivationRouteKind,
@@ -261,6 +262,92 @@ impl SupplementalSaveReceipt {
             (Some("disabled"), None, None) => Ok(Some(Self::Disabled)),
             (Some("failed"), None, Some(error)) => Self::failed(error).map(Some),
             _ => bail!("stored supplemental save receipt has an invalid field combination"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SupplementalLocalCopyReceipt {
+    Saved {
+        path: String,
+        saved_at: String,
+        sha256: String,
+    },
+    Disabled,
+    LegacyUnknown,
+}
+
+impl SupplementalLocalCopyReceipt {
+    pub(crate) fn saved(
+        path: impl Into<String>,
+        saved_at: impl Into<String>,
+        sha256: impl Into<String>,
+    ) -> Result<Self> {
+        let path = path.into();
+        let saved_at = saved_at.into();
+        let sha256 = sha256.into();
+        if !Path::new(&path).is_absolute() || path.contains('\0') {
+            bail!("supplemental local-copy receipt path must be absolute and contain no NUL");
+        }
+        if saved_at.trim().is_empty() || saved_at.contains('\0') {
+            bail!("supplemental local-copy receipt timestamp must be nonblank and contain no NUL");
+        }
+        if sha256.len() != 64
+            || !sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            bail!("supplemental local-copy receipt digest must be lowercase hex64");
+        }
+        Ok(Self::Saved {
+            path,
+            saved_at,
+            sha256,
+        })
+    }
+
+    pub(crate) fn status(&self) -> Option<&'static str> {
+        match self {
+            Self::Saved { .. } => Some("saved"),
+            Self::Disabled => Some("disabled"),
+            Self::LegacyUnknown => None,
+        }
+    }
+
+    pub(crate) fn path(&self) -> Option<&str> {
+        match self {
+            Self::Saved { path, .. } => Some(path),
+            Self::Disabled | Self::LegacyUnknown => None,
+        }
+    }
+
+    pub(crate) fn saved_at(&self) -> Option<&str> {
+        match self {
+            Self::Saved { saved_at, .. } => Some(saved_at),
+            Self::Disabled | Self::LegacyUnknown => None,
+        }
+    }
+
+    pub(crate) fn sha256(&self) -> Option<&str> {
+        match self {
+            Self::Saved { sha256, .. } => Some(sha256),
+            Self::Disabled | Self::LegacyUnknown => None,
+        }
+    }
+
+    pub(super) fn from_columns(
+        status: Option<String>,
+        path: Option<String>,
+        saved_at: Option<String>,
+        sha256: Option<String>,
+    ) -> Result<Self> {
+        match (status.as_deref(), path, saved_at, sha256) {
+            (None, None, None, None) => Ok(Self::LegacyUnknown),
+            (Some("disabled"), None, None, None) => Ok(Self::Disabled),
+            (Some("saved"), Some(path), Some(saved_at), Some(sha256)) => {
+                Self::saved(path, saved_at, sha256)
+            }
+            _ => bail!("stored supplemental local-copy receipt has an invalid field combination"),
         }
     }
 }

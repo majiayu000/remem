@@ -73,6 +73,46 @@ fn save_lesson_defaults_to_unknown_outcome() -> anyhow::Result<()> {
 }
 
 #[test]
+fn lesson_metadata_failure_rolls_back_memory_and_activation_receipt() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+    let error = save_lesson(
+        &conn,
+        &SaveLessonRequest {
+            session_id: Some("s1"),
+            project: "/repo",
+            topic_key: Some("lesson-invalid-confidence"),
+            title: "Invalid confidence",
+            content: "Lesson: invalid metadata must roll back the active memory write.",
+            confidence: f64::NAN,
+            source_evidence: None,
+            files: None,
+            branch: None,
+            scope: "project",
+            created_at_epoch: None,
+            stale_after_epoch: None,
+        },
+    )
+    .expect_err("NaN confidence should violate the metadata constraint");
+
+    assert!(error.to_string().contains("NOT NULL"));
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row
+            .get::<_, i64>(0))?,
+        0
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM memory_activation_requests",
+            [],
+            |row| { row.get::<_, i64>(0) }
+        )?,
+        0
+    );
+    Ok(())
+}
+
+#[test]
 fn save_lesson_outcome_counts_accumulate_without_unknown_overwrite() -> anyhow::Result<()> {
     let conn = Connection::open_in_memory()?;
     setup_memory_schema(&conn);

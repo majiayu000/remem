@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Context, Result};
-use chrono::Utc;
 use std::path::{Component, Path, PathBuf};
 
 const LOCAL_SAVE_ENABLE_ENV: &str = "REMEM_SAVE_MEMORY_LOCAL_COPY";
@@ -176,11 +175,15 @@ fn confine_to_base(abs: &Path) -> Result<PathBuf> {
     Ok(resolved)
 }
 
-pub(super) fn build_local_note_content(project: &str, title: &str, text: &str) -> String {
-    let now = Utc::now().to_rfc3339();
+pub(super) fn build_local_note_content(
+    project: &str,
+    title: &str,
+    text: &str,
+    saved_at: &str,
+) -> String {
     format!(
         "---\nsource: remem.save_memory\nsaved_at: {}\nproject: {}\n---\n\n# {}\n\n{}\n",
-        now, project, title, text
+        saved_at, project, title, text
     )
 }
 

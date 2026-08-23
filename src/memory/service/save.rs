@@ -1,13 +1,4 @@
-use anyhow::{anyhow, Context, Result};
-use rusqlite::Connection;
-use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use super::local_copy::{
-    build_local_note_content, local_copy_enabled_override, resolve_local_note_path,
-    write_local_note,
-};
-use super::types::{LocalCopyResult, SaveMemoryNextStep, SaveMemoryRequest, SaveMemoryResult};
+use super::types::{SaveMemoryNextStep, SaveMemoryRequest, SaveMemoryResult};
 use crate::memory::activation::SupplementalSaveReceipt;
 use crate::memory::claims::{claims_enabled, insert_memory_claim, ClaimWriteRequest};
 use crate::memory::lesson::SaveLessonRequest;
@@ -16,11 +7,18 @@ use crate::memory::poisoning::{
     scan_instruction_pattern, InstructionPatternMatch, SourceTrustClass,
 };
 use crate::memory::{MemoryType, MEMORY_TYPES};
+use anyhow::{anyhow, Context, Result};
+use rusqlite::Connection;
 
 mod activation;
 mod errors;
+mod local_copy_plan;
 pub use activation::SaveMemoryCaller;
 pub use errors::{LocalCopyError, SaveMemoryIdempotencyConflictError, SaveMemoryValidationError};
+use local_copy_plan::{
+    cleanup_local_copy, discard_local_copy_backup, prepare_local_copy, replay_local_copy,
+    write_local_copy,
+};
 
 pub fn save_memory(conn: &Connection, req: &SaveMemoryRequest) -> Result<SaveMemoryResult> {
     save_memory_from_with_reference_time(conn, req, req.created_at_epoch, SaveMemoryCaller::RustApi)
@@ -85,13 +83,6 @@ fn save_memory_inner(
 
     let scope = validated.scope.as_str();
     let effective_topic_key = effective_topic_key(req, memory_type);
-    let acknowledgement = direct_save_pattern_acknowledgement(
-        title,
-        &req.text,
-        req.acknowledge_pattern.as_deref(),
-        caller,
-    )?;
-
     let (operation_input, operation_plan) = crate::memory::operation::plan_direct_save(
         conn,
         "direct",
@@ -107,7 +98,9 @@ fn save_memory_inner(
         None,
         None,
     )?;
-    let mut local_copy = prepare_local_copy(project, title, req).map_err(LocalCopyError::from)?;
+    // Do not resolve environment-driven local-copy behavior until the activation
+    // writer actually runs. Exact replays must use only the immutable receipt.
+    let mut local_copy = None;
     let mut activation_request = activation::build_request(
         req,
         caller,
@@ -117,7 +110,11 @@ fn save_memory_inner(
         scope,
         effective_topic_key.as_deref(),
         reference_time_epoch,
-        acknowledgement.is_some(),
+        caller == SaveMemoryCaller::RustApi
+            && req
+                .acknowledge_pattern
+                .as_deref()
+                .is_some_and(|pattern| !pattern.trim().is_empty()),
     );
     activation_request.source_trust = source_trust;
     activation_request.result_source_trust = source_trust;
@@ -153,7 +150,20 @@ fn save_memory_inner(
         conn,
         &activation_request,
         |permit| {
-            write_local_copy(&mut local_copy).map_err(LocalCopyError::from)?;
+            let acknowledgement = direct_save_pattern_acknowledgement(
+                title,
+                &req.text,
+                req.acknowledge_pattern.as_deref(),
+                caller,
+            )?;
+            let mut prepared_local_copy =
+                prepare_local_copy(project, title, req).map_err(LocalCopyError::from)?;
+            write_local_copy(&mut prepared_local_copy).map_err(LocalCopyError::from)?;
+            local_copy = Some(prepared_local_copy);
+            let local_copy_receipt = local_copy
+                .as_mut()
+                .context("fresh supplemental save omitted its local-copy plan")?
+                .receipt()?;
             let result = if memory_type == "lesson" {
                 crate::memory::operation::with_operation_savepoint(conn, || {
                     let id = crate::memory::lesson::save_lesson_with_reference_time_activated(
@@ -288,7 +298,7 @@ fn save_memory_inner(
             }
             applied_operation = Some(result.1);
             let claim_receipt = write_claim_after_durable_save(conn, result.0, req)?;
-            Ok((result.0, claim_receipt))
+            Ok((result.0, claim_receipt, local_copy_receipt))
         },
     );
 
@@ -301,14 +311,26 @@ fn save_memory_inner(
                 } else {
                     err
                 };
-            if let Err(cleanup_err) = cleanup_local_copy(&local_copy) {
-                return Err(err.context(format!(
-                    "database save failed and local copy cleanup failed: {cleanup_err}"
-                )));
+            if let Some(local_copy) = local_copy.as_ref() {
+                if let Err(cleanup_err) = cleanup_local_copy(local_copy) {
+                    return Err(err.context(format!(
+                        "database save failed and local copy cleanup failed: {cleanup_err}"
+                    )));
+                }
             }
             return Err(err);
         }
     };
+    if activation.replayed {
+        let local_copy_receipt = activation
+            .supplemental_local_copy_receipt
+            .as_ref()
+            .ok_or_else(|| anyhow!("supplemental replay omitted its local-copy receipt"))?;
+        local_copy = Some(
+            replay_local_copy(project, title, &req.text, local_copy_receipt)
+                .map_err(LocalCopyError::from)?,
+        );
+    }
     let id = activation.memory_id;
     let operation = if activation.replayed {
         MemoryLifecycleOp::Noop
@@ -319,7 +341,10 @@ fn save_memory_inner(
         .supplemental_receipt
         .ok_or_else(|| anyhow!("supplemental save completed without a durable claim receipt"))?;
 
-    discard_local_copy_backup(&local_copy);
+    let local_copy = local_copy
+        .as_ref()
+        .ok_or_else(|| anyhow!("supplemental save completed without a local-copy plan"))?;
+    discard_local_copy_backup(local_copy);
     let durable = load_durable_write_details(conn, id)?;
     let local_copy_result = local_copy.result();
     Ok(SaveMemoryResult {
@@ -537,59 +562,6 @@ fn write_claim_after_durable_save(
     }
 }
 
-struct LocalCopyPlan {
-    status: String,
-    path: Option<PathBuf>,
-    reason: Option<String>,
-    content: Option<String>,
-    backup: Option<LocalCopyBackup>,
-    written: bool,
-}
-
-impl LocalCopyPlan {
-    fn result(&self) -> LocalCopyResult {
-        LocalCopyResult {
-            status: self.status.clone(),
-            path: self.path.as_ref().map(|path| path.display().to_string()),
-            reason: self.reason.clone(),
-        }
-    }
-}
-
-struct LocalCopyBackup {
-    restore_path: PathBuf,
-    backup_path: PathBuf,
-}
-
-fn prepare_local_copy(
-    project: &str,
-    title: &str,
-    req: &SaveMemoryRequest,
-) -> Result<LocalCopyPlan> {
-    if !local_copy_enabled_override(req.local_copy_enabled) {
-        return Ok(LocalCopyPlan {
-            status: "disabled".to_string(),
-            path: None,
-            reason: Some("local copy disabled by request or configuration".to_string()),
-            content: None,
-            backup: None,
-            written: false,
-        });
-    }
-
-    let local_path =
-        resolve_local_note_path(project, req.title.as_deref(), req.local_path.as_deref())?;
-    let content = build_local_note_content(project, title, &req.text);
-    Ok(LocalCopyPlan {
-        status: "saved".to_string(),
-        path: Some(local_path),
-        reason: None,
-        content: Some(content),
-        backup: None,
-        written: false,
-    })
-}
-
 fn effective_topic_key(req: &SaveMemoryRequest, memory_type: &str) -> Option<String> {
     if memory_type == "lesson" {
         return req.topic_key.clone().or_else(|| {
@@ -638,127 +610,4 @@ fn load_durable_write_details(conn: &Connection, id: i64) -> Result<DurableWrite
 
 fn durable_project_hint(project: &str) -> String {
     project.replace('\'', "\\'")
-}
-
-fn write_local_copy(local_copy: &mut LocalCopyPlan) -> Result<()> {
-    if let (Some(path), Some(content)) = (local_copy.path.as_deref(), local_copy.content.as_deref())
-    {
-        let backup = backup_existing_local_copy(path)?;
-        if let Err(err) = write_local_note(path, content) {
-            if let Err(restore_err) = restore_local_copy(backup.as_ref()) {
-                return Err(err.context(format!(
-                    "write local copy failed and restore failed: {restore_err}"
-                )));
-            }
-            return Err(err);
-        }
-        local_copy.backup = backup;
-        local_copy.written = true;
-    }
-    Ok(())
-}
-
-fn cleanup_local_copy(local_copy: &LocalCopyPlan) -> Result<()> {
-    if !local_copy.written {
-        return Ok(());
-    }
-    restore_local_copy(local_copy.backup.as_ref())?;
-    match (local_copy.path.as_deref(), local_copy.backup.as_ref()) {
-        (Some(path), None) => remove_local_copy_file(path),
-        _ => Ok(()),
-    }
-}
-
-fn backup_existing_local_copy(path: &Path) -> Result<Option<LocalCopyBackup>> {
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) => {
-            let restore_path = backup_restore_path(path, &metadata)?;
-            let backup_path = allocate_backup_path(&restore_path);
-            std::fs::rename(&restore_path, &backup_path).with_context(|| {
-                format!(
-                    "move existing local copy {} to backup {}",
-                    restore_path.display(),
-                    backup_path.display()
-                )
-            })?;
-            Ok(Some(LocalCopyBackup {
-                restore_path,
-                backup_path,
-            }))
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(err) => Err(anyhow!(
-            "check existing local copy at {}: {err}",
-            path.display()
-        )),
-    }
-}
-
-fn backup_restore_path(path: &Path, metadata: &std::fs::Metadata) -> Result<PathBuf> {
-    let file_type = metadata.file_type();
-    if file_type.is_dir() {
-        return Err(anyhow!(
-            "local_path {} must reference a file, not a directory",
-            path.display()
-        ));
-    }
-
-    if file_type.is_symlink() {
-        let target_path = path
-            .canonicalize()
-            .with_context(|| format!("resolve local_path symlink target at {}", path.display()))?;
-        if target_path.is_dir() {
-            return Err(anyhow!(
-                "local_path {} must reference a file, not a directory",
-                path.display()
-            ));
-        }
-        return Ok(target_path);
-    }
-
-    Ok(path.to_path_buf())
-}
-
-fn restore_local_copy(backup: Option<&LocalCopyBackup>) -> Result<()> {
-    if let Some(backup) = backup {
-        remove_local_copy_file(&backup.restore_path)?;
-        std::fs::rename(&backup.backup_path, &backup.restore_path).with_context(|| {
-            format!(
-                "restore local copy from backup {} to {}",
-                backup.backup_path.display(),
-                backup.restore_path.display()
-            )
-        })?;
-    }
-    Ok(())
-}
-
-fn remove_local_copy_file(path: &Path) -> Result<()> {
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err).with_context(|| format!("remove local copy at {}", path.display())),
-    }
-}
-
-fn discard_local_copy_backup(local_copy: &LocalCopyPlan) {
-    if let Some(backup) = local_copy.backup.as_ref() {
-        let _ = std::fs::remove_file(&backup.backup_path);
-    }
-}
-
-fn allocate_backup_path(path: &Path) -> PathBuf {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("local-copy");
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    parent.join(format!(
-        ".{file_name}.remem-backup-{}-{timestamp}.tmp",
-        std::process::id()
-    ))
 }

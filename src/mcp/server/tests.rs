@@ -340,6 +340,43 @@ fn save_memory_response_reports_durable_feedback_shape() {
 }
 
 #[test]
+fn save_memory_idempotency_conflicts_are_non_retryable_invalid_requests() {
+    let _dir = ScopedTestDataDir::new("mcp-save-idempotency-conflict");
+    let server = MemoryServer::new().expect("memory server should initialize");
+    let params = |text: &str| SaveMemoryParams {
+        text: text.to_string(),
+        title: Some("MCP idempotency".to_string()),
+        project: Some("proj".to_string()),
+        session_id: None,
+        host: None,
+        topic_key: Some("mcp-idempotency-conflict".to_string()),
+        memory_type: Some("decision".to_string()),
+        files: None,
+        local_path: None,
+        scope: None,
+        branch: None,
+        reference_time_epoch: None,
+        created_at_epoch: None,
+        local_copy_enabled: Some(false),
+        claim_enabled: Some(false),
+        claim_source: None,
+        idempotency_key: Some("mcp-conflict-key".to_string()),
+    };
+    server
+        .save_memory(Parameters(params("original MCP idempotent body")))
+        .expect("first save should succeed");
+
+    let err = server
+        .save_memory(Parameters(params("changed MCP idempotent body")))
+        .expect_err("changed input under the same key should conflict");
+
+    let json = assert_mcp_error(err, McpErrorCode::InvalidRequest, "save_memory", false);
+    assert!(json["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("reused with different request")));
+}
+
+#[test]
 fn govern_memory_validation_failures_are_invalid_request() {
     let _dir = ScopedTestDataDir::new("mcp-govern-validation");
     let server = match MemoryServer::new() {

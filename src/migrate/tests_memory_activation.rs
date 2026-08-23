@@ -9,12 +9,13 @@ fn latest_schema_creates_immutable_activation_ledger_with_result_trust() -> Resu
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
     run_migrations(&conn)?;
 
-    assert_eq!(super::latest_schema_version(), 88);
+    assert_eq!(super::latest_schema_version(), 89);
     for object in [
         "memory_activation_requests",
         "idx_memory_activation_result",
         "memory_activation_requests_no_update",
         "memory_activation_requests_no_delete",
+        "memory_activation_requests_local_copy_receipt_insert",
     ] {
         let exists: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = ?1)",
@@ -33,11 +34,13 @@ fn latest_schema_creates_immutable_activation_ledger_with_result_trust() -> Resu
           branch_present, branch, scope, owner_scope, owner_key, target_project,
           provenance_kind, provenance_ref, payload_sha256, result_sha256,
           poisoning_verdict, superseded_ids_json, result_memory_id, claim_status,
-          claim_id, claim_error, created_at_epoch)
+          claim_id, claim_error, local_copy_status, local_copy_path,
+          local_copy_saved_at, local_copy_sha256, created_at_epoch)
          VALUES ('test:receipt', ?1, 'supplemental_save', 'agent', 'save_memory',
                  'external_content', 'local_tool_output', '/repo', '/repo', 0,
                  NULL, 'project', 'repo', '/repo', '/repo', 'supplemental_save',
-                 'mcp:test', ?1, ?1, 'clean', '[]', ?2, 'saved', 42, NULL, 1)",
+                 'mcp:test', ?1, ?1, 'clean', '[]', ?2, 'saved', 42, NULL,
+                 'saved', '/tmp/remem-note.md', '2026-08-23T00:00:00+00:00', ?1, 1)",
         params!["b".repeat(64), memory_id],
     )?;
     assert!(conn
@@ -84,6 +87,24 @@ fn latest_schema_creates_immutable_activation_ledger_with_result_trust() -> Resu
         .execute(
             "DELETE FROM memory_activation_requests WHERE activation_id = 'test:1'",
             [],
+        )
+        .is_err());
+    assert!(conn
+        .execute(
+            "INSERT INTO memory_activation_requests
+             (activation_id, request_sha256, route_kind, actor_kind, source_operation,
+              source_trust_class, result_source_trust_class, source_project, project,
+              branch_present, branch, scope, owner_scope, owner_key, target_project,
+              provenance_kind, provenance_ref, payload_sha256, result_sha256,
+              poisoning_verdict, superseded_ids_json, result_memory_id, claim_status,
+              local_copy_path, local_copy_saved_at, local_copy_sha256, created_at_epoch)
+             VALUES ('test:null-status-local-copy', ?1, 'supplemental_save', 'agent',
+                     'save_memory', 'external_content', 'external_content', '/repo',
+                     '/repo', 0, NULL, 'project', 'repo', '/repo', '/repo',
+                     'supplemental_save', 'mcp:test', ?1, ?1, 'clean', '[]', ?2,
+                     'disabled', '/tmp/remem-note.md', '2026-08-23T00:00:00Z',
+                     ?1, 1)",
+            params!["2".repeat(64), memory_id],
         )
         .is_err());
     Ok(())
@@ -141,6 +162,79 @@ fn v088_upgrades_an_already_applied_v087_database_without_current_state_guessing
     )?;
     assert_eq!(not_null, 1);
     assert_eq!(default_value, None);
+    Ok(())
+}
+
+#[test]
+fn v089_preserves_legacy_receipts_and_rejects_partial_local_copy_evidence() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+    for migration in &super::MIGRATIONS[..88] {
+        conn.execute_batch(migration.sql)?;
+    }
+    let memory_id = insert_fixture_memory(&conn)?;
+    conn.execute(
+        "INSERT INTO memory_activation_requests
+         (activation_id, request_sha256, route_kind, actor_kind, source_operation,
+          source_trust_class, result_source_trust_class, source_project, project,
+          branch_present, branch, scope, owner_scope, owner_key, target_project,
+          provenance_kind, provenance_ref, payload_sha256, result_sha256,
+          poisoning_verdict, superseded_ids_json, result_memory_id, claim_status,
+          created_at_epoch)
+         VALUES ('test:v088-local-copy', ?1, 'supplemental_save', 'agent', 'save_memory',
+                 'external_content', 'external_content', '/repo', '/repo', 0, NULL,
+                 'project', 'repo', '/repo', '/repo', 'supplemental_save', 'mcp:test',
+                 ?1, ?1, 'clean', '[]', ?2, 'disabled', 1)",
+        params!["f".repeat(64), memory_id],
+    )?;
+    let rowid_before: i64 = conn.query_row(
+        "SELECT rowid FROM memory_activation_requests WHERE activation_id = 'test:v088-local-copy'",
+        [],
+        |row| row.get(0),
+    )?;
+
+    conn.execute_batch(super::MIGRATIONS[88].sql)?;
+
+    let migrated: (
+        i64,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = conn.query_row(
+        "SELECT rowid, local_copy_status, local_copy_path,
+                    local_copy_saved_at, local_copy_sha256
+             FROM memory_activation_requests
+             WHERE activation_id = 'test:v088-local-copy'",
+        [],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
+    )?;
+    assert_eq!(migrated, (rowid_before, None, None, None, None));
+    assert!(conn
+        .execute(
+            "INSERT INTO memory_activation_requests
+             (activation_id, request_sha256, route_kind, actor_kind, source_operation,
+              source_trust_class, result_source_trust_class, source_project, project,
+              branch_present, branch, scope, owner_scope, owner_key, target_project,
+              provenance_kind, provenance_ref, payload_sha256, result_sha256,
+              poisoning_verdict, superseded_ids_json, result_memory_id, claim_status,
+              local_copy_status, local_copy_path, created_at_epoch)
+             VALUES ('test:partial-local-copy', ?1, 'supplemental_save', 'agent', 'save_memory',
+                     'external_content', 'external_content', '/repo', '/repo', 0, NULL,
+                     'project', 'repo', '/repo', '/repo', 'supplemental_save', 'mcp:test',
+                     ?1, ?1, 'clean', '[]', ?2, 'disabled', 'saved',
+                     '/tmp/remem-note.md', 1)",
+            params!["1".repeat(64), memory_id],
+        )
+        .is_err());
     Ok(())
 }
 

@@ -109,11 +109,13 @@ pub(crate) fn execute_add_batch(
                 result_sha256,
                 memory_id,
                 None,
+                None,
             )?;
             results[pending.index] = Some(ActiveMemoryWriteResult {
                 memory_id,
                 replayed: false,
                 supplemental_receipt: None,
+                supplemental_local_copy_receipt: None,
             });
         }
         Ok(())

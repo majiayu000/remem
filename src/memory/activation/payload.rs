@@ -206,6 +206,50 @@ pub(super) fn validate_poisoning_verdict(
     Ok(())
 }
 
+pub(super) fn validate_replayed_poisoning_verdict(
+    conn: &Connection,
+    memory_id: i64,
+    verdict: ActivationPoisoningVerdict,
+) -> Result<()> {
+    let (pattern_id, pattern_version, acknowledged_at_epoch): (
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+    ) = conn.query_row(
+        "SELECT acknowledged_pattern_id, acknowledged_pattern_version, acknowledged_at_epoch
+         FROM memories WHERE id = ?1",
+        [memory_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    let acknowledgement_absent =
+        pattern_id.is_none() && pattern_version.is_none() && acknowledged_at_epoch.is_none();
+    let acknowledgement_complete = pattern_id.as_deref().is_some_and(|value| !value.is_empty())
+        && pattern_version.is_some_and(|version| version > 0)
+        && acknowledged_at_epoch.is_some_and(|epoch| epoch > 0);
+    match verdict {
+        ActivationPoisoningVerdict::Clean | ActivationPoisoningVerdict::UpstreamValidated
+            if acknowledgement_absent || acknowledgement_complete =>
+        {
+            Ok(())
+        }
+        ActivationPoisoningVerdict::Clean | ActivationPoisoningVerdict::UpstreamValidated => {
+            bail!("replayed activation has incomplete acknowledgement evidence")
+        }
+        ActivationPoisoningVerdict::Acknowledged if acknowledgement_complete => Ok(()),
+        ActivationPoisoningVerdict::Acknowledged => {
+            bail!("replayed acknowledged activation has incomplete acknowledgement evidence")
+        }
+        ActivationPoisoningVerdict::ExactRecovery
+            if acknowledgement_absent || acknowledgement_complete =>
+        {
+            Ok(())
+        }
+        ActivationPoisoningVerdict::ExactRecovery => {
+            bail!("replayed exact recovery has incomplete acknowledgement evidence")
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use anyhow::{bail, Result};

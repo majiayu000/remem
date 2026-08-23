@@ -5,6 +5,8 @@ use std::os::unix::fs::symlink;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+mod idempotency;
+
 #[test]
 fn sanitize_segment_falls_back_for_empty_slug() {
     let got = sanitize_segment("!!!", "fallback", 64);

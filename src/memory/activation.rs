@@ -15,7 +15,7 @@ mod replay;
 mod route;
 pub(crate) use batch::execute_add_batch;
 pub(crate) use payload::ExpectedActiveMemory;
-pub(crate) use receipt::SupplementalSaveReceipt;
+pub(crate) use receipt::{SupplementalLocalCopyReceipt, SupplementalSaveReceipt};
 pub(crate) use route::load_existing_route;
 
 static ACTIVATION_NONCE: AtomicU64 = AtomicU64::new(1);
@@ -113,6 +113,7 @@ pub(crate) struct ActiveMemoryWriteResult {
     pub memory_id: i64,
     pub replayed: bool,
     pub supplemental_receipt: Option<SupplementalSaveReceipt>,
+    pub supplemental_local_copy_receipt: Option<SupplementalLocalCopyReceipt>,
 }
 
 #[derive(Debug)]
@@ -145,23 +146,27 @@ pub(crate) fn execute_one(
         bail!("supplemental_save activations must use the durable receipt path");
     }
     execute_one_inner(conn, request, |permit| {
-        write(permit).map(|memory_id| (memory_id, None))
+        write(permit).map(|memory_id| (memory_id, None, None))
     })
 }
 
 pub(crate) fn execute_supplemental_save(
     conn: &Connection,
     request: &ActiveMemoryWriteRequest,
-    write: impl FnOnce(&ActiveMemoryWritePermit) -> Result<(i64, SupplementalSaveReceipt)>,
+    write: impl FnOnce(
+        &ActiveMemoryWritePermit,
+    ) -> Result<(i64, SupplementalSaveReceipt, SupplementalLocalCopyReceipt)>,
 ) -> Result<ActiveMemoryWriteResult> {
     if request.route_kind != ActivationRouteKind::SupplementalSave {
         bail!("supplemental save receipt requires the supplemental_save route");
     }
     let result = execute_one_inner(conn, request, |permit| {
-        write(permit).map(|(memory_id, receipt)| (memory_id, Some(receipt)))
+        write(permit).map(|(memory_id, claim_receipt, local_copy_receipt)| {
+            (memory_id, Some(claim_receipt), Some(local_copy_receipt))
+        })
     })?;
-    if result.supplemental_receipt.is_none() {
-        bail!("supplemental save activation is missing its durable claim receipt");
+    if result.supplemental_receipt.is_none() || result.supplemental_local_copy_receipt.is_none() {
+        bail!("supplemental save activation is missing a durable response receipt");
     }
     Ok(result)
 }
@@ -169,7 +174,13 @@ pub(crate) fn execute_supplemental_save(
 fn execute_one_inner(
     conn: &Connection,
     request: &ActiveMemoryWriteRequest,
-    write: impl FnOnce(&ActiveMemoryWritePermit) -> Result<(i64, Option<SupplementalSaveReceipt>)>,
+    write: impl FnOnce(
+        &ActiveMemoryWritePermit,
+    ) -> Result<(
+        i64,
+        Option<SupplementalSaveReceipt>,
+        Option<SupplementalLocalCopyReceipt>,
+    )>,
 ) -> Result<ActiveMemoryWriteResult> {
     let normalized_superseded_ids = validate_request(request)?;
     let request_sha256 = receipt::current_request_sha256(request, &normalized_superseded_ids)?;
@@ -182,10 +193,16 @@ fn execute_one_inner(
         claim_status,
         claim_id,
         claim_error,
+        local_copy_status,
+        local_copy_path,
+        local_copy_saved_at,
+        local_copy_sha256,
     )) = conn
         .query_row(
             "SELECT request_sha256, result_sha256, result_memory_id,
-                    result_source_trust_class, claim_status, claim_id, claim_error
+                    result_source_trust_class, claim_status, claim_id, claim_error,
+                    local_copy_status, local_copy_path, local_copy_saved_at,
+                    local_copy_sha256
              FROM memory_activation_requests
              WHERE activation_id = ?1",
             [&request.activation_id],
@@ -198,6 +215,10 @@ fn execute_one_inner(
                     row.get::<_, Option<String>>(4)?,
                     row.get::<_, Option<i64>>(5)?,
                     row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, Option<String>>(9)?,
+                    row.get::<_, Option<String>>(10)?,
                 ))
             },
         )
@@ -233,10 +254,22 @@ fn execute_one_inner(
         )?;
         let supplemental_receipt =
             SupplementalSaveReceipt::from_columns(claim_status, claim_id, claim_error)?;
+        let supplemental_local_copy_receipt =
+            if request.route_kind == ActivationRouteKind::SupplementalSave {
+                Some(SupplementalLocalCopyReceipt::from_columns(
+                    local_copy_status,
+                    local_copy_path,
+                    local_copy_saved_at,
+                    local_copy_sha256,
+                )?)
+            } else {
+                None
+            };
         return Ok(ActiveMemoryWriteResult {
             memory_id,
             replayed: true,
             supplemental_receipt,
+            supplemental_local_copy_receipt,
         });
     }
 
@@ -245,7 +278,7 @@ fn execute_one_inner(
         validate_supersede_routes(conn, request, &normalized_superseded_ids)?;
         let active_before = active_memory_snapshot(conn)?;
         let permit = ActiveMemoryWritePermit { _private: () };
-        let (memory_id, supplemental_receipt) = write(&permit)?;
+        let (memory_id, supplemental_receipt, supplemental_local_copy_receipt) = write(&permit)?;
         validate_result_route(conn, memory_id, request, true)?;
         let result_sha256 = payload::validate_result_payload(conn, memory_id, request)?;
         let active_after = active_memory_snapshot(conn)?;
@@ -263,11 +296,13 @@ fn execute_one_inner(
             &result_sha256,
             memory_id,
             supplemental_receipt.as_ref(),
+            supplemental_local_copy_receipt.as_ref(),
         )?;
         Ok(ActiveMemoryWriteResult {
             memory_id,
             replayed: false,
             supplemental_receipt,
+            supplemental_local_copy_receipt,
         })
     })();
 
@@ -299,12 +334,21 @@ fn record_activation_receipt(
     result_sha256: &str,
     memory_id: i64,
     supplemental_receipt: Option<&SupplementalSaveReceipt>,
+    supplemental_local_copy_receipt: Option<&SupplementalLocalCopyReceipt>,
 ) -> Result<()> {
     let superseded_json = serde_json::to_string(normalized_superseded_ids)
         .context("serialize activation supersede set")?;
     let claim_status = supplemental_receipt.map(SupplementalSaveReceipt::status);
     let claim_id = supplemental_receipt.and_then(SupplementalSaveReceipt::claim_id);
     let claim_error = supplemental_receipt.and_then(SupplementalSaveReceipt::error);
+    let local_copy_status =
+        supplemental_local_copy_receipt.and_then(SupplementalLocalCopyReceipt::status);
+    let local_copy_path =
+        supplemental_local_copy_receipt.and_then(SupplementalLocalCopyReceipt::path);
+    let local_copy_saved_at =
+        supplemental_local_copy_receipt.and_then(SupplementalLocalCopyReceipt::saved_at);
+    let local_copy_sha256 =
+        supplemental_local_copy_receipt.and_then(SupplementalLocalCopyReceipt::sha256);
     let now = chrono::Utc::now().timestamp();
     conn.execute(
         "INSERT INTO memory_activation_requests
@@ -314,10 +358,11 @@ fn record_activation_receipt(
           branch, scope, owner_scope, owner_key, target_project,
           provenance_kind, provenance_ref, payload_sha256, result_sha256,
           poisoning_verdict, superseded_ids_json, result_memory_id,
-          claim_status, claim_id, claim_error, created_at_epoch)
+          claim_status, claim_id, claim_error, local_copy_status, local_copy_path,
+          local_copy_saved_at, local_copy_sha256, created_at_epoch)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
                  ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21,
-                 ?22, ?23, ?24, ?25, ?26)",
+                 ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)",
         params![
             request.activation_id,
             request_sha256,
@@ -344,6 +389,10 @@ fn record_activation_receipt(
             claim_status,
             claim_id,
             claim_error,
+            local_copy_status,
+            local_copy_path,
+            local_copy_saved_at,
+            local_copy_sha256,
             now,
         ],
     )?;

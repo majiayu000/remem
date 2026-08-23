@@ -161,13 +161,15 @@ fn save_lesson_with_reference_time_and_outcome(
     reference_time_epoch: Option<i64>,
     outcome: LessonOutcomeUpdate,
 ) -> Result<i64> {
-    save_lesson_with_reference_time_and_outcome_inner(
-        conn,
-        None,
-        req,
-        reference_time_epoch,
-        outcome,
-    )
+    crate::memory::operation::with_operation_savepoint(conn, || {
+        save_lesson_with_reference_time_and_outcome_inner(
+            conn,
+            None,
+            req,
+            reference_time_epoch,
+            outcome,
+        )
+    })
 }
 
 pub(crate) fn save_lesson_with_reference_time_activated(

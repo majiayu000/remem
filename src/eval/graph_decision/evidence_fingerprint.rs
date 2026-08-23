@@ -61,6 +61,7 @@ const IMPLEMENTATION_INPUTS: &[&str] = &[
     "src/memory/semantic_dedup.rs",
     "src/memory/service/save.rs",
     "src/memory/service/save/activation.rs",
+    "src/memory/service/save/local_copy_plan.rs",
     "src/memory/staleness.rs",
     "src/memory/staleness/capabilities.rs",
     "src/memory/staleness/path.rs",
@@ -272,6 +273,7 @@ const MIGRATION_SQL_INPUTS: &[&str] = &[
     "src/migrations/v086_memory_activation_boundary.sql",
     "src/migrations/v087_activation_result_trust.sql",
     "src/migrations/v088_activation_legacy_trust.sql",
+    "src/migrations/v089_supplemental_local_copy_receipt.sql",
 ];
 
 #[derive(Debug, Clone, Serialize)]

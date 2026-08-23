@@ -38,12 +38,7 @@ pub(super) fn validate_replayed_result(
         "memory activation latest result payload has drifted"
     );
     validate_latest_route(conn, memory_id, latest)?;
-    super::payload::validate_poisoning_verdict(
-        conn,
-        memory_id,
-        &current,
-        latest.poisoning_verdict,
-    )?;
+    super::payload::validate_replayed_poisoning_verdict(conn, memory_id, latest.poisoning_verdict)?;
     Ok(())
 }
 
