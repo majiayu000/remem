@@ -2,7 +2,7 @@ use rusqlite::params;
 
 use super::*;
 
-fn request(activation_id: &str, payload: &str) -> ActiveMemoryWriteRequest {
+pub(super) fn request(activation_id: &str, payload: &str) -> ActiveMemoryWriteRequest {
     ActiveMemoryWriteRequest {
         activation_id: activation_id.to_string(),
         route_kind: ActivationRouteKind::RustApi,
@@ -21,7 +21,7 @@ fn request(activation_id: &str, payload: &str) -> ActiveMemoryWriteRequest {
     }
 }
 
-fn insert_memory(conn: &Connection, content: &str) -> Result<i64> {
+pub(super) fn insert_memory(conn: &Connection, content: &str) -> Result<i64> {
     conn.execute(
         "INSERT INTO memories
          (project, title, content, memory_type, created_at_epoch,

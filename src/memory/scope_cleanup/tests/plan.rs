@@ -119,6 +119,85 @@ fn cleanup_apply_stales_plan_ids_and_writes_audit() -> Result<()> {
 }
 
 #[test]
+fn cleanup_incompatible_merge_clears_all_prior_truth_proof() -> Result<()> {
+    let conn = setup_conn();
+    for id in [2160, 2161] {
+        insert_pref(
+            &conn,
+            id,
+            STASH,
+            "Preference: package manager",
+            "Use bun for package management.",
+            Some(if id == 2160 {
+                "pref-bun-a"
+            } else {
+                "pref-bun-b"
+            }),
+            "repo",
+            STASH,
+        )?;
+    }
+    conn.execute(
+        "INSERT INTO memory_candidates
+         (id, scope, memory_type, topic_key, text, evidence_event_ids,
+          confidence, risk_class, review_status, created_at_epoch, updated_at_epoch)
+         VALUES (3161, 'project', 'preference', 'pref-bun-b',
+                 'Use bun for package management.', '[9161]', 0.95, 'low',
+                 'approved', 100, 100)",
+        [],
+    )?;
+    conn.execute(
+        "UPDATE memories
+         SET evidence_event_ids = '[9161]', source_candidate_id = 3161,
+             confidence = 0.95, valid_from_epoch = 100,
+             source_trust_class = 'user_prompt'
+         WHERE id = 2161",
+        [],
+    )?;
+    assert_eq!(
+        crate::truth::classify_memory(&conn, 2161, 200)?.classification,
+        crate::truth::MemoryVisibilityClass::Current
+    );
+    let mut plan = build_preference_cleanup_plan(&conn, STASH)?;
+    plan.groups[0].merged_content = Some("Use npm for package management.".to_string());
+
+    apply_memory_cleanup_plan(&conn, &plan)?;
+
+    let proof: (
+        Option<String>,
+        Option<i64>,
+        Option<f64>,
+        Option<i64>,
+        String,
+    ) = conn.query_row(
+        "SELECT evidence_event_ids, source_candidate_id, confidence,
+                valid_from_epoch, source_trust_class
+         FROM memories WHERE id = 2161",
+        [],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
+    )?;
+    assert_eq!(
+        proof,
+        (None, None, None, None, "external_content".to_string())
+    );
+    let visibility = crate::truth::classify_memory(&conn, 2161, 200)?;
+    assert_eq!(
+        visibility.classification,
+        crate::truth::MemoryVisibilityClass::LegacyUnverified
+    );
+    assert!(!visibility.current_context_eligible);
+    Ok(())
+}
+
+#[test]
 fn cleanup_apply_replays_exact_plan_without_reapplying_side_effects() -> Result<()> {
     let conn = setup_conn();
     seed_stash_pollution(&conn);
@@ -168,13 +247,19 @@ fn cleanup_replay_returns_original_result_after_later_governed_update() -> Resul
     let mut expected =
         crate::memory::activation::ExpectedActiveMemory::from_existing(&conn, current_id)?;
     expected.title = "Later governed title".to_string();
+    let stored_trust: String = conn.query_row(
+        "SELECT source_trust_class FROM memories WHERE id = ?1",
+        [current_id],
+        |row| row.get(0),
+    )?;
     let request = crate::memory::activation::ActiveMemoryWriteRequest {
         activation_id: "scope-cleanup-test:later-update".to_string(),
         route_kind: crate::memory::activation::ActivationRouteKind::RustApi,
         actor_kind: crate::memory::activation::ActivationActorKind::RustApi,
         source_operation: "save_memory".to_string(),
         source_trust: crate::memory::poisoning::SourceTrustClass::LocalToolOutput,
-        result_source_trust: crate::memory::poisoning::SourceTrustClass::LocalToolOutput,
+        result_source_trust: crate::memory::poisoning::SourceTrustClass::parse(&stored_trust)
+            .expect("cleanup result trust must be valid"),
         source_project: STASH.to_string(),
         route: crate::memory::activation::ActiveMemoryRoute::default_for(STASH, None, "project"),
         provenance_kind: crate::memory::activation::ActivationProvenanceKind::RustApi,

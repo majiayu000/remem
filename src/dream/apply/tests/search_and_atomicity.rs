@@ -298,6 +298,50 @@ fn replay_precedes_a_later_replacement_topic_collision() -> Result<()> {
 }
 
 #[test]
+fn replay_precedes_mutable_owner_validation_for_rerouted_sources() -> Result<()> {
+    let (mut conn, project) = setup();
+    let source_id = insert_memory(
+        &conn,
+        Some("dream-reroute-replay"),
+        &project,
+        Some("dream-reroute-source"),
+        "Source title",
+        "Source content",
+        "decision",
+        None,
+    )?;
+    let original = MergeResult {
+        topic_key: "dream-reroute-result".to_string(),
+        memory_type: "decision".to_string(),
+        title: "Consolidated title".to_string(),
+        content: "Consolidated content.".to_string(),
+        superseded_ids: vec![source_id],
+    };
+    let first = apply(&mut conn, &project, &original)?;
+    let refs = [crate::memory::scope_cleanup::ObjectRef::memory(source_id)];
+    crate::memory::scope_cleanup::reroute_objects(
+        &conn,
+        &crate::memory::scope_cleanup::RerouteRequest {
+            refs: &refs,
+            owner_scope: "tool",
+            owner_key: "dream-history",
+            target_project: crate::memory::scope_cleanup::TargetProjectUpdate::Clear,
+            topic_domain: Some("dream"),
+            context_class: None,
+            routing_confidence: Some(1.0),
+            reason: Some("regression fixture reroute"),
+            dry_run: false,
+            confirm: true,
+        },
+    )?;
+
+    let replay = apply(&mut conn, &project, &original)?;
+
+    assert_eq!(replay, first);
+    Ok(())
+}
+
+#[test]
 fn replay_uses_receipt_identity_after_same_row_provenance_is_cleared() -> Result<()> {
     let (mut conn, project) = setup();
     conn.execute(
@@ -357,5 +401,160 @@ fn replay_uses_receipt_identity_after_same_row_provenance_is_cleared() -> Result
     let replay = apply(&mut conn, &project, &original)?;
     assert_eq!(replay.merged_id, original_outcome.merged_id);
     assert_eq!(replay.operation_id, original_outcome.operation_id);
+    Ok(())
+}
+
+fn seed_legacy_dream_receipt(
+    conn: &Connection,
+    project: &str,
+    result: &MergeResult,
+    legacy_payload_ids: &[i64],
+    actual_superseded_ids: &[i64],
+) -> Result<ApplyOutcome> {
+    let superseded_json = serde_json::to_string(legacy_payload_ids)?;
+    let payload_sha256 = crate::memory::activation::payload_sha256(&[
+        project,
+        &result.topic_key,
+        &result.title,
+        &result.content,
+        &result.memory_type,
+        &superseded_json,
+    ]);
+    let expected_memory = crate::memory::activation::ExpectedActiveMemory::new(
+        &result.title,
+        &result.content,
+        &result.memory_type,
+    )
+    .with_topic_key(Some(&result.topic_key));
+    let request = operation::activation_request(
+        project,
+        payload_sha256,
+        expected_memory,
+        actual_superseded_ids.to_vec(),
+    );
+    let state_key = crate::memory::state_key::derive_state_key(
+        &result.memory_type,
+        Some(&result.topic_key),
+        &result.title,
+        &result.content,
+    )
+    .map(|decision| decision.state_key);
+    let input = MemoryOperationInput {
+        source: "dream".to_string(),
+        actor: "dream".to_string(),
+        source_project: project.to_string(),
+        owner_scope: "repo".to_string(),
+        owner_key: project.to_string(),
+        memory_type: result.memory_type.clone(),
+        topic_key: Some(result.topic_key.clone()),
+        state_key: state_key.clone(),
+        source_candidate_id: None,
+        confidence: None,
+    };
+    let mut operation_id = None;
+    let activation = crate::memory::activation::execute_one(conn, &request, |_| {
+        let memory_id = insert_memory(
+            conn,
+            Some("legacy-dream-receipt-fixture"),
+            project,
+            Some(&result.topic_key),
+            &result.title,
+            &result.content,
+            &result.memory_type,
+            None,
+        )?;
+        trust::mark_dream_generated(conn, memory_id)?;
+        crate::memory::lifecycle::soft_supersede(
+            conn,
+            project,
+            actual_superseded_ids,
+            Some(memory_id),
+        )?;
+        let plan = MemoryOperationPlan::new(
+            MemoryLifecycleOp::Update,
+            state_key,
+            operation::reason(&request.activation_id),
+        )
+        .with_target_memory_id(Some(memory_id))
+        .with_superseded_ids(actual_superseded_ids.to_vec());
+        operation_id = Some(insert_operation_log(conn, &input, &plan, Some(memory_id))?);
+        Ok(memory_id)
+    })?;
+    Ok(ApplyOutcome {
+        merged_id: activation.memory_id,
+        operation_id: operation_id.expect("legacy fixture must write its operation log"),
+    })
+}
+
+#[test]
+fn current_dream_replays_legacy_receipt_with_unsorted_source_ids() -> Result<()> {
+    let (mut conn, project) = setup();
+    let first_id = insert_memory(
+        &conn,
+        Some("legacy-dream-order"),
+        &project,
+        Some("legacy-first"),
+        "First source",
+        "First content",
+        "decision",
+        None,
+    )?;
+    let second_id = insert_memory(
+        &conn,
+        Some("legacy-dream-order"),
+        &project,
+        Some("legacy-second"),
+        "Second source",
+        "Second content",
+        "decision",
+        None,
+    )?;
+    let result = MergeResult {
+        topic_key: "legacy-unsorted-result".to_string(),
+        memory_type: "decision".to_string(),
+        title: "Legacy unsorted consolidation".to_string(),
+        content: "Legacy unsorted value.".to_string(),
+        superseded_ids: vec![second_id, first_id],
+    };
+    let legacy = seed_legacy_dream_receipt(
+        &conn,
+        &project,
+        &result,
+        &[second_id, first_id],
+        &[second_id, first_id],
+    )?;
+
+    let replay = apply(&mut conn, &project, &result)?;
+
+    assert_eq!(replay, legacy);
+    Ok(())
+}
+
+#[test]
+fn current_dream_replays_legacy_receipt_that_excluded_reused_target() -> Result<()> {
+    let (mut conn, project) = setup();
+    let target_id = insert_memory(
+        &conn,
+        Some("legacy-dream-reused-target"),
+        &project,
+        Some("legacy-reused-target"),
+        "Original title",
+        "Original content",
+        "decision",
+        None,
+    )?;
+    let result = MergeResult {
+        topic_key: "legacy-reused-target".to_string(),
+        memory_type: "decision".to_string(),
+        title: "Legacy reused consolidation".to_string(),
+        content: "Legacy reused value.".to_string(),
+        superseded_ids: vec![target_id],
+    };
+    let legacy = seed_legacy_dream_receipt(&conn, &project, &result, &[], &[])?;
+    assert_eq!(legacy.merged_id, target_id);
+
+    let replay = apply(&mut conn, &project, &result)?;
+
+    assert_eq!(replay, legacy);
     Ok(())
 }

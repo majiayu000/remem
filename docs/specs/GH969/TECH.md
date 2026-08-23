@@ -60,7 +60,14 @@ path-based repair. Older receipts remain explicitly `legacy_unknown` rather than
 fabricating a successful local-copy response. v86 through v88 remain
 byte-stable for databases that have already recorded them. Route adapters
 bind trust, provenance, payload digest, exact supersede targets, and poisoning
-verdict before the active mutation runs in one savepoint. The boundary then
+verdict before the active mutation runs in one savepoint. A top-level activation
+acquires an immediate SQLite write transaction before receipt lookup;
+workflows that own the outer transaction must likewise begin it as immediate
+before any reads, and the activation boundary verifies write ownership before
+its own lookup.
+Concurrent requests with the same fresh activation id therefore serialize, and
+the loser validates and replays the winner's committed receipt instead of
+surfacing a lock or uniqueness error. The boundary then
 compares the stored payload/evidence fields to the request, rechecks poisoning,
 and records a result digest; an inactive result cannot satisfy an idempotent
 replay. Supplemental saves also bind an immutable claim receipt (`saved` with
@@ -98,6 +105,10 @@ carry a human poisoning acknowledgement only when the final title and content
 are byte-identical to the reviewed canonical payload and the stored pattern
 metadata still matches. Merged or otherwise changed instruction-like content
 requires a new acknowledgement and cannot inherit one from a cluster member.
+When merged cleanup content changes the deterministic preference predicate, it
+also clears candidate/direct-event proof, confidence and validity-start
+metadata, and downgrades result trust to `external_content`, so the rewritten
+claim cannot borrow CurrentTruth eligibility from the prior predicate.
 Best-effort backup normalization uses governed `backup_import` rather
 than claiming `ExactRecovery`. Backup import hashes and reads one SQLite backup
 snapshot so WAL-visible state cannot diverge from its provenance digest; a
@@ -258,6 +269,13 @@ active row was committed is not an acceptable failure mode.
 Markdown fallback lookup follows the same ownership rule: repo-owned rows remain
 project-bound, while global `user:default` rows match across source projects and
 retain the selected runtime row's stored project/source route during update.
+Dream derives its activation identity from canonical caller input and resolves
+an existing immutable receipt before checking mutable source-row owner or target
+state. Owner, freshness, collision and poisoning checks still apply to every
+fresh Dream activation; a later supported reroute cannot invalidate an exact
+replay. Replay lookup also derives the historical ordered and reused-target
+fingerprints emitted by the prior implementation, so canonicalizing new request
+identities does not orphan already-committed receipts.
 
 ### Bypass Guard
 

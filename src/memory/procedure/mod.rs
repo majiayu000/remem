@@ -157,7 +157,7 @@ fn promote_procedure_memory_with_policy(
     candidate: &ProcedureCandidate,
     policy: &ProcedurePromotionPolicy,
 ) -> Result<i64> {
-    let tx = conn.unchecked_transaction()?;
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
     let files_json = (!candidate.files.is_empty())
         .then(|| serde_json::to_string(&candidate.files))
         .transpose()?;

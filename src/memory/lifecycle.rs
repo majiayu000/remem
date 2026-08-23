@@ -89,7 +89,7 @@ pub fn apply_update(
     scope: &str,
     superseded_ids: &[i64],
 ) -> Result<LifecycleOutcome> {
-    let tx = conn.unchecked_transaction()?;
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
     let ownership = lifecycle_ownership(project, scope);
     let state_key =
         crate::memory::state_key::derive_state_key(memory_type, Some(topic_key), title, content);

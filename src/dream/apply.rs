@@ -21,7 +21,7 @@ pub(super) fn apply(
     project: &str,
     result: &MergeResult,
 ) -> Result<ApplyOutcome> {
-    let tx = conn.transaction()?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let outcome = apply_mutations_in_transaction(&tx, project, None, result)?;
     tx.commit()?;
     Ok(outcome)
@@ -42,6 +42,24 @@ fn apply_mutations_in_transaction(
     cluster: Option<&super::Cluster>,
     result: &MergeResult,
 ) -> Result<ApplyOutcome> {
+    let identities = operation::payload_identities(project, result)?;
+    for payload_sha256 in &identities.replay_candidates {
+        let activation_id = crate::memory::activation::activation_id_from_key(
+            "dream-consolidation",
+            payload_sha256,
+        );
+        if let Some(replay) = crate::memory::activation::replay_dream_identity_if_present(
+            conn,
+            &activation_id,
+            payload_sha256,
+            project,
+        )? {
+            return Ok(ApplyOutcome {
+                merged_id: replay.memory_id,
+                operation_id: operation::id_for_activation(conn, replay.memory_id, &activation_id)?,
+            });
+        }
+    }
     let superseded_ids =
         validate_dream_superseded_ids(conn, project, &result.memory_type, &result.superseded_ids)?;
     let original_target_id = target_guard::superseded_topic_target(
@@ -55,15 +73,6 @@ fn apply_mutations_in_transaction(
         .copied()
         .filter(|id| Some(*id) != original_target_id)
         .collect::<Vec<_>>();
-    let superseded_json = serde_json::to_string(&actual_superseded_ids)?;
-    let payload_sha256 = crate::memory::activation::payload_sha256(&[
-        project,
-        &result.topic_key,
-        &result.title,
-        &result.content,
-        &result.memory_type,
-        &superseded_json,
-    ]);
     let retained_provenance = original_target_id
         .map(|memory_id| {
             crate::memory::activation::ExpectedActiveMemory::from_existing(conn, memory_id)
@@ -85,20 +94,10 @@ fn apply_mutations_in_transaction(
     );
     let request = operation::activation_request(
         project,
-        payload_sha256,
+        identities.current,
         expected_memory,
         actual_superseded_ids.clone(),
     );
-    if let Some(replay) = crate::memory::activation::replay_dream_if_present(conn, &request)? {
-        return Ok(ApplyOutcome {
-            merged_id: replay.memory_id,
-            operation_id: operation::id_for_activation(
-                conn,
-                replay.memory_id,
-                &request.activation_id,
-            )?,
-        });
-    }
     if let Some(cluster) = cluster {
         super::freshness::validate_cluster_snapshot(conn, project, cluster)?;
         target_guard::validate_cluster_superseded_ids(cluster, &result.superseded_ids)?;

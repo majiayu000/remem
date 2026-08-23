@@ -148,6 +148,7 @@ pub(crate) fn replay_scope_cleanup_if_present(
     }))
 }
 
+#[cfg(test)]
 pub(crate) fn replay_dream_if_present(
     conn: &Connection,
     request: &super::ActiveMemoryWriteRequest,
@@ -194,6 +195,106 @@ pub(crate) fn replay_dream_if_present(
         memory_id,
         &stored_result_sha256,
     )?;
+    Ok(Some(super::ActiveMemoryWriteResult {
+        memory_id,
+        replayed: true,
+        supplemental_receipt: None,
+        supplemental_local_copy_receipt: None,
+    }))
+}
+
+pub(crate) fn replay_dream_identity_if_present(
+    conn: &Connection,
+    activation_id: &str,
+    payload_sha256: &str,
+    project: &str,
+) -> Result<Option<super::ActiveMemoryWriteResult>> {
+    let existing = conn
+        .query_row(
+            "SELECT result_sha256, result_memory_id, route_kind, actor_kind,
+                    source_operation, source_trust_class, result_source_trust_class,
+                    source_project, project,
+                    branch_present, branch, scope, owner_scope, owner_key, target_project,
+                    provenance_kind, provenance_ref, payload_sha256, poisoning_verdict
+             FROM memory_activation_requests WHERE activation_id = ?1",
+            [activation_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, String>(8)?,
+                    row.get::<_, i64>(9)?,
+                    row.get::<_, Option<String>>(10)?,
+                    row.get::<_, String>(11)?,
+                    row.get::<_, String>(12)?,
+                    row.get::<_, String>(13)?,
+                    row.get::<_, Option<String>>(14)?,
+                    row.get::<_, String>(15)?,
+                    row.get::<_, String>(16)?,
+                    row.get::<_, String>(17)?,
+                    row.get::<_, String>(18)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((
+        result_sha256,
+        memory_id,
+        route_kind,
+        actor_kind,
+        source_operation,
+        source_trust,
+        result_source_trust,
+        source_project,
+        route_project,
+        branch_present,
+        branch,
+        scope,
+        owner_scope,
+        owner_key,
+        target_project,
+        provenance_kind,
+        provenance_ref,
+        stored_payload_sha256,
+        poisoning_verdict,
+    )) = existing
+    else {
+        return Ok(None);
+    };
+    let expected_provenance_ref = format!("dream-generated:{payload_sha256}");
+    if route_kind != "dream_consolidation"
+        || actor_kind != "automatic_worker"
+        || source_operation != "dream_consolidation"
+        || source_trust != "external_content"
+        || !matches!(
+            result_source_trust.as_str(),
+            "external_content" | "legacy_v086_source_external_content"
+        )
+        || source_project != project
+        || route_project != project
+        || branch_present != 0
+        || branch.is_some()
+        || scope != "project"
+        || owner_scope != "repo"
+        || owner_key != project
+        || target_project.as_deref() != Some(project)
+        || provenance_kind != "generated"
+        || provenance_ref != expected_provenance_ref
+        || stored_payload_sha256 != payload_sha256
+        || poisoning_verdict != "upstream_validated"
+    {
+        return Err(super::ActivationIdConflictError {
+            activation_id: activation_id.to_string(),
+        }
+        .into());
+    }
+    validate_replayed_result(conn, activation_id, memory_id, &result_sha256)?;
     Ok(Some(super::ActiveMemoryWriteResult {
         memory_id,
         replayed: true,

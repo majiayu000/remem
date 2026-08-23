@@ -133,7 +133,7 @@ pub fn apply_memory_cleanup_plan(
         );
     }
 
-    let tx = conn.unchecked_transaction()?;
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
     validate_plan_shape(plan)?;
 
     let now = chrono::Utc::now().timestamp();
@@ -217,13 +217,17 @@ pub fn apply_memory_cleanup_plan(
             crate::memory::activation::ExpectedActiveMemory::from_existing(&tx, group.current_id)?;
         let reviewed_title = expected_memory.title.clone();
         let reviewed_content = expected_memory.content.clone();
+        let preserves_current_provenance = group.merged_content.as_deref().is_none_or(|content| {
+            crate::memory::preference::reinforcement::cleanup_preserves_candidate_provenance(
+                &expected_memory.content,
+                content,
+            )
+        });
         let expected_memory = match group.merged_content.as_deref() {
             Some(content) => {
-                if !crate::memory::preference::reinforcement::cleanup_preserves_candidate_provenance(
-                    &expected_memory.content,
-                    content,
-                ) {
+                if !preserves_current_provenance {
                     expected_memory.source_candidate_id = None;
+                    expected_memory.evidence_event_ids = None;
                 }
                 expected_memory.with_content(content)
             }
@@ -243,7 +247,11 @@ pub fn apply_memory_cleanup_plan(
             actor_kind: crate::memory::activation::ActivationActorKind::Operator,
             source_operation: "memory_cleanup".to_string(),
             source_trust,
-            result_source_trust: source_trust,
+            result_source_trust: if preserves_current_provenance {
+                source_trust
+            } else {
+                crate::memory::poisoning::SourceTrustClass::ExternalContent
+            },
             source_project,
             route: crate::memory::activation::ActiveMemoryRoute {
                 project: current_snapshot.project.clone(),
@@ -263,7 +271,7 @@ pub fn apply_memory_cleanup_plan(
         let mut group_result = None;
         let activation_result = crate::memory::activation::execute_one(&tx, &request, |_permit| {
             validate_group(&tx, plan, group)?;
-            let applied = apply_cleanup_group(&tx, plan, group, now)?;
+            let applied = apply_cleanup_group(&tx, plan, group, now, preserves_current_provenance)?;
             group_result = Some(applied);
             Ok(group.current_id)
         })?;
@@ -360,6 +368,7 @@ fn apply_cleanup_group(
     plan: &MemoryCleanupPlan,
     group: &MemoryCleanupGroup,
     now: i64,
+    preserves_current_provenance: bool,
 ) -> Result<CleanupGroupApplyResult> {
     let current_ref = ObjectRef::memory(group.current_id);
     let canonical = load_target(conn, current_ref)?;
@@ -396,6 +405,16 @@ fn apply_cleanup_group(
             "failed to update cleanup current memory {}",
             group.current_id
         );
+    }
+    if !preserves_current_provenance {
+        conn.execute(
+            "UPDATE memories
+             SET evidence_event_ids = NULL, source_candidate_id = NULL,
+                 confidence = NULL, valid_from_epoch = NULL,
+                 source_trust_class = 'external_content'
+             WHERE id = ?1",
+            [group.current_id],
+        )?;
     }
     let mut affected = vec![ObjectMutation {
         object_ref: current_ref.to_string(),

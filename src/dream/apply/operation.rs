@@ -7,6 +7,64 @@ use crate::memory::activation::{
 };
 use crate::memory::poisoning::SourceTrustClass;
 
+use super::super::merge::MergeResult;
+
+pub(super) struct PayloadIdentities {
+    pub(super) current: String,
+    pub(super) replay_candidates: Vec<String>,
+}
+
+pub(super) fn payload_identities(project: &str, result: &MergeResult) -> Result<PayloadIdentities> {
+    let mut seen_ids = std::collections::HashSet::new();
+    let ordered_ids = result
+        .superseded_ids
+        .iter()
+        .copied()
+        .filter(|id| seen_ids.insert(*id))
+        .collect::<Vec<_>>();
+    if ordered_ids.iter().any(|id| *id <= 0) {
+        anyhow::bail!("dream superseded memory ids must be positive integers");
+    }
+    let sorted_ids = ordered_ids
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+    let current = payload_sha256_for_ids(project, result, &sorted_ids)?;
+    let mut replay_candidates = vec![current.clone()];
+    let mut seen_payloads = std::collections::HashSet::from([current.clone()]);
+    for excluded in std::iter::once(None).chain(ordered_ids.iter().copied().map(Some)) {
+        let legacy_ids = ordered_ids
+            .iter()
+            .copied()
+            .filter(|id| Some(*id) != excluded)
+            .collect::<Vec<_>>();
+        let payload = payload_sha256_for_ids(project, result, &legacy_ids)?;
+        if seen_payloads.insert(payload.clone()) {
+            replay_candidates.push(payload);
+        }
+    }
+    Ok(PayloadIdentities {
+        current,
+        replay_candidates,
+    })
+}
+
+fn payload_sha256_for_ids(
+    project: &str,
+    result: &MergeResult,
+    superseded_ids: &impl serde::Serialize,
+) -> Result<String> {
+    let superseded_json = serde_json::to_string(superseded_ids)?;
+    Ok(crate::memory::activation::payload_sha256(&[
+        project,
+        &result.topic_key,
+        &result.title,
+        &result.content,
+        &result.memory_type,
+        &superseded_json,
+    ]))
+}
+
 pub(super) fn activation_request(
     project: &str,
     payload_sha256: String,

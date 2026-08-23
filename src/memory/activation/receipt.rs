@@ -246,6 +246,7 @@ pub(super) fn supplemental_caller_request_matches_receipt(
     .map_err(Into::into)
 }
 
+#[cfg(test)]
 pub(super) fn request_identity_matches_receipt(
     conn: &Connection,
     request: &ActiveMemoryWriteRequest,

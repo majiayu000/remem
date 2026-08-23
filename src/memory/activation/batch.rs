@@ -101,7 +101,7 @@ pub(crate) fn execute_add_batch(
                 .result_sha256
                 .as_deref()
                 .context("add-only activation lost its result digest")?;
-            super::record_activation_receipt(
+            super::execute::record_receipt(
                 conn,
                 &requests[pending.index],
                 &[],
