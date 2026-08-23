@@ -74,7 +74,10 @@ activation request therefore binds incoming source trust separately from the
 expected result-row trust; route policy validates the former while the durable
 postcondition validates the latter. Supplemental idempotency uses a versioned
 caller-input fingerprint that excludes mutable target provenance and validates
-the result from immutable receipt fields. Migrated v086 and v087 supplemental
+the result from immutable receipt fields. The caller-stable receipt lookup runs
+before direct-save planning can bind a current replacement row's project or
+source provenance, including for user-owned global memories. Migrated v086 and
+v087 supplemental
 receipts validate the same stable caller fields directly from the immutable
 ledger, including the caller payload digest, instead of reconstructing old
 target provenance from a later memory row; other v086 routes retain an
@@ -88,7 +91,9 @@ operation log and duplicate edges become immutable with the receipt. The receipt
 inserted after the activation ledger row but inside the same outer cleanup
 transaction. A retry resolves and validates the activation receipt before
 consulting mutable plan-row snapshots, then returns the stored cleanup result;
-missing, conflicting, or mutable cleanup evidence fails visibly. Cleanup may
+the historical poisoning verdict and acknowledgement shape remain authoritative
+for that exact retry even if a newer scanner recognizes another pattern. Missing,
+conflicting, or mutable cleanup evidence fails visibly. Cleanup may
 carry a human poisoning acknowledgement only when the final title and content
 are byte-identical to the reviewed canonical payload and the stored pattern
 metadata still matches. Merged or otherwise changed instruction-like content
@@ -249,6 +254,10 @@ active row was committed is not an acceptable failure mode.
 | Governed pack import | Verified manifest/content/entry digests, instruction scan, `pack` trust, target repo ownership, and the safe-add/no-resurrection decision from `project-memory-pack/` | Activating a conflict, quarantined row, changed plan entry, or locally suppressed/invalidated identity |
 | Other import | Import plan/digest and candidate route unless its current contract proves an equivalent governed activation | Direct activation based only on file ownership or format validity |
 | Recovery | Exact prior row identity, plan/apply digest, acknowledgement where required | Creating a semantically new claim or raising trust |
+
+Markdown fallback lookup follows the same ownership rule: repo-owned rows remain
+project-bound, while global `user:default` rows match across source projects and
+retain the selected runtime row's stored project/source route during update.
 
 ### Bypass Guard
 

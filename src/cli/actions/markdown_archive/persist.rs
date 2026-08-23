@@ -48,6 +48,8 @@ pub(super) fn update_markdown_memory(
     doc: &MarkdownMemoryDocument,
     topic_key: Option<&str>,
 ) -> Result<()> {
+    let bound_doc = bind_global_markdown_route(conn, memory_id, doc)?;
+    let doc = bound_doc.as_ref().unwrap_or(doc);
     validate_markdown_acknowledgement_metadata(doc)?;
     if doc.metadata.status != "active" {
         return update_markdown_memory_row(conn, memory_id, doc, topic_key);
@@ -64,6 +66,44 @@ pub(super) fn update_markdown_memory(
         Ok(memory_id)
     })?;
     Ok(())
+}
+
+fn bind_global_markdown_route(
+    conn: &Connection,
+    memory_id: i64,
+    doc: &MarkdownMemoryDocument,
+) -> Result<Option<MarkdownMemoryDocument>> {
+    if doc.metadata.scope != "global" {
+        return Ok(None);
+    }
+    let (project, source_project, target_project, owner_scope, owner_key): (
+        String,
+        String,
+        Option<String>,
+        String,
+        String,
+    ) = conn.query_row(
+        "SELECT project, COALESCE(source_project, project), target_project,
+                COALESCE(owner_scope, 'user'), COALESCE(owner_key, 'user:default')
+         FROM memories WHERE id = ?1",
+        [memory_id],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
+    )?;
+    let mut bound = doc.clone();
+    bound.metadata.project = project;
+    bound.metadata.source_project = Some(source_project);
+    bound.metadata.target_project = target_project;
+    bound.metadata.owner_scope = Some(owner_scope);
+    bound.metadata.owner_key = Some(owner_key);
+    Ok(Some(bound))
 }
 
 pub(super) fn insert_markdown_memory(

@@ -128,13 +128,12 @@ fn runtime_global_memory_id(
     let ownership = markdown_ownership(doc);
     let result = conn.query_row(
         "SELECT id FROM memories
-         WHERE project = ?1
-           AND topic_key = ?2
+         WHERE topic_key = ?1
            AND COALESCE(scope, 'project') = 'global'
-           AND memory_type = ?3
-           AND branch IS ?4
-           AND COALESCE(owner_scope, ?5) = ?5
-           AND COALESCE(owner_key, ?6) = ?6
+           AND memory_type = ?2
+           AND branch IS ?3
+           AND COALESCE(owner_scope, ?4) = ?4
+           AND COALESCE(owner_key, ?5) = ?5
          ORDER BY CASE status
              WHEN 'active' THEN 0
              WHEN 'stale' THEN 1
@@ -143,9 +142,8 @@ fn runtime_global_memory_id(
            END,
            updated_at_epoch DESC,
            id DESC
-         LIMIT 1",
+        LIMIT 1",
         rusqlite::params![
-            doc.metadata.project,
             topic_key,
             doc.metadata.memory_type,
             doc.metadata.branch,

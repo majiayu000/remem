@@ -4,6 +4,77 @@ use rusqlite::{params, Connection, OptionalExtension};
 use super::{ActivationPoisoningVerdict, ExpectedActiveMemory};
 use crate::memory::poisoning::SourceTrustClass;
 
+pub(crate) fn replay_supplemental_if_present(
+    conn: &Connection,
+    request: &super::ActiveMemoryWriteRequest,
+) -> Result<Option<super::ActiveMemoryWriteResult>> {
+    if request.route_kind != super::ActivationRouteKind::SupplementalSave {
+        bail!("early supplemental replay requires the supplemental_save route");
+    }
+    let normalized_superseded_ids = super::validate_request(request)?;
+    let existing = conn
+        .query_row(
+            "SELECT result_sha256, result_memory_id, claim_status, claim_id, claim_error,
+                    local_copy_status, local_copy_path, local_copy_saved_at, local_copy_sha256
+             FROM memory_activation_requests WHERE activation_id = ?1",
+            [&request.activation_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((
+        result_sha256,
+        memory_id,
+        claim_status,
+        claim_id,
+        claim_error,
+        local_copy_status,
+        local_copy_path,
+        local_copy_saved_at,
+        local_copy_sha256,
+    )) = existing
+    else {
+        return Ok(None);
+    };
+    if !super::receipt::supplemental_caller_request_matches_receipt(
+        conn,
+        request,
+        &normalized_superseded_ids,
+    )? {
+        return Err(super::ActivationIdConflictError {
+            activation_id: request.activation_id.clone(),
+        }
+        .into());
+    }
+    validate_replayed_result(conn, &request.activation_id, memory_id, &result_sha256)?;
+    Ok(Some(super::ActiveMemoryWriteResult {
+        memory_id,
+        replayed: true,
+        supplemental_receipt: super::SupplementalSaveReceipt::from_columns(
+            claim_status,
+            claim_id,
+            claim_error,
+        )?,
+        supplemental_local_copy_receipt: Some(super::SupplementalLocalCopyReceipt::from_columns(
+            local_copy_status,
+            local_copy_path,
+            local_copy_saved_at,
+            local_copy_sha256,
+        )?),
+    }))
+}
+
 pub(crate) fn replay_scope_cleanup_if_present(
     conn: &Connection,
     activation_id: &str,
@@ -152,13 +223,7 @@ pub(super) fn validate_replayed_result(
     memory_id: i64,
     historical_result_sha256: &str,
 ) -> Result<()> {
-    validate_replayed_result_inner(
-        conn,
-        activation_id,
-        memory_id,
-        historical_result_sha256,
-        false,
-    )
+    validate_replayed_result_inner(conn, activation_id, memory_id, historical_result_sha256)
 }
 
 fn validate_scope_cleanup_replayed_result(
@@ -167,13 +232,7 @@ fn validate_scope_cleanup_replayed_result(
     memory_id: i64,
     historical_result_sha256: &str,
 ) -> Result<()> {
-    validate_replayed_result_inner(
-        conn,
-        activation_id,
-        memory_id,
-        historical_result_sha256,
-        true,
-    )
+    validate_replayed_result_inner(conn, activation_id, memory_id, historical_result_sha256)
 }
 
 fn validate_replayed_result_inner(
@@ -181,7 +240,6 @@ fn validate_replayed_result_inner(
     activation_id: &str,
     memory_id: i64,
     historical_result_sha256: &str,
-    require_current_pattern_match: bool,
 ) -> Result<()> {
     let historical = receipt_by_activation(conn, activation_id, memory_id)?;
     ensure!(
@@ -196,19 +254,7 @@ fn validate_replayed_result_inner(
         "memory activation latest result payload has drifted"
     );
     validate_latest_route(conn, memory_id, latest)?;
-    if require_current_pattern_match {
-        super::payload::validate_scope_cleanup_replayed_poisoning_verdict(
-            conn,
-            memory_id,
-            latest.poisoning_verdict,
-        )?;
-    } else {
-        super::payload::validate_replayed_poisoning_verdict(
-            conn,
-            memory_id,
-            latest.poisoning_verdict,
-        )?;
-    }
+    super::payload::validate_replayed_poisoning_verdict(conn, memory_id, latest.poisoning_verdict)?;
     Ok(())
 }
 

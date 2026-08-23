@@ -284,7 +284,7 @@ fn markdown_export_uses_context_visibility_and_current_filter() -> Result<()> {
 }
 
 #[test]
-fn markdown_global_import_does_not_update_cross_project_row_on_same_branch() -> Result<()> {
+fn markdown_global_import_updates_shared_owner_row_and_preserves_its_route() -> Result<()> {
     let target = Connection::open_in_memory()?;
     setup_memory_schema(&target);
     target.execute(
@@ -321,21 +321,20 @@ fn markdown_global_import_does_not_update_cross_project_row_on_same_branch() -> 
     std::fs::write(export_dir.join("global.md"), render_markdown_memory(&doc))?;
 
     let stats = import_markdown_archive(&target, &export_dir, false)?;
-    assert_eq!((stats.imported, stats.updated), (1, 0));
-    let rows: (i64, String, String) = target.query_row(
-        "SELECT COUNT(*),
-                MAX(CASE WHEN project = '/original-repo' THEN content END),
-                MAX(CASE WHEN project = '/exporting-repo' THEN content END)
+    assert_eq!((stats.imported, stats.updated), (0, 1));
+    let rows: (i64, String, String, String) = target.query_row(
+        "SELECT COUNT(*), MIN(project), MIN(COALESCE(source_project, project)), MIN(content)
          FROM memories
          WHERE topic_key = 'global-topic' AND COALESCE(scope, 'project') = 'global'",
         [],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     )?;
     assert_eq!(
         rows,
         (
-            2,
-            "Original global content.".to_string(),
+            1,
+            "/original-repo".to_string(),
+            "/original-repo".to_string(),
             "Edited global content.".to_string(),
         )
     );

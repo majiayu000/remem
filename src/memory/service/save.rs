@@ -123,14 +123,30 @@ fn save_memory_inner(
         activation_request.source_operation = "coding_bench_fixture_seed".to_string();
         activation_request.provenance_ref = "coding-bench:curated-fixture".to_string();
     }
-    let preserves_existing_provenance = activation::bind_existing_target_provenance(
-        conn,
-        &mut activation_request,
-        &operation_plan,
-        memory_type,
-        &req.text,
-    )?;
-    if memory_type != "lesson" && operation_plan.op == MemoryLifecycleOp::Noop {
+    let early_replay =
+        crate::memory::activation::replay_supplemental_if_present(conn, &activation_request)
+            .map_err(|err| -> anyhow::Error {
+                if err.is::<crate::memory::activation::ActivationIdConflictError>() {
+                    SaveMemoryIdempotencyConflictError::new(err.to_string()).into()
+                } else {
+                    err
+                }
+            })?;
+    let preserves_existing_provenance = if early_replay.is_some() {
+        true
+    } else {
+        activation::bind_existing_target_provenance(
+            conn,
+            &mut activation_request,
+            &operation_plan,
+            memory_type,
+            &req.text,
+        )?
+    };
+    if early_replay.is_none()
+        && memory_type != "lesson"
+        && operation_plan.op == MemoryLifecycleOp::Noop
+    {
         let memory_id = operation_plan
             .target_memory_id
             .ok_or_else(|| anyhow!("noop memory operation missing existing memory id"))?;
@@ -146,10 +162,10 @@ fn save_memory_inner(
     }
 
     let mut applied_operation = None;
-    let save_result = crate::memory::activation::execute_supplemental_save(
-        conn,
-        &activation_request,
-        |permit| {
+    let save_result = if let Some(replayed) = early_replay {
+        Ok(replayed)
+    } else {
+        crate::memory::activation::execute_supplemental_save(conn, &activation_request, |permit| {
             let acknowledgement = direct_save_pattern_acknowledgement(
                 title,
                 &req.text,
@@ -299,8 +315,8 @@ fn save_memory_inner(
             applied_operation = Some(result.1);
             let claim_receipt = write_claim_after_durable_save(conn, result.0, req)?;
             Ok((result.0, claim_receipt, local_copy_receipt))
-        },
-    );
+        })
+    };
 
     let activation = match save_result {
         Ok(result) => result,

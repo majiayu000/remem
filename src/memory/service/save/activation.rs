@@ -262,4 +262,78 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn global_retry_replays_before_binding_a_cross_project_replacement() -> anyhow::Result<()> {
+        let _dir = ScopedTestDataDir::new("save-global-route-replay");
+        let conn = db::open_db()?;
+        let req = SaveMemoryRequest {
+            text: "Shared global decision.".to_string(),
+            title: Some("Global decision".to_string()),
+            project: Some("/caller-b".to_string()),
+            topic_key: Some("global-decision".to_string()),
+            memory_type: Some("decision".to_string()),
+            scope: Some("global".to_string()),
+            local_copy_enabled: Some(false),
+            claim_enabled: Some(false),
+            idempotency_key: Some("global-route-replay".to_string()),
+            ..SaveMemoryRequest::default()
+        };
+        let original =
+            save_memory_from_with_reference_time(&conn, &req, None, SaveMemoryCaller::RestAgent)?;
+        let replacement_expected = crate::memory::activation::ExpectedActiveMemory::new(
+            "Global decision",
+            "Shared global decision.",
+            "decision",
+        )
+        .with_topic_key(Some("global-decision"));
+        let replacement_request = crate::memory::activation::ActiveMemoryWriteRequest {
+            activation_id: "rust:global-replacement".to_string(),
+            route_kind: crate::memory::activation::ActivationRouteKind::RustApi,
+            actor_kind: crate::memory::activation::ActivationActorKind::RustApi,
+            source_operation: "save_memory".to_string(),
+            source_trust: SourceTrustClass::LocalToolOutput,
+            result_source_trust: SourceTrustClass::LocalToolOutput,
+            source_project: "/replacement-c".to_string(),
+            route: crate::memory::activation::ActiveMemoryRoute::default_for(
+                "/replacement-c",
+                None,
+                "global",
+            ),
+            provenance_kind: crate::memory::activation::ActivationProvenanceKind::RustApi,
+            provenance_ref: "rust-api:global-replacement".to_string(),
+            payload_sha256: crate::memory::activation::payload_sha256(&["global replacement"]),
+            expected_memory: replacement_expected,
+            poisoning_verdict: ActivationPoisoningVerdict::Clean,
+            superseded_ids: vec![original.id],
+        };
+        let replacement =
+            crate::memory::activation::execute_one(&conn, &replacement_request, |_permit| {
+                conn.execute(
+                    "UPDATE memories SET status = 'stale' WHERE id = ?1",
+                    [original.id],
+                )?;
+                conn.execute(
+                    "INSERT INTO memories
+                     (project, topic_key, title, content, memory_type, created_at_epoch,
+                      updated_at_epoch, status, scope, source_project, target_project,
+                      owner_scope, owner_key, context_class, source_trust_class)
+                     VALUES ('/replacement-c', 'global-decision', 'Global decision',
+                             'Shared global decision.', 'decision', 2, 2, 'active',
+                             'global', '/replacement-c', NULL, 'user', 'user:default',
+                             'startup_core', 'local_tool_output')",
+                    [],
+                )?;
+                Ok(conn.last_insert_rowid())
+            })?;
+
+        let replay =
+            save_memory_from_with_reference_time(&conn, &req, None, SaveMemoryCaller::RestAgent)?;
+
+        assert_eq!(replay.id, original.id);
+        assert_eq!(replay.operation, "noop");
+        assert_ne!(replay.id, replacement.memory_id);
+        assert_eq!(replay.claim_status, "disabled");
+        Ok(())
+    }
 }
