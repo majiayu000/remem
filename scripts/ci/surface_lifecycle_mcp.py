@@ -33,7 +33,7 @@ def discover_mcp_schema_fingerprints(root: Path) -> dict[str, str]:
             process.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
             process.stdin.flush()
 
-        def receive(response_id: int, timeout: float = 120.0) -> dict[str, object]:
+        def receive(response_id: int, timeout: float = 30.0) -> dict[str, object]:
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 if process.poll() is not None:
@@ -58,7 +58,7 @@ def discover_mcp_schema_fingerprints(root: Path) -> dict[str, str]:
                     "clientInfo": {"name": "surface-lifecycle-guard", "version": "1"},
                 },
             })
-            receive(1)
+            receive(1, timeout=600.0)
             send({"jsonrpc": "2.0", "method": "notifications/initialized"})
             send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
             response = receive(2)
