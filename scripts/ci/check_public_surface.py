@@ -502,8 +502,8 @@ def lifecycle_self_test() -> int:
         (doc_root / "api/struct.RouterInfo.html").write_text(
             '<pre class="rust item-decl"><code>pub struct RouterInfo { pub status: bool }</code></pre>'
             '<span id="structfield.status"></span><div id="implementations-list">'
-            '<section id="method.health"><h4 class="code-header">pub fn health(&amp;self)</h4></section></div><h2 id="trait-implementations"></h2>'
-            '<section id="method.clone" class="trait-impl"></section>',
+            '<section id="method.health" class="method"><h4 class="code-header">pub fn health(&amp;self)</h4></section></div><h2 id="trait-implementations"></h2>'
+            '<section id="method.clone" class="method trait-impl"></section>',
             encoding="utf-8",
         )
         (doc_root / "api/trait.Health.html").write_text(

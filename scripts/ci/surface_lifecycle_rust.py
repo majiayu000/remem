@@ -93,11 +93,12 @@ def discover_rust_exports(root: Path, *, doc_root: Path | None = None) -> set[st
             re.S,
         )
         if implementations:
-            for category, name in re.findall(
-                r'id="(method|associatedconstant|associatedtype)\.([A-Za-z_][A-Za-z0-9_-]*)"',
+            for category, name, classes in re.findall(
+                r'<section\s+id="(method|associatedconstant|associatedtype)\.([A-Za-z_][A-Za-z0-9_-]*)"\s+class="([^"]+)"',
                 implementations.group("body"),
             ):
-                associated[name.split("-")[0]] = f"{category}.{name}"
+                if "trait-impl" not in classes.split():
+                    associated[name.split("-")[0]] = f"{category}.{name}"
         if "/trait." in href or href.rsplit("/", 1)[-1].startswith("trait."):
             declarations = page_text.split('id="implementations"', 1)[0]
             for category, name in re.findall(
