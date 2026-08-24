@@ -61,8 +61,8 @@ following repository-local findings now have landed implementation evidence:
 
 These landed slices do not close the epic. The #1040 slice implements the
 single active-memory activation boundary and bypass guard for v0.6.82. The
-remaining material work is the surface lifecycle guard, dependency-direction
-guard, unified decision/evidence matrix, outcome scorecard, and final
+remaining material work is the dependency-direction guard, unified
+decision/evidence matrix, outcome scorecard, and final
 architecture/spec synchronization defined by this contract.
 
 ## Active-Memory Safety Boundary
@@ -142,9 +142,10 @@ guard.
 
 ## Canonical Surface Inventory
 
-This table is the canonical human-readable inventory. The implementation work
-must add a machine-readable manifest and CI consistency check without changing
-these classifications silently.
+This table is the canonical human-readable inventory. Its expanded
+machine-readable form lives at `surface-manifest.json`; the repository-owned
+public-surface check validates it against compiled Rust exports and the real
+MCP, REST, Clap, Cargo-feature, and offline-harness registration roots.
 
 The grouped Rust/MCP/REST/CLI rows below are exhaustive discovery rules, not
 sample entries. The machine manifest expands them to one record per reachable

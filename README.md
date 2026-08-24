@@ -354,8 +354,8 @@ than silent.
 loading or printing memory payloads. Bundle mode is healthy, the explicit
 legacy rollback is a warning, and an invalid render-mode value is a failure;
 the check also names the active bundle/plan schemas and policy versions. Use
-`remem context-plan --task <task> --json` when a request-specific retrieval
-plan is needed.
+the experimental `remem context-plan --task <task> --json` command when a
+request-specific retrieval plan is needed.
 
 The default Codex integration is intentionally low-noise: it uses
 `SessionStart` for context injection and `Stop` for background summarization.

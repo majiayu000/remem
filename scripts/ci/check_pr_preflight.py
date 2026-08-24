@@ -110,6 +110,10 @@ def fast_steps(base: str, head: str) -> list[tuple[str, list[str]]]:
     return [
         ("Check plugin version sync", ["python3", "scripts/ci/check_plugin_version_sync.py"]),
         ("Check public surface", ["python3", "scripts/ci/check_public_surface.py"]),
+        (
+            "Self-test surface lifecycle guard",
+            ["python3", "scripts/ci/check_public_surface.py", "--self-test"],
+        ),
         ("Check public benchmark claims", ["python3", "scripts/ci/check_public_claims.py"]),
         ("Check source file size guard", ["python3", "scripts/ci/check_file_size.py"]),
         (

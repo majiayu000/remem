@@ -1,6 +1,6 @@
 # GH969 Technical Contract — Stabilization And Surface Governance
 
-Status: Current contract; activation boundary implemented; later guard slices pending; Issue: #969
+Status: Current contract; activation boundary and surface lifecycle guard implemented; later slices pending; Issue: #969
 
 Last reconciled against `origin/main`: 2026-08-21 (`86fee409`)
 
@@ -117,8 +117,11 @@ snapshot so WAL-visible state cannot diverge from its provenance digest; a
 complete, payload-matching acknowledgement is preserved as exact recovery,
 while partial or mismatched acknowledgement evidence fails closed. A repository-owned
 CI guard inventories reviewed raw implementations and rejects new production
-bypasses. Later slices still need the surface lifecycle and dependency-direction
-guards described below.
+bypasses. The lifecycle manifest and consistency guard now live in
+`docs/specs/GH969/surface-manifest.json`,
+`scripts/ci/surface_lifecycle_discovery.py`, and
+`scripts/ci/check_public_surface.py`. Later slices still need the
+dependency-direction guard described below.
 
 ## Target Module Direction
 
@@ -320,8 +323,11 @@ at least owner scope/key, project route, memory scope, and subject/state key.
 
 ## Surface Manifest And Consistency Guard
 
-The PRODUCT inventory is canonical until a machine-readable manifest lands.
-The manifest must cover every listed entry point and include:
+The PRODUCT inventory remains the canonical human-readable contract. Its
+machine-readable expansion is `surface-manifest.json`, checked by
+`python3 scripts/ci/check_public_surface.py`; the focused positive/negative
+suite runs with `--self-test`. The manifest covers every listed entry point and
+includes:
 
 ```text
 id, surface_kind, owner, status, public_entry_points, real_callers, default_state,

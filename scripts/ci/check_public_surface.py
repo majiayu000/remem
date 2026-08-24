@@ -3,9 +3,23 @@
 
 from __future__ import annotations
 
+import argparse
+import copy
+import json
 import re
 import sys
+import tempfile
+from collections import Counter, defaultdict
+from datetime import date
 from pathlib import Path
+
+from surface_lifecycle_discovery import (
+    ROW_STATUS,
+    build_manifest,
+    discover_all,
+    discover_mcp_tools,
+    lifecycle_record,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -49,6 +63,20 @@ SITE_PAGES = [
     "site/compare/built-in-memory/index.html",
 ]
 
+MANIFEST_PATH = ROOT / "docs/specs/GH969/surface-manifest.json"
+REQUIRED_RECORD_FIELDS = {
+    "id", "surface_kind", "owner", "status", "public_entry_points",
+    "real_callers", "default_state", "spec_refs", "eval_commands",
+    "compatibility", "rollback", "decision_due",
+}
+DISCOVERED_KINDS = {"rust_export", "mcp_tool", "rest_route", "cli_command", "default_feature"}
+SPECIAL_KINDS = {
+    "runtime_component", "mcp_parameter", "recovery_path", "compatibility_path",
+    "offline_harness", "spec_contract",
+}
+DATED_STATUSES = {"staged", "experimental", "deprecated", "spec-only"}
+KNOWN_STATUSES = {"staged", "production", "experimental", "recovery-only", "deprecated", "spec-only"}
+
 
 def fail(message: str) -> None:
     print(f"FAIL: {message}", file=sys.stderr)
@@ -82,7 +110,260 @@ def require_site_page(path: str) -> None:
         fail(f"{path} must contain exactly one h1")
 
 
+def _string_list(value: object) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) and item.strip() for item in value)
+
+
+def _declared_files(artifacts: dict[str, object]) -> set[str]:
+    declared: set[str] = set()
+    for category in ("executables", "schemas", "fixtures", "data", "documents"):
+        values = artifacts.get(category)
+        if _string_list(values):
+            declared.update(values)  # type: ignore[arg-type]
+    return declared
+
+
+def check_lifecycle_manifest(
+    root: Path,
+    manifest: dict[str, object],
+    discovered: dict[str, set[str]],
+    *,
+    today: date,
+    required_rows: set[str] | None = None,
+    check_wording: bool = False,
+) -> list[str]:
+    errors: list[str] = []
+    records = manifest.get("records")
+    if manifest.get("schema_version") != 1 or not isinstance(records, list):
+        return ["surface manifest must have schema_version=1 and a records array"]
+    ids: Counter[str] = Counter()
+    rows: set[str] = set()
+    classified: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for index, raw_record in enumerate(records):
+        if not isinstance(raw_record, dict):
+            errors.append(f"record[{index}] must be an object")
+            continue
+        record = raw_record
+        record_id = record.get("id")
+        label = record_id if isinstance(record_id, str) else f"record[{index}]"
+        if isinstance(record_id, str) and record_id:
+            ids[record_id] += 1
+        else:
+            errors.append(f"{label}: missing non-empty id")
+        missing = sorted(REQUIRED_RECORD_FIELDS - record.keys())
+        if missing:
+            errors.append(f"{label}: missing required fields {', '.join(missing)}")
+        kind = record.get("surface_kind")
+        if kind not in DISCOVERED_KINDS | SPECIAL_KINDS:
+            errors.append(f"{label}: unknown surface_kind {kind!r}")
+        status = record.get("status")
+        if status not in KNOWN_STATUSES:
+            errors.append(f"{label}: unknown lifecycle status {status!r}")
+        row_name = record.get("inventory_row")
+        if not isinstance(row_name, str) or row_name not in ROW_STATUS:
+            errors.append(f"{label}: unknown or missing canonical inventory_row {row_name!r}")
+        else:
+            rows.add(row_name)
+            if status != ROW_STATUS[row_name]:
+                errors.append(f"{label}: status {status!r} contradicts canonical row {row_name}={ROW_STATUS[row_name]!r}")
+        if not isinstance(record.get("owner"), str) or not str(record.get("owner", "")).strip():
+            errors.append(f"{label}: owner is required; assign the responsible source/spec owner")
+        points = record.get("public_entry_points")
+        if not _string_list(points):
+            errors.append(f"{label}: public_entry_points must be a non-empty string array")
+            points = []
+        callers = record.get("real_callers")
+        if not _string_list(callers):
+            errors.append(f"{label}: real_callers must be a non-empty string array")
+            callers = []
+        if status == "production" and (not callers or all(str(item).lower().startswith("none") for item in callers)):
+            errors.append(f"{label}: production surface has no real production caller")
+        specs = record.get("spec_refs")
+        if not _string_list(specs):
+            errors.append(f"{label}: spec_refs must be a non-empty string array")
+        else:
+            for spec in specs:
+                if not (root / spec).is_file():
+                    errors.append(f"{label}: spec reference does not resolve: {spec}")
+        due = record.get("decision_due")
+        if status in DATED_STATUSES:
+            if not isinstance(due, str):
+                errors.append(f"{label}: {status} requires an ISO decision_due date")
+            else:
+                try:
+                    parsed_due = date.fromisoformat(due)
+                    if parsed_due < today:
+                        errors.append(f"{label}: decision_due {due} is overdue; integrate, continue with a new date, or remove")
+                except ValueError:
+                    errors.append(f"{label}: invalid ISO decision_due {due!r}")
+        state = str(record.get("default_state", "")).lower()
+        claims_default = (
+            state.startswith(("default", "required"))
+            or " default path" in state
+            or "default-on" in state
+            or "required for normal operation" in state
+        )
+        explicitly_non_default = (
+            "not a default" in state
+            or "not required" in state
+            or "separate" in state
+        )
+        if status == "experimental" and claims_default and not explicitly_non_default:
+            errors.append(f"{label}: experimental surface claims a default production path without a separately classified production entry")
+        if status == "recovery-only":
+            writers = record.get("normal_writers")
+            if not isinstance(writers, list) or writers:
+                errors.append(f"{label}: recovery-only record must declare normal_writers=[]; new-work writers are forbidden")
+        if kind in DISCOVERED_KINDS:
+            if len(points) != 1:
+                errors.append(f"{label}: {kind} records classify exactly one reachable entry point")
+            for point in points:
+                classified[(str(kind), point)].append(str(label))
+        elif kind == "offline_harness":
+            artifacts = record.get("artifacts")
+            if not isinstance(artifacts, dict) or not _string_list(artifacts.get("roots")):
+                errors.append(f"{label}: offline_harness requires artifacts.roots and exact categorized inventory")
+            else:
+                roots = artifacts["roots"]
+                actual = {
+                    path.relative_to(root).as_posix()
+                    for declared_root in roots
+                    for path in (root / declared_root).rglob("*")
+                    if path.is_file()
+                }
+                declared = _declared_files(artifacts)
+                if actual != declared:
+                    errors.append(f"{label}: offline artifact inventory drift: missing={sorted(actual-declared)} stale={sorted(declared-actual)}")
+                command = artifacts.get("checked_command")
+                if not isinstance(command, str) or len(command.split()) < 2 or command.split()[1] not in declared:
+                    errors.append(f"{label}: checked_command must invoke a declared executable")
+        elif status != "spec-only":
+            for point in points:
+                if not (root / point).exists():
+                    errors.append(f"{label}: non-spec-only entry no longer resolves: {point}")
+        else:
+            for point in points:
+                if not (root / point).exists():
+                    errors.append(f"{label}: spec-only contract no longer resolves: {point}")
+
+    for record_id, count in sorted(ids.items()):
+        if count > 1:
+            errors.append(f"duplicate manifest id {record_id!r} appears {count} times")
+    for kind, actual_entries in discovered.items():
+        for entry in sorted(actual_entries):
+            owners = classified.get((kind, entry), [])
+            if not owners:
+                errors.append(f"unclassified {kind} surface {entry!r}; add one lifecycle record")
+            elif len(owners) > 1:
+                errors.append(f"multiply classified {kind} surface {entry!r}: {', '.join(owners)}")
+        for classified_kind, entry in sorted(classified):
+            if classified_kind == kind and entry not in actual_entries:
+                errors.append(f"stale {kind} manifest surface {entry!r}; remove it or restore the registered/exported entry")
+    expected_rows = set(ROW_STATUS) if required_rows is None else required_rows
+    missing_rows = sorted(expected_rows - rows)
+    if missing_rows:
+        errors.append(f"canonical PRODUCT inventory rows missing from manifest: {', '.join(missing_rows)}")
+
+    if check_wording:
+        readme = (root / "README.md").read_text(encoding="utf-8")
+        for marker in ("experimental MCP `context_bundle`", "experimental `remem context-plan"):
+            if marker not in readme:
+                errors.append(f"README.md lifecycle wording is missing {marker!r}")
+        _, titles = discover_mcp_tools(root)
+        for name, title in titles.items():
+            expected = "experimental" if name == "context_bundle" else "production"
+            has_experimental = "experimental" in title.lower()
+            if (expected == "experimental") != has_experimental:
+                errors.append(f"served MCP title for {name!r} contradicts {expected}: {title!r}")
+        index = (root / "docs/specs/README.md").read_text(encoding="utf-8")
+        for marker in ("Context Bundle v1 implemented; API remains experimental", "v1 infrastructure; completion unimplemented"):
+            if marker not in index:
+                errors.append(f"docs/specs/README.md lifecycle wording is missing {marker!r}")
+    return errors
+
+
+def lifecycle_self_test() -> int:
+    with tempfile.TemporaryDirectory(prefix="remem-surface-lifecycle-") as raw:
+        root = Path(raw)
+        (root / "src/mcp/server").mkdir(parents=True)
+        (root / "src/api").mkdir(parents=True)
+        (root / "src/cli").mkdir(parents=True)
+        (root / "docs/specs/GH969").mkdir(parents=True)
+        (root / "docs/specs/GH969/PRODUCT.md").write_text("fixture", encoding="utf-8")
+        (root / "Cargo.toml").write_text('[features]\ndefault = ["eval"]\neval = []\n', encoding="utf-8")
+        (root / "src/mcp/server/tool_contracts.rs").write_text(
+            'struct ToolContract; const CONTRACTS: [ToolContract; 1] = [json_object("search", "Search", true, false, true, true, Schema::Search)\n];\n', encoding="utf-8"
+        )
+        (root / "src/api/server.rs").write_text('fn build_router() { Router::new().route("/api/v1/health", get(health).post(check)); }\n', encoding="utf-8")
+        (root / "src/cli/types.rs").write_text(
+            '#[derive(Subcommand)] enum Commands { Context, Admin { #[command(subcommand)] action: AdminAction } }\n'
+            '#[derive(Subcommand)] enum AdminAction { Backup }\n', encoding="utf-8"
+        )
+        doc_root = root / "doc/remem"
+        (doc_root / "api").mkdir(parents=True)
+        (doc_root / "index.html").write_text(
+            '<a class="mod" href="api/index.html">api</a>', encoding="utf-8"
+        )
+        (doc_root / "api/index.html").write_text("module", encoding="utf-8")
+        (doc_root / "all.html").write_text('<ul class="all-items"><li><a href="api/fn.build_router.html">api::build_router</a></li></ul>', encoding="utf-8")
+        discovered = discover_all(root, doc_root=doc_root)
+        expected = {
+            "remem context", "remem admin", "remem admin backup",
+            "remem help", "remem admin help",
+        }
+        if discovered["cli_command"] != expected or discovered["rest_route"] != {"GET /api/v1/health", "POST /api/v1/health"}:
+            print(f"surface discovery self-test failed: {discovered}", file=sys.stderr)
+            return 1
+        records = [
+            lifecycle_record(f"{kind}:{entry}", kind, entry, "mcp-production" if kind == "mcp_tool" else "rust-library" if kind == "rust_export" else "rest-api" if kind == "rest_route" else "cli-production" if kind == "cli_command" else "deterministic-eval")
+            for kind, entries in discovered.items() for entry in entries
+        ]
+        for item in records:
+            for spec in item["spec_refs"]:
+                spec_path = root / str(spec)
+                spec_path.parent.mkdir(parents=True, exist_ok=True)
+                spec_path.write_text("fixture", encoding="utf-8")
+        manifest: dict[str, object] = {"schema_version": 1, "records": records}
+        positive_errors = check_lifecycle_manifest(
+            root, manifest, discovered, today=date(2026, 8, 24), required_rows=set()
+        )
+        if positive_errors:
+            print(f"positive lifecycle manifest self-test failed: {positive_errors}", file=sys.stderr)
+            return 1
+
+        def proves(mutator: object, needle: str) -> bool:
+            candidate = copy.deepcopy(manifest)
+            assert callable(mutator)
+            mutator(candidate)
+            return any(needle in error for error in check_lifecycle_manifest(root, candidate, discovered, today=date(2026, 8, 24), required_rows=set()))
+
+        cases = [
+            (lambda value: value["records"][0].update(status="mystery"), "unknown lifecycle status"),
+            (lambda value: value["records"][0].update(owner=""), "owner is required"),
+            (lambda value: value["records"].append(copy.deepcopy(value["records"][0])), "multiply classified"),
+            (lambda value: value["records"].pop(0), "unclassified"),
+            (lambda value: value["records"][0]["public_entry_points"].__setitem__(0, "stale"), "stale"),
+            (lambda value: value["records"][0].update(status="production", real_callers=["none"]), "no real production caller"),
+            (lambda value: value["records"][0].update(status="experimental", inventory_row="mcp-context-bundle", decision_due="2026-01-01"), "overdue"),
+            (lambda value: value["records"][0].update(status="experimental", inventory_row="mcp-context-bundle", decision_due="2026-11-30", default_state="default path"), "without a separately classified"),
+            (lambda value: value["records"][0].update(status="recovery-only", inventory_row="legacy-pending", normal_writers=["new work"]), "new-work writers are forbidden"),
+            (lambda value: value["records"][0].update(spec_refs=["missing.md"]), "does not resolve"),
+        ]
+        failed = [needle for mutator, needle in cases if not proves(mutator, needle)]
+        if failed:
+            print(f"negative lifecycle self-tests failed: {failed}", file=sys.stderr)
+            return 1
+    print("surface lifecycle guard self-test: ok")
+    return 0
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--self-test", action="store_true")
+    args = parser.parse_args()
+    if args.self_test:
+        return lifecycle_self_test()
+
     for path in ROOT_REQUIRED_FILES:
         require_file(path)
 
@@ -111,7 +392,22 @@ def main() -> int:
     codex_page = (ROOT / "site/codex-memory/index.html").read_text(encoding="utf-8")
     require_contains("site/codex-memory/index.html", codex_page, "application/ld+json")
 
-    print("public surface check: ok")
+    try:
+        manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+        discovered = discover_all(ROOT)
+    except (OSError, json.JSONDecodeError, RuntimeError) as exc:
+        fail(f"surface lifecycle discovery could not run: {exc}")
+    lifecycle_errors = check_lifecycle_manifest(
+        ROOT,
+        manifest,
+        discovered,
+        today=date.today(),
+        check_wording=True,
+    )
+    if lifecycle_errors:
+        fail("surface lifecycle guard failed:\n  - " + "\n  - ".join(lifecycle_errors))
+
+    print("public surface and lifecycle check: ok")
     return 0
 
 
