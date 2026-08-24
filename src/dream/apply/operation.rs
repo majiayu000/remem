@@ -12,6 +12,7 @@ use super::super::merge::MergeResult;
 pub(super) struct PayloadIdentities {
     pub(super) current: String,
     pub(super) replay_candidates: Vec<String>,
+    pub(super) caller_superseded_ids: Vec<i64>,
 }
 
 pub(super) fn payload_identities(project: &str, result: &MergeResult) -> Result<PayloadIdentities> {
@@ -46,6 +47,7 @@ pub(super) fn payload_identities(project: &str, result: &MergeResult) -> Result<
     Ok(PayloadIdentities {
         current,
         replay_candidates,
+        caller_superseded_ids: sorted_ids.into_iter().collect(),
     })
 }
 

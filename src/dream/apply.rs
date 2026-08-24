@@ -53,6 +53,7 @@ fn apply_mutations_in_transaction(
             &activation_id,
             payload_sha256,
             project,
+            &identities.caller_superseded_ids,
         )? {
             return Ok(ApplyOutcome {
                 merged_id: replay.memory_id,

@@ -275,7 +275,9 @@ state. Owner, freshness, collision and poisoning checks still apply to every
 fresh Dream activation; a later supported reroute cannot invalidate an exact
 replay. Replay lookup also derives the historical ordered and reused-target
 fingerprints emitted by the prior implementation, so canonicalizing new request
-identities does not orphan already-committed receipts.
+identities does not orphan already-committed receipts. A historical fingerprint
+is accepted only when its immutable receipt supersede set equals the canonical
+caller set after excluding the receipt's reused result row.
 
 ### Bypass Guard
 

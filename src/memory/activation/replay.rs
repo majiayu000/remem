@@ -208,6 +208,7 @@ pub(crate) fn replay_dream_identity_if_present(
     activation_id: &str,
     payload_sha256: &str,
     project: &str,
+    caller_superseded_ids: &[i64],
 ) -> Result<Option<super::ActiveMemoryWriteResult>> {
     let existing = conn
         .query_row(
@@ -215,7 +216,8 @@ pub(crate) fn replay_dream_identity_if_present(
                     source_operation, source_trust_class, result_source_trust_class,
                     source_project, project,
                     branch_present, branch, scope, owner_scope, owner_key, target_project,
-                    provenance_kind, provenance_ref, payload_sha256, poisoning_verdict
+                    provenance_kind, provenance_ref, payload_sha256, poisoning_verdict,
+                    superseded_ids_json
              FROM memory_activation_requests WHERE activation_id = ?1",
             [activation_id],
             |row| {
@@ -239,6 +241,7 @@ pub(crate) fn replay_dream_identity_if_present(
                     row.get::<_, String>(16)?,
                     row.get::<_, String>(17)?,
                     row.get::<_, String>(18)?,
+                    row.get::<_, String>(19)?,
                 ))
             },
         )
@@ -263,10 +266,21 @@ pub(crate) fn replay_dream_identity_if_present(
         provenance_ref,
         stored_payload_sha256,
         poisoning_verdict,
+        stored_superseded_ids,
     )) = existing
     else {
         return Ok(None);
     };
+    let expected_superseded_ids = caller_superseded_ids
+        .iter()
+        .copied()
+        .filter(|id| *id != memory_id)
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected_superseded_ids =
+        serde_json::to_string(&expected_superseded_ids.into_iter().collect::<Vec<_>>())?;
+    if stored_superseded_ids != expected_superseded_ids {
+        return Ok(None);
+    }
     let expected_provenance_ref = format!("dream-generated:{payload_sha256}");
     if route_kind != "dream_consolidation"
         || actor_kind != "automatic_worker"

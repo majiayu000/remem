@@ -558,3 +558,48 @@ fn current_dream_replays_legacy_receipt_that_excluded_reused_target() -> Result<
     assert_eq!(replay, legacy);
     Ok(())
 }
+
+#[test]
+fn legacy_identity_probe_does_not_replay_a_smaller_supersede_set() -> Result<()> {
+    let (mut conn, project) = setup();
+    let target_id = insert_memory(
+        &conn,
+        Some("dream-expanded-sources"),
+        &project,
+        Some("dream-expanded-target"),
+        "Original title",
+        "Original content",
+        "decision",
+        None,
+    )?;
+    let original = MergeResult {
+        topic_key: "dream-expanded-target".to_string(),
+        memory_type: "decision".to_string(),
+        title: "Stable consolidation".to_string(),
+        content: "Stable consolidated value.".to_string(),
+        superseded_ids: vec![target_id],
+    };
+    let first = apply(&mut conn, &project, &original)?;
+    assert_eq!(first.merged_id, target_id);
+    let added_source_id = insert_memory(
+        &conn,
+        Some("dream-expanded-sources"),
+        &project,
+        Some("dream-added-source"),
+        "Added source",
+        "Added source content",
+        "decision",
+        None,
+    )?;
+    let expanded = MergeResult {
+        superseded_ids: vec![target_id, added_source_id],
+        ..original
+    };
+
+    let second = apply(&mut conn, &project, &expanded)?;
+
+    assert_eq!(second.merged_id, target_id);
+    assert_ne!(second.operation_id, first.operation_id);
+    assert_eq!(status_for_id(&conn, added_source_id), "stale");
+    Ok(())
+}
