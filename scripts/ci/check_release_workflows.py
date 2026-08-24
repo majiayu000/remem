@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -10,9 +11,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+import surface_lifecycle_release
+
 
 ROOT = Path(__file__).resolve().parents[2]
 AUTO_RELEASE = ROOT / ".github/workflows/auto-release.yml"
+RELEASE = ROOT / ".github/workflows/release.yml"
 TAG_STATE_SCRIPT = ROOT / "scripts/ci/auto_release_check_tag_state.sh"
 
 
@@ -72,6 +76,14 @@ def check_workflow_text() -> None:
     for needle in forbidden:
         if needle in text:
             die(f"auto-release workflow embeds unsafe shell context {needle!r}")
+
+    release_text = RELEASE.read_text(encoding="utf-8")
+    for needle in [
+        "cp docs/specs/GH969/surface-manifest.json artifacts/surface-manifest.json",
+        "artifacts/surface-manifest.json",
+    ]:
+        if needle not in release_text:
+            die(f"release workflow is missing lifecycle asset step {needle!r}")
 
 
 def git_init(path: Path) -> None:
@@ -154,11 +166,53 @@ def check_tag_state_script() -> None:
             die("older staged version without its tag should fail")
 
 
+def check_surface_release_verifier() -> None:
+    kinds = {"rust_export", "mcp_tool"}
+    manifest = {
+        "schema_version": 2,
+        "records": [
+            {"surface_kind": kind, "public_entry_points": [f"fixture-{kind}"]}
+            for kind in kinds
+        ],
+    }
+    assets = [{"name": name} for name in surface_lifecycle_release.REQUIRED_ASSETS]
+    metadata = {"tagName": "v1.2.3", "isDraft": False, "assets": assets}
+    original = surface_lifecycle_release._gh
+
+    def fake_gh(arguments: list[str]) -> str:
+        if arguments[1] == "view":
+            return json.dumps(metadata)
+        directory = Path(arguments[arguments.index("--dir") + 1])
+        (directory / "surface-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return ""
+
+    surface_lifecycle_release._gh = fake_gh
+    try:
+        baseline = surface_lifecycle_release.verified_release_baseline("v1.2.3", kinds)
+    finally:
+        surface_lifecycle_release._gh = original
+    expected = {kind: {f"fixture-{kind}"} for kind in kinds}
+    if baseline != expected:
+        die(f"release surface baseline was wrong: {baseline!r}")
+    metadata["isDraft"] = True
+    surface_lifecycle_release._gh = fake_gh
+    try:
+        try:
+            surface_lifecycle_release.verified_release_baseline("v1.2.3", kinds)
+            die("draft release advanced the published surface baseline")
+        except RuntimeError as exc:
+            if "non-draft" not in str(exc):
+                raise
+    finally:
+        surface_lifecycle_release._gh = original
+
+
 def main() -> int:
     if shutil.which("git") is None:
         die("git is required")
     check_workflow_text()
     check_tag_state_script()
+    check_surface_release_verifier()
     print("release workflow check: ok")
     return 0
 

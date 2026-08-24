@@ -146,8 +146,9 @@ This table is the canonical human-readable inventory. Its expanded
 machine-readable form lives at `surface-manifest.json`; the repository-owned
 public-surface check validates it against host-compiled, signature-fingerprinted
 Rust exports, a conservative inventory that recursively follows public contents
-of platform-cfg modules, and
-the real MCP, REST, Clap, Cargo-feature, and offline-harness registration roots.
+of platform-cfg modules and their public associated items, the normalized
+input/output schemas returned by the served MCP `tools/list` response, and the
+real REST, Clap, Cargo-feature, and offline-harness registration roots.
 
 The grouped Rust/MCP/REST/CLI rows below are exhaustive discovery rules, not
 sample entries. The machine manifest expands them to one record per reachable
@@ -161,8 +162,10 @@ public entry fails the guard.
 The manifest also carries the reviewed `published_surfaces` baseline and its
 release version. A newly discovered entry in a production group is generated as
 `staged` until an explicit post-release `--promote-published <version>`
-regeneration advances that baseline. Published removals and signature changes
-fail closed. Every expanded record copies all eight canonical table columns, so
+regeneration verifies the exact non-draft GitHub release, its distributed
+assets, and its `surface-manifest.json` before advancing the baseline from that
+artifact. Published removals and signature changes fail closed. Every expanded
+record copies all eight canonical table columns, so
 changing owner, caller/default, evidence, compatibility, or next-decision text
 requires the same reviewed manifest update as changing status.
 

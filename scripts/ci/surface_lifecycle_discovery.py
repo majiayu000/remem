@@ -20,10 +20,16 @@ from surface_lifecycle_evidence import (
     offline_categories,
 )
 from surface_lifecycle_rust import discover_rust_exports
+from surface_lifecycle_mcp import discover_mcp_schema_fingerprints
+from surface_lifecycle_release import verified_release_baseline
 
 
 HTTP_METHODS = ("delete", "get", "head", "options", "patch", "post", "put", "trace")
 ROOT = Path(__file__).resolve().parents[2]
+DISCOVERED_SURFACE_KINDS = {
+    "rust_export", "rust_target_export", "mcp_tool", "mcp_parameter",
+    "rest_route", "cli_command", "default_feature",
+}
 
 
 def _matching(text: str, opening: int, left: str, right: str) -> int | None:
@@ -442,12 +448,15 @@ def discover_default_features(root: Path) -> set[str]:
     return expanded_default_features(root)
 
 
-def discover_all(root: Path, *, doc_root: Path | None = None) -> dict[str, set[str]]:
+def discover_all(root: Path, *, doc_root: Path | None = None, mcp_fingerprints: dict[str, str] | None = None) -> dict[str, set[str]]:
     mcp_tools, _ = discover_mcp_tools(root)
+    schemas = mcp_fingerprints or discover_mcp_schema_fingerprints(root)
+    if set(schemas) != mcp_tools:
+        raise RuntimeError("served MCP schema set contradicts the contract registry")
     return {
         "rust_export": discover_rust_exports(root, doc_root=doc_root),
         "rust_target_export": discover_target_gated_exports(root),
-        "mcp_tool": mcp_tools,
+        "mcp_tool": {f"{name}@sha256={schemas[name]}" for name in mcp_tools},
         "mcp_parameter": discover_search_parameters(root),
         "rest_route": discover_rest_routes(root),
         "cli_command": discover_cli_commands(root),
@@ -597,7 +606,7 @@ def _offline_inventory(root: Path, roots: list[str]) -> dict[str, object]:
 def build_manifest(root: Path, *, doc_root: Path | None = None, published_surfaces: dict[str, set[str]] | None = None, published_release: str = "v0.6.82") -> dict[str, object]:
     discovered = discover_all(root, doc_root=doc_root)
     canonical = discover_product_rows(root)
-    published = published_surfaces or {kind: set(entries) for kind, entries in discovered.items()}
+    published = published_surfaces if published_surfaces is not None else {kind: set(entries) for kind, entries in discovered.items()}
     records = [
         lifecycle_record(f"{kind}:{entry}", kind, entry, lifecycle_row(kind, entry), canonical_rows=canonical, published=entry in published.get(kind, set()))
         for kind, entries in discovered.items()
@@ -667,10 +676,13 @@ def main() -> int:
         parser.error("pass --write-manifest for an explicit reviewed regeneration")
     previous = json.loads(args.output.read_text(encoding="utf-8")) if args.output.is_file() else {}
     baseline = previous.get("published_surfaces")
-    published = {kind: set(entries) for kind, entries in baseline.items()} if isinstance(baseline, dict) else None
+    if not isinstance(baseline, dict):
+        parser.error("existing manifest must contain published_surfaces; bootstrap is not a normal regeneration path")
+    published = {kind: set(entries) for kind, entries in baseline.items()}
     release = str(previous.get("published_release", "v0.6.82"))
     if args.promote_published:
-        published, release = None, args.promote_published
+        release = args.promote_published
+        published = verified_release_baseline(release, DISCOVERED_SURFACE_KINDS)
     manifest = build_manifest(ROOT, published_surfaces=published, published_release=release)
     args.output.write_text(render_manifest(manifest), encoding="utf-8")
     records = manifest["records"]

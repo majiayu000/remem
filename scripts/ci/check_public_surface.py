@@ -123,8 +123,12 @@ def require_site_page(path: str) -> None:
         fail(f"{path} must contain exactly one h1")
 
 
-def _string_list(value: object) -> bool:
+def _string_array(value: object) -> bool:
     return isinstance(value, list) and all(isinstance(item, str) and item.strip() for item in value)
+
+
+def _string_list(value: object) -> bool:
+    return bool(value) and _string_array(value)
 
 
 def _production_rust_sources(root: Path) -> list[tuple[str, str]]:
@@ -275,6 +279,8 @@ def check_lifecycle_manifest(
         if not _string_list(points):
             errors.append(f"{label}: public_entry_points must be a non-empty string array")
             points = []
+        if kind in DISCOVERED_KINDS and len(points) == 1 and row_name != lifecycle_row(str(kind), points[0]):
+            errors.append(f"{label}: inventory_row does not match implementation-derived lifecycle row")
         expected_status = canonical_statuses.get(str(row_name))
         if kind in DISCOVERED_KINDS and expected_status == "production" and len(points) == 1 and points[0] not in published.get(str(kind), set()):
             expected_status = "staged"
@@ -349,8 +355,8 @@ def check_lifecycle_manifest(
                     expected_categories = {name: [] for name in ("executables", "schemas", "fixtures", "data", "documents")}
                 for category, expected in expected_categories.items():
                     declared = artifacts.get(category)
-                    if not _string_list(declared) or set(declared) != set(expected):
-                        actual = set(declared) if _string_list(declared) else set()
+                    if not _string_array(declared) or set(declared) != set(expected):
+                        actual = set(declared) if _string_array(declared) else set()
                         errors.append(
                             f"{label}: offline {category} inventory drift: "
                             f"missing={sorted(set(expected)-actual)} stale={sorted(actual-set(expected))}"
@@ -488,6 +494,10 @@ def lifecycle_self_test() -> int:
             "pub fn windows_api() {}\n", encoding="utf-8"
         )
         (root / "src/lib.rs").write_text("#[cfg(windows)] pub mod platform;\n", encoding="utf-8")
+        (root / "src/platform_impl.rs").write_text(
+            "pub struct Api; #[cfg(windows)] impl Api { pub fn windows_only(&self) {} }\n",
+            encoding="utf-8",
+        )
         doc_root = root / "doc/remem"
         (doc_root / "api").mkdir(parents=True)
         (doc_root / "index.html").write_text(
@@ -512,11 +522,11 @@ def lifecycle_self_test() -> int:
             '<section id="tymethod.required"><h4 class="code-header">fn required(&amp;self)</h4></section>'
             '<h2 id="implementations"></h2>', encoding="utf-8"
         )
-        discovered = discover_all(root, doc_root=doc_root)
+        discovered = discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"})
         router_doc = doc_root / "api/struct.RouterInfo.html"
         original_router_doc = router_doc.read_text(encoding="utf-8")
         router_doc.write_text(original_router_doc.replace("status: bool", "status: String"), encoding="utf-8")
-        changed_rust = discover_all(root, doc_root=doc_root)["rust_export"]
+        changed_rust = discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"})["rust_export"]
         router_doc.write_text(original_router_doc, encoding="utf-8")
         if changed_rust == discovered["rust_export"]:
             sys.stderr.write("Rust public signature change did not alter the compatibility fingerprint\n")
@@ -539,9 +549,16 @@ def lifecycle_self_test() -> int:
             or not expected_rust.issubset({entry.split("@sha256=", 1)[0] for entry in discovered["rust_export"]})
             or any(entry.startswith("remem::api::RouterInfo::clone") for entry in discovered["rust_export"])
             or not any("src/platform.rs::windows::platform::fn:windows_api" in entry for entry in discovered["rust_target_export"])
+            or not any("impl:Api::fn:windows_only" in entry for entry in discovered["rust_target_export"])
         ):
             print(f"surface discovery self-test failed: {discovered}", file=sys.stderr)
             return 1
+        target_before = discovered["rust_target_export"]
+        (root / "src/platform.rs").write_text("pub fn windows_api() { private_only(); }\n", encoding="utf-8")
+        if discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"})["rust_target_export"] != target_before:
+            sys.stderr.write("private target implementation body changed a public signature\n")
+            return 1
+        (root / "src/platform.rs").write_text("pub fn windows_api() {}\n", encoding="utf-8")
         duplicate_enum = root / "src/cli/duplicate.rs"
         duplicate_enum.write_text(
             "#[cfg(feature = \"eval\")] #[derive(Subcommand)] enum FeatureAction { On }\n"
@@ -686,6 +703,8 @@ def lifecycle_self_test() -> int:
         cases = [
             (lambda value: value["records"][0].update(status="mystery"), "unknown lifecycle status"),
             (lambda value: value["records"][0].update(owner=""), "owner is required"),
+            (lambda value: value["records"][0].update(inventory_row="mcp-context-bundle"), "implementation-derived lifecycle row"),
+            (lambda value: value["records"][0].update(public_entry_points=[]), "non-empty string array"),
             (lambda value: value["records"][0].update(compatibility="changed"), "compatibility contradicts canonical PRODUCT"),
             (lambda value: value["records"].append(copy.deepcopy(value["records"][0])), "multiply classified"),
             (lambda value: value["records"].pop(0), "unclassified"),

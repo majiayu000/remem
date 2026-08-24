@@ -10,6 +10,8 @@ from pathlib import Path
 
 from surface_lifecycle_evidence import rustdoc_signature
 
+RUSTDOC_TOOLCHAIN = "1.97.0"
+
 
 class _AllItemsParser(HTMLParser):
     def __init__(self) -> None:
@@ -51,6 +53,13 @@ class _AllItemsParser(HTMLParser):
 def discover_rust_exports(root: Path, *, doc_root: Path | None = None) -> set[str]:
     """Use rustdoc's compiler-resolved public graph and fingerprint declarations."""
     if doc_root is None:
+        version = subprocess.run(
+            ["rustc", "--version"], text=True, capture_output=True, check=False,
+        )
+        if version.returncode != 0 or not version.stdout.startswith(f"rustc {RUSTDOC_TOOLCHAIN} "):
+            raise RuntimeError(
+                f"surface discovery requires rustdoc {RUSTDOC_TOOLCHAIN}, got {version.stdout.strip() or version.stderr.strip()}"
+            )
         result = subprocess.run(
             ["cargo", "doc", "--locked", "--quiet", "--no-deps", "--lib"],
             cwd=root,

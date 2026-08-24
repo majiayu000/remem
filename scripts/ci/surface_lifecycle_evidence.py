@@ -48,19 +48,65 @@ def expanded_default_features(root: Path) -> set[str]:
     return active
 
 
+_PUBLIC_DECLARATION = re.compile(
+    r"\bpub\s+(?!\()(?P<kind>async\s+fn|fn|struct|enum|trait|type|const|static|mod|use)\s+"
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+)
+
+
+def _matching_brace(text: str, opening: int) -> int:
+    depth = 0
+    for index in range(opening, len(text)):
+        depth += text[index] == "{"
+        depth -= text[index] == "}"
+        if depth == 0:
+            return index
+    raise RuntimeError("unclosed Rust declaration body")
+
+
+def _source_signature(text: str, match: re.Match[str]) -> str:
+    """Fingerprint a public declaration while excluding function implementation bodies."""
+    cursor = match.end()
+    paren = bracket = angle = 0
+    while cursor < len(text):
+        char = text[cursor]
+        paren += char == "("
+        paren -= char == ")"
+        bracket += char == "["
+        bracket -= char == "]"
+        angle += char == "<"
+        angle -= char == ">" and angle > 0
+        if not (paren or bracket or angle) and char in "{;":
+            break
+        cursor += 1
+    if cursor == len(text):
+        raise RuntimeError(f"cannot terminate public declaration {match.group('name')!r}")
+    declaration = text[match.start() : cursor]
+    kind = re.sub(r"\s+", "_", match.group("kind"))
+    if text[cursor] == "{" and kind in {"struct", "enum", "trait"}:
+        closing = _matching_brace(text, cursor)
+        body = text[cursor + 1 : closing]
+        if kind == "struct":
+            body = " ".join(field.group(0) for field in re.finditer(r"\bpub\s+(?:[A-Za-z_][A-Za-z0-9_]*\s*:|\([^)]*\))[^,}]*", body))
+        declaration += "{" + body + "}"
+    normalized = re.sub(r"\s+", " ", declaration).strip()
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+
 def discover_target_gated_exports(root: Path) -> set[str]:
-    """Inventory target-gated declarations and the public contents of gated modules."""
+    """Inventory signatures in target-gated declarations, modules, and impl blocks."""
     exports: set[str] = set()
     gated = re.compile(
         r"#\s*\[\s*cfg\s*\((?P<cfg>[^]]*(?:windows|unix|target_(?:os|arch|env))[^]]*)\)\s*\]"
-        r"(?:\s*#\s*\[[^]]*\])*\s*pub\s+(?!\()"
+        r"(?:\s*#\s*\[[^]]*\])*\s*(?P<declaration>pub\s+(?!\()"
         r"(?P<kind>async\s+fn|fn|struct|enum|trait|type|const|static|mod|use)\s+"
-        r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)",
+        r"(?P<name>[A-Za-z_][A-Za-z0-9_]*))",
         re.S,
     )
-    public = re.compile(
-        r"\bpub\s+(?!\()(?P<kind>async\s+fn|fn|struct|enum|trait|type|const|static|mod|use)\s+"
-        r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+    gated_impl = re.compile(
+        r"#\s*\[\s*cfg\s*\((?P<cfg>[^]]*(?:windows|unix|target_(?:os|arch|env))[^]]*)\)\s*\]"
+        r"(?:\s*#\s*\[[^]]*\])*\s*impl(?:<[^>{}]*>)?\s+(?P<owner>[^{}]+?)\s*\{",
+        re.S,
     )
 
     def module_file(parent: Path, name: str) -> Path | None:
@@ -73,12 +119,12 @@ def discover_target_gated_exports(root: Path) -> set[str]:
             return
         seen.add(path)
         raw = path.read_text(encoding="utf-8")
-        digest = hashlib.sha256(raw.encode()).hexdigest()
         relative = path.relative_to(root).as_posix()
-        for match in public.finditer(raw):
+        for match in _PUBLIC_DECLARATION.finditer(raw):
             kind = re.sub(r"\s+", "_", match.group("kind"))
             name = match.group("name")
-            exports.add(f"{relative}::{cfg}::{prefix}{kind}:{name}::{digest}")
+            digest = _source_signature(raw, match)
+            exports.add(f"{relative}::{cfg}::{prefix}{kind}:{name}::sha256={digest}")
             if kind == "mod":
                 child = module_file(path, name)
                 if child is not None:
@@ -88,19 +134,31 @@ def discover_target_gated_exports(root: Path) -> set[str]:
 
     for path in sorted((root / "src").rglob("*.rs")):
         raw = path.read_text(encoding="utf-8")
-        digest = hashlib.sha256(raw.encode()).hexdigest()
         relative = path.relative_to(root).as_posix()
         for match in gated.finditer(raw):
             cfg = re.sub(r"\s+", "", match.group("cfg"))
             kind = re.sub(r"\s+", "_", match.group("kind"))
             name = match.group("name")
-            exports.add(f"{relative}::{cfg}::{kind}:{name}::{digest}")
+            declaration = _PUBLIC_DECLARATION.search(raw, match.start("declaration"))
+            if declaration is None:
+                raise RuntimeError(f"cannot resolve target-gated declaration {name!r}")
+            digest = _source_signature(raw, declaration)
+            exports.add(f"{relative}::{cfg}::{kind}:{name}::sha256={digest}")
             if kind == "mod":
                 child = module_file(path, name)
                 if child is not None:
                     scan_module(child, cfg, f"{name}::", set())
                 elif raw[match.end() :].lstrip().startswith(";"):
                     raise RuntimeError(f"cannot resolve target-gated public module {name!r} from {relative}")
+        for match in gated_impl.finditer(raw):
+            cfg = re.sub(r"\s+", "", match.group("cfg"))
+            owner = re.sub(r"\s+", "", match.group("owner"))
+            closing = _matching_brace(raw, match.end() - 1)
+            body = raw[match.end() : closing]
+            for item in _PUBLIC_DECLARATION.finditer(body):
+                kind = re.sub(r"\s+", "_", item.group("kind"))
+                digest = _source_signature(body, item)
+                exports.add(f"{relative}::{cfg}::impl:{owner}::{kind}:{item.group('name')}::sha256={digest}")
     return exports
 
 

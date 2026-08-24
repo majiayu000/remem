@@ -355,12 +355,19 @@ current `eval/cross-host/` infrastructure.
 Schema v2 also stores `published_release` and the exact `published_surfaces`
 baseline. Normal regeneration preserves that baseline and marks newly
 discovered production-group entries `staged`; only the explicit
-`--promote-published <version>` release-verification operation advances it.
+`--promote-published <version>` operation advances it after `gh` verifies the
+exact non-draft release and all distribution assets, then downloads that
+release's `surface-manifest.json` and derives the baseline from its records.
 Every record's canonical entry, owner, status, caller/default, evidence,
 compatibility, and next-decision fields must equal the PRODUCT table. Rust item
 and associated-item identifiers include normalized declaration fingerprints,
 so parameter, return, public-field, and enum-payload changes are compatibility
-drift rather than invisible path-preserving edits.
+drift rather than invisible path-preserving edits. Platform-cfg discovery uses
+the same declaration-only rule (including public associated items), so private
+function-body edits do not create false compatibility drift. MCP tool identities
+fingerprint each normalized served `tools/list` input/output schema. Rustdoc
+surface generation is pinned to Rust 1.97.0 in CI and rejects other local
+versions, preventing renderer-version-only churn.
 
 The CI guard must reject:
 
