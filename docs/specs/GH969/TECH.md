@@ -64,7 +64,9 @@ verdict before the active mutation runs in one savepoint. A top-level activation
 acquires an immediate SQLite write transaction before receipt lookup;
 workflows that own the outer transaction must likewise begin it as immediate
 before any reads, and the activation boundary verifies write ownership before
-its own lookup.
+its own lookup. Public lesson saves follow the same rule before duplicate-topic
+lookup, so concurrent WAL writers serialize before either lesson state or
+activation receipts are read.
 Concurrent requests with the same fresh activation id therefore serialize, and
 the loser validates and replays the winner's committed receipt instead of
 surfacing a lock or uniqueness error. The boundary then
@@ -295,7 +297,10 @@ With the activation service in place:
 - reviewed raw sites are pinned by normalized statement/helper signature and
   occurrence count, so an allowlisted file cannot silently gain another bypass;
 - dynamic SQL or helper renaming cannot be used to evade review; ambiguous
-  matches fail for manual classification rather than passing silently.
+  matches fail for manual classification rather than passing silently;
+- literal SQL reconstructed through Rust arrays, macros, `push_str`, binary
+  `+`, or `+=` is scanned as one statement, including self-tests for each
+  supported composition form.
 
 ## Scope, Owner, And Relation Integrity
 

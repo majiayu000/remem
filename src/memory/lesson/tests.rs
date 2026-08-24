@@ -1,3 +1,6 @@
+use std::sync::{Arc, Barrier};
+use std::time::Duration;
+
 use rusqlite::{params, Connection};
 
 use super::*;
@@ -109,6 +112,73 @@ fn lesson_metadata_failure_rolls_back_memory_and_activation_receipt() -> anyhow:
         )?,
         0
     );
+    Ok(())
+}
+
+#[test]
+fn concurrent_duplicate_lesson_saves_serialize_before_lookup() -> anyhow::Result<()> {
+    struct DbFiles(std::path::PathBuf);
+    impl Drop for DbFiles {
+        fn drop(&mut self) {
+            crate::db::test_support::cleanup_temp_db_files(&self.0);
+        }
+    }
+
+    let path = crate::db::test_support::unique_temp_db_path("lesson-save-race");
+    let _db_files = DbFiles(path.clone());
+    let seed = Connection::open(&path)?;
+    seed.pragma_update(None, "journal_mode", "WAL")?;
+    crate::migrate::run_migrations(&seed)?;
+    drop(seed);
+
+    let barrier = Arc::new(Barrier::new(2));
+    let mut handles = Vec::new();
+    for session_id in ["lesson-race-a", "lesson-race-b"] {
+        let path = path.clone();
+        let barrier = Arc::clone(&barrier);
+        handles.push(std::thread::spawn(move || -> anyhow::Result<i64> {
+            let conn = Connection::open(path)?;
+            conn.busy_timeout(Duration::from_secs(30))?;
+            barrier.wait();
+            save_lesson(
+                &conn,
+                &SaveLessonRequest {
+                    session_id: Some(session_id),
+                    project: "/repo",
+                    topic_key: Some("lesson-concurrent-save"),
+                    title: "Serialize duplicate lesson saves",
+                    content: "Lesson: acquire write ownership before duplicate lookup.",
+                    confidence: 0.8,
+                    source_evidence: Some("concurrent WAL save"),
+                    files: None,
+                    branch: Some("main"),
+                    scope: "project",
+                    created_at_epoch: None,
+                    stale_after_epoch: None,
+                },
+            )
+        }));
+    }
+
+    let ids = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("lesson save thread panicked"))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    assert_eq!(ids[0], ids[1]);
+
+    let conn = Connection::open(&path)?;
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM memories
+             WHERE memory_type = 'lesson' AND status = 'active'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?,
+        1
+    );
+    let metadata = get_lesson_metadata(&conn, ids[0])?
+        .ok_or_else(|| anyhow::anyhow!("lesson metadata missing after concurrent saves"))?;
+    assert_eq!(metadata.reinforcement_count, 2);
     Ok(())
 }
 
