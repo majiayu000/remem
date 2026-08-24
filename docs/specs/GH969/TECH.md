@@ -120,7 +120,13 @@ CI guard inventories reviewed raw implementations and rejects new production
 bypasses. The lifecycle manifest and consistency guard now live in
 `docs/specs/GH969/surface-manifest.json`,
 `scripts/ci/surface_lifecycle_discovery.py`, and
-`scripts/ci/check_public_surface.py`. Later slices still need the
+`scripts/ci/check_public_surface.py`. The guard follows current rustdoc item
+pages through public associated items, fingerprints platform-cfg public
+declarations, expands transitive default Cargo features and Clap aliases,
+walks composed Axum routers including implicit HEAD routes, inventories served
+MCP search parameters, snapshots experimental implementation callers, verifies
+recovery writers from source, and checks offline artifact categories
+independently. Later slices still need the
 dependency-direction guard described below.
 
 ## Target Module Direction

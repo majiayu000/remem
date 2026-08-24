@@ -21,6 +21,12 @@ from surface_lifecycle_discovery import (
     discover_mcp_tools,
     discover_product_row_statuses,
     lifecycle_record,
+    lifecycle_row,
+)
+from surface_lifecycle_evidence import (
+    EXPERIMENTAL_CALLER_SYMBOLS,
+    build_caller_guard,
+    offline_categories,
 )
 
 
@@ -71,9 +77,12 @@ REQUIRED_RECORD_FIELDS = {
     "real_callers", "default_state", "spec_refs", "eval_commands",
     "compatibility", "rollback", "decision_due",
 }
-DISCOVERED_KINDS = {"rust_export", "mcp_tool", "rest_route", "cli_command", "default_feature"}
+DISCOVERED_KINDS = {
+    "rust_export", "rust_target_export", "mcp_tool", "mcp_parameter",
+    "rest_route", "cli_command", "default_feature",
+}
 SPECIAL_KINDS = {
-    "runtime_component", "mcp_parameter", "recovery_path", "compatibility_path",
+    "runtime_component", "recovery_path", "compatibility_path",
     "offline_harness", "spec_contract",
 }
 DATED_STATUSES = {"staged", "experimental", "deprecated", "spec-only"}
@@ -221,6 +230,7 @@ def check_lifecycle_manifest(
     ids: Counter[str] = Counter()
     rows: set[str] = set()
     recovery_guards: dict[str, list[dict[str, object]]] = defaultdict(list)
+    caller_guards: dict[str, list[dict[str, object]]] = defaultdict(list)
     classified: dict[tuple[str, str], list[str]] = defaultdict(list)
     for index, raw_record in enumerate(records):
         if not isinstance(raw_record, dict):
@@ -300,6 +310,9 @@ def check_lifecycle_manifest(
             guard = record.get("writer_guard")
             if isinstance(row_name, str) and isinstance(guard, dict):
                 recovery_guards[row_name].append(record)
+        caller_guard = record.get("caller_guard")
+        if isinstance(row_name, str) and isinstance(caller_guard, dict):
+            caller_guards[row_name].append(record)
         if kind in DISCOVERED_KINDS:
             if len(points) != 1:
                 errors.append(f"{label}: {kind} records classify exactly one reachable entry point")
@@ -311,17 +324,18 @@ def check_lifecycle_manifest(
                 errors.append(f"{label}: offline_harness requires artifacts.roots and exact categorized inventory")
             else:
                 roots = artifacts["roots"]
-                actual = {
-                    path.relative_to(root).as_posix()
-                    for declared_root in roots
-                    for path in (root / declared_root).rglob("*")
-                    if path.is_file()
-                }
-                declared = _declared_files(artifacts)
-                if actual != declared:
-                    errors.append(f"{label}: offline artifact inventory drift: missing={sorted(actual-declared)} stale={sorted(declared-actual)}")
+                expected_categories = offline_categories(root, roots)
+                for category, expected in expected_categories.items():
+                    declared = artifacts.get(category)
+                    if not _string_list(declared) or set(declared) != set(expected):
+                        actual = set(declared) if _string_list(declared) else set()
+                        errors.append(
+                            f"{label}: offline {category} inventory drift: "
+                            f"missing={sorted(set(expected)-actual)} stale={sorted(actual-set(expected))}"
+                        )
                 command = artifacts.get("checked_command")
-                if not isinstance(command, str) or len(command.split()) < 2 or command.split()[1] not in declared:
+                executables = set(expected_categories["executables"])
+                if not isinstance(command, str) or len(command.split()) < 2 or command.split()[1] not in executables:
                     errors.append(f"{label}: checked_command must invoke a declared executable")
         elif status != "spec-only":
             for point in points:
@@ -371,6 +385,20 @@ def check_lifecycle_manifest(
                 f"recovery-only row {row_name!r} has implementation writers forbidden by PRODUCT: {sorted(actual_writers)}"
             )
 
+    for row_name, symbols in EXPERIMENTAL_CALLER_SYMBOLS.items():
+        if row_name not in rows:
+            continue
+        guards = caller_guards.get(row_name, [])
+        if len(guards) != 1:
+            errors.append(f"experimental row {row_name!r} requires exactly one implementation caller_guard")
+            continue
+        actual_guard = guards[0].get("caller_guard")
+        expected_guard = build_caller_guard(root, symbols)
+        if actual_guard != expected_guard:
+            errors.append(
+                f"experimental row {row_name!r} implementation callers changed; review default-path status and regenerate the manifest"
+            )
+
     if check_wording:
         readme = (root / "README.md").read_text(encoding="utf-8")
         for marker in ("experimental MCP `context_bundle`", "experimental `remem context-plan"):
@@ -406,6 +434,10 @@ def lifecycle_self_test() -> int:
         (root / "src/mcp/server/tool_contracts.rs").write_text(
             'struct ToolContract; const CONTRACTS: [ToolContract; 1] = [json_object("search", "Search", true, false, true, true, Schema::Search)\n];\n', encoding="utf-8"
         )
+        (root / "src/mcp/types.rs").write_text(
+            "struct SearchParams { pub query: Option<String>, pub task_intent: Option<String> }\n",
+            encoding="utf-8",
+        )
         (root / "src/api/server.rs").write_text(
             'fn build_router() { Router::new().merge(public_routes()).nest("/api/v1/admin", admin_routes()) }\n'
             'fn public_routes() { Router::new().route("/health", get(health).post(check)) }\n'
@@ -420,6 +452,9 @@ def lifecycle_self_test() -> int:
             '#[derive(Subcommand)] enum AdminAction { #[command(alias = "save")] Backup }\n',
             encoding="utf-8",
         )
+        (root / "src/platform.rs").write_text(
+            "#[cfg(windows)] pub fn windows_api() {}\n", encoding="utf-8"
+        )
         doc_root = root / "doc/remem"
         (doc_root / "api").mkdir(parents=True)
         (doc_root / "index.html").write_text(
@@ -427,7 +462,8 @@ def lifecycle_self_test() -> int:
         )
         (doc_root / "api/index.html").write_text("module", encoding="utf-8")
         (doc_root / "all.html").write_text(
-            '<ul class="all-items"><li><a href="api/struct.RouterInfo.html">api::RouterInfo</a></li></ul>',
+            '<ul class="all-items"><li><a href="api/struct.RouterInfo.html">api::RouterInfo</a></li>'
+            '<li><a href="api/trait.Health.html">api::Health</a></li></ul>',
             encoding="utf-8",
         )
         (doc_root / "api/struct.RouterInfo.html").write_text(
@@ -436,6 +472,10 @@ def lifecycle_self_test() -> int:
             '<section id="method.clone" class="trait-impl"></section>',
             encoding="utf-8",
         )
+        (doc_root / "api/trait.Health.html").write_text(
+            '<section id="method.defaulted"></section><section id="tymethod.required"></section>'
+            '<h2 id="implementations"></h2>', encoding="utf-8"
+        )
         discovered = discover_all(root, doc_root=doc_root)
         expected = {
             "remem context", "remem ctx", "remem eval", "remem admin",
@@ -443,20 +483,43 @@ def lifecycle_self_test() -> int:
         }
         expected_rust = {
             "remem::api", "remem::api::RouterInfo", "remem::api::RouterInfo::status",
-            "remem::api::RouterInfo::health",
+            "remem::api::RouterInfo::health", "remem::api::Health",
+            "remem::api::Health::defaulted", "remem::api::Health::required",
         }
-        expected_rest = {"GET /health", "POST /health", "POST /api/v1/admin/check"}
+        expected_rest = {
+            "GET /health", "HEAD /health", "POST /health", "POST /api/v1/admin/check",
+        }
         if (
             discovered["cli_command"] != expected
             or discovered["rest_route"] != expected_rest
             or not expected_rust.issubset(discovered["rust_export"])
             or "remem::api::RouterInfo::clone" in discovered["rust_export"]
+            or not any("src/platform.rs::windows::fn:windows_api" in entry for entry in discovered["rust_target_export"])
         ):
             print(f"surface discovery self-test failed: {discovered}", file=sys.stderr)
             return 1
+        duplicate_enum = root / "src/cli/duplicate.rs"
+        duplicate_enum.write_text(
+            "#[derive(Subcommand)] enum AdminAction { Restore }\n", encoding="utf-8"
+        )
+        try:
+            discover_cli_commands(root)
+        except RuntimeError as error:
+            if "ambiguous Clap Subcommand enum basename" not in str(error):
+                raise
+        else:
+            sys.stderr.write("duplicate Clap enum basename did not fail closed\n")
+            return 1
+        duplicate_enum.unlink()
         (root / "Cargo.toml").write_text('[features]\ndefault = []\neval = []\n', encoding="utf-8")
         if "remem eval" in discover_cli_commands(root):
             sys.stderr.write("default-feature CLI discovery retained disabled eval command\n")
+            return 1
+        (root / "Cargo.toml").write_text(
+            '[features]\ndefault = ["full"]\nfull = ["eval"]\neval = []\n', encoding="utf-8"
+        )
+        if "remem eval" not in discover_cli_commands(root):
+            sys.stderr.write("transitive default feature did not enable eval command\n")
             return 1
         (root / "Cargo.toml").write_text('[features]\ndefault = ["eval"]\neval = []\n', encoding="utf-8")
         if discover_product_row_statuses(root) != {"fixture-row": "production"}:
@@ -471,10 +534,40 @@ def lifecycle_self_test() -> int:
             sys.stderr.write("recovery writer discovery self-test failed\n")
             return 1
         (root / "src/runtime.rs").write_text("fn read() {}", encoding="utf-8")
+        (root / "src/runtime.rs").write_text(
+            "fn route() { crate::retrieval_router::plan(); }", encoding="utf-8"
+        )
+        caller_guard = build_caller_guard(root, ("crate::retrieval_router",))
+        (root / "src/runtime.rs").write_text(
+            "fn route_changed() { crate::retrieval_router::plan(); }", encoding="utf-8"
+        )
+        if caller_guard == build_caller_guard(root, ("crate::retrieval_router",)):
+            sys.stderr.write("experimental caller fingerprint ignored an implementation change\n")
+            return 1
+        offline_roots = ["eval/cross-host", "docs/specs/GH935"]
+        (root / "eval/cross-host/scripts").mkdir(parents=True)
+        (root / "eval/cross-host/scripts/check.py").write_text("print('ok')\n", encoding="utf-8")
+        (root / "docs/specs/GH935").mkdir(parents=True)
+        (root / "docs/specs/GH935/PRODUCT.md").write_text("fixture", encoding="utf-8")
+        (root / "docs/specs/GH935/TECH.md").write_text("fixture", encoding="utf-8")
         records = [
-            lifecycle_record(f"{kind}:{entry}", kind, entry, "mcp-production" if kind == "mcp_tool" else "rust-library" if kind == "rust_export" else "rest-api" if kind == "rest_route" else "cli-production" if kind == "cli_command" else "deterministic-eval")
+            lifecycle_record(f"{kind}:{entry}", kind, entry, lifecycle_row(kind, entry))
             for kind, entries in discovered.items() for entry in entries
         ]
+        records.append(lifecycle_record(
+            "offline:fixture", "offline_harness", offline_roots[0], "cross-host-harness",
+            artifacts={
+                "roots": offline_roots,
+                **offline_categories(root, offline_roots),
+                "checked_command": "python3 eval/cross-host/scripts/check.py",
+            },
+        ))
+        for row_name, symbols in EXPERIMENTAL_CALLER_SYMBOLS.items():
+            guarded = next(
+                (record for record in records if record["inventory_row"] == row_name), None
+            )
+            if guarded is not None:
+                guarded["caller_guard"] = build_caller_guard(root, symbols)
         for item in records:
             for spec in item["spec_refs"]:
                 spec_path = root / str(spec)
@@ -495,6 +588,12 @@ def lifecycle_self_test() -> int:
             mutator(candidate)
             return any(needle in error for error in check_lifecycle_manifest(root, candidate, discovered, today=date(2026, 8, 24), required_rows=set()))
 
+        def miscategorize_offline(value: dict[str, object]) -> None:
+            offline = next(record for record in value["records"] if record["id"] == "offline:fixture")
+            artifacts = offline["artifacts"]
+            script = artifacts["executables"].pop()
+            artifacts["documents"].append(script)
+
         cases = [
             (lambda value: value["records"][0].update(status="mystery"), "unknown lifecycle status"),
             (lambda value: value["records"][0].update(owner=""), "owner is required"),
@@ -506,6 +605,7 @@ def lifecycle_self_test() -> int:
             (lambda value: value["records"][0].update(status="experimental", inventory_row="mcp-context-bundle", decision_due="2026-11-30", default_state="default path"), "without a separately classified"),
             (lambda value: value["records"][0].update(status="recovery-only", inventory_row="legacy-pending", normal_writers=["new work"]), "new-work writers are forbidden"),
             (lambda value: value["records"][0].update(spec_refs=["missing.md"]), "does not resolve"),
+            (miscategorize_offline, "offline executables inventory drift"),
         ]
         failed = [needle for mutator, needle in cases if not proves(mutator, needle)]
         if failed:

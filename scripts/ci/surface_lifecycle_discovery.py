@@ -11,6 +11,15 @@ import tomllib
 from html.parser import HTMLParser
 from pathlib import Path
 
+from surface_lifecycle_evidence import (
+    EXPERIMENTAL_CALLER_SYMBOLS,
+    build_caller_guard,
+    discover_search_parameters,
+    discover_target_gated_exports,
+    expanded_default_features,
+    offline_categories,
+)
+
 
 HTTP_METHODS = ("delete", "get", "head", "options", "patch", "post", "put", "trace")
 ROOT = Path(__file__).resolve().parents[2]
@@ -203,7 +212,7 @@ def discover_rust_exports(root: Path, *, doc_root: Path | None = None) -> set[st
         if "/trait." in href or href.rsplit("/", 1)[-1].startswith("trait."):
             declarations = page_text.split('id="implementations"', 1)[0]
             for category, name in re.findall(
-                r'id="(associatedconstant|associatedtype)\.([A-Za-z_][A-Za-z0-9_-]*)"',
+                r'id="(method|associatedconstant|associatedtype)\.([A-Za-z_][A-Za-z0-9_-]*)"',
                 declarations,
             ):
                 del category
@@ -337,6 +346,8 @@ def discover_rest_routes(root: Path) -> set[str]:
                 for method in HTTP_METHODS
                 if re.search(rf"\b{method}\s*\(", arguments[1])
             }
+            if "GET" in methods:
+                methods.add("HEAD")
             if not methods:
                 raise RuntimeError(f"route has no recognized HTTP method in {path}: {arguments[1].strip()}")
             route_path = prefix.rstrip("/") + "/" + path_match.group(1).lstrip("/")
@@ -508,7 +519,10 @@ def _subcommand_enums(root: Path, features: set[str]) -> dict[str, list[tuple[tu
                 if child_match:
                     child = child_match.group("type").split("::")[-1]
                 variants.append((_command_names(variant, attributes), child))
-            enums[match.group("name")] = variants
+            enum_name = match.group("name")
+            if enum_name in enums:
+                raise RuntimeError(f"ambiguous Clap Subcommand enum basename {enum_name!r}")
+            enums[enum_name] = variants
     return enums
 
 
@@ -536,12 +550,7 @@ def discover_cli_commands(root: Path) -> set[str]:
 
 
 def discover_default_features(root: Path) -> set[str]:
-    cargo = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))
-    features = cargo.get("features", {})
-    defaults = features.get("default")
-    if not isinstance(defaults, list) or not all(isinstance(item, str) for item in defaults):
-        raise RuntimeError("Cargo.toml [features].default must be a string array")
-    return set(defaults)
+    return expanded_default_features(root)
 
 
 def discover_product_row_statuses(root: Path) -> dict[str, str]:
@@ -569,7 +578,9 @@ def discover_all(root: Path, *, doc_root: Path | None = None) -> dict[str, set[s
     mcp_tools, _ = discover_mcp_tools(root)
     return {
         "rust_export": discover_rust_exports(root, doc_root=doc_root),
+        "rust_target_export": discover_target_gated_exports(root),
         "mcp_tool": mcp_tools,
+        "mcp_parameter": discover_search_parameters(root),
         "rest_route": discover_rest_routes(root),
         "cli_command": discover_cli_commands(root),
         "default_feature": discover_default_features(root),
@@ -630,7 +641,16 @@ ROW_DETAILS: dict[str, tuple[str, list[str], str, list[str], list[str], str]] = 
 
 
 def lifecycle_row(kind: str, entry: str) -> str:
-    if kind == "rust_export":
+    if kind == "rust_target_export":
+        source_overrides = {
+            "src/context_bundle": "rust-context-bundle",
+            "src/retrieval_router": "rust-retrieval-router",
+            "src/retrieval/entity": "entity-bfs",
+            "src/eval/graph_decision": "entity-bfs",
+            "src/eval/coding_bench": "coding-public-benchmarks",
+        }
+        return next((row for prefix, row in source_overrides.items() if entry.startswith(prefix)), "rust-library")
+    if kind in {"rust_export", "rust_target_export"}:
         overrides = {
             "remem::context_bundle": "rust-context-bundle",
             "remem::retrieval_router": "rust-retrieval-router",
@@ -644,6 +664,9 @@ def lifecycle_row(kind: str, entry: str) -> str:
         return "rust-library"
     if kind == "mcp_tool":
         return "mcp-context-bundle" if entry == "context_bundle" else "mcp-production"
+    if kind == "mcp_parameter":
+        routed = {"task_intent", "role", "risk", "token_budget", "include_superseded"}
+        return "routed-search-parameters" if entry.rsplit(".", 1)[-1] in routed else "mcp-production"
     if kind == "rest_route":
         return "rest-api"
     if kind == "default_feature":
@@ -687,19 +710,9 @@ def lifecycle_record(record_id: str, kind: str, entry: str, row_name: str, **ext
 
 
 def _offline_inventory(root: Path, roots: list[str]) -> dict[str, object]:
-    files = sorted(
-        path.relative_to(root).as_posix()
-        for declared_root in roots
-        for path in (root / declared_root).rglob("*")
-        if path.is_file()
-    )
     return {
         "roots": roots,
-        "executables": [path for path in files if "/scripts/" in path and path.endswith(".py")],
-        "schemas": [path for path in files if "/schemas/" in path and path.endswith(".json")],
-        "fixtures": [path for path in files if "/examples/" in path],
-        "data": [path for path in files if "/tasks/" in path or path.endswith("benchmark-charter.json")],
-        "documents": [path for path in files if not any(part in path for part in ("/scripts/", "/schemas/", "/examples/", "/tasks/")) and not path.endswith("benchmark-charter.json")],
+        **offline_categories(root, roots),
         "checked_command": "python3 eval/cross-host/scripts/test_run_dry.py",
     }
 
@@ -713,7 +726,6 @@ def build_manifest(root: Path, *, doc_root: Path | None = None) -> dict[str, obj
     specials = [
         ("runtime:sessionstart-context-bundle", "runtime_component", "src/context_bundle", "sessionstart-context-bundle"),
         ("runtime:currenttruth-v1", "runtime_component", "src/truth", "currenttruth-v1"),
-        ("mcp-parameter:search-routing", "mcp_parameter", "src/mcp/server/search_routing.rs", "routed-search-parameters"),
         ("runtime:graph-edges", "runtime_component", "src/retrieval/graph", "graph-edges"),
         ("offline:coding-public-benchmarks", "runtime_component", "eval/public", "coding-public-benchmarks"),
         ("runtime:legacy-pending-idle-bridge", "recovery_path", "src/db/pending/admin", "legacy-pending"),
@@ -729,6 +741,9 @@ def build_manifest(root: Path, *, doc_root: Path | None = None) -> dict[str, obj
         if record_id == "runtime:historical-summary":
             recovery["writer_guard"] = {"mode": "summary_job_enqueue", "target": "summary"}
         records.append(lifecycle_record(record_id, kind, entry, row_name, **recovery))
+    for row_name, symbols in EXPERIMENTAL_CALLER_SYMBOLS.items():
+        guarded = next(record for record in records if record["inventory_row"] == row_name)
+        guarded["caller_guard"] = build_caller_guard(root, symbols)
     roots = ["eval/cross-host", "docs/specs/GH935"]
     records.append(lifecycle_record("offline:cross-host-harness", "offline_harness", roots[0], "cross-host-harness", artifacts=_offline_inventory(root, roots)))
     return {

@@ -144,8 +144,9 @@ guard.
 
 This table is the canonical human-readable inventory. Its expanded
 machine-readable form lives at `surface-manifest.json`; the repository-owned
-public-surface check validates it against compiled Rust exports and the real
-MCP, REST, Clap, Cargo-feature, and offline-harness registration roots.
+public-surface check validates it against host-compiled Rust exports, a
+conservative fingerprinted inventory of public platform-cfg declarations, and
+the real MCP, REST, Clap, Cargo-feature, and offline-harness registration roots.
 
 The grouped Rust/MCP/REST/CLI rows below are exhaustive discovery rules, not
 sample entries. The machine manifest expands them to one record per reachable
@@ -158,9 +159,9 @@ public entry fails the guard.
 
 | Inventory row | Entry point | Owner | Status | Real caller / default | Evidence | Compatibility | Next decision |
 |---|---|---|---|---|---|---|---|
-| `rust-library` | Exported Rust library surface | `src/lib.rs` and reachable public modules/re-exports | `production` | Every reachable exported module/symbol and public associated item, except entries explicitly overridden below | Public API tests plus exhaustive export discovery | Published exports follow SemVer; newly exported symbols require an explicit manifest classification | Continuous; review on export-set change |
+| `rust-library` | Exported Rust library surface | `src/lib.rs` and reachable public modules/re-exports | `production` | Every host-resolved exported module/symbol and public associated item plus every conservatively discovered platform-cfg public declaration, except entries explicitly overridden below | Public API tests plus exhaustive export discovery | Published exports follow SemVer; newly exported symbols require an explicit manifest classification | Continuous; review on export-set change |
 | `mcp-production` | MCP production tool set | `mcp/server/`, `mcp/server/tests/tool_metadata.rs` | `production` | All registered tools except the explicit experimental `context_bundle` entry: `current_state`, `search`, `recall_user_context`, `timeline`, `get_observations`, `lookup_commit`, `commits_for_session`, `save_memory`, `govern_memory`, `timeline_report`, `workstreams`, `update_workstream`, `search_raw`, `list_raw_sessions` | Registry completeness, metadata, schema, served-wire, and legacy-text tests | Tool names and stable legacy response contracts remain supported; routed `search` parameters are overridden below | Continuous; review on registry change |
-| `rest-api` | REST `/api/v1` method+path set | `api/server.rs`, `api/handlers/` | `production` | Every method+path reachable from `build_router`, including composed routers and memory save/archive/restore and candidate review | `tests/api_public.rs` and handler tests | Bearer transport auth is not human provenance; route/schema changes follow public API compatibility rules | Continuous; review on router change |
+| `rest-api` | REST `/api/v1` method+path set | `api/server.rs`, `api/handlers/` | `production` | Every method+path reachable from `build_router`, including composed routers, Axum's implicit HEAD for GET, and memory save/archive/restore and candidate review | `tests/api_public.rs` and handler tests | Bearer transport auth is not human provenance; route/schema changes follow public API compatibility rules | Continuous; review on router change |
 | `cli-production` | CLI command tree | `cli/types.rs`, `cli/dispatch.rs` | `production` | Every default-feature compiled Clap command/subcommand and alias, with eval/report, plan, and recovery operations overridden by their specific inventory/spec rows | CLI parser/dispatch tests and command-specific contracts | Existing supported commands and aliases remain compatible; feature-gated absence is recorded in the expanded manifest | Continuous; review on command-tree change |
 | `sessionstart-context-bundle` | SessionStart Context Bundle compiler and audit | `context/`, `context_bundle/` | `production` | Host SessionStart in default `bundle` mode; `legacy` rolls back bundle relevance/audit but retains CurrentTruth-governed Core output | GH932 tests, SessionStart audits, coding-bench plan/audit evidence | Rendered SessionStart behavior and persisted audit schema require migration-aware change | Continuous; review on schema/policy bump |
 | `mcp-context-bundle` | MCP `context_bundle` v1 | `mcp/`, `context_bundle/` | `experimental` | Explicit MCP caller; never required by SessionStart clients | Closed schema/served-wire tests | Versioned JSON, explicitly experimental; no stability claim beyond declared schema version | 2026-11-30 |
@@ -184,6 +185,12 @@ public entry fails the guard.
 
 Adding a major surface or changing a row's status requires updating this
 contract or a machine-readable manifest linked to it in the same PR.
+Experimental implementation rows also carry a fingerprinted inventory of every
+production source file referencing their activation symbols. New callers or
+changes inside an existing caller require an explicit manifest regeneration and
+review of whether the surface has entered a default path. Offline harness
+categories are checked independently; a script cannot satisfy the executable
+contract by being relabelled as a document.
 
 ## Decision Gates
 
