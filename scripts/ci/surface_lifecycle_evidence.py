@@ -94,7 +94,7 @@ def _source_signature(text: str, match: re.Match[str]) -> str:
 
 
 def discover_target_gated_exports(root: Path) -> set[str]:
-    """Inventory signatures in target-gated declarations, modules, and impl blocks."""
+    """Inventory target-only signatures reachable through public modules from lib.rs."""
     exports: set[str] = set()
     gated = re.compile(
         r"#\s*\[\s*cfg\s*\((?P<cfg>[^]]*(?:windows|unix|target_(?:os|arch|env))[^]]*)\)\s*\]"
@@ -108,57 +108,97 @@ def discover_target_gated_exports(root: Path) -> set[str]:
         r"(?:\s*#\s*\[[^]]*\])*\s*impl(?:<[^>{}]*>)?\s+(?P<owner>[^{}]+?)\s*\{",
         re.S,
     )
+    any_impl = re.compile(r"\bimpl(?:<[^>{}]*>)?\s+(?P<owner>[^{}]+?)\s*\{", re.S)
+
+    def column_zero(text: str, position: int) -> bool:
+        return position == 0 or text.rfind("\n", 0, position) + 1 == position
+
+    def combined_cfg(parent: str | None, child: str) -> str:
+        return child if parent is None else f"all({parent},{child})"
 
     def module_file(parent: Path, name: str) -> Path | None:
         base = parent.parent / parent.stem if parent.name not in {"lib.rs", "mod.rs"} else parent.parent
         candidates = (base / f"{name}.rs", base / name / "mod.rs")
         return next((candidate for candidate in candidates if candidate.is_file()), None)
 
-    def scan_module(path: Path, cfg: str, prefix: str, seen: set[Path]) -> None:
-        if path in seen:
-            return
-        seen.add(path)
-        raw = path.read_text(encoding="utf-8")
-        relative = path.relative_to(root).as_posix()
-        for match in _PUBLIC_DECLARATION.finditer(raw):
-            kind = re.sub(r"\s+", "_", match.group("kind"))
-            name = match.group("name")
-            digest = _source_signature(raw, match)
-            exports.add(f"{relative}::{cfg}::{prefix}{kind}:{name}::sha256={digest}")
-            if kind == "mod":
-                child = module_file(path, name)
-                if child is not None:
-                    scan_module(child, cfg, f"{prefix}{name}::", seen)
-                elif raw[match.end() :].lstrip().startswith(";"):
-                    raise RuntimeError(f"cannot resolve nested public module {name!r} from {relative}")
+    def add_impl_items(raw: str, relative: str, cfg: str, match: re.Match[str]) -> None:
+        owner = re.sub(r"\s+", "", match.group("owner"))
+        closing = _matching_brace(raw, match.end() - 1)
+        body = raw[match.end() : closing]
+        for item in _PUBLIC_DECLARATION.finditer(body):
+            kind = re.sub(r"\s+", "_", item.group("kind"))
+            digest = _source_signature(body, item)
+            exports.add(f"{relative}::{cfg}::impl:{owner}::{kind}:{item.group('name')}::sha256={digest}")
 
-    for path in sorted((root / "src").rglob("*.rs")):
+    def visit(path: Path, inherited_cfg: str | None, prefix: str, seen: set[tuple[Path, str | None]]) -> None:
+        key = (path, inherited_cfg)
+        if key in seen:
+            return
+        seen.add(key)
         raw = path.read_text(encoding="utf-8")
         relative = path.relative_to(root).as_posix()
-        for match in gated.finditer(raw):
-            cfg = re.sub(r"\s+", "", match.group("cfg"))
+        gated_declarations = [match for match in gated.finditer(raw) if column_zero(raw, match.start())]
+        gated_starts = {match.start("declaration") for match in gated_declarations}
+        module_cfgs: dict[int, str] = {}
+        for match in gated_declarations:
+            cfg = combined_cfg(inherited_cfg, re.sub(r"\s+", "", match.group("cfg")))
             kind = re.sub(r"\s+", "_", match.group("kind"))
             name = match.group("name")
             declaration = _PUBLIC_DECLARATION.search(raw, match.start("declaration"))
             if declaration is None:
                 raise RuntimeError(f"cannot resolve target-gated declaration {name!r}")
             digest = _source_signature(raw, declaration)
-            exports.add(f"{relative}::{cfg}::{kind}:{name}::sha256={digest}")
+            exports.add(f"{relative}::{cfg}::{prefix}{kind}:{name}::sha256={digest}")
             if kind == "mod":
+                module_cfgs[declaration.start()] = cfg
                 child = module_file(path, name)
                 if child is not None:
-                    scan_module(child, cfg, f"{name}::", set())
-                elif raw[match.end() :].lstrip().startswith(";"):
+                    visit(child, cfg, f"{prefix}{name}::", seen)
+                elif raw[declaration.end() :].lstrip().startswith(";"):
                     raise RuntimeError(f"cannot resolve target-gated public module {name!r} from {relative}")
+
+        if inherited_cfg is not None:
+            for match in _PUBLIC_DECLARATION.finditer(raw):
+                if not column_zero(raw, match.start()) or match.start() in gated_starts:
+                    continue
+                kind = re.sub(r"\s+", "_", match.group("kind"))
+                digest = _source_signature(raw, match)
+                exports.add(f"{relative}::{inherited_cfg}::{prefix}{kind}:{match.group('name')}::sha256={digest}")
+
+        gated_impl_starts: set[int] = set()
         for match in gated_impl.finditer(raw):
-            cfg = re.sub(r"\s+", "", match.group("cfg"))
-            owner = re.sub(r"\s+", "", match.group("owner"))
-            closing = _matching_brace(raw, match.end() - 1)
-            body = raw[match.end() : closing]
-            for item in _PUBLIC_DECLARATION.finditer(body):
-                kind = re.sub(r"\s+", "_", item.group("kind"))
-                digest = _source_signature(body, item)
-                exports.add(f"{relative}::{cfg}::impl:{owner}::{kind}:{item.group('name')}::sha256={digest}")
+            if not column_zero(raw, match.start()):
+                continue
+            impl_start = raw.rfind("impl", match.start(), match.end())
+            if impl_start < 0:
+                raise RuntimeError("cannot resolve target-gated impl declaration")
+            gated_impl_starts.add(impl_start)
+            cfg = combined_cfg(inherited_cfg, re.sub(r"\s+", "", match.group("cfg")))
+            add_impl_items(raw, relative, cfg, match)
+        if inherited_cfg is not None:
+            for match in any_impl.finditer(raw):
+                if column_zero(raw, match.start()) and match.start() not in gated_impl_starts:
+                    add_impl_items(raw, relative, inherited_cfg, match)
+
+        for declaration in _PUBLIC_DECLARATION.finditer(raw):
+            if not column_zero(raw, declaration.start()) or declaration.group("kind") != "mod":
+                continue
+            name = declaration.group("name")
+            effective_cfg = module_cfgs.get(declaration.start(), inherited_cfg)
+            child = module_file(path, name)
+            if child is not None:
+                visit(child, effective_cfg, f"{prefix}{name}::", seen)
+                continue
+            tail = raw[declaration.end() :].lstrip()
+            if tail.startswith(";"):
+                raise RuntimeError(f"cannot resolve public module {name!r} from {relative}")
+            if tail.startswith("{"):
+                closing = _matching_brace(tail, 0)
+                body = tail[1:closing]
+                if effective_cfg is not None or re.search(r"#\s*\[\s*cfg\s*\([^]]*(?:windows|unix|target_)", body):
+                    raise RuntimeError(f"target-aware discovery does not support inline public module {name!r} in {relative}")
+
+    visit(root / "src/lib.rs", None, "", set())
     return exports
 
 
@@ -206,6 +246,7 @@ PRODUCTION_DEFAULT_GUARDS = {
     "sessionstart-context-bundle": "context_bundle_default",
     "currenttruth-v1": "current_truth_default",
     "graph-edges": "positive_graph_weight",
+    "legacy-events": "legacy_events_projection",
 }
 
 
@@ -239,6 +280,29 @@ def build_default_guard(root: Path, mode: str) -> dict[str, object]:
         if not match or float(match.group(1)) <= 0:
             raise RuntimeError("production GRAPH_WEIGHT must remain non-zero")
         value = float(match.group(1))
+    elif mode == "legacy_events_projection":
+        path = root / "src/memory/events/write.rs"
+        write_source = path.read_text(encoding="utf-8")
+        cursor_source = (root / "src/observe/cursor.rs").read_text(encoding="utf-8")
+        hook_source = (root / "src/observe/hook.rs").read_text(encoding="utf-8")
+        caller_sources = [cursor_source, hook_source]
+        raw = "\n".join([write_source, *caller_sources])
+        writer_markers = (
+            "pub(crate) fn insert_event_for_capture(",
+            "pub(crate) fn replace_event_for_capture(",
+            "ON CONFLICT(captured_event_id)",
+        )
+        caller_markers = (
+            "crate::memory::insert_event_for_capture(",
+            "crate::memory::replace_event_for_capture(",
+        )
+        if (
+            not all(marker in write_source for marker in writer_markers)
+            or not all(marker in cursor_source for marker in caller_markers)
+            or caller_markers[0] not in hook_source
+        ):
+            raise RuntimeError("legacy events projection no longer has both transactional writers and capture callers")
+        value = "transactional-insert-and-replace"
     else:
         raise RuntimeError(f"unknown production default guard {mode!r}")
     return {

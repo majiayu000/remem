@@ -233,8 +233,9 @@ def check_lifecycle_manifest(
     published: dict[str, set[str]] = {}
     for kind in DISCOVERED_KINDS:
         entries = published_raw.get(kind)
-        if not _string_list(entries):
-            errors.append(f"published_surfaces.{kind} must be a non-empty string array")
+        valid = _string_array(entries) if kind == "rust_target_export" else _string_list(entries)
+        if not valid:
+            errors.append(f"published_surfaces.{kind} must be a string array with the required cardinality")
             entries = []
         published[kind] = set(entries)
     ids: Counter[str] = Counter()
@@ -493,9 +494,9 @@ def lifecycle_self_test() -> int:
         (root / "src/platform.rs").write_text(
             "pub fn windows_api() {}\n", encoding="utf-8"
         )
-        (root / "src/lib.rs").write_text("#[cfg(windows)] pub mod platform;\n", encoding="utf-8")
+        (root / "src/lib.rs").write_text("#[cfg(windows)] pub mod platform;\npub mod platform_impl;\n", encoding="utf-8")
         (root / "src/platform_impl.rs").write_text(
-            "pub struct Api; #[cfg(windows)] impl Api { pub fn windows_only(&self) {} }\n",
+            "pub struct Api;\n#[cfg(windows)]\nimpl Api { pub fn windows_only(&self) {} }\n",
             encoding="utf-8",
         )
         doc_root = root / "doc/remem"

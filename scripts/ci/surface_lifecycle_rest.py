@@ -73,6 +73,15 @@ def _wire_declarations(text: str) -> list[str]:
         else:
             raise RuntimeError("unsupported REST wire declaration shape")
         declarations.append(_normalize(text[match.start() : end]))
+    custom_serde = re.compile(
+        r"\bimpl(?:\s*<[^>{}]*>)?\s+(?:serde::)?"
+        r"(?:Serialize|Deserialize(?:\s*<[^>{}]*>)?)\s+for\s+[^{}]+\{",
+        re.S,
+    )
+    for match in custom_serde.finditer(text):
+        declarations.append(
+            _normalize(text[match.start() : _matching(text, match.end() - 1, "{", "}") + 1])
+        )
     for match in re.finditer(r"(?:serde_json::)?json!\s*([({])", text):
         left = match.group(1)
         right = ")" if left == "(" else "}"
@@ -132,6 +141,7 @@ def rest_surface_self_test() -> int:
             "use serde::{Deserialize, Serialize};\n"
             "#[derive(Deserialize)] struct Request { value: String }\n"
             "#[derive(Serialize)] struct Response { ok: bool }\n"
+            "struct Manual; impl Serialize for Manual { fn serialize(self) { serializer.serialize_str(\"manual-key\"); } }\n"
             "pub(in crate::api) async fn handle_save() -> impl IntoResponse { private_work(); Json(json!({\"ok\": true})) }\n"
         )
         (api / "save.rs").write_text(source, encoding="utf-8")
@@ -139,6 +149,9 @@ def rest_surface_self_test() -> int:
         (api / "save.rs").write_text(source.replace("private_work();", "other_private_work();"), encoding="utf-8")
         if discover_rest_schema_fingerprints(root) != before:
             raise RuntimeError("private REST implementation body changed its schema fingerprint")
+        (api / "save.rs").write_text(source.replace("manual-key", "renamed-key"), encoding="utf-8")
+        if discover_rest_schema_fingerprints(root) == before:
+            raise RuntimeError("custom serde wire-key change did not change its schema fingerprint")
         (api / "save.rs").write_text(source.replace("value: String", "renamed: String"), encoding="utf-8")
         if discover_rest_schema_fingerprints(root) == before:
             raise RuntimeError("REST request field change did not change its schema fingerprint")

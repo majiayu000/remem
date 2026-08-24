@@ -359,7 +359,8 @@ discovered production-group entries `staged`; only the explicit
 exact non-draft release and all distribution assets, then downloads that
 release's `surface-manifest.json` and derives the baseline from its records.
 PR and push CI compare the committed release/baseline with the base manifest;
-any change must equal that downloaded release artifact. The one initial
+any change must advance the release version, retain every prior published
+surface, and equal that downloaded release artifact. The one initial
 bootstrap is accepted only when the base commit is the verified release tag,
 all ordinary release assets exist, product sources are unchanged, and the
 baseline equals every discovered record.
@@ -367,20 +368,26 @@ Every record's canonical entry, owner, status, caller/default, evidence,
 compatibility, and next-decision fields must equal the PRODUCT table. Rust item
 and associated-item identifiers include normalized declaration fingerprints,
 so parameter, return, public-field, and enum-payload changes are compatibility
-drift rather than invisible path-preserving edits. Platform-cfg discovery uses
-the same declaration-only rule (including public associated items), so private
-function-body edits do not create false compatibility drift. MCP tool identities
-fingerprint each normalized served `tools/list` input/output schema. Rustdoc
+drift rather than invisible path-preserving edits. Same-named inherent methods
+retain Rustdoc's disambiguator instead of overwriting one another. Platform-cfg
+discovery starts at `src/lib.rs`, follows publicly reachable external modules,
+and uses the same declaration-only rule (including public associated items), so
+private module/function-body edits do not create false compatibility drift; the
+target-only category may be empty when no such export is reachable. MCP tool
+identities fingerprint each normalized served `tools/list` input/output schema. Rustdoc
 surface generation is pinned to Rust 1.97.0 in CI and rejects other local
 versions, preventing renderer-version-only churn.
 REST route identities similarly include normalized serde request/response
-declarations, constructed JSON shapes, and their named handler signature;
+declarations (including manual `Serialize`/`Deserialize` implementations),
+constructed JSON shapes, and their named handler signature;
 reachable `route_service`, `nest_service`, and fallback registrations are
 rejected until discovery supports them. Production default evidence also binds
 CurrentTruth projection, fail-closed availability, shadow attachment, and
 channel activation on the Context Bundle path. Only `eval` and `local-onnx`
 currently have reviewed default-feature mappings; any new default feature fails
 generation until it receives a canonical lifecycle row.
+The deprecated legacy-events row is additionally bound to both transactional
+projection writers, their conflict-safe SQL, and the active capture callers.
 
 The CI guard must reject:
 

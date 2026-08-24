@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -62,6 +63,13 @@ def _recorded_surfaces(manifest: dict[str, object]) -> dict[str, list[str]]:
     return {kind: sorted(entries) for kind, entries in surfaces.items()}
 
 
+def _release_version(release: object) -> tuple[int, int, int]:
+    match = re.fullmatch(r"v([0-9]+)\.([0-9]+)\.([0-9]+)", str(release))
+    if not match:
+        raise RuntimeError(f"invalid published release {release!r}")
+    return tuple(int(part) for part in match.groups())
+
+
 def verify(base: str) -> None:
     current = json.loads((ROOT / MANIFEST).read_text(encoding="utf-8"))
     if not isinstance(current, dict):
@@ -74,6 +82,16 @@ def verify(base: str) -> None:
     if previous is not None:
         if previous.get("published_release") == release and previous.get("published_surfaces") == published:
             return
+        if _release_version(release) <= _release_version(previous.get("published_release")):
+            raise RuntimeError("published baseline changes must advance the release version monotonically")
+        prior_surfaces = previous.get("published_surfaces")
+        if not isinstance(prior_surfaces, dict):
+            raise RuntimeError("base surface manifest lacks published_surfaces")
+        for kind in DISCOVERED_SURFACE_KINDS:
+            before = prior_surfaces.get(kind)
+            after = published.get(kind)
+            if not isinstance(before, list) or not isinstance(after, list) or not set(before) <= set(after):
+                raise RuntimeError(f"published baseline promotion removed prior {kind} entries")
         released = verified_release_baseline(release, DISCOVERED_SURFACE_KINDS)
         expected = {kind: sorted(entries) for kind, entries in released.items()}
         if published != expected:

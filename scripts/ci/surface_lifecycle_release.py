@@ -20,6 +20,7 @@ DISTRIBUTION_ASSETS = {
     "remem-linux-x64.tar.gz",
 }
 REQUIRED_ASSETS = {*DISTRIBUTION_ASSETS, "surface-manifest.json"}
+OPTIONALLY_EMPTY_KINDS = {"rust_target_export"}
 
 
 def _gh(arguments: list[str]) -> str:
@@ -54,7 +55,7 @@ def _released_entries(path: Path, kinds: set[str]) -> dict[str, set[str]]:
         if entry in baseline[kind]:
             raise RuntimeError(f"released surface manifest duplicates {kind}:{entry}")
         baseline[kind].add(entry)
-    missing = sorted(kind for kind, entries in baseline.items() if not entries)
+    missing = sorted(kind for kind, entries in baseline.items() if not entries and kind not in OPTIONALLY_EMPTY_KINDS)
     if missing:
         raise RuntimeError(f"released surface manifest lacks discovered kinds: {', '.join(missing)}")
     return baseline

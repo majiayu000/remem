@@ -13,6 +13,10 @@ from surface_lifecycle_evidence import rustdoc_signature
 RUSTDOC_TOOLCHAIN = "1.97.0"
 
 
+def _associated_name(anchor_name: str) -> str:
+    return re.sub(r"-([0-9]+)$", r"#\1", anchor_name.replace(".", "::"))
+
+
 class _AllItemsParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -95,7 +99,7 @@ def discover_rust_exports(root: Path, *, doc_root: Path | None = None) -> set[st
         for category, name in re.findall(
             r'id="(structfield|variant|tymethod)\.([A-Za-z_][A-Za-z0-9_.-]*)"', page_text
         ):
-            associated[name.replace(".", "::").split("-")[0]] = f"{category}.{name}"
+            associated[_associated_name(name)] = f"{category}.{name}"
         implementations = re.search(
             r'id="implementations-list"(?P<body>.*?)(?:id="trait-implementations"|$)',
             page_text,
@@ -107,14 +111,14 @@ def discover_rust_exports(root: Path, *, doc_root: Path | None = None) -> set[st
                 implementations.group("body"),
             ):
                 if "trait-impl" not in classes.split():
-                    associated[name.split("-")[0]] = f"{category}.{name}"
+                    associated[_associated_name(name)] = f"{category}.{name}"
         if "/trait." in href or href.rsplit("/", 1)[-1].startswith("trait."):
             declarations = page_text.split('id="implementations"', 1)[0]
             for category, name in re.findall(
                 r'id="(method|associatedconstant|associatedtype)\.([A-Za-z_][A-Za-z0-9_-]*)"',
                 declarations,
             ):
-                associated[name.split("-")[0]] = f"{category}.{name}"
+                associated[_associated_name(name)] = f"{category}.{name}"
         exports.update(
             f"remem::{item}::{name}@sha256={rustdoc_signature(page_text, anchor)}"
             for name, anchor in associated.items()
