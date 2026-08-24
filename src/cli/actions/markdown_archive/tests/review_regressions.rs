@@ -94,7 +94,7 @@ fn markdown_import_source_id_requires_matching_fingerprint() -> Result<()> {
 }
 
 #[test]
-fn markdown_import_source_id_survives_project_and_scope_edits() -> Result<()> {
+fn markdown_import_source_id_rejects_project_and_scope_route_edits() -> Result<()> {
     let target = Connection::open_in_memory()?;
     setup_memory_schema(&target);
     target.execute(
@@ -136,11 +136,11 @@ fn markdown_import_source_id_survives_project_and_scope_edits() -> Result<()> {
         render_markdown_memory(&doc),
     )?;
 
-    let stats = import_markdown_archive(&target, &export_dir, false)?;
-    assert_eq!(stats.imported, 0);
-    assert_eq!(stats.updated, 1);
+    let error = import_markdown_archive(&target, &export_dir, false)
+        .expect_err("active source id must not move across project/scope routes");
+    assert!(format!("{error:#}").contains("cannot activate"));
     let row: (i64, String, String, String) = target.query_row(
-        "SELECT COUNT(*), MAX(project), MAX(scope), MAX(owner_scope)
+        "SELECT COUNT(*), MAX(project), MAX(scope), COALESCE(MAX(owner_scope), '')
          FROM memories WHERE topic_key = 'scope-topic'",
         [],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
@@ -149,9 +149,9 @@ fn markdown_import_source_id_survives_project_and_scope_edits() -> Result<()> {
         row,
         (
             1,
-            "/new-repo".to_string(),
-            "global".to_string(),
-            "user".to_string()
+            "/old-repo".to_string(),
+            "project".to_string(),
+            "".to_string()
         )
     );
 
@@ -284,7 +284,7 @@ fn markdown_export_uses_context_visibility_and_current_filter() -> Result<()> {
 }
 
 #[test]
-fn markdown_global_import_matches_existing_global_topic_across_projects() -> Result<()> {
+fn markdown_global_import_updates_shared_owner_row_and_preserves_its_route() -> Result<()> {
     let target = Connection::open_in_memory()?;
     setup_memory_schema(&target);
     target.execute(
@@ -313,6 +313,7 @@ fn markdown_global_import_matches_existing_global_topic_across_projects() -> Res
             target_project: None,
             owner_scope: Some("user".to_string()),
             owner_key: Some("user:default".to_string()),
+            branch: Some("main".to_string()),
             ..sample_metadata("active", "global")
         },
         content: "Edited global content.".to_string(),
@@ -320,15 +321,23 @@ fn markdown_global_import_matches_existing_global_topic_across_projects() -> Res
     std::fs::write(export_dir.join("global.md"), render_markdown_memory(&doc))?;
 
     let stats = import_markdown_archive(&target, &export_dir, false)?;
-    assert_eq!(stats.imported, 0);
-    assert_eq!(stats.updated, 1);
-    let rows: (i64, String) = target.query_row(
-        "SELECT COUNT(*), MAX(content) FROM memories
+    assert_eq!((stats.imported, stats.updated), (0, 1));
+    let rows: (i64, String, String, String) = target.query_row(
+        "SELECT COUNT(*), MIN(project), MIN(COALESCE(source_project, project)), MIN(content)
+         FROM memories
          WHERE topic_key = 'global-topic' AND COALESCE(scope, 'project') = 'global'",
         [],
-        |row| Ok((row.get(0)?, row.get(1)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     )?;
-    assert_eq!(rows, (1, "Edited global content.".to_string()));
+    assert_eq!(
+        rows,
+        (
+            1,
+            "/original-repo".to_string(),
+            "/original-repo".to_string(),
+            "Edited global content.".to_string(),
+        )
+    );
 
     std::fs::remove_dir_all(&export_dir)
         .with_context(|| format!("remove {}", export_dir.display()))?;

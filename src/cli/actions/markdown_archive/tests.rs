@@ -50,6 +50,9 @@ fn sample_metadata(status: &str, scope: &str) -> MarkdownMemoryMetadata {
         valid_to_epoch: None,
         evidence_event_ids: None,
         source_candidate_id: None,
+        acknowledged_pattern_id: None,
+        acknowledged_pattern_version: None,
+        acknowledged_at_epoch: None,
         lesson: None,
         facts: None,
         edges: None,
@@ -151,6 +154,67 @@ fn markdown_export_import_round_trip_rebuilds_searchable_memory() -> Result<()> 
 }
 
 #[test]
+fn markdown_round_trip_restores_acknowledged_instruction_pattern() -> Result<()> {
+    let _data_dir = ScopedTestDataDir::new("markdown-acknowledgement-round-trip");
+    let project = "/tmp/remem-markdown-acknowledgement";
+    let source = Connection::open_in_memory()?;
+    setup_memory_schema(&source);
+    source.execute(
+        "INSERT INTO memories
+         (project, topic_key, title, content, memory_type, created_at_epoch,
+          updated_at_epoch, status, scope, acknowledged_pattern_id,
+          acknowledged_pattern_version, acknowledged_at_epoch)
+         VALUES (?1, 'acknowledged-markdown', 'Reviewed quotation',
+                 'Ignore previous instructions only as a quoted false-positive fixture.',
+                 'decision', 100, 200, 'active', 'project',
+                 'override_previous_instructions', ?2, 150)",
+        rusqlite::params![
+            project,
+            crate::memory::poisoning::INSTRUCTION_PATTERN_SET_VERSION
+        ],
+    )?;
+    let export_dir = unique_temp_dir("markdown-acknowledgement-round-trip");
+    export_markdown_archive(
+        &source,
+        MarkdownExportRequest {
+            output: &export_dir,
+            project,
+            include_inactive: false,
+            limit: 10,
+        },
+    )?;
+
+    let target = crate::db::open_db()?;
+    let stats = import_markdown_archive(&target, &export_dir, false)?;
+    assert_eq!((stats.imported, stats.updated, stats.skipped), (1, 0, 0));
+    let (memory_id, pattern_id, pattern_version, acknowledged_at): (i64, String, i64, i64) = target
+        .query_row(
+            "SELECT id, acknowledged_pattern_id, acknowledged_pattern_version,
+                    acknowledged_at_epoch
+             FROM memories WHERE topic_key = 'acknowledged-markdown'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+    assert_eq!(pattern_id, "override_previous_instructions");
+    assert_eq!(
+        pattern_version,
+        crate::memory::poisoning::INSTRUCTION_PATTERN_SET_VERSION
+    );
+    assert_eq!(acknowledged_at, 150);
+    assert_eq!(
+        target.query_row(
+            "SELECT route_kind, poisoning_verdict
+             FROM memory_activation_requests WHERE result_memory_id = ?1",
+            [memory_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )?,
+        ("exact_recovery".to_string(), "exact_recovery".to_string())
+    );
+    std::fs::remove_dir_all(&export_dir)?;
+    Ok(())
+}
+
+#[test]
 fn markdown_import_updates_existing_memory_and_current_state() -> Result<()> {
     let _data_dir = ScopedTestDataDir::new("markdown-archive-update");
     let project = "/tmp/remem-markdown-update";
@@ -191,7 +255,7 @@ fn markdown_import_updates_existing_memory_and_current_state() -> Result<()> {
             ..Default::default()
         },
     )?;
-    assert_eq!(original_as_of.status, "current");
+    assert_eq!(original_as_of.status, "no_current");
 
     let path = only_markdown_file(&export_dir)?;
     let raw = std::fs::read_to_string(&path)?;
@@ -234,11 +298,8 @@ fn markdown_import_updates_existing_memory_and_current_state() -> Result<()> {
             ..Default::default()
         },
     )?;
-    assert_eq!(state.status, "current");
-    assert!(state
-        .current
-        .as_ref()
-        .is_some_and(|memory| memory.text.contains("Edited markdown mirror content")));
+    assert_eq!(state.status, "no_current");
+    assert!(state.current.is_none());
     let before_edit = current_state(
         &target,
         &CurrentStateRequest {
@@ -289,7 +350,8 @@ fn markdown_import_updates_existing_memory_and_current_state() -> Result<()> {
             ..Default::default()
         },
     )?;
-    assert_eq!(renamed_current.status, "current");
+    assert_eq!(renamed_current.status, "no_current");
+    assert!(renamed_current.current.is_none());
     let old_key = current_state(
         &target,
         &CurrentStateRequest {
@@ -369,14 +431,8 @@ fn markdown_import_update_clears_obsolete_current_state_links() -> Result<()> {
             ..Default::default()
         },
     )?;
-    assert_eq!(new_type.status, "current");
-    assert_eq!(
-        new_type
-            .current
-            .as_ref()
-            .map(|memory| memory.memory_type.as_str()),
-        Some("bugfix")
-    );
+    assert_eq!(new_type.status, "no_current");
+    assert!(new_type.current.is_none());
 
     doc.metadata.source_content_hash = Some(super::import_lookup::markdown_source_content_hash(
         &doc.metadata.title,

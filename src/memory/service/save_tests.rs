@@ -3,6 +3,8 @@ use super::{
 };
 use crate::db::{self, test_support::ScopedTestDataDir};
 
+mod activation_route;
+
 #[test]
 fn save_memory_rejects_invalid_shape_before_local_copy_or_durable_write() -> anyhow::Result<()> {
     let _dir = ScopedTestDataDir::new("save-invalid-shape");
@@ -534,7 +536,7 @@ fn direct_save_refreshes_expired_same_text_current_fact() -> anyhow::Result<()> 
 }
 
 #[test]
-fn direct_save_same_text_metadata_change_updates_row() -> anyhow::Result<()> {
+fn direct_save_branch_change_creates_route_isolated_row() -> anyhow::Result<()> {
     let _dir = ScopedTestDataDir::new("save-same-text-metadata-update");
     let conn = db::open_db()?;
     let first_req = SaveMemoryRequest {
@@ -559,16 +561,22 @@ fn direct_save_same_text_metadata_change_updates_row() -> anyhow::Result<()> {
 
     let second = save_memory(&conn, &second_req)?;
 
-    assert_eq!(second.id, first.id);
-    assert_eq!(second.operation, "update");
+    assert_ne!(second.id, first.id);
+    assert_eq!(second.operation, "add");
     let (title, files, branch): (String, Option<String>, Option<String>) = conn.query_row(
         "SELECT title, files, branch FROM memories WHERE id = ?1",
         [first.id],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
-    assert_eq!(title, "New title");
-    assert_eq!(files.as_deref(), Some("[\"src/new.rs\"]"));
-    assert_eq!(branch.as_deref(), Some("feature"));
+    assert_eq!(title, "Old title");
+    assert_eq!(files.as_deref(), Some("[\"src/old.rs\"]"));
+    assert_eq!(branch.as_deref(), Some("main"));
+    let new_branch: Option<String> = conn.query_row(
+        "SELECT branch FROM memories WHERE id = ?1",
+        [second.id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(new_branch.as_deref(), Some("feature"));
     Ok(())
 }
 
@@ -733,10 +741,12 @@ fn save_memory_claim_write_failure_is_reported_not_silent() -> anyhow::Result<()
         session_id: Some("session-claim-failure".to_string()),
         memory_type: Some("discovery".to_string()),
         local_copy_enabled: Some(false),
+        idempotency_key: Some("claim-failure-replay".to_string()),
         ..SaveMemoryRequest::default()
     };
 
     let saved = save_memory(&conn, &req)?;
+    let replay = save_memory(&conn, &req)?;
 
     assert_eq!(saved.status, "saved");
     assert_eq!(saved.claim_status, "failed");
@@ -745,6 +755,9 @@ fn save_memory_claim_write_failure_is_reported_not_silent() -> anyhow::Result<()
         .claim_error
         .as_deref()
         .is_some_and(|error| error.contains("memory_claims")));
+    assert_eq!(replay.claim_status, saved.claim_status);
+    assert_eq!(replay.claim_id, saved.claim_id);
+    assert_eq!(replay.claim_error, saved.claim_error);
     let memory_count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM memories WHERE id = ?1",
         [saved.id],

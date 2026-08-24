@@ -2,7 +2,6 @@ use anyhow::{bail, Result};
 use rusqlite::{params, Connection};
 
 pub(crate) const INSTRUCTION_PATTERN_SET_VERSION: i64 = 1;
-pub(crate) const DIRECT_SAVE_TRUST_CLASS: SourceTrustClass = SourceTrustClass::UserPrompt;
 pub(crate) const DEFAULT_EXISTING_TRUST_CLASS: SourceTrustClass = SourceTrustClass::LocalToolOutput;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

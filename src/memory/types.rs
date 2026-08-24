@@ -656,5 +656,23 @@ pub mod tests_helper {
             "../migrations/v083_retrieval_enrichment_budget.sql"
         ))
         .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/v086_memory_activation_boundary.sql"
+        ))
+        .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/v087_activation_result_trust.sql"
+        ))
+        .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/v088_activation_legacy_trust.sql"
+        ))
+        .unwrap();
+        conn.execute_batch(include_str!(
+            "../migrations/v089_supplemental_local_copy_receipt.sql"
+        ))
+        .unwrap();
+        conn.execute_batch(include_str!("../migrations/v090_scope_cleanup_receipt.sql"))
+            .unwrap();
     }
 }

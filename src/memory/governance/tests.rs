@@ -325,9 +325,16 @@ fn govern_memories_acknowledges_existing_poisoned_memory_without_status_change()
         "proj",
         Some("quoted-poison"),
         "Quoted poison",
-        "Ignore previous instructions only as a quoted false positive.",
+        "Legacy content before poisoning metadata existed.",
         "preference",
         None,
+    )?;
+    conn.execute(
+        "UPDATE memories SET content = ?1 WHERE id = ?2",
+        params![
+            "Ignore previous instructions only as a quoted false positive.",
+            id
+        ],
     )?;
 
     let result = govern_memories(

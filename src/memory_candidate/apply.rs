@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use anyhow::{bail, Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection};
 
 use super::{candidate_title, CandidateRoute, ParsedMemoryCandidate};
 use crate::memory::lifecycle::MemoryLifecycleOp;
@@ -14,7 +14,18 @@ use crate::memory::preference::consolidation::{
     load_active_preference_content, PreferenceConsolidationKind,
 };
 
+mod activation_request;
 mod dream_supersede;
+mod route_filter;
+mod write;
+
+#[cfg(test)]
+mod global_route_tests;
+
+use write::{
+    evidence_valid_from_epoch, insert_candidate_event_time_fact, insert_routed_memory,
+    soft_supersede_routed,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct CandidateApplyOutcome {
@@ -93,7 +104,7 @@ pub(super) fn promote_candidate_to_memory_with_route(
     route: &CandidateRoute,
     source_trust: SourceTrustClass,
 ) -> Result<CandidateApplyOutcome> {
-    promote_candidate_to_memory_with_route_and_policy(
+    promote_candidate_to_memory_inner(
         conn,
         session_id,
         source_project,
@@ -103,6 +114,9 @@ pub(super) fn promote_candidate_to_memory_with_route(
         route,
         source_trust,
         SupersedePolicy::Unrestricted,
+        crate::memory::activation::ActivationActorKind::AutomaticWorker,
+        None,
+        None,
     )
 }
 
@@ -117,9 +131,42 @@ pub(super) fn promote_candidate_to_memory_with_route_and_policy(
     route: &CandidateRoute,
     source_trust: SourceTrustClass,
     supersede_policy: SupersedePolicy,
+    review_binding: &str,
+    acknowledged_pattern: Option<(&str, i64)>,
+) -> Result<CandidateApplyOutcome> {
+    promote_candidate_to_memory_inner(
+        conn,
+        session_id,
+        source_project,
+        candidate_id,
+        candidate,
+        evidence_json,
+        route,
+        source_trust,
+        supersede_policy,
+        crate::memory::activation::ActivationActorKind::Operator,
+        Some(review_binding),
+        acknowledged_pattern,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn promote_candidate_to_memory_inner(
+    conn: &Connection,
+    session_id: Option<&str>,
+    source_project: &str,
+    candidate_id: i64,
+    candidate: &ParsedMemoryCandidate,
+    evidence_json: &str,
+    route: &CandidateRoute,
+    source_trust: SourceTrustClass,
+    supersede_policy: SupersedePolicy,
+    actor_kind: crate::memory::activation::ActivationActorKind,
+    review_binding: Option<&str>,
+    acknowledged_pattern: Option<(&str, i64)>,
 ) -> Result<CandidateApplyOutcome> {
     let title = candidate_title(candidate);
-    let memory_project = route.memory_project(source_project);
+    let mut memory_project = route.memory_project(source_project);
     let memory_scope = route.memory_scope();
 
     with_operation_savepoint(conn, || {
@@ -155,6 +202,8 @@ pub(super) fn promote_candidate_to_memory_with_route_and_policy(
             conn,
             candidate,
             route,
+            &memory_project,
+            memory_scope,
             state_key.as_ref(),
             now,
             candidate_has_ttl,
@@ -199,25 +248,35 @@ pub(super) fn promote_candidate_to_memory_with_route_and_policy(
                     now,
                 )?
             {
-                generic_preference_reason = Some(preference_match.reason.clone());
-                match preference_match.kind {
-                    PreferenceConsolidationKind::SamePreference
-                    | PreferenceConsolidationKind::Refinement => {
-                        active.push(ActiveTopicMemory {
-                            id: preference_match.memory_id,
-                            content: load_active_preference_content(
-                                conn,
-                                preference_match.memory_id,
-                            )?,
-                            is_current: true,
-                        });
-                    }
-                    PreferenceConsolidationKind::Contradiction => {
-                        conflicting_ids.push(preference_match.memory_id);
+                if route_filter::matches_active_route(
+                    conn,
+                    preference_match.memory_id,
+                    &memory_project,
+                    memory_scope,
+                    route,
+                )? {
+                    generic_preference_reason = Some(preference_match.reason.clone());
+                    match preference_match.kind {
+                        PreferenceConsolidationKind::SamePreference
+                        | PreferenceConsolidationKind::Refinement => {
+                            active.push(ActiveTopicMemory {
+                                id: preference_match.memory_id,
+                                content: load_active_preference_content(
+                                    conn,
+                                    preference_match.memory_id,
+                                )?,
+                                is_current: true,
+                            });
+                        }
+                        PreferenceConsolidationKind::Contradiction => {
+                            conflicting_ids.push(preference_match.memory_id);
+                        }
                     }
                 }
             }
         }
+        memory_project =
+            route_filter::bound_memory_project(conn, source_project, memory_scope, route, &active)?;
         if let Some(existing) = supersede_policy
             .is_unrestricted()
             .then(|| {
@@ -289,112 +348,152 @@ pub(super) fn promote_candidate_to_memory_with_route_and_policy(
         } else {
             evidence_valid_from_epoch(conn, &evidence_event_ids)?
         };
-        let memory_id = insert_routed_memory(
-            conn,
-            session_id,
+        let activation_request = activation_request::build(
             source_project,
             &memory_project,
+            memory_scope,
             candidate_id,
             candidate,
-            route,
-            &title,
             evidence_json,
-            memory_scope,
-            state_key.as_ref(),
-            reference_time_epoch,
+            route,
             source_trust,
+            actor_kind,
+            &superseded_ids,
+            review_binding,
+            acknowledged_pattern,
         )?;
-        plan.target_memory_id = Some(memory_id);
-        let superseded = soft_supersede_routed(conn, &superseded_ids, Some(memory_id))?;
-        if superseded != superseded_ids.len() {
-            bail!(
+        let mut applied_outcome = None;
+        let activation = crate::memory::activation::execute_one(conn, &activation_request, |_| {
+            let memory_id = insert_routed_memory(
+                conn,
+                session_id,
+                source_project,
+                &memory_project,
+                candidate_id,
+                candidate,
+                route,
+                &title,
+                evidence_json,
+                memory_scope,
+                state_key.as_ref(),
+                reference_time_epoch,
+                source_trust,
+            )?;
+            if let Some((pattern_id, pattern_version)) = acknowledged_pattern {
+                conn.execute(
+                    "UPDATE memories
+                     SET acknowledged_pattern_id = ?1, acknowledged_pattern_version = ?2,
+                         acknowledged_at_epoch = ?3
+                     WHERE id = ?4",
+                    params![pattern_id, pattern_version, now, memory_id],
+                )?;
+            }
+            plan.target_memory_id = Some(memory_id);
+            let superseded = soft_supersede_routed(conn, &superseded_ids, Some(memory_id))?;
+            if superseded != superseded_ids.len() {
+                bail!(
                 "candidate promotion supersede write count changed inside transaction: expected={} actual={superseded}",
                 superseded_ids.len()
             );
-        }
-        if candidate.memory_type == "preference" {
-            crate::memory::preference::reinforcement::persist_preference_reinforcement(
+            }
+            if candidate.memory_type == "preference" {
+                crate::memory::preference::reinforcement::persist_preference_reinforcement(
+                    conn,
+                    memory_id,
+                    &superseded_ids,
+                    &candidate.text,
+                    &candidate.risk_class,
+                    Some(evidence_json),
+                    now,
+                )?;
+                crate::memory::preference::compilation::enqueue_for_memory_ids(conn, &[memory_id])?;
+            }
+            let operation_id =
+                insert_operation_log(conn, &operation_input, &plan, Some(memory_id))?;
+            crate::memory::edge::insert_memory_edge(
                 conn,
-                memory_id,
-                &superseded_ids,
-                &candidate.text,
-                &candidate.risk_class,
-                Some(evidence_json),
-                now,
+                &crate::memory::edge::MemoryEdgeInput {
+                    edge_type: crate::memory::edge::MemoryEdgeType::DerivedFrom,
+                    from_memory_id: None,
+                    to_memory_id: Some(memory_id),
+                    state_key_id: None,
+                    source_candidate_id: Some(candidate_id),
+                    evidence_event_ids: &evidence_event_ids,
+                    source_operation_id: Some(operation_id),
+                    confidence: Some(candidate.confidence),
+                    reason: Some("candidate promoted from observation evidence"),
+                },
             )?;
-            crate::memory::preference::compilation::enqueue_for_memory_ids(conn, &[memory_id])?;
+            crate::memory::edge::insert_supersedes_edges(
+                conn,
+                &superseded_ids,
+                memory_id,
+                crate::memory::edge::MemoryEdgeWriteContext {
+                    source_candidate_id: Some(candidate_id),
+                    evidence_event_ids: &evidence_event_ids,
+                    source_operation_id: Some(operation_id),
+                    confidence: Some(candidate.confidence),
+                    reason: Some(plan.reason.as_str()),
+                    ..Default::default()
+                },
+            )?;
+            crate::memory::edge::insert_conflicts_edges(
+                conn,
+                &conflicting_ids,
+                memory_id,
+                crate::memory::edge::MemoryEdgeWriteContext {
+                    source_candidate_id: Some(candidate_id),
+                    evidence_event_ids: &evidence_event_ids,
+                    source_operation_id: Some(operation_id),
+                    confidence: Some(candidate.confidence),
+                    reason: Some(plan.reason.as_str()),
+                    ..Default::default()
+                },
+            )?;
+            insert_candidate_event_time_fact(
+                conn,
+                &memory_project,
+                memory_id,
+                candidate,
+                &evidence_event_ids,
+                reference_time_epoch,
+            )
+            .with_context(|| {
+                format!("failed to write temporal fact for promoted candidate id={candidate_id}")
+            })?;
+            super::fact_extract::write_candidate_facts(
+                conn,
+                &memory_project,
+                memory_id,
+                &candidate.facts,
+                &evidence_event_ids,
+                reference_time_epoch,
+                candidate.confidence,
+            )
+            .with_context(|| {
+                format!(
+                    "failed to write extracted SPO facts for promoted candidate id={candidate_id}"
+                )
+            })?;
+            applied_outcome = Some(CandidateApplyOutcome {
+                memory_id: Some(memory_id),
+                promoted: true,
+                noop: false,
+                superseded,
+                superseded_ids: superseded_ids.clone(),
+            });
+            Ok(memory_id)
+        })?;
+        if activation.replayed {
+            return Ok(CandidateApplyOutcome {
+                memory_id: Some(activation.memory_id),
+                promoted: false,
+                noop: true,
+                superseded: 0,
+                superseded_ids: Vec::new(),
+            });
         }
-        let operation_id = insert_operation_log(conn, &operation_input, &plan, Some(memory_id))?;
-        crate::memory::edge::insert_memory_edge(
-            conn,
-            &crate::memory::edge::MemoryEdgeInput {
-                edge_type: crate::memory::edge::MemoryEdgeType::DerivedFrom,
-                from_memory_id: None,
-                to_memory_id: Some(memory_id),
-                state_key_id: None,
-                source_candidate_id: Some(candidate_id),
-                evidence_event_ids: &evidence_event_ids,
-                source_operation_id: Some(operation_id),
-                confidence: Some(candidate.confidence),
-                reason: Some("candidate promoted from observation evidence"),
-            },
-        )?;
-        crate::memory::edge::insert_supersedes_edges(
-            conn,
-            &superseded_ids,
-            memory_id,
-            crate::memory::edge::MemoryEdgeWriteContext {
-                source_candidate_id: Some(candidate_id),
-                evidence_event_ids: &evidence_event_ids,
-                source_operation_id: Some(operation_id),
-                confidence: Some(candidate.confidence),
-                reason: Some(plan.reason.as_str()),
-                ..Default::default()
-            },
-        )?;
-        crate::memory::edge::insert_conflicts_edges(
-            conn,
-            &conflicting_ids,
-            memory_id,
-            crate::memory::edge::MemoryEdgeWriteContext {
-                source_candidate_id: Some(candidate_id),
-                evidence_event_ids: &evidence_event_ids,
-                source_operation_id: Some(operation_id),
-                confidence: Some(candidate.confidence),
-                reason: Some(plan.reason.as_str()),
-                ..Default::default()
-            },
-        )?;
-        insert_candidate_event_time_fact(
-            conn,
-            &memory_project,
-            memory_id,
-            candidate,
-            &evidence_event_ids,
-            reference_time_epoch,
-        )
-        .with_context(|| {
-            format!("failed to write temporal fact for promoted candidate id={candidate_id}")
-        })?;
-        super::fact_extract::write_candidate_facts(
-            conn,
-            &memory_project,
-            memory_id,
-            &candidate.facts,
-            &evidence_event_ids,
-            reference_time_epoch,
-            candidate.confidence,
-        )
-        .with_context(|| {
-            format!("failed to write extracted SPO facts for promoted candidate id={candidate_id}")
-        })?;
-        Ok(CandidateApplyOutcome {
-            memory_id: Some(memory_id),
-            promoted: true,
-            noop: false,
-            superseded,
-            superseded_ids,
-        })
+        applied_outcome.context("candidate activation completed without apply outcome")
     })
 }
 
@@ -478,40 +577,55 @@ fn find_active_same_topic(
     conn: &Connection,
     candidate: &ParsedMemoryCandidate,
     route: &CandidateRoute,
+    memory_project: &str,
+    memory_scope: &str,
     now_epoch: i64,
     candidate_has_ttl: bool,
 ) -> Result<Vec<ActiveTopicMemory>> {
     let mut stmt = conn.prepare(
         "SELECT id, content,
                 CASE
-                    WHEN ?5 = 1 THEN
+                    WHEN ?8 = 1 THEN
                         CASE
-                            WHEN expires_at_epoch IS NOT NULL AND expires_at_epoch > ?6 THEN 1
+                            WHEN expires_at_epoch IS NOT NULL AND expires_at_epoch > ?9 THEN 1
                             ELSE 0
                         END
-                    WHEN expires_at_epoch IS NULL OR expires_at_epoch > ?6 THEN 1
+                    WHEN expires_at_epoch IS NULL OR expires_at_epoch > ?9 THEN 1
                     ELSE 0
                 END AS is_current
          FROM memories
          WHERE status = 'active'
            AND memory_type = ?1
            AND topic_key = ?2
+           AND (?4 = 'global' OR project = ?3)
+           AND branch IS NULL
+           AND COALESCE(scope, 'project') = ?4
            AND COALESCE(
                 owner_scope,
                 CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END
-           ) = ?3
+           ) = ?5
            AND COALESCE(
                 owner_key,
                 CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user:default' ELSE project END
-           ) = ?4
+           ) = ?6
+           AND CASE
+               WHEN COALESCE(owner_scope,
+                   CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END
+               ) = 'repo'
+               THEN COALESCE(target_project, project)
+               ELSE target_project
+           END IS ?7
          ORDER BY updated_at_epoch DESC, id DESC",
     )?;
     let rows = stmt.query_map(
         params![
             candidate.memory_type,
             candidate.topic_key,
+            memory_project,
+            memory_scope,
             route.owner_scope,
             route.owner_key,
+            route.target_project,
             if candidate_has_ttl { 1_i64 } else { 0_i64 },
             now_epoch
         ],
@@ -530,10 +644,21 @@ fn find_active_same_state_or_topic(
     conn: &Connection,
     candidate: &ParsedMemoryCandidate,
     route: &CandidateRoute,
+    memory_project: &str,
+    memory_scope: &str,
     state_key: Option<&crate::memory::state_key::StateKeyDecision>,
     now_epoch: i64,
     candidate_has_ttl: bool,
 ) -> Result<Vec<ActiveTopicMemory>> {
+    let mut memories = find_active_same_topic(
+        conn,
+        candidate,
+        route,
+        memory_project,
+        memory_scope,
+        now_epoch,
+        candidate_has_ttl,
+    )?;
     if let Some(state_key) = state_key {
         let ids = crate::memory::state_key::active_memory_ids(
             conn,
@@ -544,9 +669,9 @@ fn find_active_same_state_or_topic(
             now_epoch,
             candidate_has_ttl,
         )?;
-        if !ids.is_empty() {
-            let mut memories = Vec::with_capacity(ids.len());
-            for id in ids {
+        let ids = route_filter::ids(conn, ids, memory_project, memory_scope, route)?;
+        for id in ids {
+            if !memories.iter().any(|memory| memory.id == id) {
                 let content =
                     conn.query_row("SELECT content FROM memories WHERE id = ?1", [id], |row| {
                         row.get(0)
@@ -557,210 +682,7 @@ fn find_active_same_state_or_topic(
                     is_current: true,
                 });
             }
-            return Ok(memories);
         }
     }
-    find_active_same_topic(conn, candidate, route, now_epoch, candidate_has_ttl)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn insert_routed_memory(
-    conn: &Connection,
-    session_id: Option<&str>,
-    source_project: &str,
-    memory_project: &str,
-    candidate_id: i64,
-    candidate: &ParsedMemoryCandidate,
-    route: &CandidateRoute,
-    title: &str,
-    evidence_json: &str,
-    scope: &str,
-    state_key: Option<&crate::memory::state_key::StateKeyDecision>,
-    reference_time_epoch: i64,
-    source_trust: SourceTrustClass,
-) -> Result<i64> {
-    let now = chrono::Utc::now().timestamp();
-    let (expires_at_epoch, valid_from_epoch) = crate::memory::lifecycle::ttl_metadata(
-        &candidate.memory_type,
-        Some(&candidate.topic_key),
-        &candidate.text,
-        now,
-    );
-    let search_context = crate::memory::search_context::build_search_context(
-        &candidate.memory_type,
-        Some(&candidate.topic_key),
-        &candidate.text,
-        None,
-    );
-    conn.execute(
-        "INSERT INTO memories
-         (session_id, project, topic_key, title, content, memory_type, files, search_context,
-          created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope,
-          evidence_event_ids, source_candidate_id, confidence,
-          source_project, target_project, owner_scope, owner_key, topic_domain,
-          routing_confidence, routing_reason, context_class, expires_at_epoch,
-          valid_from_epoch, source_trust_class)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7,
-                 ?8, ?8, ?9, 'active', NULL, ?10,
-                 ?11, ?12, ?13,
-                 ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
-        params![
-            session_id,
-            memory_project,
-            candidate.topic_key,
-            title,
-            candidate.text,
-            candidate.memory_type,
-            search_context,
-            now,
-            reference_time_epoch,
-            scope,
-            evidence_json,
-            candidate_id,
-            candidate.confidence,
-            source_project,
-            route.target_project.as_deref(),
-            route.owner_scope,
-            route.owner_key,
-            route.topic_domain.as_deref(),
-            route.routing_confidence,
-            route.routing_reason,
-            route.context_class,
-            expires_at_epoch,
-            valid_from_epoch,
-            source_trust.as_str()
-        ],
-    )?;
-    let memory_id = conn.last_insert_rowid();
-    if let Some(state_key) = state_key {
-        crate::memory::state_key::attach_current_memory(
-            conn,
-            memory_id,
-            &route.owner_scope,
-            &route.owner_key,
-            &candidate.memory_type,
-            state_key,
-            now,
-        )?;
-    }
-    if candidate.memory_type == "lesson" {
-        insert_lesson_metadata(conn, memory_id, candidate, evidence_json, now)?;
-    }
-    refresh_memory_entities(conn, memory_id, title, &candidate.text)?;
-    crate::retrieval::vector::upsert_memory_embedding_for_row(conn, memory_id)?;
-    Ok(memory_id)
-}
-
-fn insert_candidate_event_time_fact(
-    conn: &Connection,
-    memory_project: &str,
-    memory_id: i64,
-    candidate: &ParsedMemoryCandidate,
-    evidence_event_ids: &[i64],
-    valid_from_epoch: i64,
-) -> Result<i64> {
-    crate::memory::facts::insert_temporal_fact_in_current_tx(
-        conn,
-        &crate::memory::facts::TemporalFactInput {
-            project: memory_project,
-            subject: &candidate.topic_key,
-            predicate: crate::memory::facts::FactPredicate::AffectsProject,
-            object: memory_project,
-            valid_from_epoch: Some(valid_from_epoch),
-            valid_to_epoch: None,
-            learned_at_epoch: None,
-            source_memory_id: Some(memory_id),
-            source_observation_id: None,
-            source_event_ids: evidence_event_ids,
-            confidence: candidate.confidence,
-            supersedes_fact_id: None,
-        },
-        chrono::Utc::now().timestamp(),
-    )
-}
-
-fn evidence_valid_from_epoch(conn: &Connection, evidence_event_ids: &[i64]) -> Result<i64> {
-    if evidence_event_ids.is_empty() {
-        bail!("candidate promotion requires evidence_event_ids for temporal fact");
-    }
-    let mut earliest = None;
-    for event_id in evidence_event_ids {
-        let epoch: i64 = conn
-            .query_row(
-                "SELECT COALESCE(reference_time_epoch, created_at_epoch)
-                 FROM captured_events
-                 WHERE id = ?1",
-                [event_id],
-                |row| row.get(0),
-            )
-            .optional()?
-            .with_context(|| {
-                format!("candidate evidence event id={event_id} missing for temporal fact")
-            })?;
-        earliest = Some(earliest.map_or(epoch, |current: i64| current.min(epoch)));
-    }
-    earliest.context("candidate promotion requires evidence_event_ids for temporal fact")
-}
-
-fn insert_lesson_metadata(
-    conn: &Connection,
-    memory_id: i64,
-    candidate: &ParsedMemoryCandidate,
-    evidence_json: &str,
-    now: i64,
-) -> Result<()> {
-    let outcome_kind = candidate.outcome.as_deref().unwrap_or("unknown");
-    let success = i64::from(outcome_kind == "success");
-    let failure = i64::from(outcome_kind == "failure");
-    conn.execute(
-        "INSERT INTO memory_lessons
-         (memory_id, confidence, reinforcement_count, source_evidence,
-          last_reinforced_at_epoch, stale_after_epoch, outcome_kind,
-          success_count, failure_count, recovery_count, correction_count, revert_count)
-         VALUES (?1, ?2, 1, ?3, ?4, NULL, ?5, ?6, ?7, 0, 0, 0)",
-        params![
-            memory_id,
-            candidate.confidence,
-            evidence_json,
-            now,
-            outcome_kind,
-            success,
-            failure
-        ],
-    )?;
-    Ok(())
-}
-
-fn refresh_memory_entities(conn: &Connection, id: i64, title: &str, content: &str) -> Result<()> {
-    let entities = crate::retrieval::entity::extract_entities(title, content);
-    crate::retrieval::entity::refresh_memory_entities(conn, id, &entities)
-        .with_context(|| format!("entity refresh failed for memory id={id}"))
-}
-
-fn soft_supersede_routed(
-    conn: &Connection,
-    memory_ids: &[i64],
-    replacement_id: Option<i64>,
-) -> Result<usize> {
-    let mut seen = std::collections::HashSet::with_capacity(memory_ids.len());
-    let targets = memory_ids
-        .iter()
-        .copied()
-        .filter(|id| Some(*id) != replacement_id && seen.insert(*id))
-        .collect::<Vec<_>>();
-    let mut changed = 0usize;
-    for id in targets {
-        let updated = conn.execute(
-            "UPDATE memories
-             SET status = 'stale',
-                 valid_to_epoch = COALESCE(valid_to_epoch, ?2)
-             WHERE id = ?1",
-            params![id, chrono::Utc::now().timestamp()],
-        )?;
-        if updated != 1 {
-            bail!("failed to mark superseded memory stale: id={id}");
-        }
-        changed += updated;
-    }
-    Ok(changed)
+    Ok(memories)
 }

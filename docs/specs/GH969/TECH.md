@@ -1,6 +1,6 @@
 # GH969 Technical Contract — Stabilization And Surface Governance
 
-Status: Current contract; implementation guard slices pending; Issue: #969
+Status: Current contract; activation boundary implemented; later guard slices pending; Issue: #969
 
 Last reconciled against `origin/main`: 2026-08-21 (`86fee409`)
 
@@ -40,11 +40,85 @@ The path intentionally keeps capture cheap but not optional. Capture does not
 create durable active memory directly. LLM output is treated as derived content
 and cannot raise the trust of its sources.
 
-Known transition debt remains: low-level `memory::store::write` helpers can
-still create an active row, and safety policy is partly enforced by callers.
-The first implementation slice after this spec must consolidate production
-activation and add a bypass guard without breaking explicit user save or
-candidate promotion.
+The first implementation slice now consolidates production activation through
+`memory::activation`, backed by the immutable
+`memory_activation_requests` ledger introduced in schema v86. Schema v87 adds
+the activation result's trust class without rewriting the already-applied v86
+migration and initially marks migrated receipts as `legacy_unrecorded`. Schema
+v88 is a second forward migration that preserves receipt rowids and replaces
+that marker with result trust derived from each receipt's historically enforced
+source-trust postcondition before restoring the immutable-table triggers. It
+neither guesses from current state nor attributes later state to the historical
+activation. Schema v89 adds a supplemental-save local-copy receipt: disabled
+copies record that outcome, while saved copies bind the original confined path,
+render timestamp, and content digest so retries verify or repair the exact same
+artifact. Unix repair walks and reconstructs parent directories through
+no-follow directory descriptors and atomically publishes inside the anchored
+parent. On non-Unix platforms, an intact artifact can be verified, but a
+missing or changed artifact fails visibly instead of using a race-prone
+path-based repair. Older receipts remain explicitly `legacy_unknown` rather than
+fabricating a successful local-copy response. v86 through v88 remain
+byte-stable for databases that have already recorded them. Route adapters
+bind trust, provenance, payload digest, exact supersede targets, and poisoning
+verdict before the active mutation runs in one savepoint. A top-level activation
+acquires an immediate SQLite write transaction before receipt lookup;
+workflows that own the outer transaction must likewise begin it as immediate
+before any reads, and the activation boundary verifies write ownership before
+its own lookup. Public lesson saves follow the same rule before duplicate-topic
+lookup, so concurrent WAL writers serialize before either lesson state or
+activation receipts are read.
+Concurrent requests with the same fresh activation id therefore serialize, and
+the loser validates and replays the winner's committed receipt instead of
+surfacing a lock or uniqueness error. The boundary then
+compares the stored payload/evidence fields to the request, rechecks poisoning,
+and records a result digest; an inactive result cannot satisfy an idempotent
+replay. Supplemental saves also bind an immutable claim receipt (`saved` with
+the original claim id, `disabled`, or `failed` with its diagnostic) into the
+same ledger insert so retries reproduce the first durable outcome. Their
+local-copy receipt is written in that same activation transaction; replay never
+derives a new timestamped default path. A semantic
+no-op records the weaker incoming caller in activation evidence but never
+relabels the already-active row's trust or acknowledgement metadata. The
+activation request therefore binds incoming source trust separately from the
+expected result-row trust; route policy validates the former while the durable
+postcondition validates the latter. Supplemental idempotency uses a versioned
+caller-input fingerprint that excludes mutable target provenance and validates
+the result from immutable receipt fields. The caller-stable receipt lookup runs
+before direct-save planning can bind a current replacement row's project or
+source provenance, including for user-owned global memories. Migrated v086 and
+v087 supplemental
+receipts validate the same stable caller fields directly from the immutable
+ledger, including the caller payload digest, instead of reconstructing old
+target provenance from a later memory row; other v086 routes retain an
+explicit legacy-fingerprint validation path. Replay of an older receipt remains valid
+after a later governed in-place activation only when the current row exactly
+matches the latest immutable result receipt, including identity, scope, owner,
+trust, payload digest, and poisoning evidence.
+Schema v90 adds an immutable, activation-id-keyed scope-cleanup response receipt
+containing the exact serialized group result and operation id. Its bound
+operation log and duplicate edges become immutable with the receipt. The receipt is
+inserted after the activation ledger row but inside the same outer cleanup
+transaction. A retry resolves and validates the activation receipt before
+consulting mutable plan-row snapshots, then returns the stored cleanup result;
+the historical poisoning verdict and acknowledgement shape remain authoritative
+for that exact retry even if a newer scanner recognizes another pattern. Missing,
+conflicting, or mutable cleanup evidence fails visibly. Cleanup may
+carry a human poisoning acknowledgement only when the final title and content
+are byte-identical to the reviewed canonical payload and the stored pattern
+metadata still matches. Merged or otherwise changed instruction-like content
+requires a new acknowledgement and cannot inherit one from a cluster member.
+When merged cleanup content changes the deterministic preference predicate, it
+also clears candidate/direct-event proof, confidence and validity-start
+metadata, and downgrades result trust to `external_content`, so the rewritten
+claim cannot borrow CurrentTruth eligibility from the prior predicate.
+Best-effort backup normalization uses governed `backup_import` rather
+than claiming `ExactRecovery`. Backup import hashes and reads one SQLite backup
+snapshot so WAL-visible state cannot diverge from its provenance digest; a
+complete, payload-matching acknowledgement is preserved as exact recovery,
+while partial or mismatched acknowledgement evidence fails closed. A repository-owned
+CI guard inventories reviewed raw implementations and rejects new production
+bypasses. Later slices still need the surface lifecycle and dependency-direction
+guards described below.
 
 ## Target Module Direction
 
@@ -175,7 +249,8 @@ The boundary must, in one transaction/savepoint:
 6. calculate and validate the exact supersede/no-op set;
 7. create/update the active row and derived indexes;
 8. persist source trust, provenance, operation log, and lifecycle changes;
-9. make the same `operation_id` idempotent and reject a conflicting replay.
+9. persist any route-specific response receipt in the same savepoint;
+10. make the same `operation_id` idempotent and reject a conflicting replay.
 
 An error rolls back every activation side effect. Logging an error after an
 active row was committed is not an acceptable failure mode.
@@ -184,19 +259,33 @@ active row was committed is not an acceptable failure mode.
 
 | Route | Required proof | Forbidden behavior |
 |---|---|---|
-| Supplemental save | Exact payload scan, server-constructed caller evidence, and trust derived from authenticated/bound evidence | Treating a request field or MCP/agent call as user attestation; absent verifiable evidence uses `external_content` rather than inventing user provenance |
+| Supplemental save | Exact payload scan, server-constructed caller evidence, trust derived from authenticated/bound evidence, and an immutable claim receipt for exact replay | Treating a request field or MCP/agent call as user attestation; weakening an existing row on semantic no-op; exposing human acknowledgement through an agent save schema; or fabricating a replay response when the original receipt is missing |
 | Candidate auto-promotion | Current auto-promotion decision, evidence binding, trust at or above the current policy threshold, no poison hit | Bypassing candidate policy through `insert_memory*` |
 | Candidate manual approval | Review identity/token and immutable candidate/provenance digest | Approval of a changed candidate or unbounded Dream supersede set |
 | Dream | Candidate plus exact source-memory provenance and generated-surface verdict | Direct active insert/update or superseding source rows on quarantine/failure |
+| Scope cleanup | Immutable plan/group digest, exact supersede set, unchanged matching acknowledgement when required, and an activation-bound response receipt | Revalidating already-applied stale snapshots before replay; inheriting acknowledgement across changed payloads; or reconstructing replay output from mutable operation/current-row state |
 | Governed pack import | Verified manifest/content/entry digests, instruction scan, `pack` trust, target repo ownership, and the safe-add/no-resurrection decision from `project-memory-pack/` | Activating a conflict, quarantined row, changed plan entry, or locally suppressed/invalidated identity |
 | Other import | Import plan/digest and candidate route unless its current contract proves an equivalent governed activation | Direct activation based only on file ownership or format validity |
 | Recovery | Exact prior row identity, plan/apply digest, acknowledgement where required | Creating a semantically new claim or raising trust |
+
+Markdown fallback lookup follows the same ownership rule: repo-owned rows remain
+project-bound, while global `user:default` rows match across source projects and
+retain the selected runtime row's stored project/source route during update.
+Dream derives its activation identity from canonical caller input and resolves
+an existing immutable receipt before checking mutable source-row owner or target
+state. Owner, freshness, collision and poisoning checks still apply to every
+fresh Dream activation; a later supported reroute cannot invalidate an exact
+replay. Replay lookup also derives the historical ordered and reused-target
+fingerprints emitted by the prior implementation, so canonicalizing new request
+identities does not orphan already-committed receipts. A historical fingerprint
+is accepted only when its immutable receipt supersede set equals the canonical
+caller set after excluding the receipt's reused result row.
 
 ### Bypass Guard
 
 CI must inventory production call sites that can set `memories.status` to
 `active`, call raw active insert/update helpers, or execute equivalent SQL.
-After the activation service lands:
+With the activation service in place:
 
 - normal production call sites must route through it;
 - non-activating migration DDL, test-only scaffolding, and the activation
@@ -205,8 +294,13 @@ After the activation service lands:
   invoke the boundary with governed import or `ExactRecovery` provenance;
 - a new call site or raw SQL pattern fails with a user-readable error;
 - the guard has positive and negative self-tests;
+- reviewed raw sites are pinned by normalized statement/helper signature and
+  occurrence count, so an allowlisted file cannot silently gain another bypass;
 - dynamic SQL or helper renaming cannot be used to evade review; ambiguous
-  matches fail for manual classification rather than passing silently.
+  matches fail for manual classification rather than passing silently;
+- literal SQL reconstructed through Rust arrays, macros, `push_str`, binary
+  `+`, or `+=` is scanned as one statement, including self-tests for each
+  supported composition form.
 
 ## Scope, Owner, And Relation Integrity
 
@@ -344,6 +438,7 @@ After this spec is accepted, create focused implementation issues rather than
 one cross-repository PR:
 
 1. **Active-memory activation boundary and bypass guard**
+   - Status: implemented by #1040 for the v0.6.82 release line.
    - Primary scope: `src/memory/`, candidate promotion callers, direct-save
      callers, and a dedicated CI check.
    - Acceptance: every production activation route is classified; bypass

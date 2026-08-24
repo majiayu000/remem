@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::memory::search_context::build_search_context;
@@ -10,6 +10,11 @@ use crate::memory::{
     },
     preference::consolidation::PreferenceConsolidationKind,
 };
+
+mod activation;
+mod rust_api;
+pub(crate) use activation::insert_memory_replacement_activated;
+pub use rust_api::insert_memory_full_with_reference_time;
 
 pub fn insert_memory(
     conn: &Connection,
@@ -91,8 +96,9 @@ pub fn insert_memory_full(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn insert_memory_full_with_reference_time(
+pub(crate) fn insert_memory_full_activated(
     conn: &Connection,
+    _permit: &crate::memory::activation::ActiveMemoryWritePermit,
     session_id: Option<&str>,
     project: &str,
     topic_key: Option<&str>,
@@ -133,13 +139,32 @@ pub fn insert_memory_full_with_reference_time(
             existing_id = conn
                 .query_row(
                     "SELECT id FROM memories
-                     WHERE project = ?1 AND topic_key = ?2 AND scope = ?3
-                       AND memory_type = ?4
+                     WHERE (?3 = 'global' OR project = ?1) AND topic_key = ?2 AND scope = ?3
+                       AND memory_type = ?4 AND branch IS ?5
+                       AND COALESCE(owner_scope,
+                           CASE WHEN scope = 'global' THEN 'user' ELSE 'repo' END) = ?6
+                       AND COALESCE(owner_key,
+                           CASE WHEN scope = 'global' THEN 'user:default' ELSE project END) = ?7
+                       AND CASE
+                           WHEN COALESCE(owner_scope,
+                               CASE WHEN scope = 'global' THEN 'user' ELSE 'repo' END) = 'repo'
+                           THEN COALESCE(target_project, project)
+                           ELSE target_project
+                       END IS ?8
                      ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END,
                               updated_at_epoch DESC,
                               id DESC
                      LIMIT 1",
-                    params![project, topic_key, scope, memory_type],
+                    params![
+                        project,
+                        topic_key,
+                        scope,
+                        memory_type,
+                        branch,
+                        ownership.owner_scope,
+                        ownership.owner_key,
+                        ownership.target_project,
+                    ],
                     |row| row.get(0),
                 )
                 .optional()?;
@@ -149,7 +174,7 @@ pub fn insert_memory_full_with_reference_time(
     if existing_id.is_none() {
         if let Some(decision) = &state_key {
             if decision.allows_direct_upsert() {
-                existing_id = state_key::current_memory_id(
+                let state_memory_id = state_key::current_memory_id(
                     conn,
                     ownership.owner_scope,
                     ownership.owner_key,
@@ -157,6 +182,16 @@ pub fn insert_memory_full_with_reference_time(
                     &decision.state_key,
                     now,
                 )?;
+                if let Some(id) = state_memory_id {
+                    let same_branch: bool = conn.query_row(
+                        "SELECT branch IS ?2 FROM memories WHERE id = ?1",
+                        params![id, branch],
+                        |row| row.get(0),
+                    )?;
+                    if same_branch {
+                        existing_id = Some(id);
+                    }
+                }
             }
         }
     }
@@ -329,6 +364,69 @@ pub fn insert_memory_full_with_operation_log(
         )?;
         Ok((id, logged_plan.op))
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn insert_memory_full_with_operation_log_activated(
+    conn: &Connection,
+    permit: &crate::memory::activation::ActiveMemoryWritePermit,
+    session_id: Option<&str>,
+    project: &str,
+    topic_key: Option<&str>,
+    title: &str,
+    content: &str,
+    memory_type: &str,
+    files: Option<&str>,
+    branch: Option<&str>,
+    scope: &str,
+    created_at_override: Option<i64>,
+    reference_time_override: Option<i64>,
+    operation_input: &MemoryOperationInput,
+    operation_plan: &MemoryOperationPlan,
+) -> Result<(i64, MemoryLifecycleOp)> {
+    let id = insert_memory_full_activated(
+        conn,
+        permit,
+        session_id,
+        project,
+        topic_key,
+        title,
+        content,
+        memory_type,
+        files,
+        branch,
+        scope,
+        created_at_override,
+        reference_time_override,
+    )?;
+    let mut logged_plan = operation_plan.clone();
+    logged_plan.target_memory_id = Some(id);
+    let operation_id = insert_operation_log(conn, operation_input, &logged_plan, Some(id))?;
+    crate::memory::edge::insert_supersedes_edges(
+        conn,
+        &logged_plan.superseded_ids,
+        id,
+        crate::memory::edge::MemoryEdgeWriteContext {
+            source_candidate_id: operation_input.source_candidate_id,
+            source_operation_id: Some(operation_id),
+            confidence: operation_input.confidence,
+            reason: Some(logged_plan.reason.as_str()),
+            ..Default::default()
+        },
+    )?;
+    crate::memory::edge::insert_conflicts_edges(
+        conn,
+        &logged_plan.conflicting_ids,
+        id,
+        crate::memory::edge::MemoryEdgeWriteContext {
+            source_candidate_id: operation_input.source_candidate_id,
+            source_operation_id: Some(operation_id),
+            confidence: operation_input.confidence,
+            reason: Some(logged_plan.reason.as_str()),
+            ..Default::default()
+        },
+    )?;
+    Ok((id, logged_plan.op))
 }
 
 pub(crate) struct DefaultOwnership<'a> {

@@ -636,7 +636,24 @@ details; only `pending_observations` is the legacy queue surface.
 `save_memory` behavior:
 - Dual-write by default: SQLite memory + local Markdown (`~/.remem/manual-notes/<project>/...md`)
 - Custom local path via `local_path` parameter
+- Optional `idempotency_key` binds retries to the same payload; a conflicting replay fails closed
 - When user asks to "save a document", write project-local file first, then `save_memory` as long-term backup
+
+All production paths that leave a curated memory `active` pass through
+`memory::activation`. Schema v86 records an immutable request identity, route,
+actor, trust class, provenance, payload digest, poisoning verdict, exact
+supersede set, resulting memory ID, and a digest recomputed from the stored
+title/content/type/topic/files/evidence payload in `memory_activation_requests`.
+Schema v87 adds result trust to that ledger; v88 upgrades already-recorded v86
+receipts from v87's unknown marker using only the immutable source-trust
+postcondition and preserves receipt rowids for replay chronology.
+The boundary compares those stored fields with the reviewed request and repeats
+the poisoning check as a postcondition. Backup best-effort import is recorded
+as governed `backup_import`; only identity-preserving restore paths use
+`exact_recovery`. The
+active mutation and its audit record share one savepoint, so validation or
+audit failure rolls back the whole activation. The preflight/CI bypass guard
+rejects newly introduced direct active-memory SQL or raw helper calls.
 
 ## Memory Scope (Project vs Global)
 

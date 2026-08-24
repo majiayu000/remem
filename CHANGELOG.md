@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.82` routes every reviewed production activation
+  through one transactional boundary with an immutable request ledger, bound
+  route/trust/provenance/poisoning/supersede evidence, replay validation, and a
+  preflight/CI guard that rejects new direct active-memory writes.
 - Staged source version `0.6.81` keeps production CurrentTruth winner-changing
   relations within one computed subject identity, so a cross-topic or
   cross-owner supersedes/refutes edge cannot suppress an unrelated valid

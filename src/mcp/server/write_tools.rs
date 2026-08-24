@@ -14,7 +14,10 @@ fn detect_branch_from_cwd() -> Option<String> {
 }
 
 fn map_save_memory_error(tool: &'static str, err: anyhow::Error) -> McpToolError {
-    if err.is::<service::SaveMemoryValidationError>() || err.is::<service::LocalCopyError>() {
+    if err.is::<service::SaveMemoryValidationError>()
+        || err.is::<service::LocalCopyError>()
+        || err.is::<service::SaveMemoryIdempotencyConflictError>()
+    {
         McpToolError::invalid_request(tool, err.to_string())
     } else {
         McpToolError::db_query(tool, err)
@@ -111,12 +114,14 @@ impl MemoryServer {
                     .clone()
                     .filter(|source| !source.trim().is_empty())
                     .or_else(|| Some("manual_save".to_string())),
-                acknowledge_pattern: params.acknowledge_pattern.clone(),
+                acknowledge_pattern: None,
+                idempotency_key: params.idempotency_key.clone(),
             };
-            let saved = service::save_memory_with_reference_time(
+            let saved = service::save_memory_from_with_reference_time(
                 conn,
                 &req,
                 params.reference_time_epoch,
+                service::SaveMemoryCaller::McpAgent,
             )
             .map_err(|e| {
                 crate::log::warn("mcp", &format!("save_memory failed: {}", e));

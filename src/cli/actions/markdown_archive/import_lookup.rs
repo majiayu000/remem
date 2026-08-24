@@ -90,8 +90,9 @@ pub(super) fn runtime_memory_id(
            AND topic_key = ?2
            AND COALESCE(scope, 'project') = ?3
            AND memory_type = ?4
-           AND COALESCE(owner_scope, ?5) = ?5
-           AND COALESCE(owner_key, ?6) = ?6
+           AND branch IS ?5
+           AND COALESCE(owner_scope, ?6) = ?6
+           AND COALESCE(owner_key, ?7) = ?7
          ORDER BY CASE status
              WHEN 'active' THEN 0
              WHEN 'stale' THEN 1
@@ -106,6 +107,7 @@ pub(super) fn runtime_memory_id(
             topic_key,
             doc.metadata.scope,
             doc.metadata.memory_type,
+            doc.metadata.branch,
             ownership.owner_scope,
             ownership.owner_key,
         ],
@@ -129,8 +131,9 @@ fn runtime_global_memory_id(
          WHERE topic_key = ?1
            AND COALESCE(scope, 'project') = 'global'
            AND memory_type = ?2
-           AND COALESCE(owner_scope, ?3) = ?3
-           AND COALESCE(owner_key, ?4) = ?4
+           AND branch IS ?3
+           AND COALESCE(owner_scope, ?4) = ?4
+           AND COALESCE(owner_key, ?5) = ?5
          ORDER BY CASE status
              WHEN 'active' THEN 0
              WHEN 'stale' THEN 1
@@ -139,10 +142,11 @@ fn runtime_global_memory_id(
            END,
            updated_at_epoch DESC,
            id DESC
-         LIMIT 1",
+        LIMIT 1",
         rusqlite::params![
             topic_key,
             doc.metadata.memory_type,
+            doc.metadata.branch,
             ownership.owner_scope,
             ownership.owner_key,
         ],

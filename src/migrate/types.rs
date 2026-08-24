@@ -430,6 +430,31 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "legacy_pending_bridge_state",
         sql: include_str!("../migrations/v085_legacy_pending_bridge_state.sql"),
     },
+    Migration {
+        version: 86,
+        name: "memory_activation_boundary",
+        sql: include_str!("../migrations/v086_memory_activation_boundary.sql"),
+    },
+    Migration {
+        version: 87,
+        name: "activation_result_trust",
+        sql: include_str!("../migrations/v087_activation_result_trust.sql"),
+    },
+    Migration {
+        version: 88,
+        name: "activation_legacy_trust",
+        sql: include_str!("../migrations/v088_activation_legacy_trust.sql"),
+    },
+    Migration {
+        version: 89,
+        name: "supplemental_local_copy_receipt",
+        sql: include_str!("../migrations/v089_supplemental_local_copy_receipt.sql"),
+    },
+    Migration {
+        version: 90,
+        name: "scope_cleanup_receipt",
+        sql: include_str!("../migrations/v090_scope_cleanup_receipt.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

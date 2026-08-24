@@ -26,6 +26,21 @@ fn validate_schema_invariants_is_clean_after_current_migrations() -> Result<()> 
 }
 
 #[test]
+fn schema_drift_reports_missing_v090_operation_replace_guard() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    run_migrations(&conn)?;
+    conn.execute_batch("DROP TRIGGER memory_operation_log_activation_no_replace;")?;
+
+    let errors = super::validate_schema_invariants(&conn)?;
+
+    assert!(errors.iter().any(|error| {
+        error.contains("v090_scope_cleanup_receipt")
+            && error.contains("trigger memory_operation_log_activation_no_replace")
+    }));
+    Ok(())
+}
+
+#[test]
 fn dry_run_pending_reports_v081_context_bundle_audit_schema_drift() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     create_current_schema_missing_versions(&conn, &[81])?;

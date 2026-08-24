@@ -59,10 +59,11 @@ following repository-local findings now have landed implementation evidence:
 | CurrentTruth was diagnostic-only | The safe v1 projection is used by the default Context Bundle/SessionStart path; #1019/#1029/#1032 and the #1037/#1038 cross-subject isolation shipped in v0.6.81. Breaking v2 work remains separate under #933. |
 | Retrieval Router was a plan-only concept | Explicit routed MCP search can apply plan effects, but complete plan-controlled execution and default-on evidence remain pending under `GH934/`. |
 
-These landed slices do not close the epic. The remaining material work is the
-single active-memory activation boundary and bypass guard, surface lifecycle
-guard, dependency-direction guard, unified decision/evidence matrix, outcome
-scorecard, and architecture/spec synchronization defined by this contract.
+These landed slices do not close the epic. The #1040 slice implements the
+single active-memory activation boundary and bypass guard for v0.6.82. The
+remaining material work is the surface lifecycle guard, dependency-direction
+guard, unified decision/evidence matrix, outcome scorecard, and final
+architecture/spec synchronization defined by this contract.
 
 ## Active-Memory Safety Boundary
 
@@ -87,11 +88,11 @@ Allowed activation routes are:
 
 | Route | Minimum rule |
 |---|---|
-| Supplemental manual save | Preserve MCP and REST direct save for both people and agents, scan the exact payload, and persist the real caller plus evidence-derived trust. An agent call or shared API token is not user attestation; any future human attestation surface is separately reviewed. |
+| Supplemental manual save | Preserve MCP and REST direct save for both people and agents, scan the exact payload, and persist the real caller plus evidence-derived trust. An agent call or shared API token is not user attestation; any future human attestation surface is separately reviewed. A semantic no-op must not weaken the existing row's trust or acknowledgement evidence, and an idempotent replay returns the original durable claim and local-copy outcomes rather than synthesizing a new response or timestamped path. Agent-facing save schemas do not expose human acknowledgement; quarantined content uses the reviewed candidate-governance surface. |
 | Governed candidate promotion | Candidate identity, evidence, trust, route, review decision, and supersede policy are mandatory. Auto-promotion remains limited by the current candidate contracts. |
 | Generated consolidation | Never activates directly. Clean output enters the same governed promotion boundary; risky output remains quarantined and cannot supersede active rows. |
 | Import or host-native memory | Enters review candidates unless a narrower current contract proves an equivalent digest-bound governed route. The current safe-add project pack import is such a route and remains supported. |
-| Migration or recovery | May restore an exact previously active row only with a versioned plan, immutable evidence binding, explicit acknowledgement where required, and idempotent apply. It cannot invent a new active claim. |
+| Migration or recovery | May restore an exact previously active row only with a versioned plan, immutable evidence binding, explicit acknowledgement where required, and idempotent apply. Backup evidence must cover the same consistent database snapshot that is read, and restored acknowledgement metadata must be complete and match the restored payload. It cannot invent a new active claim. |
 
 Direct SQL, test helpers, migration DDL, and compatibility writers are not new
 production activation routes. The implementation guard may allow them only in

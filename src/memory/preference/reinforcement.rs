@@ -204,8 +204,7 @@ pub(crate) fn reconcile_cleanup_preference(
         |row| row.get(0),
     )?;
     let current_predicates = preference_predicates(&current_text);
-    let current_compatible = crate::memory::operation::same_memory_text(&current_text, final_text)
-        || (!final_predicates.is_empty() && current_predicates == final_predicates);
+    let current_compatible = cleanup_preserves_candidate_provenance(&current_text, final_text);
     let current_override_compatible = !final_predicates.is_empty()
         && final_predicates
             .iter()
@@ -285,6 +284,12 @@ pub(crate) fn reconcile_cleanup_preference(
         )?;
     }
     Ok(())
+}
+
+pub(crate) fn cleanup_preserves_candidate_provenance(current_text: &str, final_text: &str) -> bool {
+    let final_predicates = preference_predicates(final_text);
+    crate::memory::operation::same_memory_text(current_text, final_text)
+        || (!final_predicates.is_empty() && preference_predicates(current_text) == final_predicates)
 }
 
 #[derive(Debug, Clone)]

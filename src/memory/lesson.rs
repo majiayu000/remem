@@ -1,5 +1,5 @@
-use anyhow::Result;
-use rusqlite::{params, Connection, OptionalExtension};
+use anyhow::{Context, Result};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 use super::promote::slugify_for_topic;
 use super::types::{map_memory_row_pub, Memory, MEMORY_COLS};
@@ -161,6 +161,68 @@ fn save_lesson_with_reference_time_and_outcome(
     reference_time_epoch: Option<i64>,
     outcome: LessonOutcomeUpdate,
 ) -> Result<i64> {
+    if !conn.is_autocommit() {
+        conn.execute(
+            "UPDATE memory_activation_requests
+             SET activation_id = activation_id WHERE 0",
+            [],
+        )
+        .context("serialize lesson save inside caller transaction")?;
+        return crate::memory::operation::with_operation_savepoint(conn, || {
+            save_lesson_with_reference_time_and_outcome_inner(
+                conn,
+                None,
+                req,
+                reference_time_epoch,
+                outcome,
+            )
+        });
+    }
+
+    let tx = Transaction::new_unchecked(conn, TransactionBehavior::Immediate)
+        .context("begin serialized lesson save")?;
+    match save_lesson_with_reference_time_and_outcome_inner(
+        &tx,
+        None,
+        req,
+        reference_time_epoch,
+        outcome,
+    ) {
+        Ok(id) => {
+            tx.commit().context("commit serialized lesson save")?;
+            Ok(id)
+        }
+        Err(error) => match tx.rollback() {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(error.context(format!(
+                "lesson save transaction rollback also failed: {rollback_error}"
+            ))),
+        },
+    }
+}
+
+pub(crate) fn save_lesson_with_reference_time_activated(
+    conn: &Connection,
+    permit: &crate::memory::activation::ActiveMemoryWritePermit,
+    req: &SaveLessonRequest<'_>,
+    reference_time_epoch: Option<i64>,
+) -> Result<i64> {
+    save_lesson_with_reference_time_and_outcome_inner(
+        conn,
+        Some(permit),
+        req,
+        reference_time_epoch,
+        LessonOutcomeUpdate::unknown(),
+    )
+}
+
+fn save_lesson_with_reference_time_and_outcome_inner(
+    conn: &Connection,
+    permit: Option<&crate::memory::activation::ActiveMemoryWritePermit>,
+    req: &SaveLessonRequest<'_>,
+    reference_time_epoch: Option<i64>,
+    outcome: LessonOutcomeUpdate,
+) -> Result<i64> {
     validate_outcome_update(outcome)?;
     let topic_key = req
         .topic_key
@@ -172,20 +234,38 @@ fn save_lesson_with_reference_time_and_outcome(
         req.scope
     };
     let existing_id = existing_lesson_id(conn, req.project, &topic_key, scope)?;
-    let id = crate::memory::insert_memory_full_with_reference_time(
-        conn,
-        req.session_id,
-        req.project,
-        Some(&topic_key),
-        req.title,
-        req.content,
-        "lesson",
-        req.files,
-        req.branch,
-        scope,
-        req.created_at_epoch,
-        reference_time_epoch,
-    )?;
+    let id = if let Some(permit) = permit {
+        crate::memory::store::insert_memory_full_activated(
+            conn,
+            permit,
+            req.session_id,
+            req.project,
+            Some(&topic_key),
+            req.title,
+            req.content,
+            "lesson",
+            req.files,
+            req.branch,
+            scope,
+            req.created_at_epoch,
+            reference_time_epoch,
+        )?
+    } else {
+        crate::memory::insert_memory_full_with_reference_time(
+            conn,
+            req.session_id,
+            req.project,
+            Some(&topic_key),
+            req.title,
+            req.content,
+            "lesson",
+            req.files,
+            req.branch,
+            scope,
+            req.created_at_epoch,
+            reference_time_epoch,
+        )?
+    };
     let metadata_exists = get_lesson_metadata(conn, id)?.is_some();
     upsert_lesson_metadata(
         conn,

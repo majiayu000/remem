@@ -1,3 +1,4 @@
+pub(crate) mod activation;
 pub mod claims;
 pub(crate) mod conflict_common;
 pub mod current_state;

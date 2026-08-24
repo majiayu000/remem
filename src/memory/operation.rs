@@ -335,17 +335,38 @@ fn existing_memory_for_direct_save(
     branch: Option<&str>,
     now_epoch: i64,
 ) -> Result<Option<ExistingMemoryMatch>> {
+    let (owner_scope, owner_key) = owner_for_scope(project, scope);
+    let target_project = (owner_scope == "repo").then_some(project);
     if let Some(topic_key) = topic_key.filter(|topic_key| !topic_key.is_empty()) {
         let existing = conn
             .query_row(
                 "SELECT id, title, content, status, files, branch, expires_at_epoch FROM memories
-                 WHERE project = ?1 AND topic_key = ?2 AND scope = ?3
-                   AND memory_type = ?4
+                 WHERE (?3 = 'global' OR project = ?1) AND topic_key = ?2 AND scope = ?3
+                   AND memory_type = ?4 AND branch IS ?5
+                   AND COALESCE(owner_scope,
+                       CASE WHEN scope = 'global' THEN 'user' ELSE 'repo' END) = ?6
+                   AND COALESCE(owner_key,
+                       CASE WHEN scope = 'global' THEN 'user:default' ELSE project END) = ?7
+                   AND CASE
+                       WHEN COALESCE(owner_scope,
+                           CASE WHEN scope = 'global' THEN 'user' ELSE 'repo' END) = 'repo'
+                       THEN COALESCE(target_project, project)
+                       ELSE target_project
+                   END IS ?8
                  ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END,
                           updated_at_epoch DESC,
                           id DESC
                  LIMIT 1",
-                params![project, topic_key, scope, memory_type],
+                params![
+                    project,
+                    topic_key,
+                    scope,
+                    memory_type,
+                    branch,
+                    owner_scope,
+                    owner_key,
+                    target_project,
+                ],
                 map_existing_memory,
             )
             .optional()
@@ -359,7 +380,6 @@ fn existing_memory_for_direct_save(
     }
 
     if let Some(state_key) = state_key {
-        let (owner_scope, owner_key) = owner_for_scope(project, scope);
         if let Some(id) = crate::memory::state_key::current_memory_id(
             conn,
             owner_scope,
@@ -369,10 +389,12 @@ fn existing_memory_for_direct_save(
             now_epoch,
         )? {
             if let Some(memory) = load_existing_memory(conn, id)? {
-                return Ok(Some(ExistingMemoryMatch {
-                    memory,
-                    source: ExistingMemoryMatchSource::StateKey,
-                }));
+                if memory.branch.as_deref() == branch {
+                    return Ok(Some(ExistingMemoryMatch {
+                        memory,
+                        source: ExistingMemoryMatchSource::StateKey,
+                    }));
+                }
             }
         }
     }
