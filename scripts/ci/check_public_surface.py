@@ -17,7 +17,9 @@ from surface_lifecycle_discovery import (
     ROW_STATUS,
     build_manifest,
     discover_all,
+    discover_cli_commands,
     discover_mcp_tools,
+    discover_product_row_statuses,
     lifecycle_record,
 )
 
@@ -123,6 +125,75 @@ def _declared_files(artifacts: dict[str, object]) -> set[str]:
     return declared
 
 
+def _production_rust_sources(root: Path) -> list[tuple[str, str]]:
+    sources: list[tuple[str, str]] = []
+    for path in sorted((root / "src").rglob("*.rs")):
+        relative = path.relative_to(root).as_posix()
+        if (
+            "tests" in path.parts
+            or path.name == "test_support.rs"
+            or path.stem.startswith("tests")
+            or path.stem.endswith("_tests")
+        ):
+            continue
+        text = path.read_text(encoding="utf-8")
+        sources.append((relative, text))
+    return sources
+
+
+def discover_recovery_writers(root: Path, guard: dict[str, object]) -> set[str]:
+    mode = guard.get("mode")
+    target = guard.get("target")
+    if not isinstance(target, str) or mode not in {"sql_table_insert", "summary_job_enqueue"}:
+        raise RuntimeError(f"unknown recovery writer guard {guard!r}")
+    writers: set[str] = set()
+    for relative, text in _production_rust_sources(root):
+        sql_pattern = rf"\bINSERT\s+(?:OR\s+[A-Z]+\s+)?INTO\s+{re.escape(target)}\b"
+        candidate = re.search(sql_pattern, text, re.I) if mode == "sql_table_insert" else re.search(
+            r"\bJobType::Summary\b|\bINSERT\s+(?:OR\s+[A-Z]+\s+)?INTO\s+jobs\b",
+            text,
+            re.I,
+        )
+        if not candidate:
+            continue
+        while match := re.search(r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\][^{;]*\{", text):
+            opening = text.find("{", match.start())
+            depth = 0
+            for index in range(opening, len(text)):
+                depth += text[index] == "{"
+                depth -= text[index] == "}"
+                if depth == 0:
+                    text = text[: match.start()] + " " * (index + 1 - match.start()) + text[index + 1 :]
+                    break
+            else:
+                raise RuntimeError(f"unclosed cfg(test) block in {relative}")
+        if mode == "sql_table_insert" and re.search(
+            sql_pattern,
+            text,
+            re.I,
+        ):
+            writers.add(relative)
+        if mode == "summary_job_enqueue":
+            for match in re.finditer(r"\benqueue[A-Za-z0-9_:]*\s*\(", text):
+                opening = text.find("(", match.start())
+                depth = 0
+                for index in range(opening, len(text)):
+                    depth += text[index] == "("
+                    depth -= text[index] == ")"
+                    if depth == 0:
+                        if re.search(r"\bJobType::Summary\b", text[opening + 1 : index]):
+                            writers.add(relative)
+                        break
+            literals = re.findall(r'"((?:\\.|[^"\\])*)"', text, re.S)
+            if any(
+                re.search(r"\bINSERT\s+(?:OR\s+[A-Z]+\s+)?INTO\s+jobs\b", literal, re.I)
+                and re.search(r"['\"]summary['\"]", literal, re.I)
+                for literal in literals
+            ):
+                writers.add(relative)
+    return writers
+
+
 def check_lifecycle_manifest(
     root: Path,
     manifest: dict[str, object],
@@ -133,11 +204,23 @@ def check_lifecycle_manifest(
     check_wording: bool = False,
 ) -> list[str]:
     errors: list[str] = []
+    canonical_statuses = ROW_STATUS
+    if check_wording:
+        try:
+            canonical_statuses = discover_product_row_statuses(root)
+        except RuntimeError as error:
+            errors.append(str(error))
+        if canonical_statuses != ROW_STATUS:
+            errors.append(
+                "GH969 PRODUCT canonical statuses contradict discovery metadata: "
+                f"product={canonical_statuses} code={ROW_STATUS}"
+            )
     records = manifest.get("records")
     if manifest.get("schema_version") != 1 or not isinstance(records, list):
         return ["surface manifest must have schema_version=1 and a records array"]
     ids: Counter[str] = Counter()
     rows: set[str] = set()
+    recovery_guards: dict[str, list[dict[str, object]]] = defaultdict(list)
     classified: dict[tuple[str, str], list[str]] = defaultdict(list)
     for index, raw_record in enumerate(records):
         if not isinstance(raw_record, dict):
@@ -160,12 +243,12 @@ def check_lifecycle_manifest(
         if status not in KNOWN_STATUSES:
             errors.append(f"{label}: unknown lifecycle status {status!r}")
         row_name = record.get("inventory_row")
-        if not isinstance(row_name, str) or row_name not in ROW_STATUS:
+        if not isinstance(row_name, str) or row_name not in canonical_statuses:
             errors.append(f"{label}: unknown or missing canonical inventory_row {row_name!r}")
         else:
             rows.add(row_name)
-            if status != ROW_STATUS[row_name]:
-                errors.append(f"{label}: status {status!r} contradicts canonical row {row_name}={ROW_STATUS[row_name]!r}")
+            if status != canonical_statuses[row_name]:
+                errors.append(f"{label}: status {status!r} contradicts canonical PRODUCT row {row_name}={canonical_statuses[row_name]!r}")
         if not isinstance(record.get("owner"), str) or not str(record.get("owner", "")).strip():
             errors.append(f"{label}: owner is required; assign the responsible source/spec owner")
         points = record.get("public_entry_points")
@@ -214,6 +297,9 @@ def check_lifecycle_manifest(
             writers = record.get("normal_writers")
             if not isinstance(writers, list) or writers:
                 errors.append(f"{label}: recovery-only record must declare normal_writers=[]; new-work writers are forbidden")
+            guard = record.get("writer_guard")
+            if isinstance(row_name, str) and isinstance(guard, dict):
+                recovery_guards[row_name].append(record)
         if kind in DISCOVERED_KINDS:
             if len(points) != 1:
                 errors.append(f"{label}: {kind} records classify exactly one reachable entry point")
@@ -259,10 +345,31 @@ def check_lifecycle_manifest(
         for classified_kind, entry in sorted(classified):
             if classified_kind == kind and entry not in actual_entries:
                 errors.append(f"stale {kind} manifest surface {entry!r}; remove it or restore the registered/exported entry")
-    expected_rows = set(ROW_STATUS) if required_rows is None else required_rows
+    expected_rows = set(canonical_statuses) if required_rows is None else required_rows
     missing_rows = sorted(expected_rows - rows)
     if missing_rows:
         errors.append(f"canonical PRODUCT inventory rows missing from manifest: {', '.join(missing_rows)}")
+
+    recovery_rows = {
+        row_name for row_name, status in canonical_statuses.items()
+        if status == "recovery-only" and row_name in rows
+    }
+    for row_name in sorted(recovery_rows):
+        guards = recovery_guards.get(row_name, [])
+        if len(guards) != 1:
+            errors.append(f"recovery-only row {row_name!r} requires exactly one implementation writer_guard")
+            continue
+        guard = guards[0].get("writer_guard")
+        assert isinstance(guard, dict)
+        try:
+            actual_writers = discover_recovery_writers(root, guard)
+        except RuntimeError as error:
+            errors.append(f"recovery-only row {row_name!r}: {error}")
+            continue
+        if actual_writers:
+            errors.append(
+                f"recovery-only row {row_name!r} has implementation writers forbidden by PRODUCT: {sorted(actual_writers)}"
+            )
 
     if check_wording:
         readme = (root / "README.md").read_text(encoding="utf-8")
@@ -289,15 +396,29 @@ def lifecycle_self_test() -> int:
         (root / "src/api").mkdir(parents=True)
         (root / "src/cli").mkdir(parents=True)
         (root / "docs/specs/GH969").mkdir(parents=True)
-        (root / "docs/specs/GH969/PRODUCT.md").write_text("fixture", encoding="utf-8")
+        (root / "docs/specs/GH969/PRODUCT.md").write_text(
+            "## Canonical Surface Inventory\n\n| Inventory row | Entry | Owner | Status |\n"
+            "|---|---|---|---|\n| `fixture-row` | fixture | fixture | `production` |\n"
+            "\n## Decision Gates\n",
+            encoding="utf-8",
+        )
         (root / "Cargo.toml").write_text('[features]\ndefault = ["eval"]\neval = []\n', encoding="utf-8")
         (root / "src/mcp/server/tool_contracts.rs").write_text(
             'struct ToolContract; const CONTRACTS: [ToolContract; 1] = [json_object("search", "Search", true, false, true, true, Schema::Search)\n];\n', encoding="utf-8"
         )
-        (root / "src/api/server.rs").write_text('fn build_router() { Router::new().route("/api/v1/health", get(health).post(check)); }\n', encoding="utf-8")
+        (root / "src/api/server.rs").write_text(
+            'fn build_router() { Router::new().merge(public_routes()).nest("/api/v1/admin", admin_routes()) }\n'
+            'fn public_routes() { Router::new().route("/health", get(health).post(check)) }\n'
+            'fn admin_routes() { Router::new().route("/check", post(check)) }\n',
+            encoding="utf-8",
+        )
         (root / "src/cli/types.rs").write_text(
-            '#[derive(Subcommand)] enum Commands { Context, Admin { #[command(subcommand)] action: AdminAction } }\n'
-            '#[derive(Subcommand)] enum AdminAction { Backup }\n', encoding="utf-8"
+            '#[derive(Subcommand)] enum Commands { '
+            '#[command(visible_alias = "ctx")] Context, '
+            '#[cfg(feature = "eval")] Eval, #[cfg(feature = "off")] Hidden, '
+            'Admin { #[command(subcommand)] action: AdminAction } }\n'
+            '#[derive(Subcommand)] enum AdminAction { #[command(alias = "save")] Backup }\n',
+            encoding="utf-8",
         )
         doc_root = root / "doc/remem"
         (doc_root / "api").mkdir(parents=True)
@@ -305,15 +426,51 @@ def lifecycle_self_test() -> int:
             '<a class="mod" href="api/index.html">api</a>', encoding="utf-8"
         )
         (doc_root / "api/index.html").write_text("module", encoding="utf-8")
-        (doc_root / "all.html").write_text('<ul class="all-items"><li><a href="api/fn.build_router.html">api::build_router</a></li></ul>', encoding="utf-8")
+        (doc_root / "all.html").write_text(
+            '<ul class="all-items"><li><a href="api/struct.RouterInfo.html">api::RouterInfo</a></li></ul>',
+            encoding="utf-8",
+        )
+        (doc_root / "api/struct.RouterInfo.html").write_text(
+            '<span id="structfield.status"></span><div id="implementations-list">'
+            '<section id="method.health"></section></div><h2 id="trait-implementations"></h2>'
+            '<section id="method.clone" class="trait-impl"></section>',
+            encoding="utf-8",
+        )
         discovered = discover_all(root, doc_root=doc_root)
         expected = {
-            "remem context", "remem admin", "remem admin backup",
-            "remem help", "remem admin help",
+            "remem context", "remem ctx", "remem eval", "remem admin",
+            "remem admin backup", "remem admin save", "remem help", "remem admin help",
         }
-        if discovered["cli_command"] != expected or discovered["rest_route"] != {"GET /api/v1/health", "POST /api/v1/health"}:
+        expected_rust = {
+            "remem::api", "remem::api::RouterInfo", "remem::api::RouterInfo::status",
+            "remem::api::RouterInfo::health",
+        }
+        expected_rest = {"GET /health", "POST /health", "POST /api/v1/admin/check"}
+        if (
+            discovered["cli_command"] != expected
+            or discovered["rest_route"] != expected_rest
+            or not expected_rust.issubset(discovered["rust_export"])
+            or "remem::api::RouterInfo::clone" in discovered["rust_export"]
+        ):
             print(f"surface discovery self-test failed: {discovered}", file=sys.stderr)
             return 1
+        (root / "Cargo.toml").write_text('[features]\ndefault = []\neval = []\n', encoding="utf-8")
+        if "remem eval" in discover_cli_commands(root):
+            sys.stderr.write("default-feature CLI discovery retained disabled eval command\n")
+            return 1
+        (root / "Cargo.toml").write_text('[features]\ndefault = ["eval"]\neval = []\n', encoding="utf-8")
+        if discover_product_row_statuses(root) != {"fixture-row": "production"}:
+            sys.stderr.write("PRODUCT inventory status discovery self-test failed\n")
+            return 1
+        (root / "src/runtime.rs").write_text(
+            'fn write(conn: &Connection) { conn.execute("INSERT INTO pending_observations DEFAULT VALUES", []); }',
+            encoding="utf-8",
+        )
+        writer_guard = {"mode": "sql_table_insert", "target": "pending_observations"}
+        if discover_recovery_writers(root, writer_guard) != {"src/runtime.rs"}:
+            sys.stderr.write("recovery writer discovery self-test failed\n")
+            return 1
+        (root / "src/runtime.rs").write_text("fn read() {}", encoding="utf-8")
         records = [
             lifecycle_record(f"{kind}:{entry}", kind, entry, "mcp-production" if kind == "mcp_tool" else "rust-library" if kind == "rust_export" else "rest-api" if kind == "rest_route" else "cli-production" if kind == "cli_command" else "deterministic-eval")
             for kind, entries in discovered.items() for entry in entries
@@ -322,7 +479,8 @@ def lifecycle_self_test() -> int:
             for spec in item["spec_refs"]:
                 spec_path = root / str(spec)
                 spec_path.parent.mkdir(parents=True, exist_ok=True)
-                spec_path.write_text("fixture", encoding="utf-8")
+                if not spec_path.exists():
+                    spec_path.write_text("fixture", encoding="utf-8")
         manifest: dict[str, object] = {"schema_version": 1, "records": records}
         positive_errors = check_lifecycle_manifest(
             root, manifest, discovered, today=date(2026, 8, 24), required_rows=set()

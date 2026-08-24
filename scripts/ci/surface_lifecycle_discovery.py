@@ -49,7 +49,7 @@ def _matching(text: str, opening: int, left: str, right: str) -> int | None:
         elif char == "/" and following == "*":
             block_depth = 1
             index += 1
-        elif char in {'"', "'"}:
+        elif char == '"' or (char == "'" and re.match(r"'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f_]+\}|.)|[^\\'])'", text[index:])):
             quote = char
         elif char == left:
             depth += 1
@@ -97,7 +97,7 @@ def _top_level_parts(text: str, separator: str = ",") -> list[str]:
         elif char == "/" and following == "*":
             block_depth = 1
             index += 1
-        elif char in {'"', "'"}:
+        elif char == '"' or (char == "'" and re.match(r"'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f_]+\}|.)|[^\\'])'", text[index:])):
             quote = char
         elif char in depths:
             depths[char] += 1
@@ -118,7 +118,7 @@ class _AllItemsParser(HTMLParser):
         self.list_depth = 0
         self.href: str | None = None
         self.anchor_text: list[str] = []
-        self.items: list[str] = []
+        self.items: list[tuple[str, str]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
@@ -139,8 +139,8 @@ class _AllItemsParser(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         if self.in_all_items and tag == "a" and self.href is not None:
             item = "".join(self.anchor_text).strip()
-            if item:
-                self.items.append(item)
+            if item and self.href:
+                self.items.append((item, self.href))
             self.href = None
         if self.in_all_items and tag == "ul":
             self.list_depth -= 1
@@ -171,7 +171,44 @@ def discover_rust_exports(root: Path, *, doc_root: Path | None = None) -> set[st
     if not parser.items:
         raise RuntimeError(f"rustdoc public-item index has no all-items list: {all_items}")
 
-    exports = {f"remem::{item}" for item in parser.items}
+    exports = {f"remem::{item}" for item, _ in parser.items}
+    for item, href in parser.items:
+        page = (all_items.parent / href).resolve()
+        try:
+            page.relative_to(doc_root.resolve())
+        except ValueError as exc:
+            raise RuntimeError(f"rustdoc item link escapes crate docs: {href}") from exc
+        if not page.is_file():
+            raise RuntimeError(f"rustdoc linked public item page is missing: {page}")
+        page_text = page.read_text(encoding="utf-8")
+        associated: set[str] = set()
+        for category, name in re.findall(
+            r'id="(structfield|variant|tymethod)\.([A-Za-z_][A-Za-z0-9_.-]*)"',
+            page_text,
+        ):
+            del category
+            associated.add(name.replace(".", "::").split("-")[0])
+        implementations = re.search(
+            r'id="implementations-list"(?P<body>.*?)(?:id="trait-implementations"|$)',
+            page_text,
+            re.S,
+        )
+        if implementations:
+            for category, name in re.findall(
+                r'id="(method|associatedconstant|associatedtype)\.([A-Za-z_][A-Za-z0-9_-]*)"',
+                implementations.group("body"),
+            ):
+                del category
+                associated.add(name.split("-")[0])
+        if "/trait." in href or href.rsplit("/", 1)[-1].startswith("trait."):
+            declarations = page_text.split('id="implementations"', 1)[0]
+            for category, name in re.findall(
+                r'id="(associatedconstant|associatedtype)\.([A-Za-z_][A-Za-z0-9_-]*)"',
+                declarations,
+            ):
+                del category
+                associated.add(name.split("-")[0])
+        exports.update(f"remem::{item}::{name}" for name in associated)
     root_index = doc_root / "index.html"
     queue = [root_index]
     visited: set[Path] = set()
@@ -222,36 +259,104 @@ def discover_mcp_tools(root: Path) -> tuple[set[str], dict[str, str]]:
     return set(tools), tools
 
 
-def discover_rest_routes(root: Path) -> set[str]:
-    path = root / "src/api/server.rs"
-    text = path.read_text(encoding="utf-8")
-    routes: set[str] = set()
+def _method_calls(text: str, method_name: str) -> list[list[str]]:
+    calls: list[list[str]] = []
     cursor = 0
     while True:
-        opening = text.find(".route(", cursor)
+        opening = text.find(f".{method_name}(", cursor)
         if opening < 0:
             break
-        opening += len(".route")
+        opening += len(method_name) + 1
         closing = _matching(text, opening, "(", ")")
         if closing is None:
-            raise RuntimeError(f"unclosed .route call in {path}")
-        arguments = _top_level_parts(text[opening + 1 : closing])
-        if len(arguments) < 2:
-            raise RuntimeError(f"route call has fewer than two arguments in {path}")
-        path_match = re.fullmatch(r'\s*"([^\"]+)"\s*', arguments[0])
-        if not path_match:
-            raise RuntimeError(f"route path is not a literal in {path}: {arguments[0].strip()}")
-        methods = {
-            method.upper()
-            for method in HTTP_METHODS
-            if re.search(rf"\b{method}\s*\(", arguments[1])
-        }
-        if not methods:
-            raise RuntimeError(f"route has no recognized HTTP method in {path}: {arguments[1].strip()}")
-        routes.update(f"{method} {path_match.group(1)}" for method in methods)
+            raise RuntimeError(f"unclosed .{method_name} call")
+        calls.append(_top_level_parts(text[opening + 1 : closing]))
         cursor = closing + 1
+    return calls
+
+
+def _rust_functions(root: Path) -> dict[str, tuple[Path, str]]:
+    functions: dict[str, tuple[Path, str]] = {}
+    for path in sorted((root / "src/api").rglob("*.rs")):
+        if "tests" in path.parts or path.name == "tests.rs":
+            continue
+        raw_text = path.read_text(encoding="utf-8")
+        if not any(marker in raw_text for marker in ("Router::", "Router<", ".route(", ".nest(", ".merge(")):
+            continue
+        text = _mask_comments(raw_text)
+        for match in re.finditer(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", text):
+            arguments_end = _matching(text, match.end() - 1, "(", ")")
+            if arguments_end is None:
+                raise RuntimeError(f"unclosed function arguments in {path}")
+            body_start = text.find("{", arguments_end)
+            semicolon = text.find(";", arguments_end)
+            if body_start < 0 or 0 <= semicolon < body_start:
+                continue
+            body_end = _matching(text, body_start, "{", "}")
+            if body_end is None:
+                raise RuntimeError(f"unclosed function body in {path}")
+            name = match.group(1)
+            if name in functions:
+                raise RuntimeError(f"ambiguous API router helper function {name!r}")
+            functions[name] = (path, text[body_start + 1 : body_end])
+    return functions
+
+
+def _router_helper(argument: str, *, path: Path, method: str) -> str:
+    helper = re.fullmatch(
+        r"\s*(?:[A-Za-z_][A-Za-z0-9_]*::)*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*",
+        argument,
+    )
+    if not helper:
+        raise RuntimeError(
+            f".{method} in {path} must reference a named router helper so lifecycle discovery cannot silently drop routes: {argument.strip()}"
+        )
+    return helper.group("name")
+
+
+def discover_rest_routes(root: Path) -> set[str]:
+    functions = _rust_functions(root)
+    if "build_router" not in functions:
+        raise RuntimeError("cannot resolve API build_router")
+    routes: set[str] = set()
+
+    def visit(name: str, prefix: str, ancestors: tuple[str, ...]) -> None:
+        if name in ancestors:
+            raise RuntimeError(f"recursive Axum router graph: {' -> '.join((*ancestors, name))}")
+        if name not in functions:
+            raise RuntimeError(f"Axum router helper {name!r} is referenced but not discovered")
+        path, body = functions[name]
+        for arguments in _method_calls(body, "route"):
+            if len(arguments) < 2:
+                raise RuntimeError(f"route call has fewer than two arguments in {path}")
+            path_match = re.fullmatch(r'\s*"([^\"]+)"\s*', arguments[0])
+            if not path_match:
+                raise RuntimeError(f"route path is not a literal in {path}: {arguments[0].strip()}")
+            methods = {
+                method.upper()
+                for method in HTTP_METHODS
+                if re.search(rf"\b{method}\s*\(", arguments[1])
+            }
+            if not methods:
+                raise RuntimeError(f"route has no recognized HTTP method in {path}: {arguments[1].strip()}")
+            route_path = prefix.rstrip("/") + "/" + path_match.group(1).lstrip("/")
+            routes.update(f"{method} {route_path}" for method in methods)
+        for arguments in _method_calls(body, "merge"):
+            if len(arguments) != 1:
+                raise RuntimeError(f"merge call must have one router argument in {path}")
+            visit(_router_helper(arguments[0], path=path, method="merge"), prefix, (*ancestors, name))
+        for arguments in _method_calls(body, "nest"):
+            if len(arguments) != 2:
+                raise RuntimeError(f"nest call must have a prefix and router argument in {path}")
+            path_match = re.fullmatch(r'\s*"([^\"]+)"\s*', arguments[0])
+            if not path_match:
+                raise RuntimeError(f"nest prefix is not a literal in {path}: {arguments[0].strip()}")
+            nested_prefix = prefix.rstrip("/") + "/" + path_match.group(1).strip("/")
+            visit(_router_helper(arguments[1], path=path, method="nest"), nested_prefix, (*ancestors, name))
+
+    visit("build_router", "", ())
     if not routes:
-        raise RuntimeError(f"no REST routes discovered in {path}")
+        raise RuntimeError("no REST routes discovered from build_router")
     return routes
 
 
@@ -283,7 +388,7 @@ def _mask_comments(text: str) -> str:
                 escaped = True
             elif char == quote:
                 quote = None
-        elif char in {'"', "'"}:
+        elif char == '"' or (char == "'" and re.match(r"'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f_]+\}|.)|[^\\'])'", text[index:])):
             quote = char
         elif char == "/" and following == "/":
             end = text.find("\n", index + 2)
@@ -315,8 +420,53 @@ def _kebab_case(name: str) -> str:
     return value.replace("_", "-").lower()
 
 
-def _subcommand_enums(root: Path) -> dict[str, list[tuple[str, str | None]]]:
-    enums: dict[str, list[tuple[str, str | None]]] = {}
+def _cfg_enabled(expression: str, features: set[str]) -> bool:
+    value = expression.strip()
+    feature = re.fullmatch(r'feature\s*=\s*"([^"]+)"', value)
+    if feature:
+        return feature.group(1) in features
+    call = re.fullmatch(r"(all|any|not)\s*\((.*)\)", value, re.S)
+    if call:
+        values = [_cfg_enabled(part, features) for part in _top_level_parts(call.group(2))]
+        if call.group(1) == "all":
+            return all(values)
+        if call.group(1) == "any":
+            return any(values)
+        if len(values) != 1:
+            raise RuntimeError(f"cfg(not(...)) requires one predicate: {expression}")
+        return not values[0]
+    raise RuntimeError(f"unsupported CLI cfg predicate {expression!r}; discovery must fail closed")
+
+
+def _leading_attributes(raw_variant: str) -> list[str]:
+    value = _mask_comments(raw_variant).lstrip()
+    attributes: list[str] = []
+    while value.startswith("#"):
+        opening = value.find("[")
+        closing = _matching(value, opening, "[", "]") if opening >= 0 else None
+        if closing is None:
+            raise RuntimeError(f"unclosed Clap variant attribute: {raw_variant.strip()}")
+        attributes.append(value[opening + 1 : closing].strip())
+        value = value[closing + 1 :].lstrip()
+    return attributes
+
+
+def _command_names(variant: str, attributes: list[str]) -> tuple[str, ...]:
+    command_attributes = [item for item in attributes if re.match(r"command\s*\(", item)]
+    combined = "\n".join(command_attributes)
+    override = re.search(r'\bname\s*=\s*"([^"]+)"', combined)
+    names = [override.group(1) if override else _kebab_case(variant)]
+    names.extend(
+        match.group(1)
+        for match in re.finditer(r'\b(?:visible_alias|alias)\s*=\s*"([^"]+)"', combined)
+    )
+    for match in re.finditer(r"\b(?:visible_aliases|aliases)\s*=\s*\[([^]]*)\]", combined, re.S):
+        names.extend(re.findall(r'"([^"]+)"', match.group(1)))
+    return tuple(dict.fromkeys(names))
+
+
+def _subcommand_enums(root: Path, features: set[str]) -> dict[str, list[tuple[tuple[str, ...], str | None]]]:
+    enums: dict[str, list[tuple[tuple[str, ...], str | None]]] = {}
     for path in sorted((root / "src/cli").glob("*.rs")):
         text = path.read_text(encoding="utf-8")
         enum_re = re.compile(
@@ -330,21 +480,23 @@ def _subcommand_enums(root: Path) -> dict[str, list[tuple[str, str | None]]]:
             closing = _matching(text, opening, "{", "}")
             if closing is None:
                 raise RuntimeError(f"unclosed Subcommand enum {match.group('name')} in {path}")
-            variants: list[tuple[str, str | None]] = []
+            variants: list[tuple[tuple[str, ...], str | None]] = []
             for raw_variant in _top_level_parts(text[opening + 1 : closing]):
                 if not raw_variant.strip():
+                    continue
+                attributes = _leading_attributes(raw_variant)
+                cfgs = [
+                    cfg_match.group(1)
+                    for attribute in attributes
+                    if (cfg_match := re.fullmatch(r"cfg\s*\((.*)\)", attribute, re.S))
+                ]
+                if not all(_cfg_enabled(cfg, features) for cfg in cfgs):
                     continue
                 visible = _strip_leading_attributes(_mask_comments(raw_variant))
                 variant_match = re.match(r"([A-Za-z_][A-Za-z0-9_]*)", visible)
                 if not variant_match:
                     continue
                 variant = variant_match.group(1)
-                override = re.search(
-                    r"#\s*\[\s*command\s*\([^]]*?\bname\s*=\s*\"([^\"]+)\"",
-                    raw_variant,
-                    re.S,
-                )
-                command_name = override.group(1) if override else _kebab_case(variant)
                 child: str | None = None
                 child_match = re.search(
                     r"#\s*\[\s*command\s*\(\s*subcommand\s*\)\s*\]"
@@ -355,13 +507,13 @@ def _subcommand_enums(root: Path) -> dict[str, list[tuple[str, str | None]]]:
                 )
                 if child_match:
                     child = child_match.group("type").split("::")[-1]
-                variants.append((command_name, child))
+                variants.append((_command_names(variant, attributes), child))
             enums[match.group("name")] = variants
     return enums
 
 
 def discover_cli_commands(root: Path) -> set[str]:
-    enums = _subcommand_enums(root)
+    enums = _subcommand_enums(root, discover_default_features(root))
     if "Commands" not in enums:
         raise RuntimeError("cannot resolve root Clap Commands enum under src/cli")
     commands: set[str] = set()
@@ -372,11 +524,12 @@ def discover_cli_commands(root: Path) -> set[str]:
         if enum_name not in enums:
             raise RuntimeError(f"Clap subcommand enum {enum_name} is referenced but not discovered")
         commands.add("remem " + " ".join((*prefix, "help")))
-        for command, child in enums[enum_name]:
-            path = (*prefix, command)
-            commands.add("remem " + " ".join(path))
-            if child:
-                visit(child, path, (*ancestors, enum_name))
+        for command_names, child in enums[enum_name]:
+            for command in command_names:
+                path = (*prefix, command)
+                commands.add("remem " + " ".join(path))
+                if child:
+                    visit(child, path, (*ancestors, enum_name))
 
     visit("Commands", (), ())
     return commands
@@ -389,6 +542,27 @@ def discover_default_features(root: Path) -> set[str]:
     if not isinstance(defaults, list) or not all(isinstance(item, str) for item in defaults):
         raise RuntimeError("Cargo.toml [features].default must be a string array")
     return set(defaults)
+
+
+def discover_product_row_statuses(root: Path) -> dict[str, str]:
+    product = (root / "docs/specs/GH969/PRODUCT.md").read_text(encoding="utf-8")
+    section = product.split("## Canonical Surface Inventory", 1)
+    if len(section) != 2:
+        raise RuntimeError("GH969 PRODUCT is missing Canonical Surface Inventory")
+    table = section[1].split("## Decision Gates", 1)[0]
+    statuses: dict[str, str] = {}
+    for line in table.splitlines():
+        columns = [column.strip() for column in line.strip().strip("|").split("|")]
+        if len(columns) < 4 or not columns[0].startswith("`"):
+            continue
+        row_name = columns[0].strip("`")
+        status = columns[3].strip("`")
+        if row_name in statuses:
+            raise RuntimeError(f"duplicate GH969 PRODUCT inventory row {row_name!r}")
+        statuses[row_name] = status
+    if not statuses:
+        raise RuntimeError("GH969 PRODUCT canonical table has no keyed lifecycle rows")
+    return statuses
 
 
 def discover_all(root: Path, *, doc_root: Path | None = None) -> dict[str, set[str]]:
@@ -550,6 +724,10 @@ def build_manifest(root: Path, *, doc_root: Path | None = None) -> dict[str, obj
     ]
     for record_id, kind, entry, row_name in specials:
         recovery = {"normal_writers": [], "caller_paths": [entry]} if ROW_STATUS[row_name] == "recovery-only" else {}
+        if record_id == "runtime:legacy-pending-idle-bridge":
+            recovery["writer_guard"] = {"mode": "sql_table_insert", "target": "pending_observations"}
+        if record_id == "runtime:historical-summary":
+            recovery["writer_guard"] = {"mode": "summary_job_enqueue", "target": "summary"}
         records.append(lifecycle_record(record_id, kind, entry, row_name, **recovery))
     roots = ["eval/cross-host", "docs/specs/GH935"]
     records.append(lifecycle_record("offline:cross-host-harness", "offline_harness", roots[0], "cross-host-harness", artifacts=_offline_inventory(root, roots)))
