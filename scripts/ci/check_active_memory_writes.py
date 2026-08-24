@@ -128,7 +128,7 @@ EXPECTED_ALLOWED_FINDINGS = {
 
 INSERT_RE = re.compile(r"\bINSERT\s+(?:OR\s+\w+\s+)?INTO\s+memories\b", re.I)
 ACTIVE_UPDATE_RE = re.compile(
-    r'''\bUPDATE\s+memories\b(?:(?!\bWHERE\b).)*?\bstatus\s*=\s*(?:[\"']active[\"']|\?\d*|:\w+)''',
+    r'''\bUPDATE\s+memories\b(?:(?!\bWHERE\b).)*?\bSET\b(?:(?!\bWHERE\b|\bstatus\s*=).)*?\bstatus\s*=\s*(?:[\"']active[\"']|\?\d*|:\w+|CASE\b(?:(?!\bWHERE\b|,).)*?\b(?:THEN|ELSE)\s*\(*\s*[\"']active[\"'])''',
     re.I | re.S,
 )
 RAW_HELPER_RE = re.compile(r"\binsert_memory_full_activated\b")
@@ -527,6 +527,9 @@ def self_test() -> int:
             'fn bypass() {\n'
             ' let _ = concat!("INSERT INTO ", "memories (status) VALUES (\'active\')");\n'
             ' let _ = "UPDATE /* hidden */ memories SET status = \\"active\\" WHERE id = ?1";\n'
+            ' let _ = "UPDATE memories SET status = CASE WHEN ?1 THEN \'active\' ELSE status END WHERE id = ?2";\n'
+            ' let _ = "UPDATE memories SET status = \'archived\', note = \'active\' WHERE id = ?1";\n'
+            ' let _ = "UPDATE memories SET status = CASE WHEN status = \'active\' THEN \'archived\' ELSE \'stale\' END WHERE id = ?1";\n'
             ' raw_write();\n'
             ' let writer = crate::writer::insert_memory_full_activated; writer();\n'
             ' let grouped = (crate::writer::insert_memory_full_activated); grouped();\n'
@@ -690,9 +693,9 @@ def self_test() -> int:
         dynamic_errors = [error for error in errors if "src/dynamic.rs" in error]
         commented_errors = [error for error in errors if "src/commented.rs" in error]
         if (
-            len(errors) != 18
+            len(errors) != 19
             or len(direct_errors) != 2
-            or len(dynamic_errors) != 15
+            or len(dynamic_errors) != 16
             or len(commented_errors) != 1
         ):
             print(f"active-memory guard self-test failed: {errors}", file=sys.stderr)
