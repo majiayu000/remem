@@ -371,15 +371,19 @@ so parameter, return, public-field, and enum-payload changes are compatibility
 drift rather than invisible path-preserving edits. Same-named inherent methods
 retain Rustdoc's disambiguator instead of overwriting one another. Platform-cfg
 discovery starts at `src/lib.rs`, follows publicly reachable external modules,
-and uses the same declaration-only rule (including public associated items), so
-private module/function-body edits do not create false compatibility drift; the
-target-only category may be empty when no such export is reachable. MCP tool
+resolves target-gated public re-exports through private modules to the exported
+definitions, and uses the same declaration-only rule (including public
+associated items), so private module/function-body edits do not create false
+compatibility drift; the target-only category may be empty when no such export
+is reachable. MCP tool
 identities fingerprint each normalized served `tools/list` input/output schema. Rustdoc
 surface generation is pinned to Rust 1.97.0 in CI and rejects other local
 versions, preventing renderer-version-only churn.
 REST route identities similarly include normalized serde request/response
 declarations (including manual `Serialize`/`Deserialize` implementations),
-constructed JSON shapes, and their named handler signature;
+reachable external producer result types, constructed JSON shapes, and their
+named handler signature; inline `cfg(test)` declarations are masked before
+fingerprinting;
 reachable `route_service`, `nest_service`, and fallback registrations are
 rejected until discovery supports them. Production default evidence also binds
 CurrentTruth projection, fail-closed availability, shadow attachment, and
@@ -388,6 +392,12 @@ currently have reviewed default-feature mappings; any new default feature fails
 generation until it receives a canonical lifecycle row.
 The deprecated legacy-events row is additionally bound to both transactional
 projection writers, their conflict-safe SQL, and the active capture callers.
+Recovery-only SQL writer discovery also reconstructs `concat!` string literals,
+so composing a retired-table insert cannot bypass the normal-writer check.
+Generated caller, spec, evaluation, and rollback fields must exactly match their
+reviewed row details. Offline harness records must use the exact reviewed command,
+and the lifecycle guard executes that command in CI/preflight rather than merely
+checking that its script is inventoried.
 
 The CI guard must reject:
 

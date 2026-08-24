@@ -7,6 +7,7 @@ import argparse
 import copy
 import json
 import re
+import subprocess
 import sys
 import tempfile
 from collections import Counter, defaultdict
@@ -14,6 +15,7 @@ from datetime import date
 from pathlib import Path
 
 from surface_lifecycle_discovery import (
+    ROW_DETAILS,
     ROW_STATUS,
     build_manifest,
     discover_all,
@@ -28,6 +30,8 @@ from surface_lifecycle_evidence import (
     build_caller_guard,
     build_default_guard,
     discover_product_rows,
+    discover_recovery_writers,
+    execute_offline_check,
     offline_categories,
 )
 
@@ -131,75 +135,6 @@ def _string_list(value: object) -> bool:
     return bool(value) and _string_array(value)
 
 
-def _production_rust_sources(root: Path) -> list[tuple[str, str]]:
-    sources: list[tuple[str, str]] = []
-    for path in sorted((root / "src").rglob("*.rs")):
-        relative = path.relative_to(root).as_posix()
-        if (
-            "tests" in path.parts
-            or path.name == "test_support.rs"
-            or path.stem.startswith("tests")
-            or path.stem.endswith("_tests")
-        ):
-            continue
-        text = path.read_text(encoding="utf-8")
-        sources.append((relative, text))
-    return sources
-
-
-def discover_recovery_writers(root: Path, guard: dict[str, object]) -> set[str]:
-    mode = guard.get("mode")
-    target = guard.get("target")
-    if not isinstance(target, str) or mode not in {"sql_table_insert", "summary_job_enqueue"}:
-        raise RuntimeError(f"unknown recovery writer guard {guard!r}")
-    writers: set[str] = set()
-    for relative, text in _production_rust_sources(root):
-        sql_pattern = rf"\bINSERT\s+(?:OR\s+[A-Z]+\s+)?INTO\s+{re.escape(target)}\b"
-        candidate = re.search(sql_pattern, text, re.I) if mode == "sql_table_insert" else re.search(
-            r"\bJobType::Summary\b|\bINSERT\s+(?:OR\s+[A-Z]+\s+)?INTO\s+jobs\b",
-            text,
-            re.I,
-        )
-        if not candidate:
-            continue
-        while match := re.search(r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\][^{;]*\{", text):
-            opening = text.find("{", match.start())
-            depth = 0
-            for index in range(opening, len(text)):
-                depth += text[index] == "{"
-                depth -= text[index] == "}"
-                if depth == 0:
-                    text = text[: match.start()] + " " * (index + 1 - match.start()) + text[index + 1 :]
-                    break
-            else:
-                raise RuntimeError(f"unclosed cfg(test) block in {relative}")
-        if mode == "sql_table_insert" and re.search(
-            sql_pattern,
-            text,
-            re.I,
-        ):
-            writers.add(relative)
-        if mode == "summary_job_enqueue":
-            for match in re.finditer(r"\benqueue[A-Za-z0-9_:]*\s*\(", text):
-                opening = text.find("(", match.start())
-                depth = 0
-                for index in range(opening, len(text)):
-                    depth += text[index] == "("
-                    depth -= text[index] == ")"
-                    if depth == 0:
-                        if re.search(r"\bJobType::Summary\b", text[opening + 1 : index]):
-                            writers.add(relative)
-                        break
-            literals = re.findall(r'"((?:\\.|[^"\\])*)"', text, re.S)
-            if any(
-                re.search(r"\bINSERT\s+(?:OR\s+[A-Z]+\s+)?INTO\s+jobs\b", literal, re.I)
-                and re.search(r"['\"]summary['\"]", literal, re.I)
-                for literal in literals
-            ):
-                writers.add(relative)
-    return writers
-
-
 def check_lifecycle_manifest(
     root: Path,
     manifest: dict[str, object],
@@ -269,6 +204,16 @@ def check_lifecycle_manifest(
             errors.append(f"{label}: unknown or missing canonical inventory_row {row_name!r}")
         else:
             rows.add(row_name)
+            _, expected_callers, _, expected_specs, expected_evals, expected_rollback = ROW_DETAILS[row_name]
+            expanded = {
+                "real_callers": expected_callers,
+                "spec_refs": [*expected_specs, "docs/specs/GH969/PRODUCT.md"],
+                "eval_commands": expected_evals,
+                "rollback": expected_rollback,
+            }
+            for field, expected in expanded.items():
+                if record.get(field) != expected:
+                    errors.append(f"{label}: {field} contradicts reviewed lifecycle row {row_name}")
             if canonical := canonical_rows.get(row_name):
                 fields = {"canonical_entry": "entry", "owner": "owner", "default_state": "real_caller_default", "evidence": "evidence", "compatibility": "compatibility", "next_decision": "next_decision"}
                 for manifest_field, product_field in fields.items():
@@ -364,8 +309,11 @@ def check_lifecycle_manifest(
                         )
                 command = artifacts.get("checked_command")
                 executables = set(expected_categories["executables"])
-                if not isinstance(command, str) or len(command.split()) < 2 or command.split()[1] not in executables:
-                    errors.append(f"{label}: checked_command must invoke a declared executable")
+                expected_command = ROW_DETAILS[str(row_name)][4][0]
+                try:
+                    execute_offline_check(root, command, expected_command, executables)
+                except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                    errors.append(f"{label}: {error}")
         elif status != "spec-only":
             for point in points:
                 if not (root / point).exists():
@@ -635,7 +583,7 @@ def lifecycle_self_test() -> int:
         weights.write_text("const GRAPH_WEIGHT: f64 = 0.75;\n", encoding="utf-8")
         offline_roots = ["eval/cross-host", "docs/specs/GH935"]
         (root / "eval/cross-host/scripts").mkdir(parents=True)
-        (root / "eval/cross-host/scripts/check.py").write_text("print('ok')\n", encoding="utf-8")
+        (root / "eval/cross-host/scripts/test_run_dry.py").write_text("print('ok')\n", encoding="utf-8")
         (root / "docs/specs/GH935").mkdir(parents=True)
         (root / "docs/specs/GH935/PRODUCT.md").write_text("fixture", encoding="utf-8")
         (root / "docs/specs/GH935/TECH.md").write_text("fixture", encoding="utf-8")
@@ -648,7 +596,7 @@ def lifecycle_self_test() -> int:
             artifacts={
                 "roots": offline_roots,
                 **offline_categories(root, offline_roots),
-                "checked_command": "python3 eval/cross-host/scripts/check.py",
+                "checked_command": "python3 eval/cross-host/scripts/test_run_dry.py",
             },
         ))
         for row_name, symbols in EXPERIMENTAL_CALLER_SYMBOLS.items():

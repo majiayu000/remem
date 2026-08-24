@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import hashlib
 import html
+import os
 import re
+import shlex
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -24,6 +27,107 @@ EXPERIMENTAL_CALLER_SYMBOLS = {
     "entity-bfs": ("retrieval::entity", "entity_graph"),
     "coding-public-benchmarks": ("coding_bench",),
 }
+
+
+def mask_cfg_test_blocks(text: str) -> str:
+    """Mask top-level cfg(test) items while preserving source offsets."""
+    chars = list(text)
+    cursor = 0
+    pattern = re.compile(r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]")
+    while match := pattern.search(text, cursor):
+        item_start = match.start()
+        body_start = text.find("{", match.end())
+        semicolon = text.find(";", match.end())
+        if semicolon >= 0 and (body_start < 0 or semicolon < body_start):
+            item_end = semicolon
+        elif body_start >= 0:
+            item_end = _matching_brace(text, body_start)
+        else:
+            raise RuntimeError("cannot resolve cfg(test) item boundary")
+        chars[item_start : item_end + 1] = " " * (item_end + 1 - item_start)
+        cursor = item_end + 1
+    return "".join(chars)
+
+
+def _production_rust_sources(root: Path) -> list[tuple[str, str]]:
+    sources: list[tuple[str, str]] = []
+    for path in sorted((root / "src").rglob("*.rs")):
+        relative = path.relative_to(root).as_posix()
+        if (
+            "tests" in path.parts
+            or path.name == "test_support.rs"
+            or path.stem.startswith("tests")
+            or path.stem.endswith("_tests")
+        ):
+            continue
+        sources.append((relative, mask_cfg_test_blocks(path.read_text(encoding="utf-8"))))
+    return sources
+
+
+def _contains_sql_insert(text: str, target: str) -> bool:
+    sql_pattern = rf"\bINSERT\s+(?:OR\s+[A-Z]+\s+)?INTO\s+{re.escape(target)}\b"
+    if re.search(sql_pattern, text, re.I):
+        return True
+    for match in re.finditer(r"\bconcat!\s*\(", text):
+        closing = _matching_paren(text, match.end() - 1)
+        body = text[match.end() : closing]
+        literals = re.findall(r'"((?:\\.|[^"\\])*)"', body, re.S)
+        if re.search(sql_pattern, "".join(literals), re.I):
+            return True
+    return False
+
+
+def _matching_paren(text: str, opening: int) -> int:
+    return _matching_delimiter(text, opening, "(", ")")
+
+
+def discover_recovery_writers(root: Path, guard: dict[str, object]) -> set[str]:
+    mode = guard.get("mode")
+    target = guard.get("target")
+    if not isinstance(target, str) or mode not in {"sql_table_insert", "summary_job_enqueue"}:
+        raise RuntimeError(f"unknown recovery writer guard {guard!r}")
+    writers: set[str] = set()
+    for relative, text in _production_rust_sources(root):
+        if mode == "sql_table_insert" and _contains_sql_insert(text, target):
+            writers.add(relative)
+        if mode == "summary_job_enqueue":
+            for match in re.finditer(r"\benqueue[A-Za-z0-9_:]*\s*\(", text):
+                closing = _matching_paren(text, text.find("(", match.start()))
+                if re.search(r"\bJobType::Summary\b", text[match.end() : closing]):
+                    writers.add(relative)
+            literals = re.findall(r'"((?:\\.|[^"\\])*)"', text, re.S)
+            if any(
+                re.search(r"\bINSERT\s+(?:OR\s+[A-Z]+\s+)?INTO\s+jobs\b", literal, re.I)
+                and re.search(r"['\"]summary['\"]", literal, re.I)
+                for literal in literals
+            ):
+                writers.add(relative)
+    return writers
+
+
+def execute_offline_check(
+    root: Path,
+    command: object,
+    expected: str,
+    executables: set[str],
+) -> None:
+    if command != expected:
+        raise RuntimeError(f"checked_command must equal reviewed invocation {expected!r}")
+    arguments = shlex.split(expected)
+    if len(arguments) != 2 or arguments[1] not in executables:
+        raise RuntimeError("checked_command must invoke exactly one declared executable")
+    result = subprocess.run(
+        arguments,
+        cwd=root,
+        text=True,
+        capture_output=True,
+        timeout=120,
+        check=False,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(f"checked_command failed with exit {result.returncode}: {detail[-500:]}")
 
 
 def expanded_default_features(root: Path) -> set[str]:
@@ -54,14 +158,63 @@ _PUBLIC_DECLARATION = re.compile(
 )
 
 
-def _matching_brace(text: str, opening: int) -> int:
+def _matching_delimiter(text: str, opening: int, left: str, right: str) -> int:
     depth = 0
-    for index in range(opening, len(text)):
-        depth += text[index] == "{"
-        depth -= text[index] == "}"
-        if depth == 0:
-            return index
-    raise RuntimeError("unclosed Rust declaration body")
+    quote: str | None = None
+    escaped = False
+    line_comment = False
+    block_depth = 0
+    index = opening
+    while index < len(text):
+        char = text[index]
+        following = text[index + 1] if index + 1 < len(text) else ""
+        if line_comment:
+            line_comment = char != "\n"
+        elif block_depth:
+            if char == "/" and following == "*":
+                block_depth += 1
+                index += 1
+            elif char == "*" and following == "/":
+                block_depth -= 1
+                index += 1
+        elif quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+        else:
+            raw = re.match(r'(?:b|c)?r(?P<hashes>#{0,255})"', text[index:])
+            if raw:
+                marker = '"' + raw.group("hashes")
+                closing = text.find(marker, index + raw.end())
+                if closing < 0:
+                    raise RuntimeError("unclosed Rust raw string")
+                index = closing + len(marker) - 1
+            elif char == "/" and following == "/":
+                line_comment = True
+                index += 1
+            elif char == "/" and following == "*":
+                block_depth = 1
+                index += 1
+            elif char == '"' or (
+                char == "'"
+                and re.match(r"'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f_]+\}|.)|[^\\'])'", text[index:])
+            ):
+                quote = char
+            elif char == left:
+                depth += 1
+            elif char == right:
+                depth -= 1
+                if depth == 0:
+                    return index
+        index += 1
+    raise RuntimeError(f"unclosed Rust delimiter {left}{right}")
+
+
+def _matching_brace(text: str, opening: int) -> int:
+    return _matching_delimiter(text, opening, "{", "}")
 
 
 def _source_signature(text: str, match: re.Match[str]) -> str:
@@ -121,6 +274,52 @@ def discover_target_gated_exports(root: Path) -> set[str]:
         candidates = (base / f"{name}.rs", base / name / "mod.rs")
         return next((candidate for candidate in candidates if candidate.is_file()), None)
 
+    def reexport_fingerprint(parent: Path, statement: str) -> tuple[str, str]:
+        parsed = re.fullmatch(
+            r"pub\s+use\s+(?P<path>(?:(?:crate|self)::)?[A-Za-z_][A-Za-z0-9_]*"
+            r"(?:::[A-Za-z_][A-Za-z0-9_]*)+)(?:\s+as\s+(?P<alias>[A-Za-z_][A-Za-z0-9_]*))?\s*;",
+            statement.strip(),
+        )
+        if not parsed:
+            raise RuntimeError(f"unsupported target-gated public re-export {statement.strip()!r}")
+        parts = parsed.group("path").split("::")
+        anchor = parent
+        if parts[0] == "crate":
+            anchor = root / "src/lib.rs"
+            parts = parts[1:]
+        elif parts[0] == "self":
+            parts = parts[1:]
+        target = parts[-1]
+        for module in parts[:-1]:
+            child = module_file(anchor, module)
+            if child is None:
+                raise RuntimeError(f"cannot resolve target-gated re-export module {module!r}")
+            anchor = child
+        source = anchor.read_text(encoding="utf-8")
+        signatures: list[str] = []
+        for declaration in _PUBLIC_DECLARATION.finditer(source):
+            if column_zero(source, declaration.start()) and declaration.group("name") == target:
+                signatures.append(
+                    f"{declaration.group('kind')}:{target}:{_source_signature(source, declaration)}"
+                )
+        for implementation in any_impl.finditer(source):
+            owner = re.sub(r"\s+", "", implementation.group("owner"))
+            if (
+                column_zero(source, implementation.start())
+                and not re.search(r"\bfor\b", implementation.group("owner"))
+                and owner.split("<", 1)[0] == target
+            ):
+                closing = _matching_brace(source, implementation.end() - 1)
+                body = source[implementation.end() : closing]
+                signatures.extend(
+                    f"impl:{item.group('kind')}:{item.group('name')}:{_source_signature(body, item)}"
+                    for item in _PUBLIC_DECLARATION.finditer(body)
+                )
+        if not signatures:
+            raise RuntimeError(f"cannot resolve target-gated re-export definition {target!r}")
+        evidence = "\n".join([re.sub(r"\s+", " ", statement).strip(), *sorted(signatures)])
+        return parsed.group("alias") or target, hashlib.sha256(evidence.encode()).hexdigest()
+
     def add_impl_items(raw: str, relative: str, cfg: str, match: re.Match[str]) -> None:
         owner = re.sub(r"\s+", "", match.group("owner"))
         closing = _matching_brace(raw, match.end() - 1)
@@ -147,6 +346,13 @@ def discover_target_gated_exports(root: Path) -> set[str]:
             declaration = _PUBLIC_DECLARATION.search(raw, match.start("declaration"))
             if declaration is None:
                 raise RuntimeError(f"cannot resolve target-gated declaration {name!r}")
+            if kind == "use":
+                end = raw.find(";", declaration.end())
+                if end < 0:
+                    raise RuntimeError("unterminated target-gated public re-export")
+                exported_name, digest = reexport_fingerprint(path, raw[declaration.start() : end + 1])
+                exports.add(f"{relative}::{cfg}::{prefix}use:{exported_name}::sha256={digest}")
+                continue
             digest = _source_signature(raw, declaration)
             exports.add(f"{relative}::{cfg}::{prefix}{kind}:{name}::sha256={digest}")
             if kind == "mod":
@@ -162,6 +368,15 @@ def discover_target_gated_exports(root: Path) -> set[str]:
                 if not column_zero(raw, match.start()) or match.start() in gated_starts:
                     continue
                 kind = re.sub(r"\s+", "_", match.group("kind"))
+                if kind == "use":
+                    end = raw.find(";", match.end())
+                    if end < 0:
+                        raise RuntimeError("unterminated target-gated public re-export")
+                    exported_name, digest = reexport_fingerprint(path, raw[match.start() : end + 1])
+                    exports.add(
+                        f"{relative}::{inherited_cfg}::{prefix}use:{exported_name}::sha256={digest}"
+                    )
+                    continue
                 digest = _source_signature(raw, match)
                 exports.add(f"{relative}::{inherited_cfg}::{prefix}{kind}:{match.group('name')}::sha256={digest}")
 
