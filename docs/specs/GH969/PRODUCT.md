@@ -148,7 +148,10 @@ public-surface check validates it against host-compiled, signature-fingerprinted
 Rust exports, a conservative inventory that recursively follows public contents
 of platform-cfg modules and their public associated items, the normalized
 input/output schemas returned by the served MCP `tools/list` response, and the
-real REST, Clap, Cargo-feature, and offline-harness registration roots.
+real REST, Clap, Cargo-feature, and offline-harness registration roots. REST
+method+path identities include a normalized catalog of request/response serde
+declarations and constructed JSON shapes; unclassified Axum service or fallback
+registrations fail closed. Default Cargo features require explicit row mappings.
 
 The grouped Rust/MCP/REST/CLI rows below are exhaustive discovery rules, not
 sample entries. The machine manifest expands them to one record per reachable

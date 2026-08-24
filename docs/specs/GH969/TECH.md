@@ -358,6 +358,11 @@ discovered production-group entries `staged`; only the explicit
 `--promote-published <version>` operation advances it after `gh` verifies the
 exact non-draft release and all distribution assets, then downloads that
 release's `surface-manifest.json` and derives the baseline from its records.
+PR and push CI compare the committed release/baseline with the base manifest;
+any change must equal that downloaded release artifact. The one initial
+bootstrap is accepted only when the base commit is the verified release tag,
+all ordinary release assets exist, product sources are unchanged, and the
+baseline equals every discovered record.
 Every record's canonical entry, owner, status, caller/default, evidence,
 compatibility, and next-decision fields must equal the PRODUCT table. Rust item
 and associated-item identifiers include normalized declaration fingerprints,
@@ -368,6 +373,14 @@ function-body edits do not create false compatibility drift. MCP tool identities
 fingerprint each normalized served `tools/list` input/output schema. Rustdoc
 surface generation is pinned to Rust 1.97.0 in CI and rejects other local
 versions, preventing renderer-version-only churn.
+REST route identities similarly include normalized serde request/response
+declarations, constructed JSON shapes, and their named handler signature;
+reachable `route_service`, `nest_service`, and fallback registrations are
+rejected until discovery supports them. Production default evidence also binds
+CurrentTruth projection, fail-closed availability, shadow attachment, and
+channel activation on the Context Bundle path. Only `eval` and `local-onnx`
+currently have reviewed default-feature mappings; any new default feature fails
+generation until it receives a canonical lifecycle row.
 
 The CI guard must reject:
 

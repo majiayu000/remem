@@ -79,9 +79,14 @@ class PreflightCargoTestThreadsTests(unittest.TestCase):
 
         self.assertIn(["python3", "scripts/ci/check_public_surface.py"], commands)
         self.assertIn(
+            ["python3", "scripts/ci/check_surface_baseline.py", "origin/main"],
+            commands,
+        )
+        self.assertIn(
             ["python3", "scripts/ci/check_public_surface.py", "--self-test"],
             commands,
         )
+        self.assertIn(["python3", "scripts/ci/surface_lifecycle_rest.py"], commands)
 
 
 if __name__ == "__main__":

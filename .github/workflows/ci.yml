@@ -42,8 +42,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check public and lifecycle surfaces
         run: python3 scripts/ci/check_public_surface.py
+      - name: Check published surface baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/check_surface_baseline.py "${{ github.event.pull_request.base.sha || github.event.before }}"
       - name: Self-test surface lifecycle guard
         run: python3 scripts/ci/check_public_surface.py --self-test
+      - name: Self-test REST surface fingerprints
+        run: python3 scripts/ci/surface_lifecycle_rest.py
       - run: cargo fmt --check
       - run: cargo check --no-default-features --bin remem-hook
       - run: cargo clippy --all-targets -- -D warnings

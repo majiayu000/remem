@@ -204,6 +204,7 @@ def discover_product_rows(root: Path) -> dict[str, dict[str, str]]:
 
 PRODUCTION_DEFAULT_GUARDS = {
     "sessionstart-context-bundle": "context_bundle_default",
+    "currenttruth-v1": "current_truth_default",
     "graph-edges": "positive_graph_weight",
 }
 
@@ -216,6 +217,21 @@ def build_default_guard(root: Path, mode: str) -> dict[str, object]:
         if not all(marker in raw for marker in markers):
             raise RuntimeError("SessionStart Context Bundle is no longer the implementation default")
         value: object = "bundle"
+    elif mode == "current_truth_default":
+        path = root / "src/context_bundle/compile.rs"
+        compile_source = path.read_text(encoding="utf-8")
+        query_source = (root / "src/context/query.rs").read_text(encoding="utf-8")
+        markers = (
+            "crate::context_bundle::project_for_scope(",
+            "current_truth_projection",
+            "let Some(projection) = current_truth_projection else",
+            "attach_shadow_comparison(&mut bundle, &projection)",
+            "activate_current_truth_channel(",
+        )
+        raw = query_source + "\n" + compile_source
+        if not all(marker in raw for marker in markers):
+            raise RuntimeError("CurrentTruth is no longer projected and activated on the default Context Bundle path")
+        value = "projected-and-activated"
     elif mode == "positive_graph_weight":
         path = root / "src/retrieval/search/memory/weights.rs"
         raw = path.read_text(encoding="utf-8")

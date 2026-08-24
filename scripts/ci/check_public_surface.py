@@ -522,11 +522,11 @@ def lifecycle_self_test() -> int:
             '<section id="tymethod.required"><h4 class="code-header">fn required(&amp;self)</h4></section>'
             '<h2 id="implementations"></h2>', encoding="utf-8"
         )
-        discovered = discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"})
+        discovered = discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"}, rest_fingerprints={})
         router_doc = doc_root / "api/struct.RouterInfo.html"
         original_router_doc = router_doc.read_text(encoding="utf-8")
         router_doc.write_text(original_router_doc.replace("status: bool", "status: String"), encoding="utf-8")
-        changed_rust = discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"})["rust_export"]
+        changed_rust = discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"}, rest_fingerprints={})["rust_export"]
         router_doc.write_text(original_router_doc, encoding="utf-8")
         if changed_rust == discovered["rust_export"]:
             sys.stderr.write("Rust public signature change did not alter the compatibility fingerprint\n")
@@ -555,7 +555,7 @@ def lifecycle_self_test() -> int:
             return 1
         target_before = discovered["rust_target_export"]
         (root / "src/platform.rs").write_text("pub fn windows_api() { private_only(); }\n", encoding="utf-8")
-        if discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"})["rust_target_export"] != target_before:
+        if discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"}, rest_fingerprints={})["rust_target_export"] != target_before:
             sys.stderr.write("private target implementation body changed a public signature\n")
             return 1
         (root / "src/platform.rs").write_text("pub fn windows_api() {}\n", encoding="utf-8")

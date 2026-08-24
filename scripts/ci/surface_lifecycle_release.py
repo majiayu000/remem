@@ -11,8 +11,7 @@ from pathlib import Path
 
 
 REPOSITORY = "majiayu000/remem"
-REQUIRED_ASSETS = {
-    "surface-manifest.json",
+DISTRIBUTION_ASSETS = {
     "SHA256SUMS",
     "remem-releases.json",
     "remem-darwin-arm64.tar.gz",
@@ -20,6 +19,7 @@ REQUIRED_ASSETS = {
     "remem-linux-arm64.tar.gz",
     "remem-linux-x64.tar.gz",
 }
+REQUIRED_ASSETS = {*DISTRIBUTION_ASSETS, "surface-manifest.json"}
 
 
 def _gh(arguments: list[str]) -> str:
@@ -60,7 +60,7 @@ def _released_entries(path: Path, kinds: set[str]) -> dict[str, set[str]]:
     return baseline
 
 
-def verified_release_baseline(release: str, kinds: set[str]) -> dict[str, set[str]]:
+def verified_release_assets(release: str, required_assets: set[str]) -> set[str]:
     if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", release):
         raise RuntimeError(f"published release must be an exact vX.Y.Z tag, got {release!r}")
     raw = _gh([
@@ -77,9 +77,14 @@ def verified_release_baseline(release: str, kinds: set[str]) -> dict[str, set[st
     names = {
         asset.get("name") for asset in assets if isinstance(asset, dict) and isinstance(asset.get("name"), str)
     } if isinstance(assets, list) else set()
-    missing = sorted(REQUIRED_ASSETS - names)
+    missing = sorted(required_assets - names)
     if missing:
         raise RuntimeError(f"GitHub release {release} lacks required assets: {', '.join(missing)}")
+    return names
+
+
+def verified_release_baseline(release: str, kinds: set[str]) -> dict[str, set[str]]:
+    verified_release_assets(release, REQUIRED_ASSETS)
     with tempfile.TemporaryDirectory(prefix="remem-release-surface-") as raw_dir:
         directory = Path(raw_dir)
         _gh([

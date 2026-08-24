@@ -22,6 +22,7 @@ from surface_lifecycle_evidence import (
 from surface_lifecycle_rust import discover_rust_exports
 from surface_lifecycle_mcp import discover_mcp_schema_fingerprints
 from surface_lifecycle_release import verified_release_baseline
+from surface_lifecycle_rest import discover_rest_schema_fingerprints, reject_unsupported_router_methods
 
 
 HTTP_METHODS = ("delete", "get", "head", "options", "patch", "post", "put", "trace")
@@ -210,11 +211,12 @@ def _router_helper(argument: str, *, path: Path, method: str) -> str:
     return helper.group("name")
 
 
-def discover_rest_routes(root: Path) -> set[str]:
+def discover_rest_routes(root: Path, *, schema_fingerprints: dict[str, str] | None = None) -> set[str]:
     functions = _rust_functions(root)
     if "build_router" not in functions:
         raise RuntimeError("cannot resolve API build_router")
     routes: set[str] = set()
+    schemas = discover_rest_schema_fingerprints(root) if schema_fingerprints is None else schema_fingerprints
 
     def visit(name: str, prefix: str, ancestors: tuple[str, ...]) -> None:
         if name in ancestors:
@@ -222,23 +224,28 @@ def discover_rest_routes(root: Path) -> set[str]:
         if name not in functions:
             raise RuntimeError(f"Axum router helper {name!r} is referenced but not discovered")
         path, body = functions[name]
+        reject_unsupported_router_methods(body, path)
         for arguments in _method_calls(body, "route"):
             if len(arguments) < 2:
                 raise RuntimeError(f"route call has fewer than two arguments in {path}")
             path_match = re.fullmatch(r'\s*"([^\"]+)"\s*', arguments[0])
             if not path_match:
                 raise RuntimeError(f"route path is not a literal in {path}: {arguments[0].strip()}")
-            methods = {
-                method.upper()
+            method_handlers = {
+                method.upper(): match.group(1)
                 for method in HTTP_METHODS
-                if re.search(rf"\b{method}\s*\(", arguments[1])
+                if (match := re.search(rf"\b{method}\s*\(\s*(?:[A-Za-z_][A-Za-z0-9_]*::)*([A-Za-z_][A-Za-z0-9_]*)\s*\)", arguments[1]))
             }
-            if "GET" in methods:
-                methods.add("HEAD")
-            if not methods:
+            if "GET" in method_handlers:
+                method_handlers["HEAD"] = method_handlers["GET"]
+            if not method_handlers:
                 raise RuntimeError(f"route has no recognized HTTP method in {path}: {arguments[1].strip()}")
             route_path = prefix.rstrip("/") + "/" + path_match.group(1).lstrip("/")
-            routes.update(f"{method} {route_path}" for method in methods)
+            for method, handler in method_handlers.items():
+                if schemas and handler not in schemas:
+                    raise RuntimeError(f"REST route {method} {route_path} references unclassified handler {handler!r}")
+                suffix = f"@sha256={schemas[handler]}" if schemas else ""
+                routes.add(f"{method} {route_path}{suffix}")
         for arguments in _method_calls(body, "merge"):
             if len(arguments) != 1:
                 raise RuntimeError(f"merge call must have one router argument in {path}")
@@ -448,7 +455,7 @@ def discover_default_features(root: Path) -> set[str]:
     return expanded_default_features(root)
 
 
-def discover_all(root: Path, *, doc_root: Path | None = None, mcp_fingerprints: dict[str, str] | None = None) -> dict[str, set[str]]:
+def discover_all(root: Path, *, doc_root: Path | None = None, mcp_fingerprints: dict[str, str] | None = None, rest_fingerprints: dict[str, str] | None = None) -> dict[str, set[str]]:
     mcp_tools, _ = discover_mcp_tools(root)
     schemas = mcp_fingerprints or discover_mcp_schema_fingerprints(root)
     if set(schemas) != mcp_tools:
@@ -458,7 +465,7 @@ def discover_all(root: Path, *, doc_root: Path | None = None, mcp_fingerprints: 
         "rust_target_export": discover_target_gated_exports(root),
         "mcp_tool": {f"{name}@sha256={schemas[name]}" for name in mcp_tools},
         "mcp_parameter": discover_search_parameters(root),
-        "rest_route": discover_rest_routes(root),
+        "rest_route": discover_rest_routes(root, schema_fingerprints=rest_fingerprints),
         "cli_command": discover_cli_commands(root),
         "default_feature": discover_default_features(root),
     }
@@ -548,7 +555,10 @@ def lifecycle_row(kind: str, entry: str) -> str:
     if kind == "rest_route":
         return "rest-api"
     if kind == "default_feature":
-        return "local-onnx" if entry == "local-onnx" else "deterministic-eval"
+        rows = {"local-onnx": "local-onnx", "eval": "deterministic-eval"}
+        if entry not in rows:
+            raise RuntimeError(f"default Cargo feature {entry!r} lacks an explicit lifecycle row")
+        return rows[entry]
     if entry == "remem context-plan":
         return "retrieval-router-plan"
     if entry == "remem doctor truth":
