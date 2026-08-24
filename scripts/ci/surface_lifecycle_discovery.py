@@ -6,19 +6,20 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import subprocess
-import tomllib
-from html.parser import HTMLParser
 from pathlib import Path
 
 from surface_lifecycle_evidence import (
     EXPERIMENTAL_CALLER_SYMBOLS,
+    PRODUCTION_DEFAULT_GUARDS,
     build_caller_guard,
+    build_default_guard,
+    discover_product_rows,
     discover_search_parameters,
     discover_target_gated_exports,
     expanded_default_features,
     offline_categories,
 )
+from surface_lifecycle_rust import discover_rust_exports
 
 
 HTTP_METHODS = ("delete", "get", "head", "options", "patch", "post", "put", "trace")
@@ -118,126 +119,6 @@ def _top_level_parts(text: str, separator: str = ",") -> list[str]:
         index += 1
     parts.append(text[start:])
     return parts
-
-
-class _AllItemsParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self.in_all_items = False
-        self.list_depth = 0
-        self.href: str | None = None
-        self.anchor_text: list[str] = []
-        self.items: list[tuple[str, str]] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        attributes = dict(attrs)
-        if tag == "ul" and attributes.get("class") == "all-items":
-            self.in_all_items = True
-            self.list_depth = 1
-            return
-        if self.in_all_items and tag == "ul":
-            self.list_depth += 1
-        if self.in_all_items and tag == "a":
-            self.href = attributes.get("href")
-            self.anchor_text = []
-
-    def handle_data(self, data: str) -> None:
-        if self.href is not None:
-            self.anchor_text.append(data)
-
-    def handle_endtag(self, tag: str) -> None:
-        if self.in_all_items and tag == "a" and self.href is not None:
-            item = "".join(self.anchor_text).strip()
-            if item and self.href:
-                self.items.append((item, self.href))
-            self.href = None
-        if self.in_all_items and tag == "ul":
-            self.list_depth -= 1
-            if self.list_depth == 0:
-                self.in_all_items = False
-
-
-def discover_rust_exports(root: Path, *, doc_root: Path | None = None) -> set[str]:
-    """Use rustdoc's compiler-resolved public graph, including public re-exports."""
-    if doc_root is None:
-        result = subprocess.run(
-            ["cargo", "doc", "--locked", "--quiet", "--no-deps", "--lib"],
-            cwd=root,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        if result.returncode != 0:
-            detail = (result.stderr or result.stdout).strip()
-            raise RuntimeError(f"cargo doc failed while discovering Rust exports: {detail}")
-        doc_root = root / "target/doc/remem"
-
-    all_items = doc_root / "all.html"
-    if not all_items.is_file():
-        raise RuntimeError(f"rustdoc public-item index is missing: {all_items}")
-    parser = _AllItemsParser()
-    parser.feed(all_items.read_text(encoding="utf-8"))
-    if not parser.items:
-        raise RuntimeError(f"rustdoc public-item index has no all-items list: {all_items}")
-
-    exports = {f"remem::{item}" for item, _ in parser.items}
-    for item, href in parser.items:
-        page = (all_items.parent / href).resolve()
-        try:
-            page.relative_to(doc_root.resolve())
-        except ValueError as exc:
-            raise RuntimeError(f"rustdoc item link escapes crate docs: {href}") from exc
-        if not page.is_file():
-            raise RuntimeError(f"rustdoc linked public item page is missing: {page}")
-        page_text = page.read_text(encoding="utf-8")
-        associated: set[str] = set()
-        for category, name in re.findall(
-            r'id="(structfield|variant|tymethod)\.([A-Za-z_][A-Za-z0-9_.-]*)"',
-            page_text,
-        ):
-            del category
-            associated.add(name.replace(".", "::").split("-")[0])
-        implementations = re.search(
-            r'id="implementations-list"(?P<body>.*?)(?:id="trait-implementations"|$)',
-            page_text,
-            re.S,
-        )
-        if implementations:
-            for category, name in re.findall(
-                r'id="(method|associatedconstant|associatedtype)\.([A-Za-z_][A-Za-z0-9_-]*)"',
-                implementations.group("body"),
-            ):
-                del category
-                associated.add(name.split("-")[0])
-        if "/trait." in href or href.rsplit("/", 1)[-1].startswith("trait."):
-            declarations = page_text.split('id="implementations"', 1)[0]
-            for category, name in re.findall(
-                r'id="(method|associatedconstant|associatedtype)\.([A-Za-z_][A-Za-z0-9_-]*)"',
-                declarations,
-            ):
-                del category
-                associated.add(name.split("-")[0])
-        exports.update(f"remem::{item}::{name}" for name in associated)
-    root_index = doc_root / "index.html"
-    queue = [root_index]
-    visited: set[Path] = set()
-    module_link = re.compile(r'<a\s+class="[^"]*\bmod\b[^"]*"\s+href="([^"]+/index\.html)"')
-    while queue:
-        page = queue.pop()
-        if page in visited:
-            continue
-        visited.add(page)
-        if not page.is_file():
-            raise RuntimeError(f"rustdoc linked public module page is missing: {page}")
-        for href in module_link.findall(page.read_text(encoding="utf-8")):
-            child = (page.parent / href).resolve()
-            try:
-                relative = child.relative_to(doc_root.resolve())
-            except ValueError as exc:
-                raise RuntimeError(f"rustdoc module link escapes crate docs: {href}") from exc
-            exports.add("remem::" + "::".join(relative.parts[:-1]))
-            queue.append(child)
-    return exports
 
 
 def discover_mcp_tools(root: Path) -> tuple[set[str], dict[str, str]]:
@@ -481,12 +362,20 @@ def _subcommand_enums(root: Path, features: set[str]) -> dict[str, list[tuple[tu
     for path in sorted((root / "src/cli").glob("*.rs")):
         text = path.read_text(encoding="utf-8")
         enum_re = re.compile(
+            r"(?P<attributes>(?:#\s*\[(?!\s*derive\s*\([^]]*\bSubcommand\b)[^]]*\]\s*)*)"
             r"#\s*\[\s*derive\s*\([^]]*\bSubcommand\b[^]]*\)\s*\]"
             r"(?:(?:\s|#\s*\[[^]]*\])*)"
             r"(?:pub(?:\s*\([^)]*\))?\s+)?enum\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\{",
             re.S,
         )
         for match in enum_re.finditer(text):
+            enum_cfgs = [
+                cfg_match.group(1)
+                for attribute in _leading_attributes(match.group("attributes"))
+                if (cfg_match := re.fullmatch(r"cfg\s*\((.*)\)", attribute, re.S))
+            ]
+            if not all(_cfg_enabled(cfg, features) for cfg in enum_cfgs):
+                continue
             opening = match.end() - 1
             closing = _matching(text, opening, "{", "}")
             if closing is None:
@@ -551,27 +440,6 @@ def discover_cli_commands(root: Path) -> set[str]:
 
 def discover_default_features(root: Path) -> set[str]:
     return expanded_default_features(root)
-
-
-def discover_product_row_statuses(root: Path) -> dict[str, str]:
-    product = (root / "docs/specs/GH969/PRODUCT.md").read_text(encoding="utf-8")
-    section = product.split("## Canonical Surface Inventory", 1)
-    if len(section) != 2:
-        raise RuntimeError("GH969 PRODUCT is missing Canonical Surface Inventory")
-    table = section[1].split("## Decision Gates", 1)[0]
-    statuses: dict[str, str] = {}
-    for line in table.splitlines():
-        columns = [column.strip() for column in line.strip().strip("|").split("|")]
-        if len(columns) < 4 or not columns[0].startswith("`"):
-            continue
-        row_name = columns[0].strip("`")
-        status = columns[3].strip("`")
-        if row_name in statuses:
-            raise RuntimeError(f"duplicate GH969 PRODUCT inventory row {row_name!r}")
-        statuses[row_name] = status
-    if not statuses:
-        raise RuntimeError("GH969 PRODUCT canonical table has no keyed lifecycle rows")
-    return statuses
 
 
 def discover_all(root: Path, *, doc_root: Path | None = None) -> dict[str, set[str]]:
@@ -641,6 +509,7 @@ ROW_DETAILS: dict[str, tuple[str, list[str], str, list[str], list[str], str]] = 
 
 
 def lifecycle_row(kind: str, entry: str) -> str:
+    entry = entry.split("@sha256=", 1)[0]
     if kind == "rust_target_export":
         source_overrides = {
             "src/context_bundle": "rust-context-bundle",
@@ -686,9 +555,14 @@ def lifecycle_row(kind: str, entry: str) -> str:
     return "cli-production"
 
 
-def lifecycle_record(record_id: str, kind: str, entry: str, row_name: str, **extra: object) -> dict[str, object]:
+def lifecycle_record(record_id: str, kind: str, entry: str, row_name: str, *, canonical_rows: dict[str, dict[str, str]] | None = None, published: bool = True, **extra: object) -> dict[str, object]:
     owner, callers, state, specs, evaluations, rollback = ROW_DETAILS[row_name]
     status = ROW_STATUS[row_name]
+    canonical = (canonical_rows or {}).get(row_name)
+    if canonical:
+        owner, state = canonical["owner"], canonical["real_caller_default"]
+    if status == "production" and not published:
+        status = "staged"
     recovery = {"normal_writers": []} if status == "recovery-only" else {}
     return {
         "id": record_id,
@@ -701,7 +575,10 @@ def lifecycle_record(record_id: str, kind: str, entry: str, row_name: str, **ext
         "default_state": state,
         "spec_refs": [*specs, "docs/specs/GH969/PRODUCT.md"],
         "eval_commands": evaluations,
-        "compatibility": f"Governed by canonical GH969 inventory row {row_name}.",
+        "canonical_entry": canonical["entry"] if canonical else row_name,
+        "evidence": canonical["evidence"] if canonical else "fixture evidence",
+        "compatibility": canonical["compatibility"] if canonical else f"Governed by canonical GH969 inventory row {row_name}.",
+        "next_decision": canonical["next_decision"] if canonical else "fixture decision",
         "rollback": rollback,
         "decision_due": "2026-11-30" if status in {"experimental", "deprecated", "spec-only", "staged"} else None,
         **recovery,
@@ -717,10 +594,13 @@ def _offline_inventory(root: Path, roots: list[str]) -> dict[str, object]:
     }
 
 
-def build_manifest(root: Path, *, doc_root: Path | None = None) -> dict[str, object]:
+def build_manifest(root: Path, *, doc_root: Path | None = None, published_surfaces: dict[str, set[str]] | None = None, published_release: str = "v0.6.82") -> dict[str, object]:
+    discovered = discover_all(root, doc_root=doc_root)
+    canonical = discover_product_rows(root)
+    published = published_surfaces or {kind: set(entries) for kind, entries in discovered.items()}
     records = [
-        lifecycle_record(f"{kind}:{entry}", kind, entry, lifecycle_row(kind, entry))
-        for kind, entries in discover_all(root, doc_root=doc_root).items()
+        lifecycle_record(f"{kind}:{entry}", kind, entry, lifecycle_row(kind, entry), canonical_rows=canonical, published=entry in published.get(kind, set()))
+        for kind, entries in discovered.items()
         for entry in sorted(entries)
     ]
     specials = [
@@ -740,23 +620,28 @@ def build_manifest(root: Path, *, doc_root: Path | None = None) -> dict[str, obj
             recovery["writer_guard"] = {"mode": "sql_table_insert", "target": "pending_observations"}
         if record_id == "runtime:historical-summary":
             recovery["writer_guard"] = {"mode": "summary_job_enqueue", "target": "summary"}
-        records.append(lifecycle_record(record_id, kind, entry, row_name, **recovery))
+        records.append(lifecycle_record(record_id, kind, entry, row_name, canonical_rows=canonical, **recovery))
     for row_name, symbols in EXPERIMENTAL_CALLER_SYMBOLS.items():
         guarded = next(record for record in records if record["inventory_row"] == row_name)
         guarded["caller_guard"] = build_caller_guard(root, symbols)
+    for row_name, mode in PRODUCTION_DEFAULT_GUARDS.items():
+        guarded = next(record for record in records if record["inventory_row"] == row_name)
+        guarded["default_guard"] = build_default_guard(root, mode)
     roots = ["eval/cross-host", "docs/specs/GH935"]
-    records.append(lifecycle_record("offline:cross-host-harness", "offline_harness", roots[0], "cross-host-harness", artifacts=_offline_inventory(root, roots)))
+    records.append(lifecycle_record("offline:cross-host-harness", "offline_harness", roots[0], "cross-host-harness", canonical_rows=canonical, artifacts=_offline_inventory(root, roots)))
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "canonical_contract": "docs/specs/GH969/PRODUCT.md#canonical-surface-inventory",
         "generated_by": "python3 scripts/ci/surface_lifecycle_discovery.py --write-manifest",
+        "published_release": published_release,
+        "published_surfaces": {kind: sorted(entries) for kind, entries in published.items()},
         "records": sorted(records, key=lambda item: str(item["id"])),
     }
 
 
 def render_manifest(manifest: dict[str, object]) -> str:
     lines = ["{"]
-    for key in ("schema_version", "canonical_contract", "generated_by"):
+    for key in ("schema_version", "canonical_contract", "generated_by", "published_release", "published_surfaces"):
         lines.append(f"  {json.dumps(key)}: {json.dumps(manifest[key])},")
     records = manifest["records"]
     assert isinstance(records, list)
@@ -771,6 +656,7 @@ def render_manifest(manifest: dict[str, object]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--write-manifest", action="store_true")
+    parser.add_argument("--promote-published", metavar="RELEASE")
     parser.add_argument(
         "--output",
         type=Path,
@@ -779,7 +665,13 @@ def main() -> int:
     args = parser.parse_args()
     if not args.write_manifest:
         parser.error("pass --write-manifest for an explicit reviewed regeneration")
-    manifest = build_manifest(ROOT)
+    previous = json.loads(args.output.read_text(encoding="utf-8")) if args.output.is_file() else {}
+    baseline = previous.get("published_surfaces")
+    published = {kind: set(entries) for kind, entries in baseline.items()} if isinstance(baseline, dict) else None
+    release = str(previous.get("published_release", "v0.6.82"))
+    if args.promote_published:
+        published, release = None, args.promote_published
+    manifest = build_manifest(ROOT, published_surfaces=published, published_release=release)
     args.output.write_text(render_manifest(manifest), encoding="utf-8")
     records = manifest["records"]
     assert isinstance(records, list)

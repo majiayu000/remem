@@ -120,13 +120,16 @@ CI guard inventories reviewed raw implementations and rejects new production
 bypasses. The lifecycle manifest and consistency guard now live in
 `docs/specs/GH969/surface-manifest.json`,
 `scripts/ci/surface_lifecycle_discovery.py`, and
-`scripts/ci/check_public_surface.py`. The guard follows current rustdoc item
-pages through public associated items, fingerprints platform-cfg public
-declarations, expands transitive default Cargo features and Clap aliases,
+`scripts/ci/check_public_surface.py`, with focused evidence and Rustdoc helpers
+beside those scripts. The guard follows current rustdoc item pages through
+public associated items and fingerprints normalized signatures, recursively
+inventories public contents of platform-cfg modules, expands transitive default
+Cargo features and enum/variant-level Clap cfgs and aliases,
 walks composed Axum routers including implicit HEAD routes, inventories served
-MCP search parameters, snapshots experimental implementation callers, verifies
-recovery writers from source, and checks offline artifact categories
-independently. Later slices still need the
+MCP search parameters, snapshots experimental callers, fingerprints production
+default evidence for SessionStart bundle mode and non-zero graph weight,
+verifies recovery writers from source, and requires every offline artifact to
+belong to exactly one checked category. Later slices still need the
 dependency-direction guard described below.
 
 ## Target Module Direction
@@ -337,7 +340,8 @@ includes:
 
 ```text
 id, surface_kind, owner, status, public_entry_points, real_callers, default_state,
-spec_refs, eval_commands, compatibility, rollback, decision_due
+canonical_entry, evidence, spec_refs, eval_commands, compatibility, next_decision,
+rollback, decision_due
 ```
 
 `surface_kind` is a closed discriminator such as `rust_export`, `mcp_tool`,
@@ -348,12 +352,27 @@ inventory under those roots; the guard validates its documented invocation
 without treating it as a Rust production caller. This is the entry type for the
 current `eval/cross-host/` infrastructure.
 
+Schema v2 also stores `published_release` and the exact `published_surfaces`
+baseline. Normal regeneration preserves that baseline and marks newly
+discovered production-group entries `staged`; only the explicit
+`--promote-published <version>` release-verification operation advances it.
+Every record's canonical entry, owner, status, caller/default, evidence,
+compatibility, and next-decision fields must equal the PRODUCT table. Rust item
+and associated-item identifiers include normalized declaration fingerprints,
+so parameter, return, public-field, and enum-payload changes are compatibility
+drift rather than invisible path-preserving edits.
+
 The CI guard must reject:
 
 - an unknown status or missing owner/spec; staged, experimental, deprecated,
   and spec-only entries also require a dated decision (a `staged` row may bind
   it to the next release only when that release version is explicit in the
   manifest);
+- a production-group entry absent from the published baseline unless it is
+  staged, or a published entry/signature that disappears before reviewed
+  release promotion;
+- drift in any canonical PRODUCT inventory column or in production default
+  implementation evidence;
 - a public MCP/CLI/REST tool or default-on/staged feature absent from the manifest;
 - a reachable Rust `pub mod`, public item, or `pub use` absent from the
   manifest; discovery starts at `src/lib.rs` and recursively follows public
@@ -361,7 +380,8 @@ The CI guard must reject:
 - any non-`spec-only` manifest entry that no longer resolves according to its
   `surface_kind`: a discovered Rust/MCP/REST/CLI/default-feature surface, or
   for `offline_harness`, the exact declared scripts, schemas, fixtures/data,
-  and checked command under its repository roots;
+  documents, and checked command under its repository roots; unsupported or
+  multiply classified files fail instead of disappearing from the union;
 - a manifest `production` entry with no production caller;
 - an `experimental` entry used by a default production path without a
   separately classified production entry point;

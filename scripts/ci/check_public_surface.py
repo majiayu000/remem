@@ -19,13 +19,15 @@ from surface_lifecycle_discovery import (
     discover_all,
     discover_cli_commands,
     discover_mcp_tools,
-    discover_product_row_statuses,
     lifecycle_record,
     lifecycle_row,
 )
 from surface_lifecycle_evidence import (
     EXPERIMENTAL_CALLER_SYMBOLS,
+    PRODUCTION_DEFAULT_GUARDS,
     build_caller_guard,
+    build_default_guard,
+    discover_product_rows,
     offline_categories,
 )
 
@@ -75,7 +77,7 @@ MANIFEST_PATH = ROOT / "docs/specs/GH969/surface-manifest.json"
 REQUIRED_RECORD_FIELDS = {
     "id", "surface_kind", "owner", "status", "public_entry_points",
     "real_callers", "default_state", "spec_refs", "eval_commands",
-    "compatibility", "rollback", "decision_due",
+    "canonical_entry", "evidence", "compatibility", "next_decision", "rollback", "decision_due",
 }
 DISCOVERED_KINDS = {
     "rust_export", "rust_target_export", "mcp_tool", "mcp_parameter",
@@ -123,15 +125,6 @@ def require_site_page(path: str) -> None:
 
 def _string_list(value: object) -> bool:
     return isinstance(value, list) and all(isinstance(item, str) and item.strip() for item in value)
-
-
-def _declared_files(artifacts: dict[str, object]) -> set[str]:
-    declared: set[str] = set()
-    for category in ("executables", "schemas", "fixtures", "data", "documents"):
-        values = artifacts.get(category)
-        if _string_list(values):
-            declared.update(values)  # type: ignore[arg-type]
-    return declared
 
 
 def _production_rust_sources(root: Path) -> list[tuple[str, str]]:
@@ -211,12 +204,15 @@ def check_lifecycle_manifest(
     today: date,
     required_rows: set[str] | None = None,
     check_wording: bool = False,
+    canonical_rows_override: dict[str, dict[str, str]] | None = None,
 ) -> list[str]:
     errors: list[str] = []
+    canonical_rows = canonical_rows_override or {}
     canonical_statuses = ROW_STATUS
     if check_wording:
         try:
-            canonical_statuses = discover_product_row_statuses(root)
+            canonical_rows = discover_product_rows(root)
+            canonical_statuses = {name: row["status"] for name, row in canonical_rows.items()}
         except RuntimeError as error:
             errors.append(str(error))
         if canonical_statuses != ROW_STATUS:
@@ -225,12 +221,23 @@ def check_lifecycle_manifest(
                 f"product={canonical_statuses} code={ROW_STATUS}"
             )
     records = manifest.get("records")
-    if manifest.get("schema_version") != 1 or not isinstance(records, list):
-        return ["surface manifest must have schema_version=1 and a records array"]
+    published_raw = manifest.get("published_surfaces")
+    if manifest.get("schema_version") != 2 or not isinstance(records, list) or not isinstance(published_raw, dict):
+        return ["surface manifest must have schema_version=2, published_surfaces, and a records array"]
+    if not isinstance(manifest.get("published_release"), str) or not str(manifest.get("published_release", "")).strip():
+        errors.append("surface manifest requires a non-empty published_release")
+    published: dict[str, set[str]] = {}
+    for kind in DISCOVERED_KINDS:
+        entries = published_raw.get(kind)
+        if not _string_list(entries):
+            errors.append(f"published_surfaces.{kind} must be a non-empty string array")
+            entries = []
+        published[kind] = set(entries)
     ids: Counter[str] = Counter()
     rows: set[str] = set()
     recovery_guards: dict[str, list[dict[str, object]]] = defaultdict(list)
     caller_guards: dict[str, list[dict[str, object]]] = defaultdict(list)
+    default_guards: dict[str, list[dict[str, object]]] = defaultdict(list)
     classified: dict[tuple[str, str], list[str]] = defaultdict(list)
     for index, raw_record in enumerate(records):
         if not isinstance(raw_record, dict):
@@ -257,14 +264,22 @@ def check_lifecycle_manifest(
             errors.append(f"{label}: unknown or missing canonical inventory_row {row_name!r}")
         else:
             rows.add(row_name)
-            if status != canonical_statuses[row_name]:
-                errors.append(f"{label}: status {status!r} contradicts canonical PRODUCT row {row_name}={canonical_statuses[row_name]!r}")
+            if canonical := canonical_rows.get(row_name):
+                fields = {"canonical_entry": "entry", "owner": "owner", "default_state": "real_caller_default", "evidence": "evidence", "compatibility": "compatibility", "next_decision": "next_decision"}
+                for manifest_field, product_field in fields.items():
+                    if record.get(manifest_field) != canonical[product_field]:
+                        errors.append(f"{label}: {manifest_field} contradicts canonical PRODUCT row {row_name}")
         if not isinstance(record.get("owner"), str) or not str(record.get("owner", "")).strip():
             errors.append(f"{label}: owner is required; assign the responsible source/spec owner")
         points = record.get("public_entry_points")
         if not _string_list(points):
             errors.append(f"{label}: public_entry_points must be a non-empty string array")
             points = []
+        expected_status = canonical_statuses.get(str(row_name))
+        if kind in DISCOVERED_KINDS and expected_status == "production" and len(points) == 1 and points[0] not in published.get(str(kind), set()):
+            expected_status = "staged"
+        if expected_status is not None and status != expected_status:
+            errors.append(f"{label}: status {status!r} contradicts canonical/published status {expected_status!r}")
         callers = record.get("real_callers")
         if not _string_list(callers):
             errors.append(f"{label}: real_callers must be a non-empty string array")
@@ -313,6 +328,9 @@ def check_lifecycle_manifest(
         caller_guard = record.get("caller_guard")
         if isinstance(row_name, str) and isinstance(caller_guard, dict):
             caller_guards[row_name].append(record)
+        default_guard = record.get("default_guard")
+        if isinstance(row_name, str) and isinstance(default_guard, dict):
+            default_guards[row_name].append(record)
         if kind in DISCOVERED_KINDS:
             if len(points) != 1:
                 errors.append(f"{label}: {kind} records classify exactly one reachable entry point")
@@ -324,7 +342,11 @@ def check_lifecycle_manifest(
                 errors.append(f"{label}: offline_harness requires artifacts.roots and exact categorized inventory")
             else:
                 roots = artifacts["roots"]
-                expected_categories = offline_categories(root, roots)
+                try:
+                    expected_categories = offline_categories(root, roots)
+                except RuntimeError as error:
+                    errors.append(f"{label}: {error}")
+                    expected_categories = {name: [] for name in ("executables", "schemas", "fixtures", "data", "documents")}
                 for category, expected in expected_categories.items():
                     declared = artifacts.get(category)
                     if not _string_list(declared) or set(declared) != set(expected):
@@ -350,6 +372,9 @@ def check_lifecycle_manifest(
         if count > 1:
             errors.append(f"duplicate manifest id {record_id!r} appears {count} times")
     for kind, actual_entries in discovered.items():
+        missing_published = sorted(published.get(kind, set()) - actual_entries)
+        if missing_published:
+            errors.append(f"published {kind} surfaces disappeared: {missing_published}")
         for entry in sorted(actual_entries):
             owners = classified.get((kind, entry), [])
             if not owners:
@@ -399,6 +424,13 @@ def check_lifecycle_manifest(
                 f"experimental row {row_name!r} implementation callers changed; review default-path status and regenerate the manifest"
             )
 
+    for row_name, mode in PRODUCTION_DEFAULT_GUARDS.items():
+        if row_name not in rows:
+            continue
+        guards = default_guards.get(row_name, [])
+        if len(guards) != 1 or guards[0].get("default_guard") != build_default_guard(root, mode):
+            errors.append(f"production row {row_name!r} default implementation evidence changed")
+
     if check_wording:
         readme = (root / "README.md").read_text(encoding="utf-8")
         for marker in ("experimental MCP `context_bundle`", "experimental `remem context-plan"):
@@ -425,8 +457,8 @@ def lifecycle_self_test() -> int:
         (root / "src/cli").mkdir(parents=True)
         (root / "docs/specs/GH969").mkdir(parents=True)
         (root / "docs/specs/GH969/PRODUCT.md").write_text(
-            "## Canonical Surface Inventory\n\n| Inventory row | Entry | Owner | Status |\n"
-            "|---|---|---|---|\n| `fixture-row` | fixture | fixture | `production` |\n"
+            "## Canonical Surface Inventory\n\n| Inventory row | Entry | Owner | Status | Caller | Evidence | Compatibility | Decision |\n"
+            "|---|---|---|---|---|---|---|---|\n| `fixture-row` | fixture | fixture | `production` | caller | evidence | compatible | continuous |\n"
             "\n## Decision Gates\n",
             encoding="utf-8",
         )
@@ -453,8 +485,9 @@ def lifecycle_self_test() -> int:
             encoding="utf-8",
         )
         (root / "src/platform.rs").write_text(
-            "#[cfg(windows)] pub fn windows_api() {}\n", encoding="utf-8"
+            "pub fn windows_api() {}\n", encoding="utf-8"
         )
+        (root / "src/lib.rs").write_text("#[cfg(windows)] pub mod platform;\n", encoding="utf-8")
         doc_root = root / "doc/remem"
         (doc_root / "api").mkdir(parents=True)
         (doc_root / "index.html").write_text(
@@ -467,16 +500,27 @@ def lifecycle_self_test() -> int:
             encoding="utf-8",
         )
         (doc_root / "api/struct.RouterInfo.html").write_text(
+            '<pre class="rust item-decl"><code>pub struct RouterInfo { pub status: bool }</code></pre>'
             '<span id="structfield.status"></span><div id="implementations-list">'
-            '<section id="method.health"></section></div><h2 id="trait-implementations"></h2>'
+            '<section id="method.health"><h4 class="code-header">pub fn health(&amp;self)</h4></section></div><h2 id="trait-implementations"></h2>'
             '<section id="method.clone" class="trait-impl"></section>',
             encoding="utf-8",
         )
         (doc_root / "api/trait.Health.html").write_text(
-            '<section id="method.defaulted"></section><section id="tymethod.required"></section>'
+            '<pre class="rust item-decl"><code>pub trait Health</code></pre>'
+            '<section id="method.defaulted"><h4 class="code-header">fn defaulted(&amp;self)</h4></section>'
+            '<section id="tymethod.required"><h4 class="code-header">fn required(&amp;self)</h4></section>'
             '<h2 id="implementations"></h2>', encoding="utf-8"
         )
         discovered = discover_all(root, doc_root=doc_root)
+        router_doc = doc_root / "api/struct.RouterInfo.html"
+        original_router_doc = router_doc.read_text(encoding="utf-8")
+        router_doc.write_text(original_router_doc.replace("status: bool", "status: String"), encoding="utf-8")
+        changed_rust = discover_all(root, doc_root=doc_root)["rust_export"]
+        router_doc.write_text(original_router_doc, encoding="utf-8")
+        if changed_rust == discovered["rust_export"]:
+            sys.stderr.write("Rust public signature change did not alter the compatibility fingerprint\n")
+            return 1
         expected = {
             "remem context", "remem ctx", "remem eval", "remem admin",
             "remem admin backup", "remem admin save", "remem help", "remem admin help",
@@ -492,13 +536,19 @@ def lifecycle_self_test() -> int:
         if (
             discovered["cli_command"] != expected
             or discovered["rest_route"] != expected_rest
-            or not expected_rust.issubset(discovered["rust_export"])
-            or "remem::api::RouterInfo::clone" in discovered["rust_export"]
-            or not any("src/platform.rs::windows::fn:windows_api" in entry for entry in discovered["rust_target_export"])
+            or not expected_rust.issubset({entry.split("@sha256=", 1)[0] for entry in discovered["rust_export"]})
+            or any(entry.startswith("remem::api::RouterInfo::clone") for entry in discovered["rust_export"])
+            or not any("src/platform.rs::windows::platform::fn:windows_api" in entry for entry in discovered["rust_target_export"])
         ):
             print(f"surface discovery self-test failed: {discovered}", file=sys.stderr)
             return 1
         duplicate_enum = root / "src/cli/duplicate.rs"
+        duplicate_enum.write_text(
+            "#[cfg(feature = \"eval\")] #[derive(Subcommand)] enum FeatureAction { On }\n"
+            "#[cfg(not(feature = \"eval\"))] #[derive(Subcommand)] enum FeatureAction { Off }\n",
+            encoding="utf-8",
+        )
+        discover_cli_commands(root)
         duplicate_enum.write_text(
             "#[derive(Subcommand)] enum AdminAction { Restore }\n", encoding="utf-8"
         )
@@ -522,7 +572,7 @@ def lifecycle_self_test() -> int:
             sys.stderr.write("transitive default feature did not enable eval command\n")
             return 1
         (root / "Cargo.toml").write_text('[features]\ndefault = ["eval"]\neval = []\n', encoding="utf-8")
-        if discover_product_row_statuses(root) != {"fixture-row": "production"}:
+        if discover_product_rows(root)["fixture-row"]["compatibility"] != "compatible":
             sys.stderr.write("PRODUCT inventory status discovery self-test failed\n")
             return 1
         (root / "src/runtime.rs").write_text(
@@ -544,6 +594,27 @@ def lifecycle_self_test() -> int:
         if caller_guard == build_caller_guard(root, ("crate::retrieval_router",)):
             sys.stderr.write("experimental caller fingerprint ignored an implementation change\n")
             return 1
+        (root / "src/context").mkdir()
+        (root / "src/context/render_bundle.rs").write_text(
+            'match mode { "" | "bundle" => Ok(ContextBundleRenderMode::Bundle), '
+            'Err(std::env::VarError::NotPresent) => Ok(ContextBundleRenderMode::Bundle) }',
+            encoding="utf-8",
+        )
+        weights = root / "src/retrieval/search/memory/weights.rs"
+        weights.parent.mkdir(parents=True)
+        weights.write_text("const GRAPH_WEIGHT: f64 = 0.75;\n", encoding="utf-8")
+        if build_default_guard(root, "positive_graph_weight")["value"] != 0.75:
+            sys.stderr.write("production graph default evidence was not resolved\n")
+            return 1
+        weights.write_text("const GRAPH_WEIGHT: f64 = 0.0;\n", encoding="utf-8")
+        try:
+            build_default_guard(root, "positive_graph_weight")
+        except RuntimeError:
+            pass
+        else:
+            sys.stderr.write("zero graph default did not fail production evidence\n")
+            return 1
+        weights.write_text("const GRAPH_WEIGHT: f64 = 0.75;\n", encoding="utf-8")
         offline_roots = ["eval/cross-host", "docs/specs/GH935"]
         (root / "eval/cross-host/scripts").mkdir(parents=True)
         (root / "eval/cross-host/scripts/check.py").write_text("print('ok')\n", encoding="utf-8")
@@ -574,9 +645,23 @@ def lifecycle_self_test() -> int:
                 spec_path.parent.mkdir(parents=True, exist_ok=True)
                 if not spec_path.exists():
                     spec_path.write_text("fixture", encoding="utf-8")
-        manifest: dict[str, object] = {"schema_version": 1, "records": records}
+        manifest: dict[str, object] = {
+            "schema_version": 2,
+            "published_release": "v1.0.0",
+            "published_surfaces": {kind: sorted(entries) for kind, entries in discovered.items()},
+            "records": records,
+        }
+        fixture_rows: dict[str, dict[str, str]] = {}
+        for record in records:
+            row_name = str(record["inventory_row"])
+            fixture_rows.setdefault(row_name, {
+                "entry": str(record["canonical_entry"]), "owner": str(record["owner"]),
+                "status": ROW_STATUS[row_name], "real_caller_default": str(record["default_state"]),
+                "evidence": str(record["evidence"]), "compatibility": str(record["compatibility"]),
+                "next_decision": str(record["next_decision"]),
+            })
         positive_errors = check_lifecycle_manifest(
-            root, manifest, discovered, today=date(2026, 8, 24), required_rows=set()
+            root, manifest, discovered, today=date(2026, 8, 24), required_rows=set(), canonical_rows_override=fixture_rows
         )
         if positive_errors:
             print(f"positive lifecycle manifest self-test failed: {positive_errors}", file=sys.stderr)
@@ -586,7 +671,7 @@ def lifecycle_self_test() -> int:
             candidate = copy.deepcopy(manifest)
             assert callable(mutator)
             mutator(candidate)
-            return any(needle in error for error in check_lifecycle_manifest(root, candidate, discovered, today=date(2026, 8, 24), required_rows=set()))
+            return any(needle in error for error in check_lifecycle_manifest(root, candidate, discovered, today=date(2026, 8, 24), required_rows=set(), canonical_rows_override=fixture_rows))
 
         def miscategorize_offline(value: dict[str, object]) -> None:
             offline = next(record for record in value["records"] if record["id"] == "offline:fixture")
@@ -594,9 +679,14 @@ def lifecycle_self_test() -> int:
             script = artifacts["executables"].pop()
             artifacts["documents"].append(script)
 
+        def remove_from_published(value: dict[str, object]) -> None:
+            record = next(item for item in value["records"] if item["surface_kind"] in DISCOVERED_KINDS and item["status"] == "production")
+            value["published_surfaces"][record["surface_kind"]].remove(record["public_entry_points"][0])
+
         cases = [
             (lambda value: value["records"][0].update(status="mystery"), "unknown lifecycle status"),
             (lambda value: value["records"][0].update(owner=""), "owner is required"),
+            (lambda value: value["records"][0].update(compatibility="changed"), "compatibility contradicts canonical PRODUCT"),
             (lambda value: value["records"].append(copy.deepcopy(value["records"][0])), "multiply classified"),
             (lambda value: value["records"].pop(0), "unclassified"),
             (lambda value: value["records"][0]["public_entry_points"].__setitem__(0, "stale"), "stale"),
@@ -606,10 +696,21 @@ def lifecycle_self_test() -> int:
             (lambda value: value["records"][0].update(status="recovery-only", inventory_row="legacy-pending", normal_writers=["new work"]), "new-work writers are forbidden"),
             (lambda value: value["records"][0].update(spec_refs=["missing.md"]), "does not resolve"),
             (miscategorize_offline, "offline executables inventory drift"),
+            (remove_from_published, "canonical/published status 'staged'"),
         ]
         failed = [needle for mutator, needle in cases if not proves(mutator, needle)]
         if failed:
             print(f"negative lifecycle self-tests failed: {failed}", file=sys.stderr)
+            return 1
+        unsupported = root / "eval/cross-host/scripts/check.sh"
+        unsupported.write_text("#!/bin/sh\n", encoding="utf-8")
+        try:
+            offline_categories(root, offline_roots)
+        except RuntimeError as error:
+            if "unsupported offline script artifact" not in str(error):
+                raise
+        else:
+            sys.stderr.write("uncategorized offline artifact did not fail closed\n")
             return 1
     print("surface lifecycle guard self-test: ok")
     return 0
