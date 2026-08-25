@@ -366,7 +366,9 @@ CI requires new ledger entries to come from the prior baseline, rejects entries
 that remain reachable, and never permits audit-ledger deletion. A later release
 promotion may remove only those published identities already in the ledger.
 The removal PR/spec supplies the migration, compatibility notice, and boundary
-evidence reviewed alongside that exact identity. The one initial
+evidence reviewed alongside that exact identity. Before publishing the manifest
+as release authority, the tagged release job fetches its parent and runs the
+same baseline authenticator against `${GITHUB_SHA}^`. The one initial
 bootstrap is accepted only when the base commit is the verified release tag,
 all ordinary release assets exist, product sources are unchanged, and the
 baseline equals every discovered record with an empty retirement ledger.

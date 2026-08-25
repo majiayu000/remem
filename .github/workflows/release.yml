@@ -92,11 +92,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 2
       - uses: dtolnay/rust-toolchain@1.97.0
       - name: Check version sync
         run: python3 scripts/ci/check_plugin_version_sync.py --expected-version "${GITHUB_REF_NAME#v}"
       - name: Validate surface lifecycle manifest
         run: python3 scripts/ci/check_public_surface.py
+      - name: Authenticate surface lifecycle baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/check_surface_baseline.py "${GITHUB_SHA}^"
       - uses: actions/download-artifact@v8.0.1
         with:
           path: artifacts

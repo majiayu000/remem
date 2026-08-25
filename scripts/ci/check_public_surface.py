@@ -33,6 +33,7 @@ from surface_lifecycle_evidence import (
     discover_product_rows,
     discover_recovery_writers,
     execute_offline_check,
+    mask_cfg_test_blocks,
     offline_categories,
 )
 ROOT = Path(__file__).resolve().parents[2]
@@ -418,8 +419,9 @@ def lifecycle_self_test() -> int:
             'fn admin_routes() { Router::new().route("/check", post(check)) }\n',
             encoding="utf-8",
         )
+        (root / "src/install.rs").write_text('#[derive(ValueEnum)] enum Format { Json }\n', encoding="utf-8")
         (root / "src/cli/types.rs").write_text(
-            '#[derive(ValueEnum)] enum Format { Json } #[derive(Args)] struct ContextArgs { #[arg(value_enum)] format: Format } '
+            '#[derive(Args)] struct ContextArgs { #[arg(value_enum)] format: Format } '
             '#[derive(Subcommand)] enum Commands { '
             '#[command(visible_alias = "ctx")] Context(ContextArgs), '
             '#[cfg(feature = "eval")] Eval, #[cfg(feature = "off")] Hidden, '
@@ -443,7 +445,7 @@ def lifecycle_self_test() -> int:
             encoding="utf-8",
         )
         (root / "src/platform_impl.rs").write_text(
-            "pub struct Api;\n#[cfg(windows)]\nimpl Api { pub fn windows_only(&self) {} }\n#[cfg(target_vendor = \"apple\")] impl Default for Api { fn default() -> Self { Self } }\n",
+            "pub struct Api;\n#[cfg(windows)]\nimpl Api { pub fn windows_only(&self) {} }\n#[cfg(target_vendor = \"apple\")] #[cfg(target_arch = \"aarch64\")] impl Default for Api { fn default() -> Self { Self } }\n",
             encoding="utf-8",
         )
         doc_root = root / "doc/remem"
@@ -485,10 +487,10 @@ def lifecycle_self_test() -> int:
         if changed_rust == discovered["rust_export"]:
             sys.stderr.write("Rust public signature change did not alter the compatibility fingerprint\n")
             return 1
-        cli_path, mcp_path = root / "src/cli/types.rs", root / "src/mcp/server/tool_contracts.rs"; cli_source, mcp_source = cli_path.read_text(), mcp_path.read_text()
-        cli_path.write_text(cli_source.replace("Json", "Yaml")); mcp_path.write_text(mcp_source.replace("json_object(\"search\"", "json_array(\"search\"").replace("Schema::Search)", "Schema::Search, \"items\")"))
+        cli_path, enum_path, mcp_path = root / "src/cli/types.rs", root / "src/install.rs", root / "src/mcp/server/tool_contracts.rs"; cli_source, enum_source, mcp_source = cli_path.read_text(), enum_path.read_text(), mcp_path.read_text()
+        enum_path.write_text(enum_source.replace("Json", "Yaml")); mcp_path.write_text(mcp_source.replace("json_object(\"search\"", "json_array(\"search\"").replace("Schema::Search)", "Schema::Search, \"items\")"))
         changed_contracts = discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"}, rest_fingerprints={})
-        cli_path.write_text(cli_source); mcp_path.write_text(mcp_source)
+        enum_path.write_text(enum_source); mcp_path.write_text(mcp_source)
         if changed_contracts["cli_command"] == discovered["cli_command"] or changed_contracts["mcp_tool"] == discovered["mcp_tool"]:
             sys.stderr.write("CLI argument or MCP legacy shape change did not alter its fingerprint\n"); return 1
         explicit_head = discover_rest_routes(root, schema_fingerprints={"health": "get", "check": "head"})
@@ -521,6 +523,9 @@ def lifecycle_self_test() -> int:
             print(f"surface discovery self-test failed: {discovered}", file=sys.stderr)
             return 1
         target_before = discovered["rust_target_export"]
+        target_impl = root / "src/platform_impl.rs"; target_source = target_impl.read_text(); target_impl.write_text(target_source.replace("aarch64", "x86_64"))
+        if discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"}, rest_fingerprints={})["rust_target_export"] == target_before: sys.stderr.write("stacked target cfg change was not fingerprinted\n"); return 1
+        target_impl.write_text(target_source)
         reexport_source = root / "src/platform_private.rs"
         reexport_source.write_text("pub struct Api;\nimpl Default for Api { fn default() -> Result<Self, E> { todo!() } }\n", encoding="utf-8")
         if discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"}, rest_fingerprints={})["rust_target_export"] == target_before:
@@ -603,6 +608,8 @@ def lifecycle_self_test() -> int:
             return 1
         (root / "src/runtime.rs").write_text("#[cfg(test)] mod tests { fn route() { crate::retrieval_router::plan(); } }")
         if build_caller_guard(root, ("crate::retrieval_router",))["callers"]: sys.stderr.write("inline tests leaked into caller evidence\n"); return 1
+        masked_variant = mask_cfg_test_blocks("enum State { #[cfg(test)] TestReady, Ready } impl State { fn live() {} }");
+        if "TestReady" in masked_variant or "fn live" not in masked_variant: sys.stderr.write("cfg(test) variant masking erased following production syntax\n"); return 1
         (root / "src/context").mkdir()
         (root / "src/context/render_bundle.rs").write_text(
             'match mode { "" | "bundle" => Ok(ContextBundleRenderMode::Bundle), '
@@ -616,15 +623,13 @@ def lifecycle_self_test() -> int:
         if build_default_guard(root, "positive_graph_weight")["value"] != 0.75:
             sys.stderr.write("production graph default evidence was not resolved\n")
             return 1
-        weights.write_text("const GRAPH_WEIGHT: f64 = 0.75; struct SearchWeights { graph: f64 } impl Default for SearchWeights { fn default() -> Self { Self { graph: 0.0 } } }\n", encoding="utf-8")
-        try:
-            build_default_guard(root, "positive_graph_weight")
-        except RuntimeError:
-            pass
-        else:
-            sys.stderr.write("disconnected graph default did not fail production evidence\n")
-            return 1
-        weights.write_text("const GRAPH_WEIGHT: f64 = 0.75; struct SearchWeights { graph: f64 } impl Default for SearchWeights { fn default() -> Self { Self { graph: GRAPH_WEIGHT } } }\n", encoding="utf-8")
+        weight_source, graph_source = weights.read_text(), graph.read_text()
+        for changed_path, changed_source in ((weights, weight_source.replace("graph: GRAPH_WEIGHT", "graph: 0.0")), (graph, graph_source.replace("traverse_trusted_graph();", "// traverse_trusted_graph();"))):
+            changed_path.write_text(changed_source)
+            try: build_default_guard(root, "positive_graph_weight")
+            except RuntimeError: pass
+            else: sys.stderr.write("disconnected or commented graph activation did not fail production evidence\n"); return 1
+            changed_path.write_text(weight_source if changed_path == weights else graph_source)
         offline_roots = ["eval/cross-host", "docs/specs/GH935"]
         (root / "eval/cross-host/scripts").mkdir(parents=True)
         (root / "eval/cross-host/scripts/test_run_dry.py").write_text("print('ok')\n", encoding="utf-8")
@@ -689,17 +694,14 @@ def lifecycle_self_test() -> int:
             assert callable(mutator)
             mutator(candidate)
             return any(needle in error for error in check_lifecycle_manifest(root, candidate, discovered, today=date(2026, 8, 24), required_rows=set(), canonical_rows_override=fixture_rows))
-
         def miscategorize_offline(value: dict[str, object]) -> None:
             offline = next(record for record in value["records"] if record["id"] == "offline:fixture")
             artifacts = offline["artifacts"]
             script = artifacts["executables"].pop()
             artifacts["documents"].append(script)
-
         def remove_from_published(value: dict[str, object]) -> None:
             record = next(item for item in value["records"] if item["surface_kind"] in DISCOVERED_KINDS and item["status"] == "production")
             value["published_surfaces"][record["surface_kind"]].remove(record["public_entry_points"][0])
-
         cases = [
             (lambda value: value["records"][0].update(status="mystery"), "unknown lifecycle status"),
             (lambda value: value["records"][0].update(owner=""), "owner is required"),
@@ -734,26 +736,20 @@ def lifecycle_self_test() -> int:
             return 1
     print("surface lifecycle guard self-test: ok")
     return 0
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
         return lifecycle_self_test()
-
     for path in ROOT_REQUIRED_FILES:
         require_file(path)
-
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     for needle in README_BADGES + README_REQUIRED_TEXT:
         require_contains("README.md", readme, needle)
-
     zh_readme = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
     for needle in README_BADGES:
         require_contains("README.zh-CN.md", zh_readme, needle)
-
     robots = (ROOT / "site/robots.txt").read_text(encoding="utf-8")
     require_contains("site/robots.txt", robots, "Sitemap: https://majiayu000.github.io/remem/sitemap.xml")
     sitemap = (ROOT / "site/sitemap.xml").read_text(encoding="utf-8")

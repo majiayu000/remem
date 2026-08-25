@@ -79,7 +79,10 @@ def check_workflow_text() -> None:
 
     release_text = RELEASE.read_text(encoding="utf-8")
     for needle in [
+        "fetch-depth: 2",
         "python3 scripts/ci/check_public_surface.py",
+        'python3 scripts/ci/check_surface_baseline.py "${GITHUB_SHA}^"',
+        "GH_TOKEN: ${{ github.token }}",
         "cp docs/specs/GH969/surface-manifest.json artifacts/surface-manifest.json",
         "artifacts/surface-manifest.json",
     ]:

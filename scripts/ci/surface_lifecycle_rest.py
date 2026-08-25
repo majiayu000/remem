@@ -138,26 +138,24 @@ def _serde_helper_evidence(
     return sorted(found)
 
 
-def _response_behavior(body: str, source: str | None = None) -> str:
+def _response_behavior(body: str, sources: list[tuple[str, str]] | None = None, ancestors: tuple[str, ...] = ()) -> str:
     evidence = set(re.findall(r"\bStatusCode::[A-Z][A-Z0-9_]*\b", body))
     evidence.update(
         f'{field}="{value}"'
         for field, value in re.findall(r'\b(code|error_code)\s*:\s*"([^"\\]*)"', body)
     )
     for match in re.finditer(r"\b(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(", body):
-        if not any(marker in match.group("name").lower() for marker in ("error", "invalid", "response")):
+        name = match.group("name")
+        if name == "into_response" or not any(marker in name.lower() for marker in ("error", "invalid", "response")):
             continue
         closing = _matching(body, match.end() - 1, "(", ")")
         evidence.add(_normalize(body[match.start() : closing + 1]))
-        if source is not None:
-            evidence.update(
-                f"helper:{match.group('name')}:{_response_behavior(item)}"
-                for item in _function_evidence(source, match.group("name"))
-            )
+        if sources is not None and name not in ancestors:
+            evidence.update(f"helper:{relative}:{name}:{_response_behavior(item, sources, (*ancestors, name))}" for relative, source in sources for item in _function_evidence(source, name))
     return "\n".join(sorted(evidence))
 
 
-def _handler_signatures(text: str) -> dict[str, str]:
+def _handler_signatures(text: str, sources: list[tuple[str, str]]) -> dict[str, str]:
     signatures: dict[str, str] = {}
     for match in re.finditer(
         r"pub\s*\(in\s+crate::api\)\s+async\s+fn\s+(?P<name>handle_[A-Za-z0-9_]+)\s*\(", text,
@@ -168,7 +166,7 @@ def _handler_signatures(text: str) -> dict[str, str]:
             raise RuntimeError(f"REST handler {match.group('name')} has no body")
         body_end = _matching(text, body_start, "{", "}")
         signature = _normalize(text[match.start() : body_start])
-        signatures[match.group("name")] = f"{signature}\nresponse:{_response_behavior(text[body_start + 1 : body_end], text)}"
+        signatures[match.group("name")] = f"{signature}\nresponse:{_response_behavior(text[body_start + 1 : body_end], sources)}"
     return signatures
 
 
@@ -297,7 +295,7 @@ def discover_rest_schema_fingerprints(root: Path) -> dict[str, str]:
         for item in _wire_declarations(text):
             catalog.append(f"{relative}:{item}")
             catalog.extend(_serde_helper_evidence(item, sources))
-        for name, signature in _handler_signatures(text).items():
+        for name, signature in _handler_signatures(text, sources).items():
             if name in handlers:
                 raise RuntimeError(f"duplicate REST handler {name!r}")
             handlers[name] = f"{relative}:{signature}"
@@ -372,6 +370,7 @@ def rest_surface_self_test() -> int:
         source = (
             "use serde::{Deserialize, Serialize};\n"
             "use crate::external::{load as fetch};\n"
+            "use crate::api::helpers::staleness_error_response;\n"
             "#[derive(Deserialize)] struct Request { #[serde(deserialize_with = \"read_wire\")] value: String }\n"
             "#[derive(Serialize)] struct Response { #[serde(serialize_with = \"wire\")] ok: bool, #[serde(with = \"wire_module\")] wrapped: bool }\n"
             "fn wire<S>(value: &bool, serializer: S) { serializer.serialize_str(\"helper-key\"); }\n"
@@ -379,11 +378,16 @@ def rest_surface_self_test() -> int:
             "mod wire_module { fn serialize<S>() { emit(\"module-key\"); } fn deserialize<'de, D>() {} }\n"
             "struct Manual; impl Serialize for Manual { fn serialize(self) { serializer.serialize_str(\"manual-key\"); } }\n"
             "#[cfg(test)] mod tests { #[derive(Serialize)] struct TestOnly { ignored: bool } }\n"
-            "pub(in crate::api) async fn handle_save() -> impl IntoResponse { private_work(); fetch(); if bad() { return map_error(); } (StatusCode::CREATED, Json(json!({\"ok\": true}))) }\n"
+            "pub(in crate::api) async fn handle_save() -> impl IntoResponse { private_work(); fetch(); if stale() { return staleness_error_response(); } if bad() { return map_error(); } (StatusCode::CREATED, Json(json!({\"ok\": true}))) }\n"
             "fn map_error() { error_response(StatusCode::BAD_REQUEST, \"stable-code\"); }\n"
         )
         (api / "save.rs").write_text(source, encoding="utf-8")
+        helper_source = 'fn staleness_error_response() { error_response(StatusCode::INTERNAL_SERVER_ERROR, "stale-state"); }\n'
+        (api / "helpers.rs").write_text(helper_source, encoding="utf-8")
         before = discover_rest_schema_fingerprints(root)
+        (api / "helpers.rs").write_text(helper_source.replace("stale-state", "stale-renamed"), encoding="utf-8")
+        if discover_rest_schema_fingerprints(root) == before: raise RuntimeError("imported REST response helper change did not alter its fingerprint")
+        (api / "helpers.rs").write_text(helper_source, encoding="utf-8")
         (api / "save.rs").write_text(source.replace("private_work();", "other_private_work();"), encoding="utf-8")
         if discover_rest_schema_fingerprints(root) != before:
             raise RuntimeError("private REST implementation body changed its schema fingerprint")

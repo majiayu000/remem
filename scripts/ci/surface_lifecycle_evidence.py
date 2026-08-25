@@ -30,20 +30,26 @@ EXPERIMENTAL_CALLER_SYMBOLS = {
 
 
 def mask_cfg_test_blocks(text: str) -> str:
-    """Mask top-level cfg(test) items while preserving source offsets."""
+    """Mask complete cfg(test) syntax nodes while preserving source offsets."""
     chars = list(text)
     cursor = 0
     pattern = re.compile(r"#\s*\[\s*cfg\s*\(\s*test\s*\)\s*\]")
-    while match := pattern.search(text, cursor):
+    source = mask_rust_comments(text)
+    while match := pattern.search(source, cursor):
         item_start = match.start()
-        body_start = text.find("{", match.end())
-        semicolon = text.find(";", match.end())
-        if semicolon >= 0 and (body_start < 0 or semicolon < body_start):
-            item_end = semicolon
-        elif body_start >= 0:
-            item_end = _matching_brace(text, body_start)
-        else:
-            raise RuntimeError("cannot resolve cfg(test) item boundary")
+        node_start = match.end()
+        while attribute := re.match(r"\s*#\s*\[[^]]*\]", source[node_start:]):
+            node_start += attribute.end()
+        item = re.match(r"\s*(?:(?:pub(?:\s*\([^)]*\))?|async|unsafe|const|extern(?:\s+\"[^\"]+\")?)\s+)*(?:fn|mod|struct|enum|trait|impl|type|const|static|use|macro_rules!)\b", source[node_start:])
+        depth = 0
+        for index in range(node_start, len(source)):
+            char = source[index]
+            if char in "([": depth += 1
+            elif char in ")]": depth -= 1
+            elif depth == 0 and char == "{": item_end = _matching_brace(source, index); break
+            elif depth == 0 and char == ";": item_end = index; break
+            elif depth == 0 and char == "," and item is None: item_end = index; break
+        else: raise RuntimeError("cannot resolve cfg(test) syntax-node boundary")
         chars[item_start : item_end + 1] = " " * (item_end + 1 - item_start)
         cursor = item_end + 1
     return "".join(chars)
@@ -284,16 +290,15 @@ def _source_signature(text: str, match: re.Match[str]) -> str:
 def discover_target_gated_exports(root: Path) -> set[str]:
     """Inventory target-only signatures reachable through public modules from lib.rs."""
     exports: set[str] = set()
+    target = r"(?:windows|unix|target_(?:os|arch|env|vendor|family|endian|pointer_width|feature|has_atomic|abi))"
     gated = re.compile(
-        r"#\s*\[\s*cfg\s*\((?P<cfg>[^]]*(?:windows|unix|target_(?:os|arch|env|vendor|family|endian|pointer_width|feature|has_atomic|abi))[^]]*)\)\s*\]"
-        r"(?:\s*#\s*\[[^]]*\])*\s*(?P<declaration>pub\s+(?!\()"
+        r"(?P<attrs>(?:#\s*\[[^]]*\]\s*)+)\s*(?P<declaration>pub\s+(?!\()"
         rf"(?P<kind>{_FUNCTION_KIND}|struct|enum|trait|type|const|static|mod|use)\s+"
         r"(?P<name>[A-Za-z_][A-Za-z0-9_]*))",
         re.S,
     )
     gated_impl = re.compile(
-        r"#\s*\[\s*cfg\s*\((?P<cfg>[^]]*(?:windows|unix|target_(?:os|arch|env|vendor|family|endian|pointer_width|feature|has_atomic|abi))[^]]*)\)\s*\]"
-        r"(?:\s*#\s*\[[^]]*\])*\s*impl(?:<[^>{}]*>)?\s+(?P<owner>[^{}]+?)\s*\{",
+        r"(?P<attrs>(?:#\s*\[[^]]*\]\s*)+)\s*impl(?:<[^>{}]*>)?\s+(?P<owner>[^{}]+?)\s*\{",
         re.S,
     )
     any_impl = re.compile(r"\bimpl(?:<[^>{}]*>)?\s+(?P<owner>[^{}]+?)\s*\{", re.S)
@@ -303,6 +308,13 @@ def discover_target_gated_exports(root: Path) -> set[str]:
 
     def combined_cfg(parent: str | None, child: str) -> str:
         return child if parent is None else f"all({parent},{child})"
+
+    def target_cfg(match: re.Match[str]) -> str | None:
+        predicates = re.findall(r"#\s*\[\s*cfg\s*\(([^]]*)\)\s*\]", match.group("attrs"))
+        if not any(re.search(target, predicate) for predicate in predicates):
+            return None
+        normalized = [re.sub(r"\s+", "", predicate) for predicate in predicates]
+        return normalized[0] if len(normalized) == 1 else f"all({','.join(normalized)})"
 
     def module_file(parent: Path, name: str) -> Path | None:
         base = parent.parent / parent.stem if parent.name not in {"lib.rs", "mod.rs"} else parent.parent
@@ -382,11 +394,11 @@ def discover_target_gated_exports(root: Path) -> set[str]:
         seen.add(key)
         raw = path.read_text(encoding="utf-8")
         relative = path.relative_to(root).as_posix()
-        gated_declarations = [match for match in gated.finditer(raw) if column_zero(raw, match.start())]
+        gated_declarations = [match for match in gated.finditer(raw) if column_zero(raw, match.start()) and target_cfg(match) is not None]
         gated_starts = {match.start("declaration") for match in gated_declarations}
         module_cfgs: dict[int, str] = {}
         for match in gated_declarations:
-            cfg = combined_cfg(inherited_cfg, re.sub(r"\s+", "", match.group("cfg")))
+            cfg = combined_cfg(inherited_cfg, str(target_cfg(match)))
             kind = _kind_label(match.group("kind"))
             name = match.group("name")
             declaration = _PUBLIC_DECLARATION.search(raw, match.start("declaration"))
@@ -428,13 +440,13 @@ def discover_target_gated_exports(root: Path) -> set[str]:
 
         gated_impl_starts: set[int] = set()
         for match in gated_impl.finditer(raw):
-            if not column_zero(raw, match.start()):
+            if not column_zero(raw, match.start()) or target_cfg(match) is None:
                 continue
             impl_start = raw.rfind("impl", match.start(), match.end())
             if impl_start < 0:
                 raise RuntimeError("cannot resolve target-gated impl declaration")
             gated_impl_starts.add(impl_start)
-            cfg = combined_cfg(inherited_cfg, re.sub(r"\s+", "", match.group("cfg")))
+            cfg = combined_cfg(inherited_cfg, str(target_cfg(match)))
             add_impl_items(raw, relative, cfg, match)
         if inherited_cfg is not None:
             for match in any_impl.finditer(raw):
@@ -536,8 +548,8 @@ def build_default_guard(root: Path, mode: str) -> dict[str, object]:
         value = "projected-and-activated"
     elif mode == "positive_graph_weight":
         path = root / "src/retrieval/search/memory/weights.rs"
-        weights = path.read_text(encoding="utf-8")
-        consumer = "\n".join(mask_cfg_test_blocks((root / item).read_text(encoding="utf-8")) for item in ("src/retrieval/search/memory/text/graph.rs", "src/retrieval/search/memory/text.rs", "src/retrieval/search/memory/runner.rs"))
+        weights = mask_rust_comments(mask_cfg_test_blocks(path.read_text(encoding="utf-8")))
+        consumer = "\n".join(mask_rust_comments(mask_cfg_test_blocks((root / item).read_text(encoding="utf-8"))) for item in ("src/retrieval/search/memory/text/graph.rs", "src/retrieval/search/memory/text.rs", "src/retrieval/search/memory/runner.rs"))
         raw = weights + "\n" + consumer
         match = re.search(r"\bconst\s+GRAPH_WEIGHT\s*:\s*f64\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*;", weights)
         markers = ("graph: GRAPH_WEIGHT", "SearchExecutionPolicy::production()", "SearchWeights::production()", "graph::append_graph_channel(", "if weights.graph <= 0.0", "traverse_trusted_graph(", "graph_channel_after_suppression(")

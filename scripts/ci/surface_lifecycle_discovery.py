@@ -393,7 +393,7 @@ def _clap_args_contracts(root: Path) -> dict[str, str]:
         r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)",
         re.S,
     )
-    for path in sorted((root / "src/cli").glob("*.rs")):
+    for path in sorted((root / "src").rglob("*.rs")):
         text = path.read_text(encoding="utf-8")
         for match in pattern.finditer(text):
             cursor = match.end()
