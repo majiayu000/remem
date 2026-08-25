@@ -21,6 +21,7 @@ from surface_lifecycle_discovery import (
     discover_all,
     discover_cli_commands,
     discover_mcp_tools,
+    discover_rest_routes,
     lifecycle_record,
     lifecycle_row,
 )
@@ -427,7 +428,7 @@ def lifecycle_self_test() -> int:
         )
         (root / "src/api/server.rs").write_text(
             'fn build_router() { Router::new().merge(public_routes()).nest("/api/v1/admin", admin_routes()) }\n'
-            'fn public_routes() { Router::new().route("/health", get(health).post(check)) }\n'
+            'fn public_routes() { Router::new().route("/health", get(health).head(check).post(check)) }\n'
             'fn admin_routes() { Router::new().route("/check", post(check)) }\n',
             encoding="utf-8",
         )
@@ -442,7 +443,14 @@ def lifecycle_self_test() -> int:
         (root / "src/platform.rs").write_text(
             "pub fn windows_api() {}\n", encoding="utf-8"
         )
-        (root / "src/lib.rs").write_text("#[cfg(windows)] pub mod platform;\npub mod platform_impl;\n", encoding="utf-8")
+        (root / "src/lib.rs").write_text(
+            "#[cfg(windows)] pub mod platform;\npub mod platform_impl;\nmod platform_private;\n#[cfg(windows)] pub use platform_private::Api;\n",
+            encoding="utf-8",
+        )
+        (root / "src/platform_private.rs").write_text(
+            "pub struct Api;\nimpl Default for Api { fn default() -> Self { Self } }\n",
+            encoding="utf-8",
+        )
         (root / "src/api/mod.rs").write_text(
             "pub struct RouterInfo;\nimpl Default for RouterInfo {\nfn default() -> Self { Self }\n}\n",
             encoding="utf-8",
@@ -490,6 +498,10 @@ def lifecycle_self_test() -> int:
         if changed_rust == discovered["rust_export"]:
             sys.stderr.write("Rust public signature change did not alter the compatibility fingerprint\n")
             return 1
+        explicit_head = discover_rest_routes(root, schema_fingerprints={"health": "get", "check": "head"})
+        if "HEAD /health@sha256=head" not in explicit_head:
+            sys.stderr.write("explicit HEAD handler was overwritten by implicit GET handling\n")
+            return 1
         expected = {
             "remem context", "remem ctx", "remem eval", "remem admin",
             "remem admin backup", "remem admin save", "remem help", "remem admin help",
@@ -515,6 +527,12 @@ def lifecycle_self_test() -> int:
             print(f"surface discovery self-test failed: {discovered}", file=sys.stderr)
             return 1
         target_before = discovered["rust_target_export"]
+        reexport_source = root / "src/platform_private.rs"
+        reexport_source.write_text("pub struct Api;\nimpl Default for Api { fn default() -> Result<Self, E> { todo!() } }\n", encoding="utf-8")
+        if discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"}, rest_fingerprints={})["rust_target_export"] == target_before:
+            sys.stderr.write("target re-export trait implementation change was not fingerprinted\n")
+            return 1
+        reexport_source.write_text("pub struct Api;\nimpl Default for Api { fn default() -> Self { Self } }\n", encoding="utf-8")
         (root / "src/platform.rs").write_text("pub unsafe extern \"C\" fn windows_api() { private_only(); }\n", encoding="utf-8")
         qualified_target = discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"}, rest_fingerprints={})["rust_target_export"]
         if qualified_target == target_before:
@@ -565,6 +583,18 @@ def lifecycle_self_test() -> int:
         writer_guard = {"mode": "sql_table_insert", "target": "pending_observations"}
         if discover_recovery_writers(root, writer_guard) != {"src/runtime.rs"}:
             sys.stderr.write("recovery writer discovery self-test failed\n")
+            return 1
+        enqueue = root / "src/db/job/enqueue.rs"
+        enqueue.parent.mkdir(parents=True, exist_ok=True)
+        safe_enqueue = "fn reject_summary(job_type: JobType) { if job_type == JobType::Summary { bail!(\"retired\"); } } fn enqueue_job_core(job_type: JobType) { reject_summary(job_type)?; sql(\"INSERT INTO jobs DEFAULT VALUES\"); }"
+        enqueue.write_text(safe_enqueue, encoding="utf-8")
+        summary_guard = {"mode": "summary_job_enqueue", "target": "summary"}
+        if discover_recovery_writers(root, summary_guard):
+            sys.stderr.write("guarded generic Summary enqueue was classified as a writer\n")
+            return 1
+        enqueue.write_text(safe_enqueue.replace("reject_summary(job_type)?;", ""), encoding="utf-8")
+        if "src/db/job/enqueue.rs" not in discover_recovery_writers(root, summary_guard):
+            sys.stderr.write("unguarded generic Summary enqueue was not classified as a writer\n")
             return 1
         (root / "src/runtime.rs").write_text("fn read() {}", encoding="utf-8")
         (root / "src/runtime.rs").write_text(

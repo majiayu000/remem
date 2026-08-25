@@ -81,6 +81,23 @@ def _matching_paren(text: str, opening: int) -> int:
     return _matching_delimiter(text, opening, "(", ")")
 
 
+def _function_body(text: str, name: str) -> str | None:
+    match = re.search(rf"\bfn\s+{re.escape(name)}\s*\(", text)
+    if not match:
+        return None
+    arguments_end = _matching_paren(text, match.end() - 1)
+    body_start = text.find("{", arguments_end)
+    return None if body_start < 0 else text[body_start + 1 : _matching_brace(text, body_start)]
+
+
+def _summary_enqueue_is_guarded(text: str) -> bool:
+    rejection = _function_body(text, "reject_summary")
+    if not rejection or not re.search(r"JobType::Summary.*?bail!", rejection, re.S):
+        return False
+    core = _function_body(text, "enqueue_job_core")
+    return bool(core and re.search(r"reject_summary\s*\(\s*job_type\s*\)\s*\?", core))
+
+
 def discover_recovery_writers(root: Path, guard: dict[str, object]) -> set[str]:
     mode = guard.get("mode")
     target = guard.get("target")
@@ -91,6 +108,9 @@ def discover_recovery_writers(root: Path, guard: dict[str, object]) -> set[str]:
         if mode == "sql_table_insert" and _contains_sql_insert(text, target):
             writers.add(relative)
         if mode == "summary_job_enqueue":
+            enqueue_core = _function_body(text, "enqueue_job_core")
+            if enqueue_core and _contains_sql_insert(enqueue_core, "jobs") and not _summary_enqueue_is_guarded(text):
+                writers.add(relative)
             for match in re.finditer(r"\benqueue[A-Za-z0-9_:]*\s*\(", text):
                 closing = _matching_paren(text, text.find("(", match.start()))
                 if re.search(r"\bJobType::Summary\b", text[match.end() : closing]):
@@ -156,6 +176,9 @@ _FUNCTION_KIND = r"(?:(?:const|async|unsafe)\s+)*(?:extern(?:\s+\"[^\"]+\")?\s+)
 _PUBLIC_DECLARATION = re.compile(
     rf"\bpub\s+(?!\()(?P<kind>{_FUNCTION_KIND}|struct|enum|trait|type|const|static|mod|use)\s+"
     r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+)
+_TRAIT_ITEM_DECLARATION = re.compile(
+    rf"\b(?P<kind>{_FUNCTION_KIND}|type|const)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
 )
 
 
@@ -308,18 +331,24 @@ def discover_target_gated_exports(root: Path) -> set[str]:
                     f"{_kind_label(declaration.group('kind'))}:{target}:{_source_signature(source, declaration)}"
                 )
         for implementation in any_impl.finditer(source):
-            owner = re.sub(r"\s+", "", implementation.group("owner"))
-            if (
-                column_zero(source, implementation.start())
-                and not re.search(r"\bfor\b", implementation.group("owner"))
-                and owner.split("<", 1)[0] == target
-            ):
-                closing = _matching_brace(source, implementation.end() - 1)
-                body = source[implementation.end() : closing]
-                signatures.extend(
-                    f"impl:{item.group('kind')}:{item.group('name')}:{_source_signature(body, item)}"
-                    for item in _PUBLIC_DECLARATION.finditer(body)
-                )
+            if not column_zero(source, implementation.start()):
+                continue
+            raw_owner = implementation.group("owner")
+            trait_owner = re.fullmatch(r"(?P<trait>.+?)\s+for\s+(?P<owner>.+)", raw_owner, re.S)
+            owner = re.sub(r"\s+", "", trait_owner.group("owner") if trait_owner else raw_owner)
+            if owner.split("<", 1)[0] != target:
+                continue
+            closing = _matching_brace(source, implementation.end() - 1)
+            body = source[implementation.end() : closing]
+            items = _TRAIT_ITEM_DECLARATION if trait_owner else _PUBLIC_DECLARATION
+            header = re.sub(r"\s+", " ", source[implementation.start() : implementation.end() - 1]).strip()
+            item_signatures = [
+                f"impl:{_kind_label(item.group('kind'))}:{item.group('name')}:{_source_signature(body, item)}"
+                for item in items.finditer(body)
+            ]
+            if trait_owner or item_signatures:
+                signatures.append(f"impl-header:{hashlib.sha256(header.encode()).hexdigest()}")
+                signatures.extend(item_signatures)
         if not signatures:
             raise RuntimeError(f"cannot resolve target-gated re-export definition {target!r}")
         evidence = "\n".join([re.sub(r"\s+", " ", statement).strip(), *sorted(signatures)])

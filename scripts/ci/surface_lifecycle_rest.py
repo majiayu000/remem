@@ -136,6 +136,25 @@ def _serde_helper_evidence(
     return sorted(found)
 
 
+def _response_behavior(body: str, source: str | None = None) -> str:
+    evidence = set(re.findall(r"\bStatusCode::[A-Z][A-Z0-9_]*\b", body))
+    evidence.update(
+        f'{field}="{value}"'
+        for field, value in re.findall(r'\b(code|error_code)\s*:\s*"([^"\\]*)"', body)
+    )
+    for match in re.finditer(r"\b(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(", body):
+        if not any(marker in match.group("name").lower() for marker in ("error", "invalid", "response")):
+            continue
+        closing = _matching(body, match.end() - 1, "(", ")")
+        evidence.add(_normalize(body[match.start() : closing + 1]))
+        if source is not None:
+            evidence.update(
+                f"helper:{match.group('name')}:{_response_behavior(item)}"
+                for item in _function_evidence(source, match.group("name"))
+            )
+    return "\n".join(sorted(evidence))
+
+
 def _handler_signatures(text: str) -> dict[str, str]:
     signatures: dict[str, str] = {}
     for match in re.finditer(
@@ -145,7 +164,9 @@ def _handler_signatures(text: str) -> dict[str, str]:
         body_start = text.find("{", arguments_end)
         if body_start < 0:
             raise RuntimeError(f"REST handler {match.group('name')} has no body")
-        signatures[match.group("name")] = _normalize(text[match.start() : body_start])
+        body_end = _matching(text, body_start, "{", "}")
+        signature = _normalize(text[match.start() : body_start])
+        signatures[match.group("name")] = f"{signature}\nresponse:{_response_behavior(text[body_start + 1 : body_end], text)}"
     return signatures
 
 
@@ -183,6 +204,32 @@ def _wire_index(sources: list[tuple[str, str]]) -> dict[str, list[str]]:
     return index
 
 
+def _referenced_crate_paths(text: str) -> set[str]:
+    paths = set(re.findall(r"\bcrate::((?:[A-Za-z_][A-Za-z0-9_]*::)+[A-Za-z_][A-Za-z0-9_]*)", text))
+    for match in re.finditer(
+        r"\buse\s+crate::(?P<prefix>(?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*)::"
+        r"\{(?P<items>[^{};]+)\}\s*;",
+        text,
+    ):
+        for raw_item in match.group("items").split(","):
+            item = re.sub(r"\s+as\s+[A-Za-z_][A-Za-z0-9_]*\s*$", "", raw_item).strip()
+            if item and item != "self":
+                paths.add(f"{match.group('prefix')}::{item}")
+    for match in re.finditer(
+        r"\buse\s+crate::(?P<path>(?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*)"
+        r"(?:\s+as\s+(?P<alias>[A-Za-z_][A-Za-z0-9_]*))?\s*;",
+        text,
+    ):
+        path = match.group("path")
+        paths.add(path)
+        alias = match.group("alias") or path.rsplit("::", 1)[-1]
+        paths.update(
+            f"{path}::{called}"
+            for called in re.findall(rf"\b{re.escape(alias)}::([A-Za-z_][A-Za-z0-9_]*)\s*\(", text)
+        )
+    return paths
+
+
 def _external_wire_declarations(
     root: Path,
     text: str,
@@ -192,8 +239,8 @@ def _external_wire_declarations(
         name for name in re.findall(r"\b[A-Z][A-Za-z0-9_]*\b", text)
         if name in wire_index
     }
-    for path_match in re.finditer(r"\bcrate::((?:[A-Za-z_][A-Za-z0-9_]*::)+[A-Za-z_][A-Za-z0-9_]*)", text):
-        parts = path_match.group(1).split("::")
+    for referenced_path in _referenced_crate_paths(text):
+        parts = referenced_path.split("::")
         module_root: Path | None = None
         for length in range(len(parts) - 1, 0, -1):
             relative = Path(*parts[:length])
@@ -214,7 +261,7 @@ def _external_wire_declarations(
             semicolon = source.find(";", arguments_end)
             end = semicolon if 0 <= semicolon < body_start else body_start
             if end < 0:
-                raise RuntimeError(f"cannot terminate external REST producer {path_match.group(0)!r}")
+                raise RuntimeError(f"cannot terminate external REST producer crate::{referenced_path}")
             reachable.update(
                 name for name in re.findall(r"\b[A-Z][A-Za-z0-9_]*\b", source[function.start() : end])
                 if name in wire_index
@@ -286,6 +333,7 @@ def rest_surface_self_test() -> int:
         (external / "mod.rs").write_text(external_source, encoding="utf-8")
         source = (
             "use serde::{Deserialize, Serialize};\n"
+            "use crate::external::{load as fetch};\n"
             "#[derive(Deserialize)] struct Request { #[serde(deserialize_with = \"read_wire\")] value: String }\n"
             "#[derive(Serialize)] struct Response { #[serde(serialize_with = \"wire\")] ok: bool, #[serde(with = \"wire_module\")] wrapped: bool }\n"
             "fn wire<S>(value: &bool, serializer: S) { serializer.serialize_str(\"helper-key\"); }\n"
@@ -293,7 +341,8 @@ def rest_surface_self_test() -> int:
             "mod wire_module { fn serialize<S>() { emit(\"module-key\"); } fn deserialize<'de, D>() {} }\n"
             "struct Manual; impl Serialize for Manual { fn serialize(self) { serializer.serialize_str(\"manual-key\"); } }\n"
             "#[cfg(test)] mod tests { #[derive(Serialize)] struct TestOnly { ignored: bool } }\n"
-            "pub(in crate::api) async fn handle_save() -> impl IntoResponse { private_work(); crate::external::load(); Json(json!({\"ok\": true})) }\n"
+            "pub(in crate::api) async fn handle_save() -> impl IntoResponse { private_work(); fetch(); if bad() { return map_error(); } (StatusCode::CREATED, Json(json!({\"ok\": true}))) }\n"
+            "fn map_error() { error_response(StatusCode::BAD_REQUEST, \"stable-code\"); }\n"
         )
         (api / "save.rs").write_text(source, encoding="utf-8")
         before = discover_rest_schema_fingerprints(root)
@@ -308,6 +357,12 @@ def rest_surface_self_test() -> int:
         if discover_rest_schema_fingerprints(root) == before:
             raise RuntimeError("reachable external response type change did not alter REST fingerprint")
         (external / "mod.rs").write_text(external_source, encoding="utf-8")
+        (api / "save.rs").write_text(source.replace("StatusCode::CREATED", "StatusCode::OK"), encoding="utf-8")
+        if discover_rest_schema_fingerprints(root) == before:
+            raise RuntimeError("REST success status change did not alter its schema fingerprint")
+        (api / "save.rs").write_text(source.replace("stable-code", "renamed-code"), encoding="utf-8")
+        if discover_rest_schema_fingerprints(root) == before:
+            raise RuntimeError("REST stable error code change did not alter its schema fingerprint")
         (api / "save.rs").write_text(source.replace("manual-key", "renamed-key"), encoding="utf-8")
         if discover_rest_schema_fingerprints(root) == before:
             raise RuntimeError("custom serde wire-key change did not change its schema fingerprint")

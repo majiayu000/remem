@@ -237,7 +237,7 @@ def discover_rest_routes(root: Path, *, schema_fingerprints: dict[str, str] | No
                 if (match := re.search(rf"\b{method}\s*\(\s*(?:[A-Za-z_][A-Za-z0-9_]*::)*([A-Za-z_][A-Za-z0-9_]*)\s*\)", arguments[1]))
             }
             if "GET" in method_handlers:
-                method_handlers["HEAD"] = method_handlers["GET"]
+                method_handlers.setdefault("HEAD", method_handlers["GET"])
             if not method_handlers:
                 raise RuntimeError(f"route has no recognized HTTP method in {path}: {arguments[1].strip()}")
             route_path = prefix.rstrip("/") + "/" + path_match.group(1).lstrip("/")

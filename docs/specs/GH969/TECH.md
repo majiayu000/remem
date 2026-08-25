@@ -379,7 +379,8 @@ signature fingerprint. Private module/function-body edits therefore do not
 create false compatibility drift; the target-only category may be empty when
 no such export is reachable. Compiler-resolved Rust records also include
 explicit trait implementations and their locally implemented associated items,
-while excluding derived, auto, and blanket implementations. MCP tool
+while excluding derived, auto, and blanket implementations; the same explicit
+trait evidence is included when resolving a target-gated public re-export. MCP tool
 identities fingerprint each normalized served `tools/list` input/output schema. Rustdoc
 surface generation is pinned to Rust 1.97.0 in CI and rejects other local
 versions, preventing renderer-version-only churn.
@@ -388,10 +389,13 @@ declarations (including manual `Serialize`/`Deserialize` implementations),
 reachable external producer result types, constructed JSON shapes, and their
 named handler signature. Implementations referenced by serde `serialize_with`,
 `deserialize_with`, and `with` field attributes are fingerprinted with the wire
-declaration; unresolved helpers fail closed. Inline `cfg(test)` declarations
-are masked before fingerprinting;
+declaration; unresolved helpers fail closed. Handler evidence also includes
+explicit HTTP status constants and stable error-construction calls. External
+producer traversal resolves direct paths, simple imports, grouped imports, and
+aliases. Inline `cfg(test)` declarations are masked before fingerprinting;
 reachable `route_service`, `nest_service`, and fallback registrations are
-rejected until discovery supports them. Production default evidence also binds
+rejected until discovery supports them, and implicit GET-to-HEAD expansion never
+overwrites an explicitly registered HEAD handler. Production default evidence also binds
 CurrentTruth projection, fail-closed availability, shadow attachment, and
 channel activation on the Context Bundle path. Only `eval` and `local-onnx`
 currently have reviewed default-feature mappings; any new default feature fails
@@ -400,6 +404,9 @@ The deprecated legacy-events row is additionally bound to both transactional
 projection writers, their conflict-safe SQL, and the active capture callers.
 Recovery-only SQL writer discovery also reconstructs `concat!` string literals,
 so composing a retired-table insert cannot bypass the normal-writer check.
+The historical Summary guard additionally validates both the generic jobs insert
+core and its `JobType::Summary` rejection, so deleting the rejection exposes a
+forbidden writer even when callers pass a generic `job_type` variable.
 Generated caller, spec, evaluation, and rollback fields must exactly match their
 reviewed row details. Offline harness records must use the exact reviewed command,
 and the lifecycle guard executes that command in CI/preflight rather than merely
