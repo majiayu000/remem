@@ -119,6 +119,29 @@ one concern each; see
 | `log.rs`, `log/` | File logging with cross-process locking/rotation and append fallback, stderr mirroring, private permissions, timing, worker-stderr preparation, and health snapshots |
 | `cli/`, `mcp/`, `api/`, `doctor/`, `install/` | User-facing commands, MCP/REST surfaces, diagnostics, and host configuration |
 
+### Enforced dependency direction
+
+The exhaustive top-level ownership contract lives in
+[`docs/specs/GH969/TECH.md`](specs/GH969/TECH.md#target-module-direction).
+Dependencies target inward from adapters through application,
+memory/retrieval, storage, and foundation; evaluation and doctor are the
+outermost evidence/diagnostic layer. Current reverse edges are explicit debt,
+not approved architecture: their exact source sites and the largest cyclic
+component are pinned in
+[`module-dependency-baseline.json`](specs/GH969/module-dependency-baseline.json).
+
+Run the same no-expansion check used by preflight and CI with:
+
+```bash
+python3 scripts/ci/check_module_dependencies.py --base origin/main
+python3 scripts/ci/check_module_dependencies.py --self-test
+```
+
+The check fails on an unclassified root, a new reverse edge, a new site on an
+accepted reverse edge, stale baseline debt that should be removed, or growth of
+the largest cyclic component. Temporary exceptions require an owner,
+rationale, tracking issue, and decision date.
+
 ## Data Flow
 
 Current-context reads first share the deterministic, read-only trust/visibility

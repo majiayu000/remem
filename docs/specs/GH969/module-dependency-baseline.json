@@ -1,0 +1,1352 @@
+{
+  "schema_version": 1,
+  "bootstrap_base_commit": "5b98e80dca3504b53691b607c2ec7ad3a37d734f",
+  "accepted_reverse_edges": [
+    {
+      "source": "build_info",
+      "target": "migrate",
+      "sites": [
+        {
+          "path": "src/build_info.rs",
+          "kind": "path",
+          "signature": "crate::migrate",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "captured_git",
+      "target": "session_rollup",
+      "sites": [
+        {
+          "path": "src/captured_git.rs",
+          "kind": "path",
+          "signature": "crate::session_rollup",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "cli",
+      "target": "doctor",
+      "sites": [
+        {
+          "path": "src/cli/actions/query/status.rs",
+          "kind": "path",
+          "signature": "crate::doctor",
+          "occurrence": 1
+        },
+        {
+          "path": "src/cli/actions/query/status.rs",
+          "kind": "use",
+          "signature": "usecrate::doctor::health_action::{queue_actions_with_replay,render_action_block,worker_once_fallback_human,};",
+          "occurrence": 1
+        },
+        {
+          "path": "src/cli/dispatch.rs",
+          "kind": "use",
+          "signature": "usecrate::{api,context,db,doctor,install,mcp,worker};",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "cli",
+      "target": "eval",
+      "sites": [
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 1
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 2
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 3
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 4
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 5
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 6
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 7
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 8
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 9
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 10
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 11
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 12
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 13
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 14
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 15
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 16
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 17
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 18
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 19
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 20
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 21
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 22
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 23
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 24
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 25
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 26
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 27
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 28
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 29
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 30
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 31
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 32
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 33
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 34
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 35
+        },
+        {
+          "path": "src/cli/actions/eval.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 36
+        },
+        {
+          "path": "src/cli/eval_types.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 1
+        },
+        {
+          "path": "src/cli/eval_types.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 2
+        },
+        {
+          "path": "src/cli/eval_types.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 3
+        },
+        {
+          "path": "src/cli/eval_types.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 4
+        },
+        {
+          "path": "src/cli/eval_types.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 5
+        },
+        {
+          "path": "src/cli/eval_types.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 6
+        },
+        {
+          "path": "src/cli/eval_types.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 7
+        },
+        {
+          "path": "src/cli/eval_types.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 8
+        },
+        {
+          "path": "src/cli/eval_types.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 9
+        },
+        {
+          "path": "src/cli/eval_types.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 10
+        },
+        {
+          "path": "src/cli/eval_types.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 11
+        },
+        {
+          "path": "src/cli/eval_types.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 12
+        },
+        {
+          "path": "src/cli/eval_types.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 13
+        },
+        {
+          "path": "src/cli/eval_types.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 14
+        },
+        {
+          "path": "src/cli/eval_types.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 15
+        },
+        {
+          "path": "src/cli/eval_types.rs",
+          "kind": "path",
+          "signature": "crate::eval",
+          "occurrence": 16
+        }
+      ]
+    },
+    {
+      "source": "context",
+      "target": "cursor_hook",
+      "sites": [
+        {
+          "path": "src/context/invocation.rs",
+          "kind": "path",
+          "signature": "crate::cursor_hook",
+          "occurrence": 1
+        },
+        {
+          "path": "src/context/render/entry.rs",
+          "kind": "path",
+          "signature": "crate::cursor_hook",
+          "occurrence": 1
+        },
+        {
+          "path": "src/context/render/entry.rs",
+          "kind": "path",
+          "signature": "crate::cursor_hook",
+          "occurrence": 2
+        }
+      ]
+    },
+    {
+      "source": "context",
+      "target": "hook_integrity",
+      "sites": [
+        {
+          "path": "src/context/hook_warning.rs",
+          "kind": "path",
+          "signature": "crate::hook_integrity",
+          "occurrence": 1
+        },
+        {
+          "path": "src/context/hook_warning.rs",
+          "kind": "path",
+          "signature": "crate::hook_integrity",
+          "occurrence": 2
+        },
+        {
+          "path": "src/context/hook_warning.rs",
+          "kind": "path",
+          "signature": "crate::hook_integrity",
+          "occurrence": 3
+        },
+        {
+          "path": "src/context/hook_warning.rs",
+          "kind": "path",
+          "signature": "crate::hook_integrity",
+          "occurrence": 4
+        },
+        {
+          "path": "src/context/hook_warning.rs",
+          "kind": "path",
+          "signature": "crate::hook_integrity",
+          "occurrence": 5
+        }
+      ]
+    },
+    {
+      "source": "context",
+      "target": "hook_stdin",
+      "sites": [
+        {
+          "path": "src/context/invocation.rs",
+          "kind": "path",
+          "signature": "crate::hook_stdin",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "context",
+      "target": "install",
+      "sites": [
+        {
+          "path": "src/context/hook_warning.rs",
+          "kind": "path",
+          "signature": "crate::install",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "db",
+      "target": "adapter",
+      "sites": [
+        {
+          "path": "src/db/capture.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 1
+        },
+        {
+          "path": "src/db/capture.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 2
+        },
+        {
+          "path": "src/db/capture.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 3
+        }
+      ]
+    },
+    {
+      "source": "db",
+      "target": "ai",
+      "sites": [
+        {
+          "path": "src/db/usage.rs",
+          "kind": "use",
+          "signature": "usecrate::ai::TokenUsage;",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "db",
+      "target": "memory",
+      "sites": [
+        {
+          "path": "src/db/core.rs",
+          "kind": "path",
+          "signature": "crate::memory",
+          "occurrence": 1
+        },
+        {
+          "path": "src/db/core.rs",
+          "kind": "path",
+          "signature": "crate::memory",
+          "occurrence": 2
+        },
+        {
+          "path": "src/db/observation.rs",
+          "kind": "path",
+          "signature": "crate::memory",
+          "occurrence": 1
+        },
+        {
+          "path": "src/db/query/observability/metrics.rs",
+          "kind": "use",
+          "signature": "usecrate::memory::{map_memory_row_pub,memory_current_filter_sql,memory_staleness_labels_for_memories_lossy,memory_state_key_current_filter_sql,MEMORY_COLS,};",
+          "occurrence": 1
+        },
+        {
+          "path": "src/db/query/poisoning_stats.rs",
+          "kind": "path",
+          "signature": "crate::memory",
+          "occurrence": 1
+        },
+        {
+          "path": "src/db/query/stats.rs",
+          "kind": "path",
+          "signature": "crate::memory",
+          "occurrence": 1
+        },
+        {
+          "path": "src/db/query/stats.rs",
+          "kind": "path",
+          "signature": "crate::memory",
+          "occurrence": 2
+        },
+        {
+          "path": "src/db/summarize/session/finalize.rs",
+          "kind": "use",
+          "signature": "usecrate::memory::poisoning::scan_generated_surfaces;",
+          "occurrence": 1
+        },
+        {
+          "path": "src/db/summary_poisoning.rs",
+          "kind": "use",
+          "signature": "usecrate::memory::poisoning::{scan_generated_surfaces,SurfacePatternMatch};",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "db",
+      "target": "retrieval",
+      "sites": [
+        {
+          "path": "src/db/core.rs",
+          "kind": "path",
+          "signature": "crate::retrieval",
+          "occurrence": 1
+        },
+        {
+          "path": "src/db/core.rs",
+          "kind": "path",
+          "signature": "crate::retrieval",
+          "occurrence": 2
+        },
+        {
+          "path": "src/db/core.rs",
+          "kind": "path",
+          "signature": "crate::retrieval",
+          "occurrence": 3
+        },
+        {
+          "path": "src/db/core.rs",
+          "kind": "path",
+          "signature": "crate::retrieval",
+          "occurrence": 4
+        },
+        {
+          "path": "src/db/query/observability/metrics.rs",
+          "kind": "path",
+          "signature": "crate::retrieval",
+          "occurrence": 1
+        },
+        {
+          "path": "src/db/query/status_spend.rs",
+          "kind": "path",
+          "signature": "crate::retrieval",
+          "occurrence": 1
+        },
+        {
+          "path": "src/db/query/status_spend.rs",
+          "kind": "path",
+          "signature": "crate::retrieval",
+          "occurrence": 2
+        },
+        {
+          "path": "src/db/query/status_spend.rs",
+          "kind": "path",
+          "signature": "crate::retrieval",
+          "occurrence": 3
+        },
+        {
+          "path": "src/db/query/user_context_stats.rs",
+          "kind": "path",
+          "signature": "crate::retrieval",
+          "occurrence": 1
+        },
+        {
+          "path": "src/db/query/user_context_stats.rs",
+          "kind": "path",
+          "signature": "crate::retrieval",
+          "occurrence": 2
+        }
+      ]
+    },
+    {
+      "source": "git_evidence",
+      "target": "adapter",
+      "sites": [
+        {
+          "path": "src/git_evidence.rs",
+          "kind": "use",
+          "signature": "usecrate::adapter::{EventSummary,ParsedHookEvent};",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "git_evidence",
+      "target": "memory",
+      "sites": [
+        {
+          "path": "src/git_evidence.rs",
+          "kind": "path",
+          "signature": "crate::memory",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "git_util",
+      "target": "adapter",
+      "sites": [
+        {
+          "path": "src/git_util.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 1
+        },
+        {
+          "path": "src/git_util.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 2
+        },
+        {
+          "path": "src/git_util.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 3
+        }
+      ]
+    },
+    {
+      "source": "git_util",
+      "target": "db",
+      "sites": [
+        {
+          "path": "src/git_util.rs",
+          "kind": "path",
+          "signature": "crate::db",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "graph_candidate",
+      "target": "ai",
+      "sites": [
+        {
+          "path": "src/graph_candidate/mod.rs",
+          "kind": "path",
+          "signature": "crate::ai",
+          "occurrence": 1
+        },
+        {
+          "path": "src/graph_candidate/mod.rs",
+          "kind": "path",
+          "signature": "crate::ai",
+          "occurrence": 2
+        }
+      ]
+    },
+    {
+      "source": "log",
+      "target": "db",
+      "sites": [
+        {
+          "path": "src/log/config.rs",
+          "kind": "path",
+          "signature": "crate::db",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "maintenance",
+      "target": "adapter",
+      "sites": [
+        {
+          "path": "src/maintenance/mod.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "memory",
+      "target": "adapter",
+      "sites": [
+        {
+          "path": "src/memory/format/parse.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 1
+        },
+        {
+          "path": "src/memory/procedure/export/render.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 1
+        },
+        {
+          "path": "src/memory/procedure/export/render.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 2
+        },
+        {
+          "path": "src/memory/retrieval_enrichment.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 1
+        },
+        {
+          "path": "src/memory/retrieval_enrichment.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 2
+        },
+        {
+          "path": "src/memory/retrieval_enrichment.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 3
+        },
+        {
+          "path": "src/memory/retrieval_enrichment/sweep.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "memory",
+      "target": "ai",
+      "sites": [
+        {
+          "path": "src/memory/retrieval_enrichment/sweep.rs",
+          "kind": "path",
+          "signature": "crate::ai",
+          "occurrence": 1
+        },
+        {
+          "path": "src/memory/retrieval_enrichment/sweep.rs",
+          "kind": "path",
+          "signature": "crate::ai",
+          "occurrence": 2
+        }
+      ]
+    },
+    {
+      "source": "memory",
+      "target": "ingest",
+      "sites": [
+        {
+          "path": "src/memory/raw_reconcile.rs",
+          "kind": "path",
+          "signature": "crate::ingest",
+          "occurrence": 1
+        },
+        {
+          "path": "src/memory/raw_reconcile.rs",
+          "kind": "path",
+          "signature": "crate::ingest",
+          "occurrence": 2
+        },
+        {
+          "path": "src/memory/raw_reconcile.rs",
+          "kind": "use",
+          "signature": "usecrate::ingest::session_identity::IdentityRecord;",
+          "occurrence": 1
+        },
+        {
+          "path": "src/memory/raw_reconcile.rs",
+          "kind": "use",
+          "signature": "usecrate::ingest::sessions::{discover_transcript_files,ScanRoot};",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "memory",
+      "target": "retrieval_router",
+      "sites": [
+        {
+          "path": "src/memory/service/types.rs",
+          "kind": "path",
+          "signature": "crate::retrieval_router",
+          "occurrence": 1
+        },
+        {
+          "path": "src/memory/service/types.rs",
+          "kind": "path",
+          "signature": "crate::retrieval_router",
+          "occurrence": 2
+        },
+        {
+          "path": "src/memory/service/types.rs",
+          "kind": "path",
+          "signature": "crate::retrieval_router",
+          "occurrence": 3
+        },
+        {
+          "path": "src/memory/service/types.rs",
+          "kind": "path",
+          "signature": "crate::retrieval_router",
+          "occurrence": 4
+        },
+        {
+          "path": "src/memory/service/types.rs",
+          "kind": "path",
+          "signature": "crate::retrieval_router",
+          "occurrence": 5
+        },
+        {
+          "path": "src/memory/service/types.rs",
+          "kind": "path",
+          "signature": "crate::retrieval_router",
+          "occurrence": 6
+        },
+        {
+          "path": "src/memory/service/types.rs",
+          "kind": "path",
+          "signature": "crate::retrieval_router",
+          "occurrence": 7
+        },
+        {
+          "path": "src/memory/service/types.rs",
+          "kind": "path",
+          "signature": "crate::retrieval_router",
+          "occurrence": 8
+        },
+        {
+          "path": "src/memory/service/types.rs",
+          "kind": "path",
+          "signature": "crate::retrieval_router",
+          "occurrence": 9
+        },
+        {
+          "path": "src/memory/service/types.rs",
+          "kind": "path",
+          "signature": "crate::retrieval_router",
+          "occurrence": 10
+        },
+        {
+          "path": "src/memory/service/types.rs",
+          "kind": "path",
+          "signature": "crate::retrieval_router",
+          "occurrence": 11
+        },
+        {
+          "path": "src/memory/service/types.rs",
+          "kind": "path",
+          "signature": "crate::retrieval_router",
+          "occurrence": 12
+        },
+        {
+          "path": "src/memory/service/types.rs",
+          "kind": "path",
+          "signature": "crate::retrieval_router",
+          "occurrence": 13
+        }
+      ]
+    },
+    {
+      "source": "memory_candidate",
+      "target": "ai",
+      "sites": [
+        {
+          "path": "src/memory_candidate.rs",
+          "kind": "path",
+          "signature": "crate::ai",
+          "occurrence": 1
+        },
+        {
+          "path": "src/memory_candidate.rs",
+          "kind": "path",
+          "signature": "crate::ai",
+          "occurrence": 2
+        }
+      ]
+    },
+    {
+      "source": "memory_candidate",
+      "target": "dream",
+      "sites": [
+        {
+          "path": "src/memory_candidate/review/dream_provenance.rs",
+          "kind": "path",
+          "signature": "crate::dream",
+          "occurrence": 1
+        },
+        {
+          "path": "src/memory_candidate/review/dream_provenance.rs",
+          "kind": "path",
+          "signature": "crate::dream",
+          "occurrence": 2
+        },
+        {
+          "path": "src/memory_candidate/review/dream_provenance.rs",
+          "kind": "path",
+          "signature": "crate::dream",
+          "occurrence": 3
+        },
+        {
+          "path": "src/memory_candidate/review/dream_provenance.rs",
+          "kind": "path",
+          "signature": "crate::dream",
+          "occurrence": 4
+        },
+        {
+          "path": "src/memory_candidate/review/dream_provenance.rs",
+          "kind": "path",
+          "signature": "crate::dream",
+          "occurrence": 5
+        },
+        {
+          "path": "src/memory_candidate/review/dream_provenance.rs",
+          "kind": "path",
+          "signature": "crate::dream",
+          "occurrence": 6
+        },
+        {
+          "path": "src/memory_candidate/review/dream_provenance.rs",
+          "kind": "path",
+          "signature": "crate::dream",
+          "occurrence": 7
+        },
+        {
+          "path": "src/memory_candidate/review/dream_provenance.rs",
+          "kind": "path",
+          "signature": "crate::dream",
+          "occurrence": 8
+        },
+        {
+          "path": "src/memory_candidate/review/dream_provenance.rs",
+          "kind": "path",
+          "signature": "crate::dream",
+          "occurrence": 9
+        }
+      ]
+    },
+    {
+      "source": "memory_candidate",
+      "target": "extraction_worker",
+      "sites": [
+        {
+          "path": "src/memory_candidate.rs",
+          "kind": "path",
+          "signature": "crate::extraction_worker",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "migrate",
+      "target": "memory",
+      "sites": [
+        {
+          "path": "src/migrate/run.rs",
+          "kind": "path",
+          "signature": "crate::memory",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "migrate",
+      "target": "workstream",
+      "sites": [
+        {
+          "path": "src/migrate/run.rs",
+          "kind": "path",
+          "signature": "crate::workstream",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "observation_extract",
+      "target": "adapter",
+      "sites": [
+        {
+          "path": "src/observation_extract/prompt.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "retrieval",
+      "target": "adapter",
+      "sites": [
+        {
+          "path": "src/retrieval/embedding/fallback.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "retrieval",
+      "target": "hook_runtime",
+      "sites": [
+        {
+          "path": "src/retrieval/embedding/config.rs",
+          "kind": "path",
+          "signature": "crate::hook_runtime",
+          "occurrence": 1
+        },
+        {
+          "path": "src/retrieval/embedding/config.rs",
+          "kind": "path",
+          "signature": "crate::hook_runtime",
+          "occurrence": 2
+        }
+      ]
+    },
+    {
+      "source": "rules",
+      "target": "adapter",
+      "sites": [
+        {
+          "path": "src/rules/compiler/classify.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "runtime_config",
+      "target": "context",
+      "sites": [
+        {
+          "path": "src/runtime_config/context.rs",
+          "kind": "use",
+          "signature": "usecrate::context::ContextLimits;",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "runtime_config",
+      "target": "db",
+      "sites": [
+        {
+          "path": "src/runtime_config.rs",
+          "kind": "path",
+          "signature": "crate::db",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "session_activity",
+      "target": "adapter",
+      "sites": [
+        {
+          "path": "src/session_activity/projection.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 1
+        },
+        {
+          "path": "src/session_activity/projection.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 2
+        },
+        {
+          "path": "src/session_activity/projection.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 3
+        },
+        {
+          "path": "src/session_activity/query.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 1
+        },
+        {
+          "path": "src/session_activity/query.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 2
+        },
+        {
+          "path": "src/session_activity/query.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 3
+        }
+      ]
+    },
+    {
+      "source": "session_rollup",
+      "target": "adapter",
+      "sites": [
+        {
+          "path": "src/session_rollup/cursor_snapshot.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 1
+        },
+        {
+          "path": "src/session_rollup/cursor_snapshot.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 2
+        },
+        {
+          "path": "src/session_rollup/prompt.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 1
+        },
+        {
+          "path": "src/session_rollup/prompt.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 2
+        },
+        {
+          "path": "src/session_rollup/transcript_evidence.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 1
+        },
+        {
+          "path": "src/session_rollup/transcript_evidence.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 2
+        },
+        {
+          "path": "src/session_rollup/transcript_evidence.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 3
+        }
+      ]
+    },
+    {
+      "source": "summarize",
+      "target": "adapter",
+      "sites": [
+        {
+          "path": "src/summarize/summary_job/hook.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "summarize",
+      "target": "cursor_hook",
+      "sites": [
+        {
+          "path": "src/summarize/input.rs",
+          "kind": "path",
+          "signature": "crate::cursor_hook",
+          "occurrence": 1
+        },
+        {
+          "path": "src/summarize/input.rs",
+          "kind": "path",
+          "signature": "crate::cursor_hook",
+          "occurrence": 2
+        },
+        {
+          "path": "src/summarize/input.rs",
+          "kind": "path",
+          "signature": "crate::cursor_hook",
+          "occurrence": 3
+        },
+        {
+          "path": "src/summarize/input.rs",
+          "kind": "path",
+          "signature": "crate::cursor_hook",
+          "occurrence": 4
+        },
+        {
+          "path": "src/summarize/input.rs",
+          "kind": "path",
+          "signature": "crate::cursor_hook",
+          "occurrence": 5
+        },
+        {
+          "path": "src/summarize/input.rs",
+          "kind": "path",
+          "signature": "crate::cursor_hook",
+          "occurrence": 6
+        },
+        {
+          "path": "src/summarize/summary_job/hook.rs",
+          "kind": "path",
+          "signature": "crate::cursor_hook",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "summarize",
+      "target": "hook_cli",
+      "sites": [
+        {
+          "path": "src/summarize/summary_job/worker_launch.rs",
+          "kind": "path",
+          "signature": "crate::hook_cli",
+          "occurrence": 1
+        },
+        {
+          "path": "src/summarize/summary_job/worker_launch.rs",
+          "kind": "path",
+          "signature": "crate::hook_cli",
+          "occurrence": 2
+        }
+      ]
+    },
+    {
+      "source": "summarize",
+      "target": "hook_stdin",
+      "sites": [
+        {
+          "path": "src/summarize/summary_job/hook.rs",
+          "kind": "use",
+          "signature": "usecrate::hook_stdin::read_stdin_with_timeout;",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "user_context",
+      "target": "adapter",
+      "sites": [
+        {
+          "path": "src/user_context/extraction/prompt.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 1
+        },
+        {
+          "path": "src/user_context/non_retention.rs",
+          "kind": "path",
+          "signature": "crate::adapter",
+          "occurrence": 1
+        }
+      ]
+    },
+    {
+      "source": "user_context",
+      "target": "ai",
+      "sites": [
+        {
+          "path": "src/user_context/extraction/mod.rs",
+          "kind": "path",
+          "signature": "crate::ai",
+          "occurrence": 1
+        },
+        {
+          "path": "src/user_context/extraction/mod.rs",
+          "kind": "path",
+          "signature": "crate::ai",
+          "occurrence": 2
+        }
+      ]
+    }
+  ],
+  "largest_cyclic_component": {
+    "size": 37,
+    "roots": [
+      "adapter",
+      "ai",
+      "api",
+      "build_info",
+      "captured_git",
+      "context",
+      "context_bundle",
+      "db",
+      "dream",
+      "extraction_worker",
+      "git_evidence",
+      "git_trace",
+      "git_util",
+      "graph_candidate",
+      "hook_cli",
+      "hook_integrity",
+      "identity",
+      "ingest",
+      "install",
+      "log",
+      "memory",
+      "memory_candidate",
+      "migrate",
+      "observation_extract",
+      "observe",
+      "project_id",
+      "retrieval",
+      "retrieval_router",
+      "rules",
+      "runtime_config",
+      "session_activity",
+      "session_rollup",
+      "spill_queue",
+      "summarize",
+      "truth",
+      "user_context",
+      "workstream"
+    ]
+  },
+  "exceptions": [],
+  "scc_exceptions": []
+}

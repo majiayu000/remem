@@ -1,8 +1,8 @@
 # GH969 Technical Contract — Stabilization And Surface Governance
 
-Status: Current contract; activation boundary and surface lifecycle guard implemented; later slices pending; Issue: #969
+Status: Current contract; activation, surface lifecycle, and dependency-direction guards implemented; later slices pending; Issue: #969
 
-Last reconciled against `origin/main`: 2026-08-21 (`86fee409`)
+Last reconciled against `origin/main`: 2026-08-25 (`5b98e80d`)
 
 ## Contract Boundaries
 
@@ -129,8 +129,8 @@ walks composed Axum routers including implicit HEAD routes, inventories served
 MCP search parameters, snapshots experimental callers, fingerprints production
 default evidence for SessionStart bundle mode and non-zero graph weight,
 verifies recovery writers from source, and requires every offline artifact to
-belong to exactly one checked category. Later slices still need the
-dependency-direction guard described below.
+belong to exactly one checked category. The dependency-direction slice now
+enforces the target root ownership and no-expansion rules described below.
 
 ## Target Module Direction
 
@@ -200,6 +200,25 @@ The guard does not need to parse full Rust semantics in v1. A conservative
 scanner is acceptable if self-tests cover `use crate::x`, absolute
 `crate::x::...`, grouped imports, `pub use`, test cfgs, comments/strings, and
 module-relative references that cross an owned root.
+
+The repository implementation is
+`scripts/ci/check_module_dependencies.py`, backed by the conservative scanner
+in `scripts/ci/module_dependency_discovery.py` and the reviewed evidence in
+`module-dependency-baseline.json`. Site identities bind file, syntax kind,
+normalized reference, and same-file occurrence without binding line numbers,
+so line-only movement does not create churn while copied or newly introduced
+references remain visible. Exact `cfg(test)` items and external module trees
+are excluded only when module reachability proves they are test-only; names
+such as `tests.rs` do not suppress production evidence.
+
+The one-time baseline is bound to the exact pre-implementation base commit and
+can bootstrap only when Rust product sources are unchanged. Later accepted
+sites and the largest cyclic-component size may only shrink. New dependency or
+SCC exceptions require owner, rationale, tracking issue, and a non-overdue
+decision date; normal regeneration has no accept-current-output mode. The
+guard prints every currently accepted reverse edge with live source lines and
+runs both its current-tree check and synthetic negative suite in preflight and
+CI.
 
 ## Active-Memory Activation API
 
@@ -546,6 +565,7 @@ one cross-repository PR:
    - Acceptance: every PRODUCT inventory row is represented; stale/overdue or
      contradictory declarations fail CI.
 3. **Module dependency-direction baseline and no-expansion guard**
+   - Status: implemented by #1044 against the post-#1043 main baseline.
    - Primary scope: module scanner, reviewed baseline, CI/preflight wiring.
    - Acceptance: self-tests pass; current violations are visible; synthetic new
      reverse edges and cycle growth fail.
