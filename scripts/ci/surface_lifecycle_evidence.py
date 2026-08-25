@@ -27,6 +27,7 @@ EXPERIMENTAL_CALLER_SYMBOLS = {
     "entity-bfs": ("retrieval::entity", "entity_graph"),
     "coding-public-benchmarks": ("coding_bench",),
 }
+DYNAMIC_SQL_TABLE_PREFIXES = ("memory_embedding_vec_",)
 
 
 def mask_cfg_test_blocks(text: str) -> str:
@@ -70,6 +71,28 @@ def _production_rust_sources(root: Path) -> list[tuple[str, str]]:
     return sources
 
 
+def _function_source_at(text: str, position: int) -> str:
+    for match in reversed(list(re.finditer(r"\bfn\s+[A-Za-z_][A-Za-z0-9_]*\s*\(", text[:position]))):
+        arguments_end = _matching_paren(text, match.end() - 1)
+        body_start = text.find("{", arguments_end)
+        if body_start >= 0 and position <= _matching_brace(text, body_start):
+            return text[body_start + 1 : position]
+    return ""
+
+
+def _resolve_dynamic_table(text: str, position: int, rendered: str) -> str:
+    scope = _function_source_at(text, position)
+    for name in re.findall(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", rendered):
+        assignments = re.findall(rf"\blet\s+{re.escape(name)}\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*\([^;]*\)\s*;", scope)
+        if not assignments:
+            continue
+        helper = _function_body(text, assignments[-1])
+        template = None if helper is None else re.fullmatch(r'\s*format!\s*\(\s*"([^"\\]*)"[^)]*\)\s*', helper)
+        if template:
+            rendered = rendered.replace(f"{{{name}}}", template.group(1))
+    return rendered
+
+
 def _sql_insert_position(text: str, target: str) -> int | None:
     sql_pattern = rf"\bINSERT\s+(?:OR\s+[A-Z]+\s+)?INTO\s+{re.escape(target)}\b"
     positions = [match.start() for match in re.finditer(sql_pattern, text, re.I)]
@@ -79,6 +102,20 @@ def _sql_insert_position(text: str, target: str) -> int | None:
         literals = re.findall(r'"((?:\\.|[^"\\])*)"', body, re.S)
         if re.search(sql_pattern, "".join(literals), re.I):
             positions.append(match.start())
+    constants = dict(re.findall(r'\bconst\s+([A-Z][A-Z0-9_]*)[^=;]*=\s*"([^"\\]*)"', text))
+    for match in re.finditer(r"\bformat!\s*\(", text):
+        closing = _matching_paren(text, match.end() - 1)
+        literals = re.findall(r'"((?:\\.|[^"\\])*)"', text[match.end() : closing], re.S)
+        if not literals or not re.search(r"\bINSERT\s+(?:OR\s+[A-Z]+\s+)?INTO\b", literals[0], re.I): continue
+        rendered = literals[0]
+        for value in literals[1:]: rendered = rendered.replace("{}", value, 1)
+        for name, value in constants.items(): rendered = rendered.replace(f"{{{name}}}", value)
+        rendered = _resolve_dynamic_table(text, match.start(), rendered)
+        table = re.search(r"\bINSERT\s+(?:OR\s+[A-Z]+\s+)?INTO\s+([^\s(]+)", rendered, re.I)
+        if table and (re.search(r"\{[^{}]+\}", table.group(1)) or "{}" in table.group(1)):
+            if not table.group(1).startswith(DYNAMIC_SQL_TABLE_PREFIXES):
+                raise RuntimeError("unresolved dynamic SQL insert is outside the audited derived-table namespace")
+        elif re.search(sql_pattern, rendered, re.I): positions.append(match.start())
     return min(positions) if positions else None
 
 
@@ -183,6 +220,30 @@ def expanded_default_features(root: Path) -> set[str]:
             raise RuntimeError(f"Cargo.toml feature {feature!r} must be a string array")
         queue.extend(dependencies)
     return active
+
+
+def default_feature_contracts(root: Path) -> set[str]:
+    features = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8")).get("features", {})
+    active = expanded_default_features(root)
+    if not isinstance(features, dict): raise RuntimeError("Cargo.toml [features] must be a table")
+    def resolve(name: str, ancestors: tuple[str, ...]) -> str:
+        if name in ancestors: raise RuntimeError(f"recursive Cargo feature graph: {' -> '.join((*ancestors, name))}")
+        members = features.get(name, [])
+        if not isinstance(members, list) or any(not isinstance(member, str) for member in members): raise RuntimeError(f"Cargo.toml feature {name!r} must be a string array")
+        children = [resolve(member, (*ancestors, name)) for member in members if member in features]
+        return hashlib.sha256("\n".join([name, *sorted(members), *sorted(children)]).encode()).hexdigest()
+    return {f"{name}@sha256={resolve(name, ())}" for name in active}
+
+
+def clap_root_contract(root: Path) -> tuple[str, str]:
+    text = mask_cfg_test_blocks((root / "src/cli/types.rs").read_text(encoding="utf-8"))
+    match = re.search(r"#\s*\[\s*derive\s*\([^]]*\bParser\b[^]]*\)\s*\](?:\s*#\s*\[[^]]*\])*\s*(?:pub(?:\s*\([^)]*\))?\s+)?struct\s+Cli\s*\{", text, re.S)
+    if not match: raise RuntimeError("cannot resolve root Clap Parser declaration")
+    end = _matching_brace(text, match.end() - 1); raw = text[match.start() : end + 1]
+    name = re.search(r'\bname\s*=\s*"([^"]+)"', raw)
+    if not name: raise RuntimeError("root Clap Parser requires an explicit command name")
+    normalized = re.sub(r"\s+", " ", mask_rust_comments(raw)).strip()
+    return name.group(1), hashlib.sha256(normalized.encode()).hexdigest()
 
 
 _FUNCTION_KIND = r"(?:(?:const|async|unsafe)\s+)*(?:extern(?:\s+\"[^\"]+\")?\s+)?fn"
@@ -526,8 +587,10 @@ PRODUCTION_DEFAULT_GUARDS = {
 def build_default_guard(root: Path, mode: str) -> dict[str, object]:
     if mode == "context_bundle_default":
         path = root / "src/context/render_bundle.rs"
-        raw = path.read_text(encoding="utf-8")
-        markers = ('"" | "bundle" => Ok(ContextBundleRenderMode::Bundle)', "NotPresent) => Ok(ContextBundleRenderMode::Bundle)")
+        config = mask_rust_comments(path.read_text(encoding="utf-8"))
+        caller = mask_rust_comments((root / "src/context/render.rs").read_text(encoding="utf-8"))
+        raw = config + "\n" + caller
+        markers = ('"" | "bundle" => Ok(ContextBundleRenderMode::Bundle)', "NotPresent) => Ok(ContextBundleRenderMode::Bundle)", "super::render_bundle::renderer_enabled()?", "use_context_bundle: bool", "if use_context_bundle {")
         if not all(marker in raw for marker in markers):
             raise RuntimeError("SessionStart Context Bundle is no longer the implementation default")
         value: object = "bundle"

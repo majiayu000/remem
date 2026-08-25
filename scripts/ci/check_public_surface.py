@@ -421,7 +421,7 @@ def lifecycle_self_test() -> int:
         )
         (root / "src/install.rs").write_text('#[derive(ValueEnum)] enum Format { Json }\n', encoding="utf-8")
         (root / "src/cli/types.rs").write_text(
-            '#[derive(Args)] struct ContextArgs { #[arg(value_enum)] format: Format } '
+            '#[derive(Parser)] #[command(name = "remem", about = "fixture")] struct Cli { #[command(subcommand)] command: Commands } #[derive(Args)] struct ContextArgs { #[arg(value_enum)] format: Format } '
             '#[derive(Subcommand)] enum Commands { '
             '#[command(visible_alias = "ctx")] Context(ContextArgs), '
             '#[cfg(feature = "eval")] Eval, #[cfg(feature = "off")] Hidden, '
@@ -493,6 +493,11 @@ def lifecycle_self_test() -> int:
         enum_path.write_text(enum_source); mcp_path.write_text(mcp_source)
         if changed_contracts["cli_command"] == discovered["cli_command"] or changed_contracts["mcp_tool"] == discovered["mcp_tool"]:
             sys.stderr.write("CLI argument or MCP legacy shape change did not alter its fingerprint\n"); return 1
+        cli_path.write_text(cli_source.replace('name = "remem"', 'name = "memory"'))
+        if discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"}, rest_fingerprints={})["cli_command"] == discovered["cli_command"]: sys.stderr.write("root Clap Parser metadata change was not fingerprinted\n"); return 1
+        cli_path.write_text(cli_source); cargo_path = root / "Cargo.toml"; cargo_source = cargo_path.read_text(); cargo_path.write_text(cargo_source.replace("eval = []", 'eval = ["dep:fixture"]'))
+        if discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"}, rest_fingerprints={})["default_feature"] == discovered["default_feature"]: sys.stderr.write("default feature composition change was not fingerprinted\n"); return 1
+        cargo_path.write_text(cargo_source)
         explicit_head = discover_rest_routes(root, schema_fingerprints={"health": "get", "check": "head"})
         if "HEAD /health@sha256=head" not in explicit_head:
             sys.stderr.write("explicit HEAD handler was overwritten by implicit GET handling\n")
@@ -576,13 +581,17 @@ def lifecycle_self_test() -> int:
             sys.stderr.write("PRODUCT inventory status discovery self-test failed\n")
             return 1
         (root / "src/runtime.rs").write_text(
-            'fn write(conn: &Connection) { conn.execute("INSERT INTO pending_observations DEFAULT VALUES", []); }',
+            'fn write(conn: &Connection) { conn.execute(&format!("INSERT INTO {}", "pending_observations"), []); }',
             encoding="utf-8",
         )
         writer_guard = {"mode": "sql_table_insert", "target": "pending_observations"}
         if discover_recovery_writers(root, writer_guard) != {"src/runtime.rs"}:
             sys.stderr.write("recovery writer discovery self-test failed\n")
             return 1
+        (root / "src/runtime.rs").write_text('fn write(conn: &Connection, table: &str) { conn.execute(&format!("INSERT INTO {table}"), []); }')
+        try: discover_recovery_writers(root, writer_guard)
+        except RuntimeError: pass
+        else: sys.stderr.write("unresolved dynamic recovery SQL did not fail closed\n"); return 1
         enqueue = root / "src/db/job/enqueue.rs"
         enqueue.parent.mkdir(parents=True, exist_ok=True)
         safe_enqueue = "fn reject_summary(job_type: JobType) { if job_type == JobType::Summary { bail!(\"retired\"); } } fn enqueue_job_core(job_type: JobType) { reject_summary(job_type)?; sql(\"INSERT INTO jobs DEFAULT VALUES\"); }"
@@ -611,11 +620,17 @@ def lifecycle_self_test() -> int:
         masked_variant = mask_cfg_test_blocks("enum State { #[cfg(test)] TestReady, Ready } impl State { fn live() {} }");
         if "TestReady" in masked_variant or "fn live" not in masked_variant: sys.stderr.write("cfg(test) variant masking erased following production syntax\n"); return 1
         (root / "src/context").mkdir()
+        render = root / "src/context/render.rs"; render_source = "fn render() { render_context_output_from_inputs(super::render_bundle::renderer_enabled()?); } fn render_context_output_from_inputs(use_context_bundle: bool) { if use_context_bundle {} }"; render.write_text(render_source)
         (root / "src/context/render_bundle.rs").write_text(
             'match mode { "" | "bundle" => Ok(ContextBundleRenderMode::Bundle), '
             'Err(std::env::VarError::NotPresent) => Ok(ContextBundleRenderMode::Bundle) }',
             encoding="utf-8",
         )
+        build_default_guard(root, "context_bundle_default"); render.write_text(render_source.replace("super::render_bundle::renderer_enabled()?", "false"))
+        try: build_default_guard(root, "context_bundle_default")
+        except RuntimeError: pass
+        else: sys.stderr.write("SessionStart caller bypassed the Context Bundle default guard\n"); return 1
+        render.write_text(render_source)
         weights = root / "src/retrieval/search/memory/weights.rs"
         weights.parent.mkdir(parents=True)
         weights.write_text("const GRAPH_WEIGHT: f64 = 0.75; struct SearchWeights { graph: f64 } impl Default for SearchWeights { fn default() -> Self { Self { graph: GRAPH_WEIGHT } } }\n", encoding="utf-8")
@@ -760,13 +775,10 @@ def main() -> int:
         "https://majiayu000.github.io/remem/mcp-memory-server/",
     ]:
         require_contains("site/sitemap.xml", sitemap, url)
-
     for page in SITE_PAGES:
         require_site_page(page)
-
     codex_page = (ROOT / "site/codex-memory/index.html").read_text(encoding="utf-8")
     require_contains("site/codex-memory/index.html", codex_page, "application/ld+json")
-
     try:
         manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
         discovered = discover_all(ROOT)
@@ -781,10 +793,7 @@ def main() -> int:
     )
     if lifecycle_errors:
         fail("surface lifecycle guard failed:\n  - " + "\n  - ".join(lifecycle_errors))
-
     print("public surface and lifecycle check: ok")
     return 0
-
-
 if __name__ == "__main__":
     raise SystemExit(main())

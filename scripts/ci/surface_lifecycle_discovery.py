@@ -14,6 +14,8 @@ from surface_lifecycle_evidence import (
     PRODUCTION_DEFAULT_GUARDS,
     build_caller_guard,
     build_default_guard,
+    clap_root_contract,
+    default_feature_contracts,
     discover_product_rows,
     discover_search_parameters,
     discover_target_gated_exports,
@@ -29,16 +31,12 @@ from surface_lifecycle_rest import (
     reject_unsupported_method_routes,
     reject_unsupported_router_methods,
 )
-
-
 HTTP_METHODS = ("delete", "get", "head", "options", "patch", "post", "put", "trace")
 ROOT = Path(__file__).resolve().parents[2]
 DISCOVERED_SURFACE_KINDS = {
     "rust_export", "rust_target_export", "mcp_tool", "mcp_parameter",
     "rest_route", "cli_command", "default_feature",
 }
-
-
 def _matching(text: str, opening: int, left: str, right: str) -> int | None:
     depth = 0
     quote: str | None = None
@@ -486,37 +484,33 @@ def _subcommand_enums(root: Path, features: set[str]) -> dict[str, list[tuple[tu
                 raise RuntimeError(f"ambiguous Clap Subcommand enum basename {enum_name!r}")
             enums[enum_name] = variants
     return enums
-
-
 def discover_cli_commands(root: Path) -> set[str]:
     enums = _subcommand_enums(root, discover_default_features(root))
+    root_name, _ = clap_root_contract(root)
     if "Commands" not in enums:
         raise RuntimeError("cannot resolve root Clap Commands enum under src/cli")
     commands: set[str] = set()
-
     def visit(enum_name: str, prefix: tuple[str, ...], ancestors: tuple[str, ...]) -> None:
         if enum_name in ancestors:
             raise RuntimeError(f"recursive Clap subcommand graph: {' -> '.join((*ancestors, enum_name))}")
         if enum_name not in enums:
             raise RuntimeError(f"Clap subcommand enum {enum_name} is referenced but not discovered")
-        commands.add("remem " + " ".join((*prefix, "help")))
+        commands.add(root_name + " " + " ".join((*prefix, "help")))
         for command_names, child, _ in enums[enum_name]:
             for command in command_names:
                 path = (*prefix, command)
-                commands.add("remem " + " ".join(path))
+                commands.add(root_name + " " + " ".join(path))
                 if child:
                     visit(child, path, (*ancestors, enum_name))
 
     visit("Commands", (), ())
     return commands
-
-
 def discover_cli_contracts(root: Path) -> set[str]:
     enums = _subcommand_enums(root, discover_default_features(root))
+    root_name, root_digest = clap_root_contract(root)
     if "Commands" not in enums:
         raise RuntimeError("cannot resolve root Clap Commands enum under src/cli")
     commands: set[str] = set()
-
     def visit(enum_name: str, prefix: tuple[str, ...], ancestors: tuple[str, ...], parents: tuple[str, ...]) -> None:
         if enum_name in ancestors:
             raise RuntimeError(f"recursive Clap subcommand graph: {' -> '.join((*ancestors, enum_name))}")
@@ -524,24 +518,20 @@ def discover_cli_contracts(root: Path) -> set[str]:
             raise RuntimeError(f"Clap subcommand enum {enum_name} is referenced but not discovered")
         variants = enums[enum_name]
         help_digest = hashlib.sha256("\n".join(sorted((*parents, *(item[2] for item in variants)))).encode()).hexdigest()
-        commands.add("remem " + " ".join((*prefix, "help")) + f"@sha256={help_digest}")
+        commands.add(root_name + " " + " ".join((*prefix, "help")) + f"@sha256={help_digest}")
         for command_names, child, digest in variants:
             chain = (*parents, digest)
             fingerprint = hashlib.sha256("\n".join(chain).encode()).hexdigest()
             for command in command_names:
                 path = (*prefix, command)
-                commands.add("remem " + " ".join(path) + f"@sha256={fingerprint}")
+                commands.add(root_name + " " + " ".join(path) + f"@sha256={fingerprint}")
                 if child:
                     visit(child, path, (*ancestors, enum_name), chain)
 
-    visit("Commands", (), (), ())
+    visit("Commands", (), (), (root_digest,))
     return commands
-
-
 def discover_default_features(root: Path) -> set[str]:
     return expanded_default_features(root)
-
-
 def discover_all(root: Path, *, doc_root: Path | None = None, mcp_fingerprints: dict[str, str] | None = None, rest_fingerprints: dict[str, str] | None = None) -> dict[str, set[str]]:
     mcp_tools, _ = discover_mcp_tools(root)
     schemas = mcp_fingerprints or discover_mcp_schema_fingerprints(root)
@@ -561,7 +551,7 @@ def discover_all(root: Path, *, doc_root: Path | None = None, mcp_fingerprints: 
         "mcp_parameter": discover_search_parameters(root),
         "rest_route": discover_rest_routes(root, schema_fingerprints=rest_fingerprints),
         "cli_command": discover_cli_contracts(root),
-        "default_feature": discover_default_features(root),
+        "default_feature": default_feature_contracts(root),
     }
 
 
@@ -650,6 +640,7 @@ def lifecycle_row(kind: str, entry: str) -> str:
         return "rest-api"
     if kind == "default_feature":
         rows = {"local-onnx": "local-onnx", "eval": "deterministic-eval"}
+        entry = entry.split("@sha256=", 1)[0]
         if entry not in rows:
             raise RuntimeError(f"default Cargo feature {entry!r} lacks an explicit lifecycle row")
         return rows[entry]

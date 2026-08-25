@@ -146,12 +146,16 @@ def _response_behavior(body: str, sources: list[tuple[str, str]] | None = None, 
     )
     for match in re.finditer(r"\b(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(", body):
         name = match.group("name")
-        if name == "into_response" or not any(marker in name.lower() for marker in ("error", "invalid", "response")):
+        if name == "into_response":
             continue
+        definitions = [(relative, item) for relative, source in (sources or []) for item in _function_evidence(source, name)]
+        named = any(marker in name.lower() for marker in ("error", "invalid", "response"))
+        response_definitions = [(relative, item) for relative, item in definitions if named or re.search(r"->[^\{]*(?:Response|IntoResponse)|StatusCode::|\b(?:code|error_code)\s*:", item)]
+        if not named and not response_definitions: continue
         closing = _matching(body, match.end() - 1, "(", ")")
         evidence.add(_normalize(body[match.start() : closing + 1]))
         if sources is not None and name not in ancestors:
-            evidence.update(f"helper:{relative}:{name}:{_response_behavior(item, sources, (*ancestors, name))}" for relative, source in sources for item in _function_evidence(source, name))
+            evidence.update(f"helper:{relative}:{name}:{_response_behavior(item, sources, (*ancestors, name))}" for relative, item in response_definitions)
     return "\n".join(sorted(evidence))
 
 
@@ -382,7 +386,7 @@ def rest_surface_self_test() -> int:
             "fn map_error() { error_response(StatusCode::BAD_REQUEST, \"stable-code\"); }\n"
         )
         (api / "save.rs").write_text(source, encoding="utf-8")
-        helper_source = 'fn staleness_error_response() { error_response(StatusCode::INTERNAL_SERVER_ERROR, "stale-state"); }\n'
+        helper_source = 'fn staleness_error_response() -> Response { candidate_not_pending() } fn candidate_not_pending() -> Response { error_response(StatusCode::INTERNAL_SERVER_ERROR, "stale-state"); }\n'
         (api / "helpers.rs").write_text(helper_source, encoding="utf-8")
         before = discover_rest_schema_fingerprints(root)
         (api / "helpers.rs").write_text(helper_source.replace("stale-state", "stale-renamed"), encoding="utf-8")

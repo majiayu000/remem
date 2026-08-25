@@ -398,20 +398,27 @@ reachable external producer result types, constructed JSON shapes, and their
 named handler signature. Implementations referenced by serde `serialize_with`,
 `deserialize_with`, and `with` field attributes are fingerprinted with the wire
 declaration; unresolved helpers fail closed. Handler evidence also includes
-explicit HTTP status constants and stable error-construction calls. External
+explicit HTTP status constants and the complete locally resolvable chain of
+response-producing helpers, independent of helper naming. External
 producer traversal resolves direct paths, simple imports, grouped imports, and
-aliases. Inline `cfg(test)` declarations are masked before fingerprinting;
+aliases. Complete `cfg(test)` syntax nodes are masked before fingerprinting
+without consuming adjacent production syntax;
 reachable `route_service`, `nest_service`, and fallback registrations are
 rejected until discovery supports them, and implicit GET-to-HEAD expansion never
 overwrites an explicitly registered HEAD handler. Production default evidence also binds
 CurrentTruth projection, fail-closed availability, shadow attachment, and
-channel activation on the Context Bundle path. Only `eval` and `local-onnx`
-currently have reviewed default-feature mappings; any new default feature fails
-generation until it receives a canonical lifecycle row.
+channel activation on the Context Bundle path, including the SessionStart caller
+that selects and consumes `renderer_enabled()`. The root Clap `Parser` metadata
+is included in every CLI identity. Only `eval` and `local-onnx` currently have
+reviewed default-feature mappings; their identities include normalized transitive
+feature membership, and any new default feature fails generation until it
+receives a canonical lifecycle row.
 The deprecated legacy-events row is additionally bound to both transactional
 projection writers, their conflict-safe SQL, and the active capture callers.
-Recovery-only SQL writer discovery also reconstructs `concat!` string literals,
-so composing a retired-table insert cannot bypass the normal-writer check.
+Recovery-only SQL writer discovery reconstructs `concat!`, constant `format!`,
+and locally derived table names. Unresolved dynamic inserts fail closed unless
+their resolved prefix belongs to the reviewed vector-index derived-table
+namespace, so an otherwise safe source file cannot hide a retired-table insert.
 The historical Summary guard additionally validates both the generic jobs insert
 core and its `JobType::Summary` rejection, so deleting the rejection exposes a
 forbidden writer even when callers pass a generic `job_type` variable.
