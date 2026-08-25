@@ -70,6 +70,22 @@ def _release_version(release: object) -> tuple[int, int, int]:
     return tuple(int(part) for part in match.groups())
 
 
+def _retired(manifest: dict[str, object], *, allow_missing: bool = False) -> dict[str, set[str]]:
+    raw = manifest.get("retired_surfaces")
+    if raw is None and allow_missing:
+        return {kind: set() for kind in DISCOVERED_SURFACE_KINDS}
+    if not isinstance(raw, dict) or set(raw) != set(DISCOVERED_SURFACE_KINDS):
+        raise RuntimeError("retired_surfaces must contain exactly every discovered surface kind")
+    retired: dict[str, set[str]] = {}
+    for kind, entries in raw.items():
+        if not isinstance(entries, list) or any(not isinstance(entry, str) or not entry.strip() for entry in entries):
+            raise RuntimeError(f"retired_surfaces.{kind} must be a string array")
+        if len(entries) != len(set(entries)):
+            raise RuntimeError(f"retired_surfaces.{kind} contains duplicate identities")
+        retired[kind] = set(entries)
+    return retired
+
+
 def verify(base: str) -> None:
     current = json.loads((ROOT / MANIFEST).read_text(encoding="utf-8"))
     if not isinstance(current, dict):
@@ -78,20 +94,29 @@ def verify(base: str) -> None:
     published = current.get("published_surfaces")
     if not isinstance(release, str) or not isinstance(published, dict):
         raise RuntimeError("current surface manifest lacks published release metadata")
+    current_retired = _retired(current)
     previous = _manifest_at(base)
     if previous is not None:
-        if previous.get("published_release") == release and previous.get("published_surfaces") == published:
-            return
-        if _release_version(release) <= _release_version(previous.get("published_release")):
-            raise RuntimeError("published baseline changes must advance the release version monotonically")
         prior_surfaces = previous.get("published_surfaces")
         if not isinstance(prior_surfaces, dict):
             raise RuntimeError("base surface manifest lacks published_surfaces")
+        prior_retired = _retired(previous, allow_missing=True)
         for kind in DISCOVERED_SURFACE_KINDS:
             before = prior_surfaces.get(kind)
             after = published.get(kind)
-            if not isinstance(before, list) or not isinstance(after, list) or not set(before) <= set(after):
-                raise RuntimeError(f"published baseline promotion removed prior {kind} entries")
+            if not isinstance(before, list) or not isinstance(after, list):
+                raise RuntimeError(f"published baseline {kind} entries must be arrays")
+            if not prior_retired[kind] <= current_retired[kind]:
+                raise RuntimeError(f"retired {kind} audit entries cannot be removed")
+            if not current_retired[kind] - prior_retired[kind] <= set(before):
+                raise RuntimeError(f"new retired {kind} identities must come from the prior published baseline")
+        if previous.get("published_release") == release and prior_surfaces == published:
+            return
+        if _release_version(release) <= _release_version(previous.get("published_release")):
+            raise RuntimeError("published baseline changes must advance the release version monotonically")
+        for kind in DISCOVERED_SURFACE_KINDS:
+            if not set(prior_surfaces[kind]) - set(published[kind]) <= current_retired[kind]:
+                raise RuntimeError(f"published baseline promotion removed unreviewed {kind} entries")
         released = verified_release_baseline(release, DISCOVERED_SURFACE_KINDS)
         expected = {kind: sorted(entries) for kind, entries in released.items()}
         if published != expected:
@@ -105,6 +130,8 @@ def verify(base: str) -> None:
     product_diff = _run(["git", "diff", "--quiet", base, "HEAD", "--", "Cargo.toml", "src"])
     if product_diff.returncode != 0:
         raise RuntimeError("initial published baseline cannot bootstrap across product-source changes")
+    if any(current_retired.values()):
+        raise RuntimeError("initial published baseline cannot bootstrap retirement entries")
     if published != _recorded_surfaces(current):
         raise RuntimeError("initial published baseline must equal every discovered release-source record")
 

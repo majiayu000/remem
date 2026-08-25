@@ -285,14 +285,14 @@ def discover_target_gated_exports(root: Path) -> set[str]:
     """Inventory target-only signatures reachable through public modules from lib.rs."""
     exports: set[str] = set()
     gated = re.compile(
-        r"#\s*\[\s*cfg\s*\((?P<cfg>[^]]*(?:windows|unix|target_(?:os|arch|env))[^]]*)\)\s*\]"
+        r"#\s*\[\s*cfg\s*\((?P<cfg>[^]]*(?:windows|unix|target_(?:os|arch|env|vendor|family|endian|pointer_width|feature|has_atomic|abi))[^]]*)\)\s*\]"
         r"(?:\s*#\s*\[[^]]*\])*\s*(?P<declaration>pub\s+(?!\()"
         rf"(?P<kind>{_FUNCTION_KIND}|struct|enum|trait|type|const|static|mod|use)\s+"
         r"(?P<name>[A-Za-z_][A-Za-z0-9_]*))",
         re.S,
     )
     gated_impl = re.compile(
-        r"#\s*\[\s*cfg\s*\((?P<cfg>[^]]*(?:windows|unix|target_(?:os|arch|env))[^]]*)\)\s*\]"
+        r"#\s*\[\s*cfg\s*\((?P<cfg>[^]]*(?:windows|unix|target_(?:os|arch|env|vendor|family|endian|pointer_width|feature|has_atomic|abi))[^]]*)\)\s*\]"
         r"(?:\s*#\s*\[[^]]*\])*\s*impl(?:<[^>{}]*>)?\s+(?P<owner>[^{}]+?)\s*\{",
         re.S,
     )

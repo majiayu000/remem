@@ -35,8 +35,6 @@ from surface_lifecycle_evidence import (
     execute_offline_check,
     offline_categories,
 )
-
-
 ROOT = Path(__file__).resolve().parents[2]
 
 README_BADGES = [
@@ -46,7 +44,6 @@ README_BADGES = [
     "img.shields.io/npm/v/%40remem-ai%2Fremem",
     "License-MIT",
 ]
-
 README_REQUIRED_TEXT = [
     "brew install majiayu000/tap/remem",
     "npm install -g @remem-ai/remem",
@@ -55,7 +52,6 @@ README_REQUIRED_TEXT = [
     "remem search \"last decision\"",
     "GitHub Releases: prebuilt binaries",
 ]
-
 ROOT_REQUIRED_FILES = [
     "README.md",
     "README.zh-CN.md",
@@ -69,7 +65,6 @@ ROOT_REQUIRED_FILES = [
     "docs/release-lifecycle.md",
     "docs/maintenance/file-size-debt.md",
 ]
-
 SITE_PAGES = [
     "site/index.html",
     "site/claude-code-memory/index.html",
@@ -77,7 +72,6 @@ SITE_PAGES = [
     "site/mcp-memory-server/index.html",
     "site/compare/built-in-memory/index.html",
 ]
-
 MANIFEST_PATH = ROOT / "docs/specs/GH969/surface-manifest.json"
 REQUIRED_RECORD_FIELDS = {
     "id", "surface_kind", "owner", "status", "public_entry_points",
@@ -94,23 +88,15 @@ SPECIAL_KINDS = {
 }
 DATED_STATUSES = {"staged", "experimental", "deprecated", "spec-only"}
 KNOWN_STATUSES = {"staged", "production", "experimental", "recovery-only", "deprecated", "spec-only"}
-
-
 def fail(message: str) -> None:
     print(f"FAIL: {message}", file=sys.stderr)
     sys.exit(1)
-
-
 def require_file(path: str) -> None:
     if not (ROOT / path).is_file():
         fail(f"missing {path}")
-
-
 def require_contains(label: str, text: str, needle: str) -> None:
     if needle not in text:
         fail(f"{label} is missing {needle!r}")
-
-
 def require_site_page(path: str) -> None:
     full = ROOT / path
     require_file(path)
@@ -126,16 +112,10 @@ def require_site_page(path: str) -> None:
         require_contains(path, text, needle)
     if len(re.findall(r"<h1\b", text)) != 1:
         fail(f"{path} must contain exactly one h1")
-
-
 def _string_array(value: object) -> bool:
     return isinstance(value, list) and all(isinstance(item, str) and item.strip() for item in value)
-
-
 def _string_list(value: object) -> bool:
     return bool(value) and _string_array(value)
-
-
 def check_lifecycle_manifest(
     root: Path,
     manifest: dict[str, object],
@@ -161,12 +141,12 @@ def check_lifecycle_manifest(
                 f"product={canonical_statuses} code={ROW_STATUS}"
             )
     records = manifest.get("records")
-    published_raw = manifest.get("published_surfaces")
-    if manifest.get("schema_version") != 2 or not isinstance(records, list) or not isinstance(published_raw, dict):
-        return ["surface manifest must have schema_version=2, published_surfaces, and a records array"]
+    published_raw, retired_raw = manifest.get("published_surfaces"), manifest.get("retired_surfaces")
+    if manifest.get("schema_version") != 2 or not isinstance(records, list) or not isinstance(published_raw, dict) or not isinstance(retired_raw, dict):
+        return ["surface manifest must have schema_version=2, published_surfaces, retired_surfaces, and a records array"]
     if not isinstance(manifest.get("published_release"), str) or not str(manifest.get("published_release", "")).strip():
         errors.append("surface manifest requires a non-empty published_release")
-    published: dict[str, set[str]] = {}
+    published: dict[str, set[str]] = {}; retired: dict[str, set[str]] = {}
     for kind in DISCOVERED_KINDS:
         entries = published_raw.get(kind)
         valid = _string_array(entries) if kind == "rust_target_export" else _string_list(entries)
@@ -174,6 +154,10 @@ def check_lifecycle_manifest(
             errors.append(f"published_surfaces.{kind} must be a string array with the required cardinality")
             entries = []
         published[kind] = set(entries)
+        retired_entries = retired_raw.get(kind)
+        if not _string_array(retired_entries): errors.append(f"retired_surfaces.{kind} must be a string array"); retired_entries = []
+        retired[kind] = set(retired_entries)
+    if set(retired_raw) != DISCOVERED_KINDS: errors.append("retired_surfaces must contain exactly the discovered surface kinds")
     ids: Counter[str] = Counter()
     rows: set[str] = set()
     recovery_guards: dict[str, list[dict[str, object]]] = defaultdict(list)
@@ -328,9 +312,11 @@ def check_lifecycle_manifest(
         if count > 1:
             errors.append(f"duplicate manifest id {record_id!r} appears {count} times")
     for kind, actual_entries in discovered.items():
-        missing_published = sorted(entry for entry in published.get(kind, set()) if not any(actual == entry or actual.startswith(entry + "@") for actual in actual_entries))
+        missing_published = sorted(entry for entry in published.get(kind, set()) - retired[kind] if not any(actual == entry or actual.startswith(entry + "@") for actual in actual_entries))
         if missing_published:
             errors.append(f"published {kind} surfaces disappeared: {missing_published}")
+        reachable_retired = sorted(entry for entry in retired[kind] if any(actual == entry or actual.startswith(entry + "@") for actual in actual_entries))
+        if reachable_retired: errors.append(f"retired {kind} surfaces remain reachable: {reachable_retired}")
         for entry in sorted(actual_entries):
             owners = classified.get((kind, entry), [])
             if not owners:
@@ -427,13 +413,13 @@ def lifecycle_self_test() -> int:
             encoding="utf-8",
         )
         (root / "src/api/server.rs").write_text(
-            'fn build_router() { Router::new().merge(public_routes()).nest("/api/v1/admin", admin_routes()) }\n'
+            'fn build_router() { let public = public_routes(); public.nest("/api/v1/admin", admin_routes()) }\n'
             'fn public_routes() { Router::new().route("/health", get(health).head(check).post(check)) }\n'
             'fn admin_routes() { Router::new().route("/check", post(check)) }\n',
             encoding="utf-8",
         )
         (root / "src/cli/types.rs").write_text(
-            '#[derive(Args)] struct ContextArgs { #[arg(long)] json: bool } '
+            '#[derive(ValueEnum)] enum Format { Json } #[derive(Args)] struct ContextArgs { #[arg(value_enum)] format: Format } '
             '#[derive(Subcommand)] enum Commands { '
             '#[command(visible_alias = "ctx")] Context(ContextArgs), '
             '#[cfg(feature = "eval")] Eval, #[cfg(feature = "off")] Hidden, '
@@ -457,7 +443,7 @@ def lifecycle_self_test() -> int:
             encoding="utf-8",
         )
         (root / "src/platform_impl.rs").write_text(
-            "pub struct Api;\n#[cfg(windows)]\nimpl Api { pub fn windows_only(&self) {} }\n#[cfg(windows)] impl Default for Api { fn default() -> Self { Self } }\n",
+            "pub struct Api;\n#[cfg(windows)]\nimpl Api { pub fn windows_only(&self) {} }\n#[cfg(target_vendor = \"apple\")] impl Default for Api { fn default() -> Self { Self } }\n",
             encoding="utf-8",
         )
         doc_root = root / "doc/remem"
@@ -500,7 +486,7 @@ def lifecycle_self_test() -> int:
             sys.stderr.write("Rust public signature change did not alter the compatibility fingerprint\n")
             return 1
         cli_path, mcp_path = root / "src/cli/types.rs", root / "src/mcp/server/tool_contracts.rs"; cli_source, mcp_source = cli_path.read_text(), mcp_path.read_text()
-        cli_path.write_text(cli_source.replace("#[arg(long)]", "#[arg(short)]")); mcp_path.write_text(mcp_source.replace("json_object(\"search\"", "json_array(\"search\"").replace("Schema::Search)", "Schema::Search, \"items\")"))
+        cli_path.write_text(cli_source.replace("Json", "Yaml")); mcp_path.write_text(mcp_source.replace("json_object(\"search\"", "json_array(\"search\"").replace("Schema::Search)", "Schema::Search, \"items\")"))
         changed_contracts = discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"}, rest_fingerprints={})
         cli_path.write_text(cli_source); mcp_path.write_text(mcp_source)
         if changed_contracts["cli_command"] == discovered["cli_command"] or changed_contracts["mcp_tool"] == discovered["mcp_tool"]:
@@ -673,6 +659,7 @@ def lifecycle_self_test() -> int:
             "schema_version": 2,
             "published_release": "v1.0.0",
             "published_surfaces": {kind: sorted(entries) for kind, entries in discovered.items()},
+            "retired_surfaces": {kind: [] for kind in discovered},
             "records": records,
         }
         fixture_rows: dict[str, dict[str, str]] = {}
@@ -690,7 +677,13 @@ def lifecycle_self_test() -> int:
         if positive_errors:
             print(f"positive lifecycle manifest self-test failed: {positive_errors}", file=sys.stderr)
             return 1
-
+        retired_manifest, retired_discovered = copy.deepcopy(manifest), copy.deepcopy(discovered)
+        retired_record = next(item for item in retired_manifest["records"] if item["surface_kind"] in DISCOVERED_KINDS)
+        retired_kind, retired_entry = retired_record["surface_kind"], retired_record["public_entry_points"][0]
+        retired_discovered[retired_kind].remove(retired_entry); retired_manifest["records"].remove(retired_record)
+        retired_manifest["retired_surfaces"][retired_kind].append(retired_entry)
+        if check_lifecycle_manifest(root, retired_manifest, retired_discovered, today=date(2026, 8, 24), required_rows=set(), canonical_rows_override=fixture_rows):
+            sys.stderr.write("reviewed retirement path did not accept an unreachable published identity\n"); return 1
         def proves(mutator: object, needle: str) -> bool:
             candidate = copy.deepcopy(manifest)
             assert callable(mutator)
@@ -723,6 +716,7 @@ def lifecycle_self_test() -> int:
             (lambda value: value["records"][0].update(spec_refs=["missing.md"]), "does not resolve"),
             (miscategorize_offline, "offline executables inventory drift"),
             (remove_from_published, "canonical/published status 'staged'"),
+            (lambda value: value["retired_surfaces"][retired_kind].append(retired_entry), "remain reachable"),
         ]
         failed = [needle for mutator, needle in cases if not proves(mutator, needle)]
         if failed:

@@ -359,11 +359,17 @@ discovered production-group entries `staged`; only the explicit
 exact non-draft release and all distribution assets, then downloads that
 release's `surface-manifest.json` and derives the baseline from its records.
 PR and push CI compare the committed release/baseline with the base manifest;
-any change must advance the release version, retain every prior published
-surface, and equal that downloaded release artifact. The one initial
+any baseline change must advance the release version and equal that downloaded
+release artifact. An intentional removal is staged first by deleting the
+surface and appending its exact prior published identity to `retired_surfaces`;
+CI requires new ledger entries to come from the prior baseline, rejects entries
+that remain reachable, and never permits audit-ledger deletion. A later release
+promotion may remove only those published identities already in the ledger.
+The removal PR/spec supplies the migration, compatibility notice, and boundary
+evidence reviewed alongside that exact identity. The one initial
 bootstrap is accepted only when the base commit is the verified release tag,
 all ordinary release assets exist, product sources are unchanged, and the
-baseline equals every discovered record.
+baseline equals every discovered record with an empty retirement ledger.
 Every record's canonical entry, owner, status, caller/default, evidence,
 compatibility, and next-decision fields must equal the PRODUCT table. Rust item
 and associated-item identifiers include normalized declaration fingerprints,
@@ -419,8 +425,8 @@ The CI guard must reject:
   it to the next release only when that release version is explicit in the
   manifest);
 - a production-group entry absent from the published baseline unless it is
-  staged, or a published entry/signature that disappears before reviewed
-  release promotion;
+  staged, or a published entry/signature that disappears without an exact,
+  append-only, previously published retirement-ledger entry;
 - drift in any canonical PRODUCT inventory column or in production default
   implementation evidence;
 - a public MCP/CLI/REST tool or default-on/staged feature absent from the manifest;

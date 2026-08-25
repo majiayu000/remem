@@ -233,6 +233,9 @@ def discover_rest_routes(root: Path, *, schema_fingerprints: dict[str, str] | No
         path, body = functions[name]
         router_sources.append((path.relative_to(root).as_posix(), body))
         reject_unsupported_router_methods(body, path)
+        for local in re.finditer(r"\blet\s+(?P<var>[A-Za-z_][A-Za-z0-9_]*)[^=;]*=\s*(?P<helper>[A-Za-z_][A-Za-z0-9_]*)\s*\([^;]*\)\s*;", body):
+            if local.group("helper") in functions and re.search(rf"\b{re.escape(local.group('var'))}\s*\.\s*(?:route|merge|nest|route_layer|layer)\s*\(", body[local.end() :]):
+                visit(local.group("helper"), prefix, (*ancestors, name))
         for arguments in _method_calls(body, "route"):
             if len(arguments) < 2:
                 raise RuntimeError(f"route call has fewer than two arguments in {path}")
@@ -385,8 +388,8 @@ def _command_names(variant: str, attributes: list[str]) -> tuple[str, ...]:
 def _clap_args_contracts(root: Path) -> dict[str, str]:
     declarations: dict[str, str] = {}
     pattern = re.compile(
-        r"#\s*\[\s*derive\s*\([^]]*\bArgs\b[^]]*\)\s*\]"
-        r"(?:(?:\s|#\s*\[[^]]*\])*)(?:pub(?:\s*\([^)]*\))?\s+)?struct\s+"
+        r"#\s*\[\s*derive\s*\([^]]*\b(?:Args|ValueEnum)\b[^]]*\)\s*\]"
+        r"(?:(?:\s|#\s*\[[^]]*\])*)(?:pub(?:\s*\([^)]*\))?\s+)?(?:struct|enum)\s+"
         r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)",
         re.S,
     )
@@ -704,7 +707,7 @@ def _offline_inventory(root: Path, roots: list[str]) -> dict[str, object]:
     }
 
 
-def build_manifest(root: Path, *, doc_root: Path | None = None, published_surfaces: dict[str, set[str]] | None = None, published_release: str = "v0.6.82") -> dict[str, object]:
+def build_manifest(root: Path, *, doc_root: Path | None = None, published_surfaces: dict[str, set[str]] | None = None, published_release: str = "v0.6.82", retired_surfaces: dict[str, set[str]] | None = None) -> dict[str, object]:
     discovered = discover_all(root, doc_root=doc_root)
     canonical = discover_product_rows(root)
     published = published_surfaces if published_surfaces is not None else {kind: set(entries) for kind, entries in discovered.items()}
@@ -745,13 +748,12 @@ def build_manifest(root: Path, *, doc_root: Path | None = None, published_surfac
         "generated_by": "python3 scripts/ci/surface_lifecycle_discovery.py --write-manifest",
         "published_release": published_release,
         "published_surfaces": {kind: sorted(entries) for kind, entries in published.items()},
+        "retired_surfaces": {kind: sorted(entries) for kind, entries in (retired_surfaces or {kind: set() for kind in DISCOVERED_SURFACE_KINDS}).items()},
         "records": sorted(records, key=lambda item: str(item["id"])),
     }
-
-
 def render_manifest(manifest: dict[str, object]) -> str:
     lines = ["{"]
-    for key in ("schema_version", "canonical_contract", "generated_by", "published_release", "published_surfaces"):
+    for key in ("schema_version", "canonical_contract", "generated_by", "published_release", "published_surfaces", "retired_surfaces"):
         lines.append(f"  {json.dumps(key)}: {json.dumps(manifest[key])},")
     records = manifest["records"]
     assert isinstance(records, list)
@@ -761,8 +763,6 @@ def render_manifest(manifest: dict[str, object]) -> str:
         lines.append("    " + json.dumps(record, separators=(",", ":")) + suffix)
     lines.extend(["  ]", "}"])
     return "\n".join(lines) + "\n"
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--write-manifest", action="store_true")
@@ -780,11 +780,13 @@ def main() -> int:
     if not isinstance(baseline, dict):
         parser.error("existing manifest must contain published_surfaces; bootstrap is not a normal regeneration path")
     published = {kind: set(entries) for kind, entries in baseline.items()}
+    retirements = previous.get("retired_surfaces", {kind: [] for kind in DISCOVERED_SURFACE_KINDS})
+    if not isinstance(retirements, dict): parser.error("retired_surfaces must be a kind-to-entry-list object")
     release = str(previous.get("published_release", "v0.6.82"))
     if args.promote_published:
         release = args.promote_published
         published = verified_release_baseline(release, DISCOVERED_SURFACE_KINDS)
-    manifest = build_manifest(ROOT, published_surfaces=published, published_release=release)
+    manifest = build_manifest(ROOT, published_surfaces=published, published_release=release, retired_surfaces={kind: set(entries) for kind, entries in retirements.items()})
     args.output.write_text(render_manifest(manifest), encoding="utf-8")
     records = manifest["records"]
     assert isinstance(records, list)
@@ -792,5 +794,4 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+if __name__ == "__main__": raise SystemExit(main())

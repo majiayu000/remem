@@ -167,7 +167,11 @@ release version. A newly discovered entry in a production group is generated as
 `staged` until an explicit post-release `--promote-published <version>`
 regeneration verifies the exact non-draft GitHub release, its distributed
 assets, and its `surface-manifest.json` before advancing the baseline from that
-artifact. Published removals and signature changes fail closed. Every expanded
+artifact. Published removals and signature changes fail closed unless the exact
+old identity is first added to the append-only `retired_surfaces` audit ledger
+in the reviewed removal PR. That review must point to the owning migration,
+user-visible compatibility notice, and removal-boundary evidence; an entry in
+the ledger is valid only after the surface is no longer reachable. Every expanded
 record copies all eight canonical table columns, so
 changing owner, caller/default, evidence, compatibility, or next-decision text
 requires the same reviewed manifest update as changing status.
