@@ -21,6 +21,10 @@ jobs:
         run: python3 scripts/ci/check_active_memory_writes.py
       - name: Self-test active-memory write boundary
         run: python3 scripts/ci/check_active_memory_writes.py --self-test
+      - name: Check module dependency direction
+        run: python3 scripts/ci/check_module_dependencies.py --base "${{ github.event.pull_request.base.sha || github.event.before }}"
+      - name: Self-test module dependency direction
+        run: python3 scripts/ci/check_module_dependencies.py --self-test
       - name: Check migration concerns
         run: python3 scripts/ci/check_migration_concerns.py
       - name: Check release workflows

@@ -1,8 +1,8 @@
 # GH969 Product Contract — Stabilization And Surface Governance
 
-Status: Current contract; repository-local stabilization is partially implemented; Issue: #969
+Status: Current contract; activation, surface, and dependency-direction guards implemented; Issue: #969
 
-Last reconciled against `origin/main`: 2026-08-21 (`86fee409`)
+Last reconciled against `origin/main`: 2026-08-25 (`5b98e80d`)
 
 ## Purpose
 
@@ -61,9 +61,10 @@ following repository-local findings now have landed implementation evidence:
 
 These landed slices do not close the epic. The #1040 slice implements the
 single active-memory activation boundary and bypass guard for v0.6.82. The
-remaining material work is the dependency-direction guard, unified
-decision/evidence matrix, outcome scorecard, and final
-architecture/spec synchronization defined by this contract.
+#1044 slice adds the reviewed dependency-direction baseline and
+no-expansion guard. Remaining material work is the unified decision/evidence
+matrix, outcome scorecard, and final architecture/spec synchronization defined
+by this contract.
 
 ## Active-Memory Safety Boundary
 

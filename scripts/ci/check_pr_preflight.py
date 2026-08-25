@@ -127,6 +127,14 @@ def fast_steps(base: str, head: str) -> list[tuple[str, list[str]]]:
             ["python3", "scripts/ci/check_active_memory_writes.py", "--self-test"],
         ),
         (
+            "Check module dependency direction",
+            ["python3", "scripts/ci/check_module_dependencies.py", "--base", base],
+        ),
+        (
+            "Self-test module dependency direction",
+            ["python3", "scripts/ci/check_module_dependencies.py", "--self-test"],
+        ),
+        (
             "Check migration concerns",
             ["python3", "scripts/ci/check_migration_concerns.py"],
         ),
