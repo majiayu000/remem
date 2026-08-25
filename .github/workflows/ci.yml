@@ -13,8 +13,6 @@ jobs:
           fetch-depth: 0
       - name: Check plugin version sync
         run: python3 scripts/ci/check_plugin_version_sync.py
-      - name: Check public surface
-        run: python3 scripts/ci/check_public_surface.py
       - name: Check public benchmark claims
         run: python3 scripts/ci/check_public_claims.py
       - name: Check source file size guard
@@ -38,10 +36,20 @@ jobs:
       - name: Check version bump
         if: github.event_name == 'pull_request'
         run: python3 scripts/ci/check_version_bump.py "${{ github.event.pull_request.base.sha }}" HEAD
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.97.0
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - name: Check public and lifecycle surfaces
+        run: python3 scripts/ci/check_public_surface.py
+      - name: Check published surface baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/check_surface_baseline.py "${{ github.event.pull_request.base.sha || github.event.before }}"
+      - name: Self-test surface lifecycle guard
+        run: python3 scripts/ci/check_public_surface.py --self-test
+      - name: Self-test REST surface fingerprints
+        run: python3 scripts/ci/surface_lifecycle_rest.py
       - run: cargo fmt --check
       - run: cargo check --no-default-features --bin remem-hook
       - run: cargo clippy --all-targets -- -D warnings

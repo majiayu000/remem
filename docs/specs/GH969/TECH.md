@@ -1,6 +1,6 @@
 # GH969 Technical Contract — Stabilization And Surface Governance
 
-Status: Current contract; activation boundary implemented; later guard slices pending; Issue: #969
+Status: Current contract; activation boundary and surface lifecycle guard implemented; later slices pending; Issue: #969
 
 Last reconciled against `origin/main`: 2026-08-21 (`86fee409`)
 
@@ -117,8 +117,20 @@ snapshot so WAL-visible state cannot diverge from its provenance digest; a
 complete, payload-matching acknowledgement is preserved as exact recovery,
 while partial or mismatched acknowledgement evidence fails closed. A repository-owned
 CI guard inventories reviewed raw implementations and rejects new production
-bypasses. Later slices still need the surface lifecycle and dependency-direction
-guards described below.
+bypasses. The lifecycle manifest and consistency guard now live in
+`docs/specs/GH969/surface-manifest.json`,
+`scripts/ci/surface_lifecycle_discovery.py`, and
+`scripts/ci/check_public_surface.py`, with focused evidence and Rustdoc helpers
+beside those scripts. The guard follows current rustdoc item pages through
+public associated items and fingerprints normalized signatures, recursively
+inventories public contents of platform-cfg modules, expands transitive default
+Cargo features and enum/variant-level Clap cfgs and aliases,
+walks composed Axum routers including implicit HEAD routes, inventories served
+MCP search parameters, snapshots experimental callers, fingerprints production
+default evidence for SessionStart bundle mode and non-zero graph weight,
+verifies recovery writers from source, and requires every offline artifact to
+belong to exactly one checked category. Later slices still need the
+dependency-direction guard described below.
 
 ## Target Module Direction
 
@@ -320,12 +332,16 @@ at least owner scope/key, project route, memory scope, and subject/state key.
 
 ## Surface Manifest And Consistency Guard
 
-The PRODUCT inventory is canonical until a machine-readable manifest lands.
-The manifest must cover every listed entry point and include:
+The PRODUCT inventory remains the canonical human-readable contract. Its
+machine-readable expansion is `surface-manifest.json`, checked by
+`python3 scripts/ci/check_public_surface.py`; the focused positive/negative
+suite runs with `--self-test`. The manifest covers every listed entry point and
+includes:
 
 ```text
 id, surface_kind, owner, status, public_entry_points, real_callers, default_state,
-spec_refs, eval_commands, compatibility, rollback, decision_due
+canonical_entry, evidence, spec_refs, eval_commands, compatibility, next_decision,
+rollback, decision_due
 ```
 
 `surface_kind` is a closed discriminator such as `rust_export`, `mcp_tool`,
@@ -336,12 +352,92 @@ inventory under those roots; the guard validates its documented invocation
 without treating it as a Rust production caller. This is the entry type for the
 current `eval/cross-host/` infrastructure.
 
+Schema v2 also stores `published_release` and the exact `published_surfaces`
+baseline. Normal regeneration preserves that baseline and marks newly
+discovered production-group entries `staged`; only the explicit
+`--promote-published <version>` operation advances it after `gh` verifies the
+exact non-draft release and all distribution assets, then downloads that
+release's `surface-manifest.json` and derives the baseline from its records.
+PR and push CI compare the committed release/baseline with the base manifest;
+any baseline change must advance the release version and equal that downloaded
+release artifact. An intentional removal is staged first by deleting the
+surface and appending its exact prior published identity to `retired_surfaces`;
+CI requires new ledger entries to come from the prior baseline, rejects entries
+that remain reachable, and never permits audit-ledger deletion. A later release
+promotion may remove only those published identities already in the ledger.
+The removal PR/spec supplies the migration, compatibility notice, and boundary
+evidence reviewed alongside that exact identity. Before publishing the manifest
+as release authority, the tagged release job fetches its parent and runs the
+same baseline authenticator against `${GITHUB_SHA}^`. The one initial
+bootstrap is accepted only when the base commit is the verified release tag,
+all ordinary release assets exist, product sources are unchanged, and the
+baseline equals every discovered record with an empty retirement ledger.
+Every record's canonical entry, owner, status, caller/default, evidence,
+compatibility, and next-decision fields must equal the PRODUCT table. Rust item
+and associated-item identifiers include normalized declaration fingerprints,
+so parameter, return, public-field, and enum-payload changes are compatibility
+drift rather than invisible path-preserving edits. Same-named inherent methods
+retain Rustdoc's disambiguator instead of overwriting one another. Platform-cfg
+discovery starts at `src/lib.rs`, follows publicly reachable external modules,
+resolves target-gated public re-exports through private modules to the exported
+definitions, and uses the same declaration-only rule (including public
+associated items). Target-only function parsing accepts Rust qualifiers such as
+`const`, `async`, `unsafe`, and `extern`; the qualifiers are part of the
+signature fingerprint. Private module/function-body edits therefore do not
+create false compatibility drift; the target-only category may be empty when
+no such export is reachable. Compiler-resolved Rust records also include
+explicit trait implementations and their locally implemented associated items,
+while excluding derived, auto, and blanket implementations; the same explicit
+trait evidence is included when resolving a target-gated public re-export. MCP tool
+identities fingerprint each normalized served `tools/list` input/output schema. Rustdoc
+surface generation is pinned to Rust 1.97.0 in CI and rejects other local
+versions, preventing renderer-version-only churn.
+REST route identities similarly include normalized serde request/response
+declarations (including manual `Serialize`/`Deserialize` implementations),
+reachable external producer result types, constructed JSON shapes, and their
+named handler signature. Implementations referenced by serde `serialize_with`,
+`deserialize_with`, and `with` field attributes are fingerprinted with the wire
+declaration; unresolved helpers fail closed. Handler evidence also includes
+explicit HTTP status constants and the complete locally resolvable chain of
+response-producing helpers, independent of helper naming. External
+producer traversal resolves direct paths, simple imports, grouped imports, and
+aliases. Complete `cfg(test)` syntax nodes are masked before fingerprinting
+without consuming adjacent production syntax;
+reachable `route_service`, `nest_service`, and fallback registrations are
+rejected until discovery supports them, and implicit GET-to-HEAD expansion never
+overwrites an explicitly registered HEAD handler. Production default evidence also binds
+CurrentTruth projection, fail-closed availability, shadow attachment, and
+channel activation on the Context Bundle path, including the SessionStart caller
+that selects and consumes `renderer_enabled()`. The root Clap `Parser` metadata
+is included in every CLI identity. Only `eval` and `local-onnx` currently have
+reviewed default-feature mappings; their identities include normalized transitive
+feature membership, and any new default feature fails generation until it
+receives a canonical lifecycle row.
+The deprecated legacy-events row is additionally bound to both transactional
+projection writers, their conflict-safe SQL, and the active capture callers.
+Recovery-only SQL writer discovery reconstructs `concat!`, constant `format!`,
+and locally derived table names. Unresolved dynamic inserts fail closed unless
+their resolved prefix belongs to the reviewed vector-index derived-table
+namespace, so an otherwise safe source file cannot hide a retired-table insert.
+The historical Summary guard additionally validates both the generic jobs insert
+core and its `JobType::Summary` rejection, so deleting the rejection exposes a
+forbidden writer even when callers pass a generic `job_type` variable.
+Generated caller, spec, evaluation, and rollback fields must exactly match their
+reviewed row details. Offline harness records must use the exact reviewed command,
+and the lifecycle guard executes that command in CI/preflight rather than merely
+checking that its script is inventoried.
+
 The CI guard must reject:
 
 - an unknown status or missing owner/spec; staged, experimental, deprecated,
   and spec-only entries also require a dated decision (a `staged` row may bind
   it to the next release only when that release version is explicit in the
   manifest);
+- a production-group entry absent from the published baseline unless it is
+  staged, or a published entry/signature that disappears without an exact,
+  append-only, previously published retirement-ledger entry;
+- drift in any canonical PRODUCT inventory column or in production default
+  implementation evidence;
 - a public MCP/CLI/REST tool or default-on/staged feature absent from the manifest;
 - a reachable Rust `pub mod`, public item, or `pub use` absent from the
   manifest; discovery starts at `src/lib.rs` and recursively follows public
@@ -349,7 +445,8 @@ The CI guard must reject:
 - any non-`spec-only` manifest entry that no longer resolves according to its
   `surface_kind`: a discovered Rust/MCP/REST/CLI/default-feature surface, or
   for `offline_harness`, the exact declared scripts, schemas, fixtures/data,
-  and checked command under its repository roots;
+  documents, and checked command under its repository roots; unsupported or
+  multiply classified files fail instead of disappearing from the union;
 - a manifest `production` entry with no production caller;
 - an `experimental` entry used by a default production path without a
   separately classified production entry point;

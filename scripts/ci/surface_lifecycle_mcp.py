@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""Discover normalized schemas from remem's actually served MCP tools/list response."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import select
+import subprocess
+import tempfile
+import time
+from pathlib import Path
+
+
+def discover_mcp_legacy_shapes(root: Path) -> dict[str, str]:
+    """Resolve the legacy text response shape adapted for each registered tool."""
+    text = (root / "src/mcp/server/tool_contracts.rs").read_text(encoding="utf-8")
+    match = re.search(r"const\s+CONTRACTS\s*:[^=]+?=\s*\[(?P<body>.*?)\n\];", text, re.S)
+    if not match:
+        raise RuntimeError("cannot resolve MCP CONTRACTS registry for legacy shapes")
+    body = match.group("body")
+    shapes: dict[str, str] = {}
+    for item in re.finditer(
+        r'json_(?P<shape>object|array)\s*\(\s*"(?P<name>[^"]+)"(?P<body>.*?)\)(?=\s*(?:,|$))',
+        body,
+        re.S,
+    ):
+        shape = item.group("shape")
+        if shape == "array":
+            strings = re.findall(r'"([^"]+)"', item.group("body"))
+            if not strings:
+                raise RuntimeError(f"MCP array contract {item.group('name')!r} has no envelope")
+            shape = f"array:{strings[-1]}"
+        shapes[item.group("name")] = shape
+    for item in re.finditer(
+        r'ToolContract\s*\{\s*name:\s*"(?P<name>[^"]+)"(?P<body>.*?)\}(?=\s*(?:,|$))', body, re.S
+    ):
+        output = re.search(r"\boutput:\s*None\b", item.group("body"))
+        if not output:
+            raise RuntimeError(f"literal MCP contract {item.group('name')!r} has unsupported output shape")
+        shapes[item.group("name")] = "none"
+    return shapes
+
+
+def discover_mcp_schema_fingerprints(root: Path) -> dict[str, str]:
+    with tempfile.TemporaryDirectory(prefix="remem-surface-mcp-") as data_dir:
+        env = os.environ.copy()
+        env["REMEM_DATA_DIR"] = data_dir
+        env["REMEM_ALLOW_PLAINTEXT_DB"] = "1"
+        process = subprocess.Popen(
+            ["cargo", "run", "--quiet", "--", "mcp"],
+            cwd=root,
+            env=env,
+            text=True,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        assert process.stdin is not None and process.stdout is not None
+
+        def send(message: dict[str, object]) -> None:
+            process.stdin.write(json.dumps(message, separators=(",", ":")) + "\n")
+            process.stdin.flush()
+
+        def receive(response_id: int, timeout: float = 30.0) -> dict[str, object]:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if process.poll() is not None:
+                    detail = process.stderr.read().strip() if process.stderr else ""
+                    raise RuntimeError(f"remem mcp exited before response {response_id}: {detail}")
+                ready, _, _ = select.select([process.stdout], [], [], min(1.0, deadline - time.monotonic()))
+                if not ready:
+                    continue
+                line = process.stdout.readline()
+                if not line:
+                    continue
+                message = json.loads(line)
+                if message.get("id") == response_id:
+                    return message
+            raise RuntimeError(f"timed out waiting for remem mcp response {response_id}")
+
+        try:
+            send({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-03-26", "capabilities": {},
+                    "clientInfo": {"name": "surface-lifecycle-guard", "version": "1"},
+                },
+            })
+            receive(1, timeout=600.0)
+            send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+            send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+            response = receive(2)
+        finally:
+            process.stdin.close()
+            try:
+                process.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                process.wait(timeout=15)
+
+    tools = response.get("result", {}).get("tools") if isinstance(response.get("result"), dict) else None
+    if not isinstance(tools, list) or not tools:
+        raise RuntimeError("served MCP tools/list response has no tools")
+    fingerprints: dict[str, str] = {}
+    for tool in tools:
+        if not isinstance(tool, dict) or not isinstance(tool.get("name"), str):
+            raise RuntimeError("served MCP tool descriptor is malformed")
+        name = tool["name"]
+        schemas = {"inputSchema": tool.get("inputSchema"), "outputSchema": tool.get("outputSchema")}
+        normalized = json.dumps(schemas, sort_keys=True, separators=(",", ":"))
+        descriptor = json.dumps(tool, sort_keys=True, separators=(",", ":"))
+        if name in fingerprints:
+            raise RuntimeError(f"served MCP tools/list contains duplicate {name!r}")
+        fingerprints[name] = (
+            f"{hashlib.sha256(normalized.encode()).hexdigest()}"
+            f"@descriptor-sha256={hashlib.sha256(descriptor.encode()).hexdigest()}"
+        )
+    return fingerprints

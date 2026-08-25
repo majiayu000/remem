@@ -61,8 +61,8 @@ following repository-local findings now have landed implementation evidence:
 
 These landed slices do not close the epic. The #1040 slice implements the
 single active-memory activation boundary and bypass guard for v0.6.82. The
-remaining material work is the surface lifecycle guard, dependency-direction
-guard, unified decision/evidence matrix, outcome scorecard, and final
+remaining material work is the dependency-direction guard, unified
+decision/evidence matrix, outcome scorecard, and final
 architecture/spec synchronization defined by this contract.
 
 ## Active-Memory Safety Boundary
@@ -142,9 +142,16 @@ guard.
 
 ## Canonical Surface Inventory
 
-This table is the canonical human-readable inventory. The implementation work
-must add a machine-readable manifest and CI consistency check without changing
-these classifications silently.
+This table is the canonical human-readable inventory. Its expanded
+machine-readable form lives at `surface-manifest.json`; the repository-owned
+public-surface check validates it against host-compiled, signature-fingerprinted
+Rust exports, a conservative inventory that recursively follows public contents
+of platform-cfg modules and their public associated items, the normalized
+input/output schemas returned by the served MCP `tools/list` response, and the
+real REST, Clap, Cargo-feature, and offline-harness registration roots. REST
+method+path identities include a normalized catalog of request/response serde
+declarations and constructed JSON shapes; unclassified Axum service or fallback
+registrations fail closed. Default Cargo features require explicit row mappings.
 
 The grouped Rust/MCP/REST/CLI rows below are exhaustive discovery rules, not
 sample entries. The machine manifest expands them to one record per reachable
@@ -155,34 +162,54 @@ than from the Rust surface graph. An entry inherits the group status unless a
 more specific row below overrides it; an undiscovered or multiply classified
 public entry fails the guard.
 
-| Entry point | Owner | Status | Real caller / default | Evidence | Compatibility | Next decision |
-|---|---|---|---|---|---|---|
-| Exported Rust library surface | `src/lib.rs` and reachable public modules/re-exports | `production` | Every reachable exported module/symbol, except entries explicitly overridden below | Public API tests plus exhaustive export discovery | Published exports follow SemVer; newly exported symbols require an explicit manifest classification | Continuous; review on export-set change |
-| MCP production tool set | `mcp/server/`, `mcp/server/tests/tool_metadata.rs` | `production` | All registered tools except the explicit experimental `context_bundle` entry: `current_state`, `search`, `recall_user_context`, `timeline`, `get_observations`, `lookup_commit`, `commits_for_session`, `save_memory`, `govern_memory`, `timeline_report`, `workstreams`, `update_workstream`, `search_raw`, `list_raw_sessions` | Registry completeness, metadata, schema, served-wire, and legacy-text tests | Tool names and stable legacy response contracts remain supported; routed `search` parameters are overridden below | Continuous; review on registry change |
-| REST `/api/v1` method+path set | `api/server.rs`, `api/handlers/` | `production` | Every method+path registered by `build_router`, including memory save/archive/restore and candidate review | `tests/api_public.rs` and handler tests | Bearer transport auth is not human provenance; route/schema changes follow public API compatibility rules | Continuous; review on router change |
-| CLI command tree | `cli/types.rs`, `cli/dispatch.rs` | `production` | Every compiled Clap command/subcommand, with eval/report, plan, and recovery operations overridden by their specific inventory/spec rows | CLI parser/dispatch tests and command-specific contracts | Existing supported commands remain compatible; feature-gated absence is recorded in the expanded manifest | Continuous; review on command-tree change |
-| SessionStart Context Bundle compiler and audit | `context/`, `context_bundle/` | `production` | Host SessionStart in default `bundle` mode; `legacy` rolls back bundle relevance/audit but retains CurrentTruth-governed Core output | GH932 tests, SessionStart audits, coding-bench plan/audit evidence | Rendered SessionStart behavior and persisted audit schema require migration-aware change | Continuous; review on schema/policy bump |
-| MCP `context_bundle` v1 | `mcp/`, `context_bundle/` | `experimental` | Explicit MCP caller; never required by SessionStart clients | Closed schema/served-wire tests | Versioned JSON, explicitly experimental; no stability claim beyond declared schema version | 2026-11-30 |
-| `remem::context_bundle` exported API | `context_bundle/` | `experimental` | Explicit Rust caller; default SessionStart uses an internal adapter rather than making this API stable | GH932 schema/policy tests | Versioned but explicitly experimental | 2026-11-30 |
-| CurrentTruth v1 context projection | `truth/`, `context_bundle/current_truth.rs` | `production` | Default Context Bundle/SessionStart path since v0.6.81, including legacy relevance mode's Core rendering | GH933 v1 tests, production activation regressions, #1038 relation isolation, published v0.6.81 tag/assets | No CurrentTruth-specific v1 rollback exists; the broader old-path rollback remains pending Phase B acceptance under #933 | Continuous; review under #933 |
-| `remem doctor truth` | `doctor/truth.rs`, `truth/` | `production` | Explicit diagnostic | Projection/rehearsal diagnostics | Read-only diagnostic output may evolve additively within v1 | Review with GH933 v2 |
-| Retrieval Router plan compiler and `context-plan` | `retrieval_router/`, `cli/` | `experimental` | Explicit diagnostic/plan caller | Determinism and schema tests | Versioned plan schema; no default execution promise | 2026-11-30 under GH934 |
-| `remem::retrieval_router` exported API | `retrieval_router/` | `experimental` | Explicit Rust caller; not a stable default executor | GH934 plan determinism tests | Versioned but explicitly experimental | 2026-11-30 under GH934 |
-| Routed MCP `search` parameters | `mcp/server/search_routing.rs`, `retrieval_router/` | `experimental` | Explicit intent/role/risk/budget only; ordinary search remains supported | Applied-effects tests; incomplete full-executor ablation | Optional parameters must not change legacy requests | 2026-11-30 under GH934 |
-| Trusted literal `graph_edges` retrieval channel | `retrieval/graph/`, `memory/graph_contract.rs` | `production` | Weighted retrieval search; default graph weight is non-zero | Associative and graph-decision gates, scope/leak/latency tests | Rollback is graph weight zero; graph provenance/schema remain governed | Continuous; rerun decision gate on policy/weight change |
-| Entity BFS diagnostic/eval arm | `retrieval/entity/`, `eval/graph_decision.rs` | `experimental` | Eval/diagnostic comparison, not the literal-graph ship decision | Informational graph-decision arm | No default-on promise | 2026-11-30 |
-| `local-onnx` embedding provider | `retrieval/embedding/`, Cargo feature | `production` | Feature is built by default; activation remains conditional because `Auto` selects only verified local artifacts | `local-semantic-embedding/` reports and provider tests | Provider/model identity is persisted; operator/provider rollback remains available | Review on model/default-selection change |
-| Deterministic eval gates | `eval/`, `eval/gates.rs` | `production` | CI/preflight engineering gate and explicit feature-gated CLI; overrides the general CLI row | Golden, capacity, SessionStart and security gates | Threshold changes require same-PR baseline rationale | Continuous |
-| Coding/public benchmark reports | `eval/coding_bench/`, `eval/public/` | `experimental` | Evidence remains non-claim-bearing until claim gates pass; explicit runner/report commands only | GH931 and `public-memory-benchmark/` | Artifacts are immutable/hash-bound; draft rows remain directional | 2026-11-30; external authority may justify an explicit dated continuation, never an undated exemption |
-| Legacy `pending_observations` replay/admin | `db/pending/admin/`, worker idle bridge | `recovery-only` | Existing residual rows via the declared idle-only automatic worker drain or explicit CLI/admin operations; no new normal writer | `legacy-observation-retirement/` and failure-lifecycle tests | Exact row identity, bounded replay, visible failures | Retire only after contractually measured zero residual state |
-| Legacy `events` compatibility projection | `db/capture.rs`, legacy query surfaces | `deprecated` | Transactional compatibility projection from canonical capture; no independent source of truth | #992 idempotency/failure regressions | Preserve readers until a separately announced removal boundary | 2026-11-30 inventory review |
-| Historical Summary jobs/writers | failure lifecycle compatibility | `recovery-only` | New dispatch is rejected; retained only for explicit diagnostics/history | Legacy retirement tests | Never revive as a production writer | Remove only with migration evidence |
-| CurrentTruth v2 native writer/cutover | `docs/specs/GH933/` | `spec-only` | No production caller | Migration, rehearsal, rollout contracts only | Requires approved breaking cutover and rollback | 2026-11-30 under #933 |
-| Cross-host offline harness | `eval/cross-host/`, `docs/specs/GH935/` | `experimental` | Explicit offline schema/scanner/dry-run commands; no live execution claim | GH935 v1 infrastructure tests | Artifact schema is versioned; dry-run output is not a result | 2026-11-30 |
-| Cross-host benchmark completion | `docs/specs/GH935/` | `spec-only` | Completion is unimplemented beyond the experimental offline harness above | No live claim-bearing matrix | No public result until prerequisites and official runs exist | 2026-11-30; continue only with dated GH931/user-identity dependency evidence |
+The manifest also carries the reviewed `published_surfaces` baseline and its
+release version. A newly discovered entry in a production group is generated as
+`staged` until an explicit post-release `--promote-published <version>`
+regeneration verifies the exact non-draft GitHub release, its distributed
+assets, and its `surface-manifest.json` before advancing the baseline from that
+artifact. Published removals and signature changes fail closed unless the exact
+old identity is first added to the append-only `retired_surfaces` audit ledger
+in the reviewed removal PR. That review must point to the owning migration,
+user-visible compatibility notice, and removal-boundary evidence; an entry in
+the ledger is valid only after the surface is no longer reachable. Every expanded
+record copies all eight canonical table columns, so
+changing owner, caller/default, evidence, compatibility, or next-decision text
+requires the same reviewed manifest update as changing status.
+
+| Inventory row | Entry point | Owner | Status | Real caller / default | Evidence | Compatibility | Next decision |
+|---|---|---|---|---|---|---|---|
+| `rust-library` | Exported Rust library surface | `src/lib.rs` and reachable public modules/re-exports | `production` | Every host-resolved exported module/symbol and public associated item with a normalized signature fingerprint, plus recursively discovered public contents of platform-cfg modules, except entries explicitly overridden below | Public API tests plus exhaustive export/signature discovery | Published exports follow SemVer; new or signature-changed symbols remain staged until release verification | Continuous; review on export-set or signature change |
+| `mcp-production` | MCP production tool set | `mcp/server/`, `mcp/server/tests/tool_metadata.rs` | `production` | All registered tools except the explicit experimental `context_bundle` entry: `current_state`, `search`, `recall_user_context`, `timeline`, `get_observations`, `lookup_commit`, `commits_for_session`, `save_memory`, `govern_memory`, `timeline_report`, `workstreams`, `update_workstream`, `search_raw`, `list_raw_sessions` | Registry completeness, metadata, schema, served-wire, and legacy-text tests | Tool names and stable legacy response contracts remain supported; routed `search` parameters are overridden below | Continuous; review on registry change |
+| `rest-api` | REST `/api/v1` method+path set | `api/server.rs`, `api/handlers/` | `production` | Every method+path reachable from `build_router`, including composed routers, Axum's implicit HEAD for GET, and memory save/archive/restore and candidate review | `tests/api_public.rs` and handler tests | Bearer transport auth is not human provenance; route/schema changes follow public API compatibility rules | Continuous; review on router change |
+| `cli-production` | CLI command tree | `cli/types.rs`, `cli/dispatch.rs` | `production` | Every default-feature compiled Clap command/subcommand and alias, with eval/report, plan, and recovery operations overridden by their specific inventory/spec rows | CLI parser/dispatch tests and command-specific contracts | Existing supported commands and aliases remain compatible; feature-gated absence is recorded in the expanded manifest | Continuous; review on command-tree change |
+| `sessionstart-context-bundle` | SessionStart Context Bundle compiler and audit | `context/`, `context_bundle/` | `production` | Host SessionStart in default `bundle` mode; `legacy` rolls back bundle relevance/audit but retains CurrentTruth-governed Core output | GH932 tests, SessionStart audits, coding-bench plan/audit evidence | Rendered SessionStart behavior and persisted audit schema require migration-aware change | Continuous; review on schema/policy bump |
+| `mcp-context-bundle` | MCP `context_bundle` v1 | `mcp/`, `context_bundle/` | `experimental` | Explicit MCP caller; never required by SessionStart clients | Closed schema/served-wire tests | Versioned JSON, explicitly experimental; no stability claim beyond declared schema version | 2026-11-30 |
+| `rust-context-bundle` | `remem::context_bundle` exported API | `context_bundle/` | `experimental` | Explicit Rust caller; default SessionStart uses an internal adapter rather than making this API stable | GH932 schema/policy tests | Versioned but explicitly experimental | 2026-11-30 |
+| `currenttruth-v1` | CurrentTruth v1 context projection | `truth/`, `context_bundle/current_truth.rs` | `production` | Default Context Bundle/SessionStart path since v0.6.81, including legacy relevance mode's Core rendering | GH933 v1 tests, production activation regressions, #1038 relation isolation, published v0.6.81 tag/assets | No CurrentTruth-specific v1 rollback exists; the broader old-path rollback remains pending Phase B acceptance under #933 | Continuous; review under #933 |
+| `doctor-truth` | `remem doctor truth` | `doctor/truth.rs`, `truth/` | `production` | Explicit diagnostic | Projection/rehearsal diagnostics | Read-only diagnostic output may evolve additively within v1 | Review with GH933 v2 |
+| `retrieval-router-plan` | Retrieval Router plan compiler and `context-plan` | `retrieval_router/`, `cli/` | `experimental` | Explicit diagnostic/plan caller | Determinism and schema tests | Versioned plan schema; no default execution promise | 2026-11-30 under GH934 |
+| `rust-retrieval-router` | `remem::retrieval_router` exported API | `retrieval_router/` | `experimental` | Explicit Rust caller; not a stable default executor | GH934 plan determinism tests | Versioned but explicitly experimental | 2026-11-30 under GH934 |
+| `routed-search-parameters` | Routed MCP `search` parameters | `mcp/server/search_routing.rs`, `retrieval_router/` | `experimental` | Explicit intent/role/risk/budget only; ordinary search remains supported | Applied-effects tests; incomplete full-executor ablation | Optional parameters must not change legacy requests | 2026-11-30 under GH934 |
+| `graph-edges` | Trusted literal `graph_edges` retrieval channel | `retrieval/graph/`, `memory/graph_contract.rs` | `production` | Weighted retrieval search; default graph weight is non-zero | Associative and graph-decision gates, scope/leak/latency tests | Rollback is graph weight zero; graph provenance/schema remain governed | Continuous; rerun decision gate on policy/weight change |
+| `entity-bfs` | Entity BFS diagnostic/eval arm | `retrieval/entity/`, `eval/graph_decision.rs` | `experimental` | Eval/diagnostic comparison, not the literal-graph ship decision | Informational graph-decision arm | No default-on promise | 2026-11-30 |
+| `local-onnx` | `local-onnx` embedding provider | `retrieval/embedding/`, Cargo feature | `production` | Feature is built by default; activation remains conditional because `Auto` selects only verified local artifacts | `local-semantic-embedding/` reports and provider tests | Provider/model identity is persisted; operator/provider rollback remains available | Review on model/default-selection change |
+| `deterministic-eval` | Deterministic eval gates | `eval/`, `eval/gates.rs` | `production` | CI/preflight engineering gate and explicit feature-gated CLI; overrides the general CLI row | Golden, capacity, SessionStart and security gates | Threshold changes require same-PR baseline rationale | Continuous |
+| `coding-public-benchmarks` | Coding/public benchmark reports | `eval/coding_bench/`, `eval/public/` | `experimental` | Evidence remains non-claim-bearing until claim gates pass; explicit runner/report commands only | GH931 and `public-memory-benchmark/` | Artifacts are immutable/hash-bound; draft rows remain directional | 2026-11-30; external authority may justify an explicit dated continuation, never an undated exemption |
+| `legacy-pending` | Legacy `pending_observations` replay/admin | `db/pending/admin/`, worker idle bridge | `recovery-only` | Existing residual rows via the declared idle-only automatic worker drain or explicit CLI/admin operations; no new normal writer | `legacy-observation-retirement/` and failure-lifecycle tests | Exact row identity, bounded replay, visible failures | Retire only after contractually measured zero residual state |
+| `legacy-events` | Legacy `events` compatibility projection | `db/capture.rs`, legacy query surfaces | `deprecated` | Transactional compatibility projection from canonical capture; no independent source of truth | #992 idempotency/failure regressions | Preserve readers until a separately announced removal boundary | 2026-11-30 inventory review |
+| `historical-summary` | Historical Summary jobs/writers | failure lifecycle compatibility | `recovery-only` | New dispatch is rejected; retained only for explicit diagnostics/history | Legacy retirement tests | Never revive as a production writer | Remove only with migration evidence |
+| `currenttruth-v2` | CurrentTruth v2 native writer/cutover | `docs/specs/GH933/` | `spec-only` | No production caller | Migration, rehearsal, rollout contracts only | Requires approved breaking cutover and rollback | 2026-11-30 under #933 |
+| `cross-host-harness` | Cross-host offline harness | `eval/cross-host/`, `docs/specs/GH935/` | `experimental` | Explicit offline schema/scanner/dry-run commands; no live execution claim | GH935 v1 infrastructure tests | Artifact schema is versioned; dry-run output is not a result | 2026-11-30 |
+| `cross-host-completion` | Cross-host benchmark completion | `docs/specs/GH935/` | `spec-only` | Completion is unimplemented beyond the experimental offline harness above | No live claim-bearing matrix | No public result until prerequisites and official runs exist | 2026-11-30; continue only with dated GH931/user-identity dependency evidence |
 
 Adding a major surface or changing a row's status requires updating this
 contract or a machine-readable manifest linked to it in the same PR.
+Experimental implementation rows also carry a fingerprinted inventory of every
+production source file referencing their activation symbols. New callers or
+changes inside an existing caller require an explicit manifest regeneration and
+review of whether the surface has entered a default path. Offline harness
+categories are checked independently; a script cannot satisfy the executable
+contract by being relabelled as a document.
 
 ## Decision Gates
 
