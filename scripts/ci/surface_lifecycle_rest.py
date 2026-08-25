@@ -14,6 +14,8 @@ from surface_lifecycle_evidence import mask_cfg_test_blocks
 UNSUPPORTED_ROUTER_METHODS = (
     "route_service", "nest_service", "fallback", "fallback_service",
 )
+SUPPORTED_ROUTE_METHODS = {"delete", "get", "head", "options", "patch", "post", "put", "trace"}
+UNSUPPORTED_METHOD_ROUTES = {"any", "any_service", "connect", "connect_service", "on", "on_service"}
 
 
 def _matching(text: str, opening: int, left: str, right: str) -> int:
@@ -319,6 +321,17 @@ def reject_unsupported_router_methods(body: str, path: Path) -> None:
         )
 
 
+def reject_unsupported_method_routes(route: str, path: Path) -> None:
+    calls = set(re.findall(r"(?:^|\.)\s*([a-z][a-z0-9_]*)\s*\(", route.strip()))
+    unsupported = sorted((calls & UNSUPPORTED_METHOD_ROUTES) | {
+        call for call in calls if call.endswith("_service") and call.removesuffix("_service") in SUPPORTED_ROUTE_METHODS
+    })
+    if unsupported:
+        raise RuntimeError(
+            f"reachable Axum route in {path} uses unsupported HTTP method registration: {', '.join(unsupported)}"
+        )
+
+
 def rest_surface_self_test() -> int:
     with tempfile.TemporaryDirectory(prefix="remem-rest-surface-") as raw:
         root = Path(raw)
@@ -385,6 +398,12 @@ def rest_surface_self_test() -> int:
             rejected = True
         if not rejected:
             raise RuntimeError("unsupported Axum route_service registration did not fail closed")
+        try:
+            reject_unsupported_method_routes("get(handle).connect(tunnel)", api / "server.rs")
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("unsupported CONNECT method registration did not fail closed")
     print("REST surface fingerprint self-test: ok")
     return 0
 

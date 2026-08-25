@@ -64,17 +64,20 @@ def _production_rust_sources(root: Path) -> list[tuple[str, str]]:
     return sources
 
 
-def _contains_sql_insert(text: str, target: str) -> bool:
+def _sql_insert_position(text: str, target: str) -> int | None:
     sql_pattern = rf"\bINSERT\s+(?:OR\s+[A-Z]+\s+)?INTO\s+{re.escape(target)}\b"
-    if re.search(sql_pattern, text, re.I):
-        return True
+    positions = [match.start() for match in re.finditer(sql_pattern, text, re.I)]
     for match in re.finditer(r"\bconcat!\s*\(", text):
         closing = _matching_paren(text, match.end() - 1)
         body = text[match.end() : closing]
         literals = re.findall(r'"((?:\\.|[^"\\])*)"', body, re.S)
         if re.search(sql_pattern, "".join(literals), re.I):
-            return True
-    return False
+            positions.append(match.start())
+    return min(positions) if positions else None
+
+
+def _contains_sql_insert(text: str, target: str) -> bool:
+    return _sql_insert_position(text, target) is not None
 
 
 def _matching_paren(text: str, opening: int) -> int:
@@ -95,7 +98,11 @@ def _summary_enqueue_is_guarded(text: str) -> bool:
     if not rejection or not re.search(r"JobType::Summary.*?bail!", rejection, re.S):
         return False
     core = _function_body(text, "enqueue_job_core")
-    return bool(core and re.search(r"reject_summary\s*\(\s*job_type\s*\)\s*\?", core))
+    if not core:
+        return False
+    guard = re.search(r"reject_summary\s*\(\s*job_type\s*\)\s*\?", core)
+    insert = _sql_insert_position(core, "jobs")
+    return bool(guard and insert is not None and guard.start() < insert)
 
 
 def discover_recovery_writers(root: Path, guard: dict[str, object]) -> set[str]:
@@ -358,7 +365,12 @@ def discover_target_gated_exports(root: Path) -> set[str]:
         owner = re.sub(r"\s+", "", match.group("owner"))
         closing = _matching_brace(raw, match.end() - 1)
         body = raw[match.end() : closing]
-        for item in _PUBLIC_DECLARATION.finditer(body):
+        trait_owner = re.fullmatch(r".+?\s+for\s+.+", match.group("owner"), re.S)
+        items = _TRAIT_ITEM_DECLARATION if trait_owner else _PUBLIC_DECLARATION
+        if trait_owner:
+            header = re.sub(r"\s+", " ", raw[match.start() : match.end() - 1]).strip()
+            exports.add(f"{relative}::{cfg}::impl:{owner}::header::sha256={hashlib.sha256(header.encode()).hexdigest()}")
+        for item in items.finditer(body):
             kind = _kind_label(item.group("kind"))
             digest = _source_signature(body, item)
             exports.add(f"{relative}::{cfg}::impl:{owner}::{kind}:{item.group('name')}::sha256={digest}")
@@ -587,11 +599,65 @@ def _production_sources(root: Path) -> list[Path]:
     return paths
 
 
+def _mask_rust_comments(text: str) -> str:
+    chars = list(text)
+    quote: str | None = None
+    escaped = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        following = text[index + 1] if index + 1 < len(text) else ""
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+        else:
+            raw = re.match(r'(?:b|c)?r(?P<hashes>#{0,255})"', text[index:])
+            if raw:
+                marker = '"' + raw.group("hashes")
+                closing = text.find(marker, index + raw.end())
+                if closing < 0:
+                    raise RuntimeError("unclosed Rust raw string")
+                index = closing + len(marker) - 1
+            elif char == '"' or (
+                char == "'"
+                and re.match(r"'(?:\\(?:x[0-9A-Fa-f]{2}|u\{[0-9A-Fa-f_]+\}|.)|[^\\'])'", text[index:])
+            ):
+                quote = char
+            elif char == "/" and following == "/":
+                end = text.find("\n", index + 2)
+                end = len(text) if end < 0 else end
+                chars[index:end] = " " * (end - index)
+                index = end - 1
+            elif char == "/" and following == "*":
+                depth = 1
+                end = index + 2
+                while end < len(text) and depth:
+                    pair = text[end : end + 2]
+                    if pair == "/*":
+                        depth += 1
+                        end += 2
+                    elif pair == "*/":
+                        depth -= 1
+                        end += 2
+                    else:
+                        end += 1
+                if depth:
+                    raise RuntimeError("unclosed Rust block comment")
+                chars[index:end] = " " * (end - index)
+                index = end - 1
+        index += 1
+    return "".join(chars)
+
+
 def build_caller_guard(root: Path, symbols: tuple[str, ...]) -> dict[str, object]:
     callers: list[dict[str, str]] = []
     for path in _production_sources(root):
         raw = path.read_text(encoding="utf-8")
-        source = re.sub(r"//[^\n]*|/\*.*?\*/", "", raw, flags=re.S)
+        source = _mask_rust_comments(raw)
         if any(symbol in source for symbol in symbols):
             callers.append({
                 "path": path.relative_to(root).as_posix(),

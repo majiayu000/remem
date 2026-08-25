@@ -328,7 +328,7 @@ def check_lifecycle_manifest(
         if count > 1:
             errors.append(f"duplicate manifest id {record_id!r} appears {count} times")
     for kind, actual_entries in discovered.items():
-        missing_published = sorted(published.get(kind, set()) - actual_entries)
+        missing_published = sorted(entry for entry in published.get(kind, set()) if not any(actual == entry or actual.startswith(entry + "@") for actual in actual_entries))
         if missing_published:
             errors.append(f"published {kind} surfaces disappeared: {missing_published}")
         for entry in sorted(actual_entries):
@@ -434,7 +434,7 @@ def lifecycle_self_test() -> int:
         )
         (root / "src/cli/types.rs").write_text(
             '#[derive(Subcommand)] enum Commands { '
-            '#[command(visible_alias = "ctx")] Context, '
+            '#[command(visible_alias = "ctx")] Context { #[arg(long)] json: bool }, '
             '#[cfg(feature = "eval")] Eval, #[cfg(feature = "off")] Hidden, '
             'Admin { #[command(subcommand)] action: AdminAction } }\n'
             '#[derive(Subcommand)] enum AdminAction { #[command(alias = "save")] Backup }\n',
@@ -456,7 +456,7 @@ def lifecycle_self_test() -> int:
             encoding="utf-8",
         )
         (root / "src/platform_impl.rs").write_text(
-            "pub struct Api;\n#[cfg(windows)]\nimpl Api { pub fn windows_only(&self) {} }\n",
+            "pub struct Api;\n#[cfg(windows)]\nimpl Api { pub fn windows_only(&self) {} }\n#[cfg(windows)] impl Default for Api { fn default() -> Self { Self } }\n",
             encoding="utf-8",
         )
         doc_root = root / "doc/remem"
@@ -498,6 +498,14 @@ def lifecycle_self_test() -> int:
         if changed_rust == discovered["rust_export"]:
             sys.stderr.write("Rust public signature change did not alter the compatibility fingerprint\n")
             return 1
+        cli_path, mcp_path = root / "src/cli/types.rs", root / "src/mcp/server/tool_contracts.rs"
+        cli_source, mcp_source = cli_path.read_text(), mcp_path.read_text()
+        cli_path.write_text(cli_source.replace("#[arg(long)]", "#[arg(short)]"))
+        mcp_path.write_text(mcp_source.replace("json_object(\"search\"", "json_array(\"search\"").replace("Schema::Search)", "Schema::Search, \"items\")"))
+        changed_contracts = discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"}, rest_fingerprints={})
+        cli_path.write_text(cli_source); mcp_path.write_text(mcp_source)
+        if changed_contracts["cli_command"] == discovered["cli_command"] or changed_contracts["mcp_tool"] == discovered["mcp_tool"]:
+            sys.stderr.write("CLI argument or MCP legacy shape change did not alter its fingerprint\n"); return 1
         explicit_head = discover_rest_routes(root, schema_fingerprints={"health": "get", "check": "head"})
         if "HEAD /health@sha256=head" not in explicit_head:
             sys.stderr.write("explicit HEAD handler was overwritten by implicit GET handling\n")
@@ -517,12 +525,13 @@ def lifecycle_self_test() -> int:
             "GET /health", "HEAD /health", "POST /health", "POST /api/v1/admin/check",
         }
         if (
-            discovered["cli_command"] != expected
+            {entry.split("@sha256=", 1)[0] for entry in discovered["cli_command"]} != expected
             or discovered["rest_route"] != expected_rest
             or not expected_rust.issubset({entry.split("@sha256=", 1)[0] for entry in discovered["rust_export"]})
             or any(entry.startswith("remem::api::RouterInfo::clone") for entry in discovered["rust_export"])
             or not any("src/platform.rs::windows::platform::fn:windows_api" in entry for entry in discovered["rust_target_export"])
             or not any("impl:Api::fn:windows_only" in entry for entry in discovered["rust_target_export"])
+            or not any("impl:DefaultforApi::fn:default" in entry for entry in discovered["rust_target_export"])
         ):
             print(f"surface discovery self-test failed: {discovered}", file=sys.stderr)
             return 1
@@ -592,17 +601,17 @@ def lifecycle_self_test() -> int:
         if discover_recovery_writers(root, summary_guard):
             sys.stderr.write("guarded generic Summary enqueue was classified as a writer\n")
             return 1
-        enqueue.write_text(safe_enqueue.replace("reject_summary(job_type)?;", ""), encoding="utf-8")
+        enqueue.write_text(safe_enqueue.replace("reject_summary(job_type)?; sql", "sql").replace("VALUES\");", "VALUES\"); reject_summary(job_type)?;"), encoding="utf-8")
         if "src/db/job/enqueue.rs" not in discover_recovery_writers(root, summary_guard):
             sys.stderr.write("unguarded generic Summary enqueue was not classified as a writer\n")
             return 1
         (root / "src/runtime.rs").write_text("fn read() {}", encoding="utf-8")
         (root / "src/runtime.rs").write_text(
-            "fn route() { crate::retrieval_router::plan(); }", encoding="utf-8"
+            'fn route() { let url = "https://host"; crate::retrieval_router::plan(); }', encoding="utf-8"
         )
         caller_guard = build_caller_guard(root, ("crate::retrieval_router",))
         (root / "src/runtime.rs").write_text(
-            "fn route_changed() { crate::retrieval_router::plan(); }", encoding="utf-8"
+            'fn route_changed() { let url = "https://host"; crate::retrieval_router::plan(); }', encoding="utf-8"
         )
         if caller_guard == build_caller_guard(root, ("crate::retrieval_router",)):
             sys.stderr.write("experimental caller fingerprint ignored an implementation change\n")

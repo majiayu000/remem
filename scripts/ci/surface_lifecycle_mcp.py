@@ -6,11 +6,42 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import select
 import subprocess
 import tempfile
 import time
 from pathlib import Path
+
+
+def discover_mcp_legacy_shapes(root: Path) -> dict[str, str]:
+    """Resolve the legacy text response shape adapted for each registered tool."""
+    text = (root / "src/mcp/server/tool_contracts.rs").read_text(encoding="utf-8")
+    match = re.search(r"const\s+CONTRACTS\s*:[^=]+?=\s*\[(?P<body>.*?)\n\];", text, re.S)
+    if not match:
+        raise RuntimeError("cannot resolve MCP CONTRACTS registry for legacy shapes")
+    body = match.group("body")
+    shapes: dict[str, str] = {}
+    for item in re.finditer(
+        r'json_(?P<shape>object|array)\s*\(\s*"(?P<name>[^"]+)"(?P<body>.*?)\)(?=\s*(?:,|$))',
+        body,
+        re.S,
+    ):
+        shape = item.group("shape")
+        if shape == "array":
+            strings = re.findall(r'"([^"]+)"', item.group("body"))
+            if not strings:
+                raise RuntimeError(f"MCP array contract {item.group('name')!r} has no envelope")
+            shape = f"array:{strings[-1]}"
+        shapes[item.group("name")] = shape
+    for item in re.finditer(
+        r'ToolContract\s*\{\s*name:\s*"(?P<name>[^"]+)"(?P<body>.*?)\}(?=\s*(?:,|$))', body, re.S
+    ):
+        output = re.search(r"\boutput:\s*None\b", item.group("body"))
+        if not output:
+            raise RuntimeError(f"literal MCP contract {item.group('name')!r} has unsupported output shape")
+        shapes[item.group("name")] = "none"
+    return shapes
 
 
 def discover_mcp_schema_fingerprints(root: Path) -> dict[str, str]:

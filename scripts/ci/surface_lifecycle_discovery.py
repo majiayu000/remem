@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -20,9 +21,13 @@ from surface_lifecycle_evidence import (
     offline_categories,
 )
 from surface_lifecycle_rust import discover_rust_exports
-from surface_lifecycle_mcp import discover_mcp_schema_fingerprints
+from surface_lifecycle_mcp import discover_mcp_legacy_shapes, discover_mcp_schema_fingerprints
 from surface_lifecycle_release import verified_release_baseline
-from surface_lifecycle_rest import discover_rest_schema_fingerprints, reject_unsupported_router_methods
+from surface_lifecycle_rest import (
+    discover_rest_schema_fingerprints,
+    reject_unsupported_method_routes,
+    reject_unsupported_router_methods,
+)
 
 
 HTTP_METHODS = ("delete", "get", "head", "options", "patch", "post", "put", "trace")
@@ -228,6 +233,7 @@ def discover_rest_routes(root: Path, *, schema_fingerprints: dict[str, str] | No
         for arguments in _method_calls(body, "route"):
             if len(arguments) < 2:
                 raise RuntimeError(f"route call has fewer than two arguments in {path}")
+            reject_unsupported_method_routes(arguments[1], path)
             path_match = re.fullmatch(r'\s*"([^\"]+)"\s*', arguments[0])
             if not path_match:
                 raise RuntimeError(f"route path is not a literal in {path}: {arguments[0].strip()}")
@@ -370,8 +376,8 @@ def _command_names(variant: str, attributes: list[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(names))
 
 
-def _subcommand_enums(root: Path, features: set[str]) -> dict[str, list[tuple[tuple[str, ...], str | None]]]:
-    enums: dict[str, list[tuple[tuple[str, ...], str | None]]] = {}
+def _subcommand_enums(root: Path, features: set[str]) -> dict[str, list[tuple[tuple[str, ...], str | None, str]]]:
+    enums: dict[str, list[tuple[tuple[str, ...], str | None, str]]] = {}
     for path in sorted((root / "src/cli").glob("*.rs")):
         text = path.read_text(encoding="utf-8")
         enum_re = re.compile(
@@ -393,7 +399,7 @@ def _subcommand_enums(root: Path, features: set[str]) -> dict[str, list[tuple[tu
             closing = _matching(text, opening, "{", "}")
             if closing is None:
                 raise RuntimeError(f"unclosed Subcommand enum {match.group('name')} in {path}")
-            variants: list[tuple[tuple[str, ...], str | None]] = []
+            variants: list[tuple[tuple[str, ...], str | None, str]] = []
             for raw_variant in _top_level_parts(text[opening + 1 : closing]):
                 if not raw_variant.strip():
                     continue
@@ -420,7 +426,8 @@ def _subcommand_enums(root: Path, features: set[str]) -> dict[str, list[tuple[tu
                 )
                 if child_match:
                     child = child_match.group("type").split("::")[-1]
-                variants.append((_command_names(variant, attributes), child))
+                contract = re.sub(r"\s+", " ", _mask_comments(raw_variant)).strip()
+                variants.append((_command_names(variant, attributes), child, hashlib.sha256(contract.encode()).hexdigest()))
             enum_name = match.group("name")
             if enum_name in enums:
                 raise RuntimeError(f"ambiguous Clap Subcommand enum basename {enum_name!r}")
@@ -440,7 +447,7 @@ def discover_cli_commands(root: Path) -> set[str]:
         if enum_name not in enums:
             raise RuntimeError(f"Clap subcommand enum {enum_name} is referenced but not discovered")
         commands.add("remem " + " ".join((*prefix, "help")))
-        for command_names, child in enums[enum_name]:
+        for command_names, child, _ in enums[enum_name]:
             for command in command_names:
                 path = (*prefix, command)
                 commands.add("remem " + " ".join(path))
@@ -448,6 +455,33 @@ def discover_cli_commands(root: Path) -> set[str]:
                     visit(child, path, (*ancestors, enum_name))
 
     visit("Commands", (), ())
+    return commands
+
+
+def discover_cli_contracts(root: Path) -> set[str]:
+    enums = _subcommand_enums(root, discover_default_features(root))
+    if "Commands" not in enums:
+        raise RuntimeError("cannot resolve root Clap Commands enum under src/cli")
+    commands: set[str] = set()
+
+    def visit(enum_name: str, prefix: tuple[str, ...], ancestors: tuple[str, ...], parents: tuple[str, ...]) -> None:
+        if enum_name in ancestors:
+            raise RuntimeError(f"recursive Clap subcommand graph: {' -> '.join((*ancestors, enum_name))}")
+        if enum_name not in enums:
+            raise RuntimeError(f"Clap subcommand enum {enum_name} is referenced but not discovered")
+        variants = enums[enum_name]
+        help_digest = hashlib.sha256("\n".join(sorted((*parents, *(item[2] for item in variants)))).encode()).hexdigest()
+        commands.add("remem " + " ".join((*prefix, "help")) + f"@sha256={help_digest}")
+        for command_names, child, digest in variants:
+            chain = (*parents, digest)
+            fingerprint = hashlib.sha256("\n".join(chain).encode()).hexdigest()
+            for command in command_names:
+                path = (*prefix, command)
+                commands.add("remem " + " ".join(path) + f"@sha256={fingerprint}")
+                if child:
+                    visit(child, path, (*ancestors, enum_name), chain)
+
+    visit("Commands", (), (), ())
     return commands
 
 
@@ -460,13 +494,20 @@ def discover_all(root: Path, *, doc_root: Path | None = None, mcp_fingerprints: 
     schemas = mcp_fingerprints or discover_mcp_schema_fingerprints(root)
     if set(schemas) != mcp_tools:
         raise RuntimeError("served MCP schema set contradicts the contract registry")
+    legacy_shapes = discover_mcp_legacy_shapes(root)
+    if set(legacy_shapes) != mcp_tools:
+        raise RuntimeError("MCP legacy response shapes contradict the contract registry")
+    mcp_contracts = {
+        name: f"{schemas[name]}@legacy-sha256={hashlib.sha256(legacy_shapes[name].encode()).hexdigest()}"
+        for name in mcp_tools
+    }
     return {
         "rust_export": discover_rust_exports(root, doc_root=doc_root),
         "rust_target_export": discover_target_gated_exports(root),
-        "mcp_tool": {f"{name}@sha256={schemas[name]}" for name in mcp_tools},
+        "mcp_tool": {f"{name}@sha256={mcp_contracts[name]}" for name in mcp_tools},
         "mcp_parameter": discover_search_parameters(root),
         "rest_route": discover_rest_routes(root, schema_fingerprints=rest_fingerprints),
-        "cli_command": discover_cli_commands(root),
+        "cli_command": discover_cli_contracts(root),
         "default_feature": discover_default_features(root),
     }
 
