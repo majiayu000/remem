@@ -152,10 +152,15 @@ def expanded_default_features(root: Path) -> set[str]:
     return active
 
 
+_FUNCTION_KIND = r"(?:(?:const|async|unsafe)\s+)*(?:extern(?:\s+\"[^\"]+\")?\s+)?fn"
 _PUBLIC_DECLARATION = re.compile(
-    r"\bpub\s+(?!\()(?P<kind>async\s+fn|fn|struct|enum|trait|type|const|static|mod|use)\s+"
+    rf"\bpub\s+(?!\()(?P<kind>{_FUNCTION_KIND}|struct|enum|trait|type|const|static|mod|use)\s+"
     r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
 )
+
+
+def _kind_label(kind: str) -> str:
+    return "fn" if re.search(r"\bfn$", kind) else re.sub(r"\s+", "_", kind)
 
 
 def _matching_delimiter(text: str, opening: int, left: str, right: str) -> int:
@@ -235,7 +240,7 @@ def _source_signature(text: str, match: re.Match[str]) -> str:
     if cursor == len(text):
         raise RuntimeError(f"cannot terminate public declaration {match.group('name')!r}")
     declaration = text[match.start() : cursor]
-    kind = re.sub(r"\s+", "_", match.group("kind"))
+    kind = _kind_label(match.group("kind"))
     if text[cursor] == "{" and kind in {"struct", "enum", "trait"}:
         closing = _matching_brace(text, cursor)
         body = text[cursor + 1 : closing]
@@ -252,7 +257,7 @@ def discover_target_gated_exports(root: Path) -> set[str]:
     gated = re.compile(
         r"#\s*\[\s*cfg\s*\((?P<cfg>[^]]*(?:windows|unix|target_(?:os|arch|env))[^]]*)\)\s*\]"
         r"(?:\s*#\s*\[[^]]*\])*\s*(?P<declaration>pub\s+(?!\()"
-        r"(?P<kind>async\s+fn|fn|struct|enum|trait|type|const|static|mod|use)\s+"
+        rf"(?P<kind>{_FUNCTION_KIND}|struct|enum|trait|type|const|static|mod|use)\s+"
         r"(?P<name>[A-Za-z_][A-Za-z0-9_]*))",
         re.S,
     )
@@ -300,7 +305,7 @@ def discover_target_gated_exports(root: Path) -> set[str]:
         for declaration in _PUBLIC_DECLARATION.finditer(source):
             if column_zero(source, declaration.start()) and declaration.group("name") == target:
                 signatures.append(
-                    f"{declaration.group('kind')}:{target}:{_source_signature(source, declaration)}"
+                    f"{_kind_label(declaration.group('kind'))}:{target}:{_source_signature(source, declaration)}"
                 )
         for implementation in any_impl.finditer(source):
             owner = re.sub(r"\s+", "", implementation.group("owner"))
@@ -325,7 +330,7 @@ def discover_target_gated_exports(root: Path) -> set[str]:
         closing = _matching_brace(raw, match.end() - 1)
         body = raw[match.end() : closing]
         for item in _PUBLIC_DECLARATION.finditer(body):
-            kind = re.sub(r"\s+", "_", item.group("kind"))
+            kind = _kind_label(item.group("kind"))
             digest = _source_signature(body, item)
             exports.add(f"{relative}::{cfg}::impl:{owner}::{kind}:{item.group('name')}::sha256={digest}")
 
@@ -341,7 +346,7 @@ def discover_target_gated_exports(root: Path) -> set[str]:
         module_cfgs: dict[int, str] = {}
         for match in gated_declarations:
             cfg = combined_cfg(inherited_cfg, re.sub(r"\s+", "", match.group("cfg")))
-            kind = re.sub(r"\s+", "_", match.group("kind"))
+            kind = _kind_label(match.group("kind"))
             name = match.group("name")
             declaration = _PUBLIC_DECLARATION.search(raw, match.start("declaration"))
             if declaration is None:
@@ -367,7 +372,7 @@ def discover_target_gated_exports(root: Path) -> set[str]:
             for match in _PUBLIC_DECLARATION.finditer(raw):
                 if not column_zero(raw, match.start()) or match.start() in gated_starts:
                     continue
-                kind = re.sub(r"\s+", "_", match.group("kind"))
+                kind = _kind_label(match.group("kind"))
                 if kind == "use":
                     end = raw.find(";", match.end())
                     if end < 0:

@@ -91,6 +91,51 @@ def _wire_declarations(text: str) -> list[str]:
     return declarations
 
 
+def _function_evidence(text: str, name: str) -> list[str]:
+    evidence: list[str] = []
+    pattern = re.compile(rf"\bfn\s+{re.escape(name)}\s*(?:<[^>{{}};]*>)?\s*\(")
+    for match in pattern.finditer(text):
+        arguments_end = _matching(text, match.end() - 1, "(", ")")
+        body_start = text.find("{", arguments_end)
+        semicolon = text.find(";", arguments_end)
+        if body_start < 0 or 0 <= semicolon < body_start:
+            continue
+        evidence.append(_normalize(text[match.start() : _matching(text, body_start, "{", "}") + 1]))
+    return evidence
+
+
+def _serde_helper_evidence(
+    declaration: str,
+    sources: list[tuple[str, str]],
+) -> list[str]:
+    direct = set(re.findall(r"\b(?:serialize_with|deserialize_with)\s*=\s*\"([^\"]+)\"", declaration))
+    modules = set(re.findall(r"\bwith\s*=\s*\"([^\"]+)\"", declaration))
+    found: set[str] = set()
+    for helper in direct:
+        name = helper.rsplit("::", 1)[-1]
+        matches = [f"{relative}:{item}" for relative, source in sources for item in _function_evidence(source, name)]
+        if not matches:
+            raise RuntimeError(f"cannot resolve serde helper implementation {helper!r}")
+        found.update(matches)
+    for helper in modules:
+        name = helper.rsplit("::", 1)[-1]
+        matches: list[str] = []
+        for relative, source in sources:
+            for module in re.finditer(rf"\bmod\s+{re.escape(name)}\s*\{{", source):
+                end = _matching(source, module.end() - 1, "{", "}")
+                matches.append(f"{relative}:{_normalize(source[module.start() : end + 1])}")
+            path = Path(relative)
+            if path.stem == name or (path.name == "mod.rs" and path.parent.name == name):
+                for function in ("serialize", "deserialize"):
+                    matches.extend(
+                        f"{relative}:{item}" for item in _function_evidence(source, function)
+                    )
+        if not matches:
+            raise RuntimeError(f"cannot resolve serde helper module {helper!r}")
+        found.update(matches)
+    return sorted(found)
+
+
 def _handler_signatures(text: str) -> dict[str, str]:
     signatures: dict[str, str] = {}
     for match in re.finditer(
@@ -104,8 +149,8 @@ def _handler_signatures(text: str) -> dict[str, str]:
     return signatures
 
 
-def _wire_index(root: Path) -> dict[str, list[str]]:
-    index: dict[str, list[str]] = {}
+def _production_sources(root: Path) -> list[tuple[str, str]]:
+    sources: list[tuple[str, str]] = []
     for path in sorted((root / "src").rglob("*.rs")):
         if (
             "tests" in path.parts
@@ -113,8 +158,16 @@ def _wire_index(root: Path) -> dict[str, list[str]]:
             or path.stem.endswith("_tests")
         ):
             continue
-        source = mask_cfg_test_blocks(path.read_text(encoding="utf-8"))
-        relative = path.relative_to(root).as_posix()
+        sources.append((
+            path.relative_to(root).as_posix(),
+            mask_cfg_test_blocks(path.read_text(encoding="utf-8")),
+        ))
+    return sources
+
+
+def _wire_index(sources: list[tuple[str, str]]) -> dict[str, list[str]]:
+    index: dict[str, list[str]] = {}
+    for relative, source in sources:
         for declaration in _wire_declarations(source):
             named = re.search(
                 r"\b(?:struct|enum)\s+([A-Za-z_][A-Za-z0-9_]*)|"
@@ -124,7 +177,9 @@ def _wire_index(root: Path) -> dict[str, list[str]]:
             )
             if named:
                 name = named.group(1) or named.group(2)
-                index.setdefault(name, []).append(f"{relative}:{declaration}")
+                evidence = [f"{relative}:{declaration}"]
+                evidence.extend(_serde_helper_evidence(declaration, sources))
+                index.setdefault(name, []).extend(evidence)
     return index
 
 
@@ -183,13 +238,16 @@ def discover_rest_schema_fingerprints(root: Path) -> dict[str, str]:
     catalog: list[str] = []
     handlers: dict[str, str] = {}
     external: dict[str, list[str]] = {}
-    wire_index = _wire_index(root)
+    sources = _production_sources(root)
+    wire_index = _wire_index(sources)
     for path in sorted((root / "src/api").rglob("*.rs")):
         if "tests" in path.parts or path.name == "tests.rs":
             continue
         text = mask_cfg_test_blocks(path.read_text(encoding="utf-8"))
         relative = path.relative_to(root).as_posix()
-        catalog.extend(f"{relative}:{item}" for item in _wire_declarations(text))
+        for item in _wire_declarations(text):
+            catalog.append(f"{relative}:{item}")
+            catalog.extend(_serde_helper_evidence(item, sources))
         for name, signature in _handler_signatures(text).items():
             if name in handlers:
                 raise RuntimeError(f"duplicate REST handler {name!r}")
@@ -228,8 +286,11 @@ def rest_surface_self_test() -> int:
         (external / "mod.rs").write_text(external_source, encoding="utf-8")
         source = (
             "use serde::{Deserialize, Serialize};\n"
-            "#[derive(Deserialize)] struct Request { value: String }\n"
-            "#[derive(Serialize)] struct Response { ok: bool }\n"
+            "#[derive(Deserialize)] struct Request { #[serde(deserialize_with = \"read_wire\")] value: String }\n"
+            "#[derive(Serialize)] struct Response { #[serde(serialize_with = \"wire\")] ok: bool, #[serde(with = \"wire_module\")] wrapped: bool }\n"
+            "fn wire<S>(value: &bool, serializer: S) { serializer.serialize_str(\"helper-key\"); }\n"
+            "fn read_wire<'de, D>(deserializer: D) { parse(\"read-helper-key\"); }\n"
+            "mod wire_module { fn serialize<S>() { emit(\"module-key\"); } fn deserialize<'de, D>() {} }\n"
             "struct Manual; impl Serialize for Manual { fn serialize(self) { serializer.serialize_str(\"manual-key\"); } }\n"
             "#[cfg(test)] mod tests { #[derive(Serialize)] struct TestOnly { ignored: bool } }\n"
             "pub(in crate::api) async fn handle_save() -> impl IntoResponse { private_work(); crate::external::load(); Json(json!({\"ok\": true})) }\n"
@@ -250,6 +311,15 @@ def rest_surface_self_test() -> int:
         (api / "save.rs").write_text(source.replace("manual-key", "renamed-key"), encoding="utf-8")
         if discover_rest_schema_fingerprints(root) == before:
             raise RuntimeError("custom serde wire-key change did not change its schema fingerprint")
+        (api / "save.rs").write_text(source.replace("helper-key", "renamed-helper-key"), encoding="utf-8")
+        if discover_rest_schema_fingerprints(root) == before:
+            raise RuntimeError("serde field helper change did not change its schema fingerprint")
+        (api / "save.rs").write_text(source.replace("read-helper-key", "renamed-read-key"), encoding="utf-8")
+        if discover_rest_schema_fingerprints(root) == before:
+            raise RuntimeError("serde deserialize helper change did not change its schema fingerprint")
+        (api / "save.rs").write_text(source.replace("module-key", "renamed-module-key"), encoding="utf-8")
+        if discover_rest_schema_fingerprints(root) == before:
+            raise RuntimeError("serde helper module change did not change its schema fingerprint")
         (api / "save.rs").write_text(source.replace("value: String", "renamed: String"), encoding="utf-8")
         if discover_rest_schema_fingerprints(root) == before:
             raise RuntimeError("REST request field change did not change its schema fingerprint")

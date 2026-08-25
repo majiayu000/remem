@@ -443,6 +443,10 @@ def lifecycle_self_test() -> int:
             "pub fn windows_api() {}\n", encoding="utf-8"
         )
         (root / "src/lib.rs").write_text("#[cfg(windows)] pub mod platform;\npub mod platform_impl;\n", encoding="utf-8")
+        (root / "src/api/mod.rs").write_text(
+            "pub struct RouterInfo;\nimpl Default for RouterInfo {\nfn default() -> Self { Self }\n}\n",
+            encoding="utf-8",
+        )
         (root / "src/platform_impl.rs").write_text(
             "pub struct Api;\n#[cfg(windows)]\nimpl Api { pub fn windows_only(&self) {} }\n",
             encoding="utf-8",
@@ -462,7 +466,13 @@ def lifecycle_self_test() -> int:
             '<pre class="rust item-decl"><code>pub struct RouterInfo { pub status: bool }</code></pre>'
             '<span id="structfield.status"></span><div id="implementations-list">'
             '<section id="method.health" class="method"><h4 class="code-header">pub fn health(&amp;self)</h4></section></div><h2 id="trait-implementations"></h2>'
-            '<section id="method.clone" class="method trait-impl"></section>',
+            '<div id="trait-implementations-list"><section id="impl-Default-for-RouterInfo" class="impl">'
+            '<a class="src rightside" href="../../../src/remem/api/mod.rs.html#2-4"></a>'
+            '<h3 class="code-header">impl Default for RouterInfo</h3></section>'
+            '<section id="method.default" class="method trait-impl">'
+            '<a class="src rightside" href="../../../src/remem/api/mod.rs.html#3"></a>'
+            '<h4 class="code-header">fn default() -&gt; Self</h4></section></div>'
+            '<h2 id="synthetic-implementations"></h2><section id="method.clone" class="method trait-impl"></section>',
             encoding="utf-8",
         )
         (doc_root / "api/trait.Health.html").write_text(
@@ -488,6 +498,8 @@ def lifecycle_self_test() -> int:
             "remem::api", "remem::api::RouterInfo", "remem::api::RouterInfo::status",
             "remem::api::RouterInfo::health", "remem::api::Health",
             "remem::api::Health::defaulted", "remem::api::Health::required",
+            "remem::api::RouterInfo::impl:impl-Default-for-RouterInfo",
+            "remem::api::RouterInfo::default",
         }
         expected_rest = {
             "GET /health", "HEAD /health", "POST /health", "POST /api/v1/admin/check",
@@ -503,6 +515,11 @@ def lifecycle_self_test() -> int:
             print(f"surface discovery self-test failed: {discovered}", file=sys.stderr)
             return 1
         target_before = discovered["rust_target_export"]
+        (root / "src/platform.rs").write_text("pub unsafe extern \"C\" fn windows_api() { private_only(); }\n", encoding="utf-8")
+        qualified_target = discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"}, rest_fingerprints={})["rust_target_export"]
+        if qualified_target == target_before:
+            sys.stderr.write("target function modifiers did not alter its signature fingerprint\n")
+            return 1
         (root / "src/platform.rs").write_text("pub fn windows_api() { private_only(); }\n", encoding="utf-8")
         if discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"}, rest_fingerprints={})["rust_target_export"] != target_before:
             sys.stderr.write("private target implementation body changed a public signature\n")

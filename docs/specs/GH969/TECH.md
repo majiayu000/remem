@@ -373,17 +373,23 @@ retain Rustdoc's disambiguator instead of overwriting one another. Platform-cfg
 discovery starts at `src/lib.rs`, follows publicly reachable external modules,
 resolves target-gated public re-exports through private modules to the exported
 definitions, and uses the same declaration-only rule (including public
-associated items), so private module/function-body edits do not create false
-compatibility drift; the target-only category may be empty when no such export
-is reachable. MCP tool
+associated items). Target-only function parsing accepts Rust qualifiers such as
+`const`, `async`, `unsafe`, and `extern`; the qualifiers are part of the
+signature fingerprint. Private module/function-body edits therefore do not
+create false compatibility drift; the target-only category may be empty when
+no such export is reachable. Compiler-resolved Rust records also include
+explicit trait implementations and their locally implemented associated items,
+while excluding derived, auto, and blanket implementations. MCP tool
 identities fingerprint each normalized served `tools/list` input/output schema. Rustdoc
 surface generation is pinned to Rust 1.97.0 in CI and rejects other local
 versions, preventing renderer-version-only churn.
 REST route identities similarly include normalized serde request/response
 declarations (including manual `Serialize`/`Deserialize` implementations),
 reachable external producer result types, constructed JSON shapes, and their
-named handler signature; inline `cfg(test)` declarations are masked before
-fingerprinting;
+named handler signature. Implementations referenced by serde `serialize_with`,
+`deserialize_with`, and `with` field attributes are fingerprinted with the wire
+declaration; unresolved helpers fail closed. Inline `cfg(test)` declarations
+are masked before fingerprinting;
 reachable `route_service`, `nest_service`, and fallback registrations are
 rejected until discovery supports them. Production default evidence also binds
 CurrentTruth projection, fail-closed availability, shadow attachment, and
