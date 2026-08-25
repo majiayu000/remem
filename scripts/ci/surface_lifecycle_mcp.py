@@ -111,7 +111,11 @@ def discover_mcp_schema_fingerprints(root: Path) -> dict[str, str]:
         name = tool["name"]
         schemas = {"inputSchema": tool.get("inputSchema"), "outputSchema": tool.get("outputSchema")}
         normalized = json.dumps(schemas, sort_keys=True, separators=(",", ":"))
+        descriptor = json.dumps(tool, sort_keys=True, separators=(",", ":"))
         if name in fingerprints:
             raise RuntimeError(f"served MCP tools/list contains duplicate {name!r}")
-        fingerprints[name] = hashlib.sha256(normalized.encode()).hexdigest()
+        fingerprints[name] = (
+            f"{hashlib.sha256(normalized.encode()).hexdigest()}"
+            f"@descriptor-sha256={hashlib.sha256(descriptor.encode()).hexdigest()}"
+        )
     return fingerprints

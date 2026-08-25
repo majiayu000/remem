@@ -24,6 +24,7 @@ from surface_lifecycle_rust import discover_rust_exports
 from surface_lifecycle_mcp import discover_mcp_legacy_shapes, discover_mcp_schema_fingerprints
 from surface_lifecycle_release import verified_release_baseline
 from surface_lifecycle_rest import (
+    discover_rest_middleware_fingerprint,
     discover_rest_schema_fingerprints,
     reject_unsupported_method_routes,
     reject_unsupported_router_methods,
@@ -222,6 +223,7 @@ def discover_rest_routes(root: Path, *, schema_fingerprints: dict[str, str] | No
         raise RuntimeError("cannot resolve API build_router")
     routes: set[str] = set()
     schemas = discover_rest_schema_fingerprints(root) if schema_fingerprints is None else schema_fingerprints
+    router_sources: list[tuple[str, str]] = []
 
     def visit(name: str, prefix: str, ancestors: tuple[str, ...]) -> None:
         if name in ancestors:
@@ -229,6 +231,7 @@ def discover_rest_routes(root: Path, *, schema_fingerprints: dict[str, str] | No
         if name not in functions:
             raise RuntimeError(f"Axum router helper {name!r} is referenced but not discovered")
         path, body = functions[name]
+        router_sources.append((path.relative_to(root).as_posix(), body))
         reject_unsupported_router_methods(body, path)
         for arguments in _method_calls(body, "route"):
             if len(arguments) < 2:
@@ -266,6 +269,9 @@ def discover_rest_routes(root: Path, *, schema_fingerprints: dict[str, str] | No
             visit(_router_helper(arguments[1], path=path, method="nest"), nested_prefix, (*ancestors, name))
 
     visit("build_router", "", ())
+    middleware = discover_rest_middleware_fingerprint(root, router_sources) if schemas else None
+    if middleware:
+        routes = {f"{route}@router-sha256={middleware}" for route in routes}
     if not routes:
         raise RuntimeError("no REST routes discovered from build_router")
     return routes
@@ -376,8 +382,48 @@ def _command_names(variant: str, attributes: list[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(names))
 
 
+def _clap_args_contracts(root: Path) -> dict[str, str]:
+    declarations: dict[str, str] = {}
+    pattern = re.compile(
+        r"#\s*\[\s*derive\s*\([^]]*\bArgs\b[^]]*\)\s*\]"
+        r"(?:(?:\s|#\s*\[[^]]*\])*)(?:pub(?:\s*\([^)]*\))?\s+)?struct\s+"
+        r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)",
+        re.S,
+    )
+    for path in sorted((root / "src/cli").glob("*.rs")):
+        text = path.read_text(encoding="utf-8")
+        for match in pattern.finditer(text):
+            cursor = match.end()
+            while cursor < len(text) and text[cursor].isspace():
+                cursor += 1
+            if cursor >= len(text) or text[cursor] not in "{(":
+                raise RuntimeError(f"unsupported Clap Args struct {match.group('name')} in {path}")
+            right = "}" if text[cursor] == "{" else ")"
+            end = _matching(text, cursor, text[cursor], right)
+            name = match.group("name")
+            if name in declarations:
+                raise RuntimeError(f"ambiguous Clap Args struct basename {name!r}")
+            declarations[name] = text[match.start() : end + 1]
+    cache: dict[str, str] = {}
+
+    def resolve(name: str, ancestors: tuple[str, ...]) -> str:
+        if name in ancestors:
+            raise RuntimeError(f"recursive Clap Args graph: {' -> '.join((*ancestors, name))}")
+        if name in cache:
+            return cache[name]
+        raw = declarations[name]
+        nested = sorted(other for other in declarations if other != name and re.search(rf"\b{re.escape(other)}\b", raw))
+        evidence = [re.sub(r"\s+", " ", _mask_comments(raw)).strip()]
+        evidence.extend(resolve(other, (*ancestors, name)) for other in nested)
+        cache[name] = hashlib.sha256("\n".join(evidence).encode()).hexdigest()
+        return cache[name]
+
+    return {name: resolve(name, ()) for name in declarations}
+
+
 def _subcommand_enums(root: Path, features: set[str]) -> dict[str, list[tuple[tuple[str, ...], str | None, str]]]:
     enums: dict[str, list[tuple[tuple[str, ...], str | None, str]]] = {}
+    args_contracts = _clap_args_contracts(root)
     for path in sorted((root / "src/cli").glob("*.rs")):
         text = path.read_text(encoding="utf-8")
         enum_re = re.compile(
@@ -427,6 +473,10 @@ def _subcommand_enums(root: Path, features: set[str]) -> dict[str, list[tuple[tu
                 if child_match:
                     child = child_match.group("type").split("::")[-1]
                 contract = re.sub(r"\s+", " ", _mask_comments(raw_variant)).strip()
+                contract += "".join(
+                    f"\n{name}:{digest}" for name, digest in sorted(args_contracts.items())
+                    if re.search(rf"\b{re.escape(name)}\b", raw_variant)
+                )
                 variants.append((_command_names(variant, attributes), child, hashlib.sha256(contract.encode()).hexdigest()))
             enum_name = match.group("name")
             if enum_name in enums:

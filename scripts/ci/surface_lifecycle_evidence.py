@@ -536,10 +536,13 @@ def build_default_guard(root: Path, mode: str) -> dict[str, object]:
         value = "projected-and-activated"
     elif mode == "positive_graph_weight":
         path = root / "src/retrieval/search/memory/weights.rs"
-        raw = path.read_text(encoding="utf-8")
-        match = re.search(r"\bconst\s+GRAPH_WEIGHT\s*:\s*f64\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*;", raw)
-        if not match or float(match.group(1)) <= 0:
-            raise RuntimeError("production GRAPH_WEIGHT must remain non-zero")
+        weights = path.read_text(encoding="utf-8")
+        consumer = "\n".join(mask_cfg_test_blocks((root / item).read_text(encoding="utf-8")) for item in ("src/retrieval/search/memory/text/graph.rs", "src/retrieval/search/memory/text.rs", "src/retrieval/search/memory/runner.rs"))
+        raw = weights + "\n" + consumer
+        match = re.search(r"\bconst\s+GRAPH_WEIGHT\s*:\s*f64\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*;", weights)
+        markers = ("graph: GRAPH_WEIGHT", "SearchExecutionPolicy::production()", "SearchWeights::production()", "graph::append_graph_channel(", "if weights.graph <= 0.0", "traverse_trusted_graph(", "graph_channel_after_suppression(")
+        if not match or float(match.group(1)) <= 0 or markers[0] not in weights or not all(item in consumer for item in markers[1:]):
+            raise RuntimeError("production graph weight must remain positive, assigned, and consumed")
         value = float(match.group(1))
     elif mode == "legacy_events_projection":
         path = root / "src/memory/events/write.rs"
@@ -599,7 +602,7 @@ def _production_sources(root: Path) -> list[Path]:
     return paths
 
 
-def _mask_rust_comments(text: str) -> str:
+def mask_rust_comments(text: str) -> str:
     chars = list(text)
     quote: str | None = None
     escaped = False
@@ -657,7 +660,7 @@ def build_caller_guard(root: Path, symbols: tuple[str, ...]) -> dict[str, object
     callers: list[dict[str, str]] = []
     for path in _production_sources(root):
         raw = path.read_text(encoding="utf-8")
-        source = _mask_rust_comments(raw)
+        source = mask_rust_comments(mask_cfg_test_blocks(raw))
         if any(symbol in source for symbol in symbols):
             callers.append({
                 "path": path.relative_to(root).as_posix(),

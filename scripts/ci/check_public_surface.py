@@ -433,8 +433,9 @@ def lifecycle_self_test() -> int:
             encoding="utf-8",
         )
         (root / "src/cli/types.rs").write_text(
+            '#[derive(Args)] struct ContextArgs { #[arg(long)] json: bool } '
             '#[derive(Subcommand)] enum Commands { '
-            '#[command(visible_alias = "ctx")] Context { #[arg(long)] json: bool }, '
+            '#[command(visible_alias = "ctx")] Context(ContextArgs), '
             '#[cfg(feature = "eval")] Eval, #[cfg(feature = "off")] Hidden, '
             'Admin { #[command(subcommand)] action: AdminAction } }\n'
             '#[derive(Subcommand)] enum AdminAction { #[command(alias = "save")] Backup }\n',
@@ -498,10 +499,8 @@ def lifecycle_self_test() -> int:
         if changed_rust == discovered["rust_export"]:
             sys.stderr.write("Rust public signature change did not alter the compatibility fingerprint\n")
             return 1
-        cli_path, mcp_path = root / "src/cli/types.rs", root / "src/mcp/server/tool_contracts.rs"
-        cli_source, mcp_source = cli_path.read_text(), mcp_path.read_text()
-        cli_path.write_text(cli_source.replace("#[arg(long)]", "#[arg(short)]"))
-        mcp_path.write_text(mcp_source.replace("json_object(\"search\"", "json_array(\"search\"").replace("Schema::Search)", "Schema::Search, \"items\")"))
+        cli_path, mcp_path = root / "src/cli/types.rs", root / "src/mcp/server/tool_contracts.rs"; cli_source, mcp_source = cli_path.read_text(), mcp_path.read_text()
+        cli_path.write_text(cli_source.replace("#[arg(long)]", "#[arg(short)]")); mcp_path.write_text(mcp_source.replace("json_object(\"search\"", "json_array(\"search\"").replace("Schema::Search)", "Schema::Search, \"items\")"))
         changed_contracts = discover_all(root, doc_root=doc_root, mcp_fingerprints={"search": "fixture"}, rest_fingerprints={})
         cli_path.write_text(cli_source); mcp_path.write_text(mcp_source)
         if changed_contracts["cli_command"] == discovered["cli_command"] or changed_contracts["mcp_tool"] == discovered["mcp_tool"]:
@@ -616,6 +615,8 @@ def lifecycle_self_test() -> int:
         if caller_guard == build_caller_guard(root, ("crate::retrieval_router",)):
             sys.stderr.write("experimental caller fingerprint ignored an implementation change\n")
             return 1
+        (root / "src/runtime.rs").write_text("#[cfg(test)] mod tests { fn route() { crate::retrieval_router::plan(); } }")
+        if build_caller_guard(root, ("crate::retrieval_router",))["callers"]: sys.stderr.write("inline tests leaked into caller evidence\n"); return 1
         (root / "src/context").mkdir()
         (root / "src/context/render_bundle.rs").write_text(
             'match mode { "" | "bundle" => Ok(ContextBundleRenderMode::Bundle), '
@@ -624,19 +625,20 @@ def lifecycle_self_test() -> int:
         )
         weights = root / "src/retrieval/search/memory/weights.rs"
         weights.parent.mkdir(parents=True)
-        weights.write_text("const GRAPH_WEIGHT: f64 = 0.75;\n", encoding="utf-8")
+        weights.write_text("const GRAPH_WEIGHT: f64 = 0.75; struct SearchWeights { graph: f64 } impl Default for SearchWeights { fn default() -> Self { Self { graph: GRAPH_WEIGHT } } }\n", encoding="utf-8")
+        graph = weights.parent / "text/graph.rs"; graph.parent.mkdir(); graph.write_text("fn append(weights: SearchWeights) { if weights.graph <= 0.0 {} traverse_trusted_graph(); graph_channel_after_suppression(); }"); (weights.parent / "text.rs").write_text("fn search() { graph::append_graph_channel(); }"); (weights.parent / "runner.rs").write_text("fn production() { SearchExecutionPolicy::production(); SearchWeights::production(); }")
         if build_default_guard(root, "positive_graph_weight")["value"] != 0.75:
             sys.stderr.write("production graph default evidence was not resolved\n")
             return 1
-        weights.write_text("const GRAPH_WEIGHT: f64 = 0.0;\n", encoding="utf-8")
+        weights.write_text("const GRAPH_WEIGHT: f64 = 0.75; struct SearchWeights { graph: f64 } impl Default for SearchWeights { fn default() -> Self { Self { graph: 0.0 } } }\n", encoding="utf-8")
         try:
             build_default_guard(root, "positive_graph_weight")
         except RuntimeError:
             pass
         else:
-            sys.stderr.write("zero graph default did not fail production evidence\n")
+            sys.stderr.write("disconnected graph default did not fail production evidence\n")
             return 1
-        weights.write_text("const GRAPH_WEIGHT: f64 = 0.75;\n", encoding="utf-8")
+        weights.write_text("const GRAPH_WEIGHT: f64 = 0.75; struct SearchWeights { graph: f64 } impl Default for SearchWeights { fn default() -> Self { Self { graph: GRAPH_WEIGHT } } }\n", encoding="utf-8")
         offline_roots = ["eval/cross-host", "docs/specs/GH935"]
         (root / "eval/cross-host/scripts").mkdir(parents=True)
         (root / "eval/cross-host/scripts/test_run_dry.py").write_text("print('ok')\n", encoding="utf-8")

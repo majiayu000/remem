@@ -8,7 +8,7 @@ import re
 import tempfile
 from pathlib import Path
 
-from surface_lifecycle_evidence import mask_cfg_test_blocks
+from surface_lifecycle_evidence import mask_cfg_test_blocks, mask_rust_comments
 
 
 UNSUPPORTED_ROUTER_METHODS = (
@@ -43,7 +43,7 @@ def _matching(text: str, opening: int, left: str, right: str) -> int:
 
 
 def _normalize(value: str) -> str:
-    value = re.sub(r"//[^\n]*|/\*.*?\*/", " ", value, flags=re.S)
+    value = mask_rust_comments(value)
     return re.sub(r"\s+", " ", value).strip()
 
 
@@ -313,6 +313,31 @@ def discover_rest_schema_fingerprints(root: Path) -> dict[str, str]:
     }
 
 
+def discover_rest_middleware_fingerprint(
+    root: Path, router_sources: list[tuple[str, str]] | None = None,
+) -> str | None:
+    evidence: list[str] = []
+    helpers: set[str] = set()
+    sources = _production_sources(root)
+    routed = router_sources or [(relative, source) for relative, source in sources if relative.startswith("src/api/")]
+    for relative, source in routed:
+        for match in re.finditer(r"\.(?:route_layer|layer)\s*\(", source):
+            closing = _matching(source, match.end() - 1, "(", ")")
+            call = _normalize(source[match.start() : closing + 1])
+            evidence.append(f"{relative}:{call}")
+            helpers.update(re.findall(r"\bfrom_fn\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)", call))
+    for helper in sorted(helpers):
+        found = [
+            f"{relative}:{item}"
+            for relative, source in sources
+            for item in _function_evidence(source, helper)
+        ]
+        if not found:
+            raise RuntimeError(f"cannot resolve REST middleware helper {helper!r}")
+        evidence.extend(found)
+    return hashlib.sha256("\n".join(sorted(evidence)).encode()).hexdigest() if evidence else None
+
+
 def reject_unsupported_router_methods(body: str, path: Path) -> None:
     found = [method for method in UNSUPPORTED_ROUTER_METHODS if re.search(rf"\.{method}\s*\(", body)]
     if found:
@@ -391,6 +416,16 @@ def rest_surface_self_test() -> int:
         (api / "save.rs").write_text(source.replace("value: String", "renamed: String"), encoding="utf-8")
         if discover_rest_schema_fingerprints(root) == before:
             raise RuntimeError("REST request field change did not change its schema fingerprint")
+        (api / "save.rs").write_text(source.replace('{"ok": true}', '{"url": "https://old.example", "ok": true}'), encoding="utf-8")
+        url_before = discover_rest_schema_fingerprints(root)
+        (api / "save.rs").write_text(source.replace('{"ok": true}', '{"url": "https://new.example", "ok": true}'), encoding="utf-8")
+        if discover_rest_schema_fingerprints(root) == url_before:
+            raise RuntimeError("REST URL string change did not change its schema fingerprint")
+        (api / "server.rs").write_text("fn require_api_token() { old_auth(); } fn router() { Router::new().route_layer(middleware::from_fn(require_api_token)); }", encoding="utf-8")
+        middleware_before = discover_rest_middleware_fingerprint(root)
+        (api / "server.rs").write_text("fn require_api_token() { new_auth(); } fn router() { Router::new().route_layer(middleware::from_fn(require_api_token)); }", encoding="utf-8")
+        if discover_rest_middleware_fingerprint(root) == middleware_before:
+            raise RuntimeError("REST authentication middleware change did not alter its fingerprint")
         rejected = False
         try:
             reject_unsupported_router_methods("Router::new().route_service(\"/x\", service)", api / "server.rs")

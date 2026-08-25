@@ -79,6 +79,7 @@ def check_workflow_text() -> None:
 
     release_text = RELEASE.read_text(encoding="utf-8")
     for needle in [
+        "python3 scripts/ci/check_public_surface.py",
         "cp docs/specs/GH969/surface-manifest.json artifacts/surface-manifest.json",
         "artifacts/surface-manifest.json",
     ]:
