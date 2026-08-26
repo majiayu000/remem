@@ -1,30 +1,4 @@
 {
-  "schema_version": 1,
-  "benchmark_id": "adversarial-policy",
-  "benchmark_version": "v2",
-  "layer": "memory_system_capability",
-  "suite": "adversarial-policy",
-  "condition": "remem_default",
-  "task_id": "assistant-authored-unsupported-001",
-  "run_index": 0,
-  "reference_time_epoch": 1760000000,
-  "reader_model": {
-    "model": "deterministic-memory-reader",
-    "prompt_hash": "sha256:ceced4df4ed2bef7894878fad7f577f0517b30634d0f1bbce064883d21053b91",
-    "provider": "fixture",
-    "temperature": 0
-  },
-  "environment": {
-    "os": "macos",
-    "arch": "aarch64",
-    "remem_commit": "d0108bc651f98621917fc52d7dd662354745d21a",
-    "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/assistant-authored-unsupported-001",
-    "source_dirty": false,
-    "production_input_tree_sha256": "4f92707e975c1f2e5d7c5c3a208081db244516a8e345323f18d9a1bd3aa6b08c",
-    "docker_image_digest": "local-fixture-no-docker",
-    "fixture_revision": "adversarial-policy-v2",
-    "repo_base_commit": null
-  },
   "answer": {
     "abstained": true,
     "no_answer_correct": true,
@@ -33,20 +7,42 @@
     "temporal_as_of_correct": true,
     "text": "Insufficient benchmark evidence to answer."
   },
-  "retrieval": {
-    "retrieved_memory_ids": [],
-    "retrieved_supporting_evidence_ids": [],
-    "gold_supporting_event_ids": [
-      "assistant-001:e1"
+  "artifacts": {
+    "answer": "memory/artifacts/adversarial-policy-v2/remem_default-assistant-authored-unsupported-001/answer.json",
+    "diagnosis": "memory/artifacts/adversarial-policy-v2/remem_default-assistant-authored-unsupported-001/diagnosis.json",
+    "reader_input": "memory/artifacts/adversarial-policy-v2/remem_default-assistant-authored-unsupported-001/reader_input.txt",
+    "remem_db_snapshot": "memory/artifacts/adversarial-policy-v2/remem_default-assistant-authored-unsupported-001/remem.db.snapshot.tar.zst",
+    "retrieved_evidence": "memory/artifacts/adversarial-policy-v2/remem_default-assistant-authored-unsupported-001/retrieved_evidence.json",
+    "score": "memory/artifacts/adversarial-policy-v2/remem_default-assistant-authored-unsupported-001/score.json"
+  },
+  "benchmark_id": "adversarial-policy",
+  "benchmark_version": "v2",
+  "condition": "remem_default",
+  "diagnosis": {
+    "notes": [
+      "missing supporting evidence: assistant-001:e1"
     ],
-    "missing_supporting_evidence_ids": [
-      "assistant-001:e1"
-    ]
+    "policy_abstention": true,
+    "reader_gap": false,
+    "retrieval_side_gap": false,
+    "write_side_gap": true
+  },
+  "environment": {
+    "arch": "aarch64",
+    "docker_image_digest": "local-fixture-no-docker",
+    "fixture_revision": "adversarial-policy-v2",
+    "os": "macos",
+    "production_input_tree_sha256": "dd3ac70d08c5f6149b71391c825255dcc5de6b261ffbe18ffa3b9b98765fd7a2",
+    "remem_commit": "be655f406bcb1b15e5f1c312b983d42ec7aa474c",
+    "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/assistant-authored-unsupported-001",
+    "repo_base_commit": null,
+    "source_dirty": false
   },
   "evidence": {
-    "cited_memory_ids": [],
-    "cited_event_ids": []
+    "cited_event_ids": [],
+    "cited_memory_ids": []
   },
+  "layer": "memory_system_capability",
   "metrics": {
     "abstention_accuracy": 1.0,
     "answer_score": 1.0,
@@ -76,21 +72,25 @@
     "staleness_accuracy": 1.0,
     "support_coverage": 0.0
   },
-  "diagnosis": {
-    "write_side_gap": true,
-    "retrieval_side_gap": false,
-    "reader_gap": false,
-    "policy_abstention": true,
-    "notes": [
-      "missing supporting evidence: assistant-001:e1"
-    ]
+  "reader_model": {
+    "model": "deterministic-memory-reader",
+    "prompt_hash": "sha256:ceced4df4ed2bef7894878fad7f577f0517b30634d0f1bbce064883d21053b91",
+    "provider": "fixture",
+    "temperature": 0
   },
-  "artifacts": {
-    "answer": "memory/artifacts/adversarial-policy-v2/remem_default-assistant-authored-unsupported-001/answer.json",
-    "diagnosis": "memory/artifacts/adversarial-policy-v2/remem_default-assistant-authored-unsupported-001/diagnosis.json",
-    "reader_input": "memory/artifacts/adversarial-policy-v2/remem_default-assistant-authored-unsupported-001/reader_input.txt",
-    "remem_db_snapshot": "memory/artifacts/adversarial-policy-v2/remem_default-assistant-authored-unsupported-001/remem.db.snapshot.tar.zst",
-    "retrieved_evidence": "memory/artifacts/adversarial-policy-v2/remem_default-assistant-authored-unsupported-001/retrieved_evidence.json",
-    "score": "memory/artifacts/adversarial-policy-v2/remem_default-assistant-authored-unsupported-001/score.json"
-  }
+  "reference_time_epoch": 1760000000,
+  "retrieval": {
+    "gold_supporting_event_ids": [
+      "assistant-001:e1"
+    ],
+    "missing_supporting_evidence_ids": [
+      "assistant-001:e1"
+    ],
+    "retrieved_memory_ids": [],
+    "retrieved_supporting_evidence_ids": []
+  },
+  "run_index": 0,
+  "schema_version": 1,
+  "suite": "adversarial-policy",
+  "task_id": "assistant-authored-unsupported-001"
 }
