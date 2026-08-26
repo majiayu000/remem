@@ -62,7 +62,9 @@ remem install --target codex
 GitHub Release 也提供带校验和的 macOS、Linux x64/arm64 二进制。系统里尽量
 只保留一个 `remem`。hooks 和终端若解析到不同副本，`remem doctor` 会给出警告。
 
-完整的安装、更新、插件和平台说明可以从[文档导航](docs/README.md)进入。
+各安装渠道的升级方法、平台边界、PATH 漂移和手动安装说明见
+[安装与升级指南](docs/installation.md)。插件和运维材料可以继续从
+[文档导航](docs/README.md)进入。
 
 ## 验证安装
 

@@ -70,8 +70,10 @@ GitHub Releases: prebuilt binaries for macOS and Linux on x64/arm64, with
 published checksums. Use one canonical `remem` executable on `PATH`;
 `remem doctor` warns when hooks and terminals resolve different copies.
 
-Full installation, update, plugin, and platform notes are linked from the
-[documentation guide](docs/README.md).
+For channel-specific upgrades, platform boundaries, PATH drift, and manual
+install notes, read the [installation and upgrade guide](docs/installation.md).
+The broader [documentation guide](docs/README.md) links plugin and operational
+material.
 
 ## Verify the installation
 

@@ -17,10 +17,11 @@ or evidence details.
 
 | Topic | Current document |
 |---|---|
-| Standard binary installation and verification | [Root README](../README.md#install-in-five-minutes) |
+| Quick installation and verification | [Root README](../README.md#install-in-five-minutes) |
+| Install channels, upgrades, platforms, and PATH drift | [Installation and upgrade guide](installation.md) |
 | Codex plugin runtime and explicit hook activation | [Plugin README](../plugins/remem/README.md) |
 | SessionStart smoke test | [SessionStart context smoke](sessionstart-context-smoke.md) |
-| Codex context injection gating | [Codex context gate design](spec-codex-context-injection-gating-2026-05-25.md) |
+| SessionStart injection and cache stability | [Architecture](ARCHITECTURE.md) and [current cache-stability contract](specs/cache-stable-injection/PRODUCT.md) |
 | Cursor host evidence and limitations | [Cursor contract research](research/cursor-hooks-contract-2026-07-23.md) |
 | Plugin target design | [Codex plugin complete design](spec-codex-plugin-complete-design.md) |
 | Release channels and artifact policy | [Release lifecycle](release-lifecycle.md) |
@@ -34,7 +35,7 @@ the integration behaves that way.
 | Topic | Current document |
 |---|---|
 | Memory AI hosts, profiles, models, and executors | [Memory AI config](spec-memory-ai-config.md) |
-| SessionStart budgets and selection | [Context budget design](context-budget-design-2026-04-29.md) |
+| SessionStart budgets and selection | [Current context-budget contract](specs/context-budget-config/PRODUCT.md) |
 | Local semantic embeddings | [Local embedding product contract](specs/local-semantic-embedding/PRODUCT.md) |
 | SQLite cache and durability policy | [SQLite tuning contract](specs/GH949/PRODUCT.md) |
 | Usage and cost reporting | [Memory usage guide](memory-usage-guide.md) and `remem usage --help` |
