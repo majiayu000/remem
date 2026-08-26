@@ -73,6 +73,9 @@ windows-sys = { version = "=0.61.2", features = [
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 
+[build-dependencies]
+sha2 = "0.10"
+
 [features]
 default = ["local-onnx", "eval"]
 eval = []

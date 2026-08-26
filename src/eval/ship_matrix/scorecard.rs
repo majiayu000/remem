@@ -210,11 +210,9 @@ fn latency_field(public: &PublicEvidence) -> ScorecardField {
     let denominator = security_number(public, "/aggregate_metrics/performance/remem_default/tasks");
     let measured = p50.is_some() && p95.is_some() && denominator.is_some_and(|value| value > 0.0);
     let mut values = BTreeMap::new();
-    if let Some(value) = p50 {
-        values.insert("p50_ms".to_string(), value);
-    }
-    if let Some(value) = p95 {
-        values.insert("p95_ms".to_string(), value);
+    if measured {
+        values.insert("p50_ms".to_string(), p50.expect("measured p50"));
+        values.insert("p95_ms".to_string(), p95.expect("measured p95"));
     }
     ScorecardField {
         id: "foreground_latency_p50_p95",
@@ -230,7 +228,7 @@ fn latency_field(public: &PublicEvidence) -> ScorecardField {
         },
         denominator: ScorecardComponent {
             definition: "timed verified runs".to_string(),
-            value: denominator,
+            value: measured.then_some(denominator).flatten(),
         },
         values,
         threshold: "reported; owning latency contract supplies release threshold".to_string(),

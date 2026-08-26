@@ -1,5 +1,8 @@
-use super::authority::{ClaimAuthority, SecurityAuthority};
-use super::rows::{claim_artifact_matches_implementation, component_gate};
+use super::authority::{
+    supporting_report_binds_implementation, verify_security_task_set, ClaimAuthority,
+    SecurityAuthority,
+};
+use super::rows::component_gate;
 use super::scorecard::{build_scorecard, ratio_field, unavailable_field};
 use super::*;
 use crate::eval::gates::{EvalGateDelta, EvalGateStatus};
@@ -188,6 +191,129 @@ fn ratio_requires_a_nonzero_denominator() {
 }
 
 #[test]
+fn partial_latency_evidence_is_fully_unavailable() {
+    let public = PublicEvidence {
+        report: None,
+        report_error: None,
+        security: Some(serde_json::json!({
+            "aggregate_metrics": {
+                "performance": {
+                    "remem_default": {
+                        "end_to_end_latency_p50_ms": 12.0,
+                        "tasks": 20
+                    }
+                }
+            }
+        })),
+        security_error: None,
+        security_authority: SecurityAuthority {
+            passed: true,
+            benchmark_commit: None,
+            diagnostics: Vec::new(),
+        },
+        claim_authority: ClaimAuthority {
+            coding_passed: false,
+            level3_passed: false,
+            diagnostics: Vec::new(),
+        },
+    };
+    let scorecard = build_scorecard(&public);
+    let latency = scorecard
+        .fields
+        .iter()
+        .find(|field| field.id == "foreground_latency_p50_p95")
+        .unwrap();
+    assert_eq!(latency.measurement_state, MeasurementState::Unavailable);
+    assert_eq!(latency.denominator.value, None);
+    assert!(latency.values.is_empty());
+}
+
+#[test]
+fn security_task_set_requires_every_suite_task() {
+    let temp = unique_temp_dir("security-task-set");
+    let suite_dir = temp.join("memory/suites/adversarial-policy");
+    std::fs::create_dir_all(&suite_dir).unwrap();
+    std::fs::write(
+        suite_dir.join("suite.json"),
+        br#"{"version":"v2","fixture_revision":"adversarial-policy-v2","tasks":[{"id":"one"},{"id":"two"}]}"#,
+    )
+    .unwrap();
+    let options = ShipMatrixOptions {
+        public_root: temp.clone(),
+        ..Default::default()
+    };
+    let mut diagnostics = Vec::new();
+    verify_security_task_set(
+        &options,
+        &std::collections::BTreeSet::from(["one".to_string()]),
+        &mut diagnostics,
+    );
+    assert!(diagnostics
+        .iter()
+        .any(|item| item.contains("missing=[two]")));
+    std::fs::remove_dir_all(temp).unwrap();
+}
+
+#[test]
+fn supporting_claim_report_must_bind_current_sha() {
+    let current = "0123456789abcdef0123456789abcdef01234567";
+    let stale = serde_json::to_vec(&serde_json::json!({
+        "reproducibility": {
+            "remem_commits": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+        }
+    }))
+    .unwrap();
+    let mut diagnostics = Vec::new();
+    assert!(!supporting_report_binds_implementation(
+        &stale,
+        "claim",
+        Some(current),
+        &mut diagnostics,
+    ));
+    assert!(diagnostics
+        .iter()
+        .any(|item| item.contains("does not bind current implementation SHA")));
+}
+
+#[test]
+fn serialized_gate_always_carries_exclusions() {
+    let value =
+        serde_json::to_value(test_gate("gate", ShipGateStatus::Pass, vec!["merge"], true)).unwrap();
+    assert_eq!(value["exclusions"], serde_json::json!([]));
+}
+
+#[test]
+fn missing_capacity_evidence_is_incomplete_and_blocks_command() {
+    let temp = unique_temp_dir("capacity-incomplete");
+    std::fs::create_dir_all(&temp).unwrap();
+    let artifact = temp.join("artifact.json");
+    std::fs::write(&artifact, b"{}").unwrap();
+    let evidence = build_ship_evidence(
+        &[],
+        false,
+        true,
+        ShipMatrixOptions {
+            baseline_path: artifact.to_string_lossy().to_string(),
+            thresholds_path: artifact.to_string_lossy().to_string(),
+            golden_dataset_path: artifact.to_string_lossy().to_string(),
+            public_root: temp.join("public"),
+            security_report_path: temp.join("security.json"),
+            cross_host_charter_path: temp.join("charter.json"),
+            claim_registry_path: temp.join("claims.json"),
+        },
+    );
+    let capacity = evidence
+        .ship_matrix
+        .gates
+        .iter()
+        .find(|gate| gate.id == "capacity")
+        .unwrap();
+    assert_eq!(capacity.status, ShipGateStatus::Incomplete);
+    assert!(!evidence.ship_matrix.summary.command_passed);
+    std::fs::remove_dir_all(temp).unwrap();
+}
+
+#[test]
 fn unavailable_claim_scope_does_not_fail_merge_scope() {
     let merge = test_gate("merge", ShipGateStatus::Pass, vec!["merge"], true);
     let claim = test_gate(
@@ -203,37 +329,6 @@ fn unavailable_claim_scope_does_not_fail_merge_scope() {
         .iter()
         .filter(|gate| gate.required_for_command_success)
         .all(pass_or_not_applicable));
-}
-
-#[test]
-fn absent_claim_report_cannot_match_current_implementation() {
-    let public = PublicEvidence {
-        report: None,
-        report_error: Some("missing".to_string()),
-        security: None,
-        security_error: None,
-        security_authority: SecurityAuthority {
-            passed: false,
-            benchmark_commit: None,
-            diagnostics: Vec::new(),
-        },
-        claim_authority: ClaimAuthority {
-            coding_passed: false,
-            level3_passed: false,
-            diagnostics: Vec::new(),
-        },
-    };
-    let implementation = ImplementationIdentity {
-        git_sha: Some("0123456789abcdef0123456789abcdef01234567".to_string()),
-        source_dirty: Some(false),
-        package_version: "test",
-        os: "test",
-        arch: "test",
-    };
-    assert!(!claim_artifact_matches_implementation(
-        &public,
-        &implementation
-    ));
 }
 
 #[test]
@@ -284,6 +379,17 @@ fn metric_set_hash(metrics: &[&str]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+fn unique_temp_dir(label: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "remem-ship-matrix-{label}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ))
+}
+
 fn test_gate(
     id: &'static str,
     status: ShipGateStatus,
@@ -302,6 +408,7 @@ fn test_gate(
         model_identity: "test".to_string(),
         metric_deltas: BTreeMap::new(),
         stop_loss_verdict: "test".to_string(),
+        exclusions: Vec::new(),
         evidence: Vec::new(),
         diagnostics: Vec::new(),
     }

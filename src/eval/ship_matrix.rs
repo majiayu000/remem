@@ -97,6 +97,7 @@ pub struct ShipGateRow {
     pub model_identity: String,
     pub metric_deltas: BTreeMap<String, f64>,
     pub stop_loss_verdict: String,
+    pub exclusions: Vec<String>,
     pub evidence: Vec<ArtifactEvidence>,
     pub diagnostics: Vec<String>,
 }
@@ -108,6 +109,7 @@ pub enum ShipGateStatus {
     Fail,
     Incomplete,
     Unavailable,
+    #[allow(dead_code)]
     NotApplicable,
 }
 
@@ -241,7 +243,8 @@ fn load_public_evidence(
         security.as_ref(),
         implementation,
     );
-    let claim_authority = authority::verify_claim_authority(&options.claim_registry_path);
+    let claim_authority =
+        authority::verify_claim_authority(&options.claim_registry_path, implementation);
     PublicEvidence {
         report,
         report_error,

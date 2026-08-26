@@ -137,15 +137,7 @@ pub(crate) fn run_eval_gates_with_ship_evidence(
     );
     let command_passed = ship_evidence.ship_matrix.summary.command_passed;
     let summary = &ship_evidence.ship_matrix.summary;
-    let ship_summary = format!(
-        "ship_matrix merge_ready={} release_ready={} default_on_ready={} cross_host_claim_ready={} coding_outcome_claim_ready={} public_claim_ready={}",
-        summary.merge_ready,
-        summary.release_ready,
-        summary.default_on_ready,
-        summary.cross_host_claim_ready,
-        summary.coding_outcome_claim_ready,
-        summary.public_claim_ready,
-    );
+    let ship_summary = format_ship_summary(summary);
     let mut report_value = serde_json::to_value(&report)?;
     let report_object = report_value
         .as_object_mut()
@@ -169,6 +161,19 @@ pub(crate) fn run_eval_gates_with_ship_evidence(
         ship_summary,
         command_passed,
     })
+}
+
+fn format_ship_summary(summary: &crate::eval::ship_matrix::ShipMatrixSummary) -> String {
+    format!(
+        "ship_matrix command_passed={} merge_ready={} release_ready={} default_on_ready={} cross_host_claim_ready={} coding_outcome_claim_ready={} public_claim_ready={}",
+        summary.command_passed,
+        summary.merge_ready,
+        summary.release_ready,
+        summary.default_on_ready,
+        summary.cross_host_claim_ready,
+        summary.coding_outcome_claim_ready,
+        summary.public_claim_ready,
+    )
 }
 
 pub fn run_eval_gates(options: EvalGateOptions) -> Result<EvalGateReport> {

@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
@@ -700,57 +699,17 @@ fn prompt_hash(prompt: &str) -> String {
     format!("sha256:{:x}", hasher.finalize())
 }
 
-fn current_git_rev() -> Option<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
 fn execution_identity() -> ExecutionIdentity {
     ExecutionIdentity {
-        remem_commit: current_git_rev(),
-        source_dirty: current_git_dirty(),
-        production_input_tree_sha256: production_input_tree_sha256(),
+        remem_commit: option_env!("REMEM_BUILD_GIT_SHA").map(str::to_string),
+        source_dirty: option_env!("REMEM_BUILD_SOURCE_DIRTY").and_then(|value| match value {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        }),
+        production_input_tree_sha256: option_env!("REMEM_BUILD_PRODUCTION_INPUT_TREE_SHA256")
+            .map(str::to_string),
     }
-}
-
-fn current_git_dirty() -> Option<bool> {
-    let output = Command::new("git")
-        .args(["status", "--porcelain", "--untracked-files=normal"])
-        .output()
-        .ok()?;
-    output.status.success().then_some(!output.stdout.is_empty())
-}
-
-fn production_input_tree_sha256() -> Option<String> {
-    let output = Command::new("git")
-        .args([
-            "ls-files",
-            "-s",
-            "--",
-            "Cargo.toml",
-            "Cargo.lock",
-            "build.rs",
-            ".cargo",
-            "rust-toolchain.toml",
-            "src",
-            "prompts",
-            "assets",
-            ":(exclude)src/eval/ship_matrix.rs",
-            ":(exclude)src/eval/ship_matrix/**",
-            ":(exclude)src/eval/gates.rs",
-        ])
-        .output()
-        .ok()?;
-    if !output.status.success() || output.stdout.is_empty() {
-        return None;
-    }
-    Some(format!("{:x}", Sha256::digest(&output.stdout)))
 }
 
 fn is_checked_in_public_root(public_root: &Path) -> bool {

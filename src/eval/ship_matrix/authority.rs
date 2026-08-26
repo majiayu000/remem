@@ -53,6 +53,7 @@ pub(super) fn verify_security_authority(
             diagnostics.push("security report has no run_artifacts array".to_string());
             SecurityRunIdentities::default()
         });
+    verify_security_task_set(options, &identities.task_ids, &mut diagnostics);
     let benchmark_commit = if identities.commits.len() == 1 {
         identities.commits.first().cloned()
     } else {
@@ -100,6 +101,7 @@ pub(super) fn verify_security_authority(
 struct SecurityRunIdentities {
     commits: BTreeSet<String>,
     production_trees: BTreeSet<String>,
+    task_ids: BTreeSet<String>,
 }
 
 fn collect_security_identities(
@@ -142,6 +144,13 @@ fn collect_security_identities(
             diagnostics.push(format!("security run is invalid JSON: {relative}"));
             continue;
         };
+        match run.get("task_id").and_then(Value::as_str) {
+            Some(task_id) if identities.task_ids.insert(task_id.to_string()) => {}
+            Some(task_id) => {
+                diagnostics.push(format!("security run task_id is duplicated: {task_id}"))
+            }
+            None => diagnostics.push(format!("security run lacks task_id: {relative}")),
+        }
         match run
             .pointer("/environment/remem_commit")
             .and_then(Value::as_str)
@@ -182,6 +191,59 @@ fn collect_security_identities(
         }
     }
     identities
+}
+
+pub(super) fn verify_security_task_set(
+    options: &ShipMatrixOptions,
+    actual: &BTreeSet<String>,
+    diagnostics: &mut Vec<String>,
+) {
+    let suite_path = options
+        .public_root
+        .join("memory/suites/adversarial-policy/suite.json");
+    let suite = match super::read_json_value(&suite_path) {
+        Ok(value) => value,
+        Err(error) => {
+            diagnostics.push(format!("cannot load adversarial-policy v2 suite: {error}"));
+            return;
+        }
+    };
+    if suite.get("version").and_then(Value::as_str) != Some("v2")
+        || suite.get("fixture_revision").and_then(Value::as_str) != Some("adversarial-policy-v2")
+    {
+        diagnostics.push(
+            "adversarial-policy suite identity must be version v2 and fixture_revision adversarial-policy-v2"
+                .to_string(),
+        );
+    }
+    let mut expected = BTreeSet::new();
+    let Some(tasks) = suite.get("tasks").and_then(Value::as_array) else {
+        diagnostics.push("adversarial-policy v2 suite has no tasks array".to_string());
+        return;
+    };
+    for task in tasks {
+        match task.get("id").and_then(Value::as_str) {
+            Some(id) if expected.insert(id.to_string()) => {}
+            Some(id) => diagnostics.push(format!(
+                "adversarial-policy v2 suite task_id is duplicated: {id}"
+            )),
+            None => diagnostics
+                .push("adversarial-policy v2 suite contains a task without an id".to_string()),
+        }
+    }
+    if expected.is_empty() {
+        diagnostics.push("adversarial-policy v2 suite task set is empty".to_string());
+        return;
+    }
+    let missing = expected.difference(actual).cloned().collect::<Vec<_>>();
+    let unexpected = actual.difference(&expected).cloned().collect::<Vec<_>>();
+    if !missing.is_empty() || !unexpected.is_empty() {
+        diagnostics.push(format!(
+            "security run task set mismatch: missing=[{}] unexpected=[{}]",
+            missing.join(","),
+            unexpected.join(",")
+        ));
+    }
 }
 
 fn security_source_equivalent(
@@ -306,7 +368,10 @@ fn verify_security_outcomes(security: Option<&Value>, diagnostics: &mut Vec<Stri
     }
 }
 
-pub(super) fn verify_claim_authority(path: &Path) -> ClaimAuthority {
+pub(super) fn verify_claim_authority(
+    path: &Path,
+    implementation: &ImplementationIdentity,
+) -> ClaimAuthority {
     let mut diagnostics = Vec::new();
     let registry = match super::read_json_value(path) {
         Ok(value) => value,
@@ -346,7 +411,13 @@ pub(super) fn verify_claim_authority(path: &Path) -> ClaimAuthority {
             claims_passed = false;
             continue;
         };
-        claims_passed &= verify_pass_claim(claim, id, &repo_root, &mut diagnostics);
+        claims_passed &= verify_pass_claim(
+            claim,
+            id,
+            &repo_root,
+            implementation.git_sha.as_deref(),
+            &mut diagnostics,
+        );
     }
     diagnostics.push(
         "claim registry schema has no independently verified Level 3 claim authority".to_string(),
@@ -362,6 +433,7 @@ fn verify_pass_claim(
     claim: &Value,
     id: &str,
     repo_root: &Path,
+    implementation_sha: Option<&str>,
     diagnostics: &mut Vec<String>,
 ) -> bool {
     if claim.get("status").and_then(Value::as_str) != Some("PASS") {
@@ -381,7 +453,9 @@ fn verify_pass_claim(
         return false;
     };
     match fs::read(repo_root.join(relative)) {
-        Ok(bytes) if format!("{:x}", Sha256::digest(&bytes)) == expected => true,
+        Ok(bytes) if format!("{:x}", Sha256::digest(&bytes)) == expected => {
+            supporting_report_binds_implementation(&bytes, id, implementation_sha, diagnostics)
+        }
         Ok(_) => {
             diagnostics.push(format!("claim {id} supporting_report sha256 mismatch"));
             false
@@ -393,4 +467,41 @@ fn verify_pass_claim(
             false
         }
     }
+}
+
+pub(super) fn supporting_report_binds_implementation(
+    bytes: &[u8],
+    id: &str,
+    implementation_sha: Option<&str>,
+    diagnostics: &mut Vec<String>,
+) -> bool {
+    let Some(implementation_sha) = implementation_sha else {
+        diagnostics.push(format!(
+            "claim {id} cannot bind an unidentified current implementation"
+        ));
+        return false;
+    };
+    let report: Value = match serde_json::from_slice(bytes) {
+        Ok(value) => value,
+        Err(error) => {
+            diagnostics.push(format!(
+                "claim {id} supporting_report is invalid JSON: {error}"
+            ));
+            return false;
+        }
+    };
+    let bound = report
+        .pointer("/reproducibility/remem_commits")
+        .and_then(Value::as_array)
+        .is_some_and(|commits| {
+            commits
+                .iter()
+                .any(|commit| commit.as_str() == Some(implementation_sha))
+        });
+    if !bound {
+        diagnostics.push(format!(
+            "claim {id} supporting_report does not bind current implementation SHA {implementation_sha}"
+        ));
+    }
+    bound
 }

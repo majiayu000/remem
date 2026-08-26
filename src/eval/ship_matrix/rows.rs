@@ -54,7 +54,7 @@ pub(super) fn build_gate_rows(
             vec!["merge", "release", "retrieval_default"],
         )
     } else {
-        not_applicable_capacity(options)
+        incomplete_capacity(options)
     };
     vec![
         deterministic,
@@ -166,6 +166,7 @@ pub(super) fn component_gate(
             _ => "incomplete",
         }
         .to_string(),
+        exclusions: Vec::new(),
         evidence,
         diagnostics,
     }
@@ -185,11 +186,11 @@ fn metric_set_sha256(relevant: &[&EvalGateDelta]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-fn not_applicable_capacity(options: &ShipMatrixOptions) -> ShipGateRow {
+fn incomplete_capacity(options: &ShipMatrixOptions) -> ShipGateRow {
     ShipGateRow {
         id: "capacity",
         owner: "src/eval/capacity.rs",
-        status: ShipGateStatus::NotApplicable,
+        status: ShipGateStatus::Incomplete,
         blocks: vec!["merge", "release", "retrieval_default"],
         required_for_command_success: true,
         claim_level: "component_gate_only".to_string(),
@@ -197,13 +198,15 @@ fn not_applicable_capacity(options: &ShipMatrixOptions) -> ShipGateRow {
         config_identity: "eval-gates checked-in thresholds".to_string(),
         model_identity: "none_deterministic".to_string(),
         metric_deltas: BTreeMap::new(),
-        stop_loss_verdict: "not_applicable".to_string(),
+        stop_loss_verdict: "incomplete_missing_capacity_evidence".to_string(),
+        exclusions: Vec::new(),
         evidence: vec![evidence_for_path(
             Path::new(&options.golden_dataset_path),
             ArtifactState::Verified,
         )],
         diagnostics: vec![
-            "Capacity is not silently passed when the dataset has no fixture corpus.".to_string(),
+            "Capacity evidence is required; a dataset without a fixture corpus cannot pass the gate."
+                .to_string(),
         ],
     }
 }
@@ -252,6 +255,7 @@ fn security_gate(options: &ShipMatrixOptions, public: &PublicEvidence) -> ShipGa
             "failed_or_incomplete_security_evidence"
         }
         .to_string(),
+        exclusions: Vec::new(),
         evidence: vec![evidence_for_path(
             &options.security_report_path,
             if status == ShipGateStatus::Pass {
@@ -284,6 +288,7 @@ fn cross_host_gate(options: &ShipMatrixOptions) -> ShipGateRow {
         model_identity: "unavailable_until_governed_runs".to_string(),
         metric_deltas: BTreeMap::new(),
         stop_loss_verdict: "unavailable_no_verified_sealed_result".to_string(),
+        exclusions: vec!["no_verified_cross_host_execution".to_string()],
         evidence: vec![evidence_for_path(
             &options.cross_host_charter_path,
             if charter.is_ok() {
@@ -304,13 +309,11 @@ fn coding_gate(
     public: &PublicEvidence,
     implementation: &ImplementationIdentity,
 ) -> ShipGateRow {
-    let implementation_current = claim_artifact_matches_implementation(public, implementation);
     let artifacts_verified = public
         .report
         .as_ref()
         .is_some_and(|report| report.artifact_verifier.passed);
-    let passed =
-        artifacts_verified && public.claim_authority.coding_passed && implementation_current;
+    let passed = artifacts_verified && public.claim_authority.coding_passed;
     ShipGateRow {
         id: "coding_outcome",
         owner: "docs/specs/GH931 + src/eval/bench_artifact",
@@ -337,6 +340,7 @@ fn coding_gate(
         model_identity: public_model_identity(public),
         metric_deltas: BTreeMap::new(),
         stop_loss_verdict: if passed { "passed" } else { "unavailable" }.to_string(),
+        exclusions: vec!["smoke_or_unregistered_coding_runs".to_string()],
         evidence: vec![evidence_for_path(
             &options.public_root.join("reports/baseline.json"),
             if public.report.is_some() {
@@ -358,8 +362,7 @@ fn public_claim_gate(
     public: &PublicEvidence,
     implementation: &ImplementationIdentity,
 ) -> ShipGateRow {
-    let implementation_current = claim_artifact_matches_implementation(public, implementation);
-    let passed = public.claim_authority.level3_passed && implementation_current;
+    let passed = public.claim_authority.level3_passed;
     ShipGateRow {
         id: "public_claim",
         owner: "eval/claims + scripts/ci/check_public_claims.py",
@@ -386,6 +389,7 @@ fn public_claim_gate(
         model_identity: public_model_identity(public),
         metric_deltas: BTreeMap::new(),
         stop_loss_verdict: if passed { "passed" } else { "unavailable" }.to_string(),
+        exclusions: vec!["non_independently_verified_claim_evidence".to_string()],
         evidence: vec![evidence_for_path(
             &options.claim_registry_path,
             if options.claim_registry_path.is_file() {
@@ -430,21 +434,10 @@ fn default_decision_gate(
         model_identity: "must be declared by decision artifact".to_string(),
         metric_deltas: BTreeMap::new(),
         stop_loss_verdict: "unavailable_no_default_decision".to_string(),
+        exclusions: vec!["regression_only_evidence_without_capability_ablation".to_string()],
         evidence: Vec::new(),
         diagnostics: vec![diagnostic.to_string()],
     }
-}
-
-pub(super) fn claim_artifact_matches_implementation(
-    public: &PublicEvidence,
-    implementation: &ImplementationIdentity,
-) -> bool {
-    implementation.git_sha.as_ref().is_some_and(|sha| {
-        public
-            .report
-            .as_ref()
-            .is_some_and(|report| report.reproducibility.remem_commits.contains(sha))
-    })
 }
 
 fn claim_diagnostics(
@@ -458,9 +451,9 @@ fn claim_diagnostics(
             .clone()
             .unwrap_or_else(|| "public baseline unavailable".to_string())]
     });
-    if !claim_artifact_matches_implementation(public, implementation) {
+    if !public.claim_authority.coding_passed {
         diagnostics.push(format!(
-            "claim artifact does not bind current implementation SHA {}",
+            "each required claim supporting report must bind current implementation SHA {}",
             implementation.git_sha.as_deref().unwrap_or("unavailable")
         ));
     }
