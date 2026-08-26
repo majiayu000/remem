@@ -32,6 +32,8 @@
         "arch": { "type": "string", "minLength": 1 },
         "remem_commit": { "type": "string", "minLength": 1 },
         "remem_data_dir": { "type": "string", "minLength": 1 },
+        "source_dirty": { "type": ["boolean", "null"] },
+        "production_input_tree_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
         "docker_image_digest": { "type": ["string", "null"] },
         "fixture_revision": { "type": ["string", "null"] },
         "repo_base_commit": { "type": ["string", "null"] }

@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -31,6 +31,13 @@ const READER_PROVIDER: &str = "fixture";
 const READER_MODEL: &str = "deterministic-memory-reader";
 
 #[derive(Debug, Clone)]
+struct ExecutionIdentity {
+    remem_commit: Option<String>,
+    source_dirty: Option<bool>,
+    production_input_tree_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct MemoryBenchOptions {
     pub suite: String,
     pub condition: Option<String>,
@@ -52,6 +59,17 @@ pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBench
         .artifact_prefix
         .unwrap_or_else(|| format!("memory/artifacts/{}", fixture.fixture_revision));
     let public_layout = path_starts_with(&json_out, &public_root);
+    let execution_identity = execution_identity();
+    if public_layout && is_checked_in_public_root(&public_root) {
+        if execution_identity.source_dirty != Some(false) {
+            bail!("checked-in public memory benchmarks require a clean Git source tree");
+        }
+        if execution_identity.remem_commit.is_none()
+            || execution_identity.production_input_tree_sha256.is_none()
+        {
+            bail!("checked-in public memory benchmarks require Git commit and production-input identities");
+        }
+    }
     let artifact_root = if public_layout {
         public_root.join(&artifact_prefix)
     } else {
@@ -76,6 +94,7 @@ pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBench
                 &artifact_root,
                 &public_root,
                 public_layout,
+                &execution_identity,
             )?;
             run_artifacts.push(run_json_path);
             outcomes.push(outcome);
@@ -428,6 +447,7 @@ fn write_run_artifacts(
     artifact_root: &Path,
     public_root: &Path,
     public_layout: bool,
+    execution_identity: &ExecutionIdentity,
 ) -> Result<String> {
     let run_dir = artifact_root.join(format!(
         "{}-{}",
@@ -527,13 +547,18 @@ fn write_run_artifacts(
         environment: RunEnvironment {
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
-            remem_commit: current_git_rev().unwrap_or_else(|| "unknown".to_string()),
+            remem_commit: execution_identity
+                .remem_commit
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
             remem_data_dir: format!(
                 "temp://remem-memory-bench/{}/{}/{}",
                 fixture.fixture_revision,
                 outcome.condition.as_str(),
                 outcome.task_id
             ),
+            source_dirty: execution_identity.source_dirty,
+            production_input_tree_sha256: execution_identity.production_input_tree_sha256.clone(),
             docker_image_digest: Some("local-fixture-no-docker".to_string()),
             fixture_revision: Some(fixture.fixture_revision.clone()),
             repo_base_commit: None,
@@ -673,6 +698,52 @@ fn current_git_rev() -> Option<String> {
         return None;
     }
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn execution_identity() -> ExecutionIdentity {
+    ExecutionIdentity {
+        remem_commit: current_git_rev(),
+        source_dirty: current_git_dirty(),
+        production_input_tree_sha256: production_input_tree_sha256(),
+    }
+}
+
+fn current_git_dirty() -> Option<bool> {
+    let output = Command::new("git")
+        .args(["status", "--porcelain", "--untracked-files=normal"])
+        .output()
+        .ok()?;
+    output.status.success().then(|| !output.stdout.is_empty())
+}
+
+fn production_input_tree_sha256() -> Option<String> {
+    let output = Command::new("git")
+        .args([
+            "ls-files",
+            "-s",
+            "--",
+            "Cargo.toml",
+            "Cargo.lock",
+            "build.rs",
+            ".cargo",
+            "rust-toolchain.toml",
+            "src",
+            "prompts",
+            "assets",
+            ":(exclude)src/eval/ship_matrix.rs",
+            ":(exclude)src/eval/ship_matrix/**",
+            ":(exclude)src/eval/gates.rs",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() || output.stdout.is_empty() {
+        return None;
+    }
+    Some(format!("{:x}", Sha256::digest(&output.stdout)))
+}
+
+fn is_checked_in_public_root(public_root: &Path) -> bool {
+    public_root.canonicalize().ok() == Path::new(DEFAULT_PUBLIC_ROOT).canonicalize().ok()
 }
 
 #[derive(Debug, Clone)]

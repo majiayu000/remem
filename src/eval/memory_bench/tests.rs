@@ -217,6 +217,13 @@ async fn adversarial_policy_bench_reports_zero_policy_leaks() -> Result<()> {
             run["benchmark_version"], report.benchmark_version,
             "generated run {run_path} must inherit the suite version"
         );
+        assert!(run["environment"]["source_dirty"].is_boolean());
+        assert_eq!(
+            run["environment"]["production_input_tree_sha256"]
+                .as_str()
+                .map(str::len),
+            Some(64)
+        );
     }
     let policy = &report.aggregate_metrics["policy"];
     assert_eq!(policy["non_retention_leak_rate"], 0.0);
