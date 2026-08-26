@@ -168,6 +168,12 @@ dropped or routed to review with a diagnosable reason.
 For module ownership and current data flow, read
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+The experimental MCP `context_bundle` tool exposes the versioned, budgeted
+compiler to explicit callers. The experimental `remem context-plan` command
+prints a request-specific retrieval plan. These opt-in interfaces are tracked
+by the [Context Bundle](docs/specs/GH932/PRODUCT.md) and
+[retrieval-router](docs/specs/GH934/PRODUCT.md) contracts.
+
 ## Everyday workflows
 
 ### Recall and inspect

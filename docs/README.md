@@ -72,6 +72,8 @@ hand-maintained command inventories drift as the product evolves.
 | Interface | Current document |
 |---|---|
 | MCP tools and structured output | [MCP metadata contract](specs/GH981/PRODUCT.md) |
+| Experimental Context Bundle compiler | [Context Bundle contract](specs/GH932/PRODUCT.md) |
+| Experimental retrieval-plan compiler | [Retrieval-router contract](specs/GH934/PRODUCT.md) |
 | Local authenticated REST API | [Web API contract](specs/SPEC-web-api.md) |
 | Codex plugin MCP wrapper | [Plugin README](../plugins/remem/README.md) |
 | Native/local app prototype | [Plugin app section](../plugins/remem/README.md#local-app-surface) |

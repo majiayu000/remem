@@ -152,6 +152,11 @@ hooks 完成可靠捕获或入队后就会返回。后台 worker 负责提炼、
 
 模块边界和当前数据流见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
+实验性的 MCP `context_bundle` 向显式调用者开放带版本和预算的 compiler。
+实验性的 `remem context-plan` 可以输出一次请求对应的 retrieval plan。两个
+opt-in 接口分别由 [Context Bundle](docs/specs/GH932/PRODUCT.md)和
+[retrieval router](docs/specs/GH934/PRODUCT.md)契约跟踪。
+
 ## 常用流程
 
 ### 检索与查看
