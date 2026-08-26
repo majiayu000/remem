@@ -119,7 +119,8 @@ The JSON report includes:
 ## Eval Regression Gates
 
 `remem eval-gates` runs the CI regression gate for golden retrieval,
-capacity degradation, SessionStart injection, and aggregate extraction quality:
+capacity degradation, SessionStart injection, aggregate extraction quality,
+and the GH969 executable ship matrix:
 
 ```bash
 remem eval-gates --json-out /tmp/remem-eval-gates.json
@@ -136,6 +137,22 @@ per-channel loss metrics for `fts`, `entity`, `fact`, `temporal`, `vector`, and
 CI also keeps the exact `eval-extraction --check-baseline` gate so extraction
 prompt, parser, replay fixture, and request-fingerprint changes cannot pass on
 aggregate rates alone.
+
+The JSON artifact adds `ship_matrix` and `outcome_scorecard` at the top level.
+The matrix separates merge, release, default-on, cross-host, coding-outcome,
+and public-claim readiness. Each row records its claim level, condition
+completeness, implementation/config/model identity, artifact hashes, deltas,
+stop-loss verdict, and diagnostics. Deterministic retrieval, capacity,
+SessionStart, and production-security rows are required for command success;
+missing required evidence fails the command. GH931 coding outcomes, GH935
+cross-host runs, and Level 3 public-claim evidence remain claim-scoped: until
+their governed artifacts exist they are `unavailable`, never synthetic zeroes
+or passes.
+
+Every outcome-scorecard field declares its eligible population, numerator,
+denominator, measurement state, source, and claim level. A null value paired
+with `unavailable` means the repository has no accepted evidence for that
+measure. Smoke/directional artifacts stay explicitly below public-claim level.
 
 The hidden `--simulate-golden-regression` and
 `--simulate-capacity-regression` flags are exercised in CI to prove the gate

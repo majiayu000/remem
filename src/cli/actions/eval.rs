@@ -219,23 +219,26 @@ pub(in crate::cli) fn run_eval_gates(
     simulate_golden_regression: bool,
     simulate_capacity_regression: bool,
 ) -> Result<()> {
-    let report = crate::eval::gates::run_eval_gates(crate::eval::gates::EvalGateOptions {
-        baseline_path: baseline_path.to_string(),
-        thresholds_path: thresholds_path.to_string(),
-        golden_dataset_path: golden_dataset_path.to_string(),
-        simulate_golden_regression,
-        simulate_capacity_regression,
-    })?;
-    let report_json = serde_json::to_string_pretty(&report)?;
+    let execution = crate::eval::gates::run_eval_gates_with_ship_evidence(
+        crate::eval::gates::EvalGateOptions {
+            baseline_path: baseline_path.to_string(),
+            thresholds_path: thresholds_path.to_string(),
+            golden_dataset_path: golden_dataset_path.to_string(),
+            simulate_golden_regression,
+            simulate_capacity_regression,
+        },
+    )?;
     if let Some(path) = json_out {
-        fs::write(path, &report_json).with_context(|| format!("write eval gate JSON {path}"))?;
+        fs::write(path, &execution.report_json)
+            .with_context(|| format!("write eval gate JSON {path}"))?;
     }
     if json {
-        println!("{report_json}");
+        println!("{}", execution.report_json);
     } else {
-        print!("{report}");
+        print!("{}", execution.legacy_report);
+        println!("{}", execution.ship_summary);
     }
-    if !report.summary.passed {
+    if !execution.command_passed {
         bail!("eval-gates checks failed");
     }
     Ok(())

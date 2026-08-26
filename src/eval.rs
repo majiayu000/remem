@@ -15,4 +15,5 @@ pub mod memory_bench;
 pub mod metrics;
 pub mod provider_comparison;
 pub mod rerank;
+pub(crate) mod ship_matrix;
 pub mod weight_grid;

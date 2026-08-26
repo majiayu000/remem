@@ -1,8 +1,8 @@
 # GH969 Product Contract — Stabilization And Surface Governance
 
-Status: Current contract; activation, surface, and dependency-direction guards implemented; Issue: #969
+Status: Current contract; activation, surface, dependency-direction, and executable ship-matrix slices implemented; final reconciliation pending; Issue: #969
 
-Last reconciled against `origin/main`: 2026-08-25 (`5b98e80d`)
+Last reconciled against `origin/main`: 2026-08-26 (`36f3d38c`)
 
 ## Purpose
 
@@ -61,10 +61,11 @@ following repository-local findings now have landed implementation evidence:
 
 These landed slices do not close the epic. The #1040 slice implements the
 single active-memory activation boundary and bypass guard for v0.6.82. The
-#1044 slice adds the reviewed dependency-direction baseline and
-no-expansion guard. Remaining material work is the unified decision/evidence
-matrix, outcome scorecard, and final architecture/spec synchronization defined
-by this contract.
+#1044 slice adds the reviewed dependency-direction baseline and no-expansion
+guard. The #1049 slice extends `eval-gates` with the executable decision/evidence
+matrix and outcome scorecard. Remaining material work is final
+architecture/current-spec synchronization and explicit lifecycle decisions for
+the referenced experimental surfaces.
 
 ## Active-Memory Safety Boundary
 

@@ -1,8 +1,8 @@
 # GH969 Technical Contract — Stabilization And Surface Governance
 
-Status: Current contract; activation, surface lifecycle, and dependency-direction guards implemented; later slices pending; Issue: #969
+Status: Current contract; activation, surface lifecycle, dependency-direction, and executable ship-matrix slices implemented; final reconciliation pending; Issue: #969
 
-Last reconciled against `origin/main`: 2026-08-25 (`5b98e80d`)
+Last reconciled against `origin/main`: 2026-08-26 (`36f3d38c`)
 
 ## Contract Boundaries
 
@@ -570,6 +570,9 @@ one cross-repository PR:
    - Acceptance: self-tests pass; current violations are visible; synthetic new
      reverse edges and cycle growth fail.
 4. **Executable ship matrix and outcome scorecard**
+   - Status: implemented by #1049 in the v0.6.83 release line by extending
+     `remem eval-gates` with top-level `ship_matrix` and `outcome_scorecard`
+     artifacts.
    - Primary scope: existing eval gate/report aggregation.
    - Acceptance: gate scope and claim level are machine-readable; unavailable
      measures cannot appear as pass.
@@ -605,6 +608,11 @@ node --test plugins/remem/scripts/remem-runtime.test.js \
 cargo run -- eval-extraction --json --check-baseline
 cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json
 ```
+
+The final command is also the deterministic #1049 acceptance command. Its
+required merge/release rows fail on missing or invalid repository evidence,
+while absent GH931/GH935/public-claim runs remain explicit claim-scoped
+`unavailable` rows and null scorecard values.
 
 Binary-impacting implementation PRs also satisfy the version-bump guard.
 Passing historical output from another SHA is not completion evidence.

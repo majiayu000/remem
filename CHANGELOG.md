@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.83` extends `remem eval-gates` with the GH969
+  executable ship matrix and outcome scorecard. Required repository evidence
+  now fails closed when missing or invalid, while absent governed GH931,
+  GH935, and public-claim runs remain explicit `unavailable` measures instead
+  of synthetic zeroes or passes.
 - Staged source version `0.6.82` routes every reviewed production activation
   through one transactional boundary with an immutable request ledger, bound
   route/trust/provenance/poisoning/supersede evidence, replay validation, and a

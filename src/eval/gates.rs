@@ -106,6 +106,70 @@ pub struct EvalSourceReports {
     pub extraction: serde_json::Value,
 }
 
+pub(crate) struct EvalGateExecution {
+    pub(crate) legacy_report: EvalGateReport,
+    pub(crate) report_json: String,
+    pub(crate) ship_summary: String,
+    pub(crate) command_passed: bool,
+}
+
+pub(crate) fn run_eval_gates_with_ship_evidence(
+    options: EvalGateOptions,
+) -> Result<EvalGateExecution> {
+    let ship_options = crate::eval::ship_matrix::ShipMatrixOptions {
+        baseline_path: options.baseline_path.clone(),
+        thresholds_path: options.thresholds_path.clone(),
+        golden_dataset_path: options.golden_dataset_path.clone(),
+        ..Default::default()
+    };
+    let report = run_eval_gates(options)?;
+    let capacity_applicable = report
+        .source_reports
+        .capacity
+        .get("skipped")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true);
+    let ship_evidence = crate::eval::ship_matrix::build_ship_evidence(
+        &report.deltas,
+        capacity_applicable,
+        ship_options,
+    );
+    let command_passed = report.summary.passed && ship_evidence.ship_matrix.summary.command_passed;
+    let summary = &ship_evidence.ship_matrix.summary;
+    let ship_summary = format!(
+        "ship_matrix merge_ready={} release_ready={} default_on_ready={} cross_host_claim_ready={} coding_outcome_claim_ready={} public_claim_ready={}",
+        summary.merge_ready,
+        summary.release_ready,
+        summary.default_on_ready,
+        summary.cross_host_claim_ready,
+        summary.coding_outcome_claim_ready,
+        summary.public_claim_ready,
+    );
+    let mut report_value = serde_json::to_value(&report)?;
+    let report_object = report_value
+        .as_object_mut()
+        .context("eval-gates report must serialize as a JSON object")?;
+    report_object.insert(
+        "ship_matrix".to_string(),
+        serde_json::to_value(&ship_evidence.ship_matrix)?,
+    );
+    report_object.insert(
+        "outcome_scorecard".to_string(),
+        serde_json::to_value(&ship_evidence.outcome_scorecard)?,
+    );
+    report_object
+        .get_mut("summary")
+        .and_then(serde_json::Value::as_object_mut)
+        .context("eval-gates report summary must serialize as a JSON object")?
+        .insert("passed".to_string(), serde_json::json!(command_passed));
+    Ok(EvalGateExecution {
+        legacy_report: report,
+        report_json: serde_json::to_string_pretty(&report_value)?,
+        ship_summary,
+        command_passed,
+    })
+}
+
 pub fn run_eval_gates(options: EvalGateOptions) -> Result<EvalGateReport> {
     let mut baseline = load_baseline(&options.baseline_path)?;
     let mut thresholds = load_thresholds(&options.thresholds_path)?;
