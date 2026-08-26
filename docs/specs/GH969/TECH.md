@@ -584,9 +584,10 @@ one cross-repository PR:
      artifacts.
    - Primary scope: existing eval gate/report aggregation.
    - Acceptance: gate scope and claim level are machine-readable; unavailable
-     measures cannot appear as pass; exact metric sets, production-source
-     binding, claim authority, clean release identity, and capability-specific
-     default decisions fail closed.
+     measures cannot appear as pass; exact metric sets, clean execution and
+     production-input binding, security stop-loss outcomes, claim authority,
+     clean release identity, and capability-specific default decisions fail
+     closed.
 5. **Architecture/current-spec synchronization**
    - Primary scope: `docs/ARCHITECTURE.md`, specs index, manifest-linked drift
      checks.

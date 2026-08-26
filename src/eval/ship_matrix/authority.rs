@@ -44,20 +44,30 @@ pub(super) fn verify_security_authority(
         diagnostics.push("verified public manifest omitted adversarial-policy v2".to_string());
     }
 
-    let commits = security
+    verify_security_outcomes(security, &mut diagnostics);
+    let identities = security
         .and_then(|value| value.get("run_artifacts"))
         .and_then(Value::as_array)
-        .map(|paths| collect_security_commits(&options.public_root, paths, &mut diagnostics))
+        .map(|paths| collect_security_identities(&options.public_root, paths, &mut diagnostics))
         .unwrap_or_else(|| {
             diagnostics.push("security report has no run_artifacts array".to_string());
-            BTreeSet::new()
+            SecurityRunIdentities::default()
         });
-    let benchmark_commit = if commits.len() == 1 {
-        commits.first().cloned()
+    let benchmark_commit = if identities.commits.len() == 1 {
+        identities.commits.first().cloned()
     } else {
         diagnostics.push(format!(
             "security runs must bind exactly one implementation commit; found {}",
-            commits.len()
+            identities.commits.len()
+        ));
+        None
+    };
+    let benchmark_tree = if identities.production_trees.len() == 1 {
+        identities.production_trees.first().cloned()
+    } else {
+        diagnostics.push(format!(
+            "security runs must bind exactly one production input tree; found {}",
+            identities.production_trees.len()
         ));
         None
     };
@@ -67,7 +77,12 @@ pub(super) fn verify_security_authority(
             diagnostics.push(format!(
                 "security run commit is not a full Git SHA: {commit}"
             ));
-        } else if !security_source_equivalent(commit, implementation, &mut diagnostics) {
+        } else if !security_source_equivalent(
+            commit,
+            benchmark_tree.as_deref(),
+            implementation,
+            &mut diagnostics,
+        ) {
             diagnostics.push(
                 "security artifact is stale for the current production source tree".to_string(),
             );
@@ -81,12 +96,18 @@ pub(super) fn verify_security_authority(
     }
 }
 
-fn collect_security_commits(
+#[derive(Default)]
+struct SecurityRunIdentities {
+    commits: BTreeSet<String>,
+    production_trees: BTreeSet<String>,
+}
+
+fn collect_security_identities(
     public_root: &Path,
     paths: &[Value],
     diagnostics: &mut Vec<String>,
-) -> BTreeSet<String> {
-    let mut commits = BTreeSet::new();
+) -> SecurityRunIdentities {
+    let mut identities = SecurityRunIdentities::default();
     let root = match public_root.canonicalize() {
         Ok(root) => root,
         Err(error) => {
@@ -94,7 +115,7 @@ fn collect_security_commits(
                 "cannot resolve public root {}: {error}",
                 public_root.display()
             ));
-            return commits;
+            return identities;
         }
     };
     if paths.is_empty() {
@@ -117,24 +138,55 @@ fn collect_security_commits(
                 continue;
             }
         };
-        match super::read_json_value(&resolved).ok().and_then(|run| {
-            run.pointer("/environment/remem_commit")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        }) {
+        let Some(run) = super::read_json_value(&resolved).ok() else {
+            diagnostics.push(format!("security run is invalid JSON: {relative}"));
+            continue;
+        };
+        match run
+            .pointer("/environment/remem_commit")
+            .and_then(Value::as_str)
+        {
             Some(commit) => {
-                commits.insert(commit);
+                identities.commits.insert(commit.to_string());
             }
             None => diagnostics.push(format!(
                 "security run lacks environment.remem_commit: {relative}"
             )),
         }
+        if run
+            .pointer("/environment/source_dirty")
+            .and_then(Value::as_bool)
+            != Some(false)
+        {
+            diagnostics.push(format!(
+                "security run lacks clean-source attestation: {relative}"
+            ));
+        }
+        match run
+            .pointer("/environment/production_input_tree_sha256")
+            .and_then(Value::as_str)
+        {
+            Some(tree) if is_sha256(tree) => {
+                identities.production_trees.insert(tree.to_string());
+            }
+            _ => diagnostics.push(format!(
+                "security run lacks a valid production input tree SHA-256: {relative}"
+            )),
+        }
+        if run
+            .pointer("/metrics/policy/policy_failure_count")
+            .and_then(Value::as_u64)
+            != Some(0)
+        {
+            diagnostics.push(format!("security run has a policy failure: {relative}"));
+        }
     }
-    commits
+    identities
 }
 
 fn security_source_equivalent(
     benchmark_commit: &str,
+    benchmark_tree: Option<&str>,
     implementation: &ImplementationIdentity,
     diagnostics: &mut Vec<String>,
 ) -> bool {
@@ -148,10 +200,27 @@ fn security_source_equivalent(
         ));
         return false;
     }
+    let current_tree = production_input_tree_sha256();
+    if benchmark_tree.is_none() || current_tree.as_deref() != benchmark_tree {
+        diagnostics.push(format!(
+            "production input tree differs: benchmark={} current={}",
+            benchmark_tree.unwrap_or("unavailable"),
+            current_tree.as_deref().unwrap_or("unavailable")
+        ));
+        return false;
+    }
     let production_pathspec = [
+        "Cargo.toml",
+        "Cargo.lock",
+        "build.rs",
+        ".cargo",
+        "rust-toolchain.toml",
         "src",
+        "prompts",
+        "assets",
         ":(exclude)src/eval/ship_matrix.rs",
         ":(exclude)src/eval/ship_matrix/**",
+        ":(exclude)src/eval/gates.rs",
     ];
     let mut committed_args = vec!["diff", "--quiet", benchmark_commit, current, "--"];
     committed_args.extend(production_pathspec);
@@ -180,6 +249,61 @@ fn git_succeeds(args: &[&str]) -> bool {
 
 fn is_full_git_sha(value: &str) -> bool {
     value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn production_input_tree_sha256() -> Option<String> {
+    let output = crate::git_util::git_output_soft(
+        Path::new("."),
+        &[
+            "ls-files",
+            "-s",
+            "--",
+            "Cargo.toml",
+            "Cargo.lock",
+            "build.rs",
+            ".cargo",
+            "rust-toolchain.toml",
+            "src",
+            "prompts",
+            "assets",
+            ":(exclude)src/eval/ship_matrix.rs",
+            ":(exclude)src/eval/ship_matrix/**",
+            ":(exclude)src/eval/gates.rs",
+        ],
+    )?;
+    if !output.status.success() || output.stdout.is_empty() {
+        return None;
+    }
+    Some(format!("{:x}", Sha256::digest(&output.stdout)))
+}
+
+fn verify_security_outcomes(security: Option<&Value>, diagnostics: &mut Vec<String>) {
+    let required = [
+        ("/aggregate_metrics/policy/non_retention_leak_rate", 0.0),
+        ("/aggregate_metrics/policy/policy_failure_rate", 0.0),
+        ("/aggregate_metrics/policy/false_block_rate", 0.0),
+        ("/aggregate_metrics/policy/suppression_obeyed_rate", 1.0),
+        (
+            "/aggregate_metrics/policy/sensitive_restricted_default_exclusion_rate",
+            1.0,
+        ),
+        ("/aggregate_metrics/policy/policy_abstention_accuracy", 1.0),
+    ];
+    for (pointer, expected) in required {
+        let actual = security
+            .and_then(|value| value.pointer(pointer))
+            .and_then(Value::as_f64);
+        if actual != Some(expected) {
+            diagnostics.push(format!(
+                "security stop-loss failed at {pointer}: expected {expected}, got {}",
+                actual.map_or_else(|| "unavailable".to_string(), |value| value.to_string())
+            ));
+        }
+    }
 }
 
 pub(super) fn verify_claim_authority(path: &Path) -> ClaimAuthority {

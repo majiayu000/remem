@@ -7,9 +7,10 @@
   executable ship matrix and outcome scorecard. Required repository evidence
   now fails closed when missing or invalid, while absent governed GH931,
   GH935, and public-claim runs remain explicit `unavailable` measures instead
-  of synthetic zeroes or passes. Exact component metric sets, security-run
-  source binding, clean release identity, claim authority, and capability-
-  specific default decisions are verified separately.
+  of synthetic zeroes or passes. Exact component metric sets, clean execution
+  and production-input binding, security stop-loss outcomes, clean release
+  identity, claim authority, and capability-specific default decisions are
+  verified separately.
 - Staged source version `0.6.82` routes every reviewed production activation
   through one transactional boundary with an immutable request ledger, bound
   route/trust/provenance/poisoning/supersede evidence, replay validation, and a

@@ -17,8 +17,10 @@
   "environment": {
     "os": "macos",
     "arch": "aarch64",
-    "remem_commit": "4b3a8b3b93fc9c992137920b5a7e7cc0fea60b85",
+    "remem_commit": "d0108bc651f98621917fc52d7dd662354745d21a",
     "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/opaque-payload-001",
+    "source_dirty": false,
+    "production_input_tree_sha256": "4f92707e975c1f2e5d7c5c3a208081db244516a8e345323f18d9a1bd3aa6b08c",
     "docker_image_digest": "local-fixture-no-docker",
     "fixture_revision": "adversarial-policy-v2",
     "repo_base_commit": null

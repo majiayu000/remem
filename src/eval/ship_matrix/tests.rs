@@ -123,6 +123,7 @@ fn invalid_public_evidence_blocks_required_security_row() {
     let evidence = build_ship_evidence(
         &deltas,
         true,
+        true,
         ShipMatrixOptions {
             baseline_path: artifact.to_string_lossy().to_string(),
             thresholds_path: artifact.to_string_lossy().to_string(),
@@ -181,6 +182,8 @@ fn ratio_requires_a_nonzero_denominator() {
         "no_claim",
     );
     assert_eq!(field.measurement_state, MeasurementState::Unavailable);
+    assert_eq!(field.numerator.value, None);
+    assert_eq!(field.denominator.value, None);
     assert!(!field.values.contains_key("rate"));
 }
 

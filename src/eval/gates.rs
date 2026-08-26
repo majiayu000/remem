@@ -132,9 +132,10 @@ pub(crate) fn run_eval_gates_with_ship_evidence(
     let ship_evidence = crate::eval::ship_matrix::build_ship_evidence(
         &report.deltas,
         capacity_applicable,
+        report.summary.passed,
         ship_options,
     );
-    let command_passed = report.summary.passed && ship_evidence.ship_matrix.summary.command_passed;
+    let command_passed = ship_evidence.ship_matrix.summary.command_passed;
     let summary = &ship_evidence.ship_matrix.summary;
     let ship_summary = format!(
         "ship_matrix merge_ready={} release_ready={} default_on_ready={} cross_host_claim_ready={} coding_outcome_claim_ready={} public_claim_ready={}",

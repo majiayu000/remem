@@ -93,10 +93,6 @@ pub struct RunEnvironment {
     pub remem_commit: String,
     pub remem_data_dir: String,
     #[serde(default)]
-    pub source_dirty: Option<bool>,
-    #[serde(default)]
-    pub production_input_tree_sha256: Option<String>,
-    #[serde(default)]
     pub docker_image_digest: Option<String>,
     #[serde(default)]
     pub fixture_revision: Option<String>,

@@ -247,7 +247,7 @@ fn security_gate(options: &ShipMatrixOptions, public: &PublicEvidence) -> ShipGa
         model_identity: public_model_identity(public),
         metric_deltas: BTreeMap::new(),
         stop_loss_verdict: if status == ShipGateStatus::Pass {
-            "passed_production_security_artifact_verification"
+            "passed_production_security_stop_loss_and_identity"
         } else {
             "failed_or_incomplete_security_evidence"
         }
@@ -305,7 +305,12 @@ fn coding_gate(
     implementation: &ImplementationIdentity,
 ) -> ShipGateRow {
     let implementation_current = claim_artifact_matches_implementation(public, implementation);
-    let passed = public.claim_authority.coding_passed && implementation_current;
+    let artifacts_verified = public
+        .report
+        .as_ref()
+        .is_some_and(|report| report.artifact_verifier.passed);
+    let passed =
+        artifacts_verified && public.claim_authority.coding_passed && implementation_current;
     ShipGateRow {
         id: "coding_outcome",
         owner: "docs/specs/GH931 + src/eval/bench_artifact",

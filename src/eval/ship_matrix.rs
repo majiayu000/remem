@@ -175,6 +175,7 @@ pub(super) struct PublicEvidence {
 pub fn build_ship_evidence(
     deltas: &[EvalGateDelta],
     capacity_applicable: bool,
+    legacy_gates_passed: bool,
     options: ShipMatrixOptions,
 ) -> ShipEvidence {
     let implementation = implementation_identity();
@@ -186,10 +187,11 @@ pub fn build_ship_evidence(
         &public,
         &implementation,
     );
-    let command_passed = gates
-        .iter()
-        .filter(|gate| gate.required_for_command_success)
-        .all(pass_or_not_applicable);
+    let command_passed = legacy_gates_passed
+        && gates
+            .iter()
+            .filter(|gate| gate.required_for_command_success)
+            .all(pass_or_not_applicable);
     let implementation_identified = implementation.git_sha.is_some();
     let source_clean = implementation.source_dirty == Some(false);
     let summary = ShipMatrixSummary {

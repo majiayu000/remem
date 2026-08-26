@@ -427,14 +427,6 @@ fn validate_environment(env: &super::types::RunEnvironment, label: &str, state: 
         "environment.remem_data_dir",
         state,
     );
-    if let Some(digest) = env.production_input_tree_sha256.as_deref() {
-        if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            state.fail(
-                label.to_string(),
-                "environment.production_input_tree_sha256 must be 64 hexadecimal characters",
-            );
-        }
-    }
     if !env.remem_data_dir.starts_with("temp://")
         && !env.remem_data_dir.starts_with("/tmp/")
         && !env.remem_data_dir.starts_with("/private/tmp/")

@@ -101,6 +101,11 @@ pub(super) fn ratio_field(
     claim_level: &str,
 ) -> ScorecardField {
     let measured = numerator.is_some() && denominator.is_some_and(|value| value > 0.0);
+    let (numerator, denominator) = if measured {
+        (numerator, denominator)
+    } else {
+        (None, None)
+    };
     let mut values = BTreeMap::new();
     if let (Some(numerator), Some(denominator)) = (numerator, denominator) {
         if denominator > 0.0 {
