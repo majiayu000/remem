@@ -1,5 +1,6 @@
+use super::authority::{ClaimAuthority, SecurityAuthority};
 use super::rows::{claim_artifact_matches_implementation, component_gate};
-use super::scorecard::{ratio_field, unavailable_field};
+use super::scorecard::{build_scorecard, ratio_field, unavailable_field};
 use super::*;
 use crate::eval::gates::{EvalGateDelta, EvalGateStatus};
 
@@ -28,6 +29,7 @@ fn component_gate_never_turns_missing_metrics_into_pass() {
         "deterministic_retrieval",
         "test",
         &["golden."],
+        &metric_set_hash(&[]),
         &[],
         Vec::new(),
         vec!["merge"],
@@ -46,6 +48,7 @@ fn component_gate_propagates_failures() {
         "deterministic_retrieval",
         "test",
         &["golden."],
+        &metric_set_hash(&["golden.overall.hit_at_k", "golden.slice.temporal.hit_at_k"]),
         &deltas,
         Vec::new(),
         vec!["merge"],
@@ -60,6 +63,7 @@ fn missing_component_artifact_cannot_pass() {
         "deterministic_retrieval",
         "test",
         &["golden."],
+        &metric_set_hash(&["golden.overall.hit_at_k"]),
         &[delta("golden.overall.hit_at_k", EvalGateStatus::Pass)],
         vec![ArtifactEvidence {
             path: "missing.json".to_string(),
@@ -71,6 +75,24 @@ fn missing_component_artifact_cannot_pass() {
     );
     assert_eq!(gate.status, ShipGateStatus::Fail);
     assert!(gate.diagnostics[0].contains("required evidence"));
+}
+
+#[test]
+fn component_gate_rejects_a_shrunken_metric_set() {
+    let gate = component_gate(
+        "deterministic_retrieval",
+        "test",
+        &["golden."],
+        &metric_set_hash(&["golden.overall.hit_at_k", "golden.overall.mrr_at_10"]),
+        &[delta("golden.overall.hit_at_k", EvalGateStatus::Pass)],
+        Vec::new(),
+        vec!["merge"],
+    );
+    assert_eq!(gate.status, ShipGateStatus::Incomplete);
+    assert!(gate
+        .diagnostics
+        .iter()
+        .any(|item| item.contains("metric set identity mismatch")));
 }
 
 #[test]
@@ -87,7 +109,7 @@ fn invalid_public_evidence_blocks_required_security_row() {
     let invalid_security = temp.join("security.json");
     std::fs::write(&invalid_security, b"{").unwrap();
     let charter = temp.join("charter.json");
-    std::fs::write(&charter, br#"{"status":"infrastructure_only_no_runs"}"#).unwrap();
+    std::fs::write(&charter, br#"{"status":"PASS","executable_ready":true}"#).unwrap();
     let claims = temp.join("claims.json");
     std::fs::write(&claims, b"{}").unwrap();
     let artifact = temp.join("component.json");
@@ -118,7 +140,15 @@ fn invalid_public_evidence_blocks_required_security_row() {
         .find(|gate| gate.id == "production_security_e2e")
         .unwrap();
     assert_eq!(security.status, ShipGateStatus::Fail);
+    let cross_host = evidence
+        .ship_matrix
+        .gates
+        .iter()
+        .find(|gate| gate.id == "cross_host")
+        .unwrap();
+    assert_eq!(cross_host.status, ShipGateStatus::Unavailable);
     assert!(!evidence.ship_matrix.summary.command_passed);
+    assert!(!evidence.ship_matrix.summary.default_on_ready);
     assert!(!evidence.ship_matrix.summary.public_claim_ready);
     std::fs::remove_dir_all(&temp).unwrap();
 }
@@ -179,6 +209,16 @@ fn absent_claim_report_cannot_match_current_implementation() {
         report_error: Some("missing".to_string()),
         security: None,
         security_error: None,
+        security_authority: SecurityAuthority {
+            passed: false,
+            benchmark_commit: None,
+            diagnostics: Vec::new(),
+        },
+        claim_authority: ClaimAuthority {
+            coding_passed: false,
+            level3_passed: false,
+            diagnostics: Vec::new(),
+        },
     };
     let implementation = ImplementationIdentity {
         git_sha: Some("0123456789abcdef0123456789abcdef01234567".to_string()),
@@ -191,6 +231,54 @@ fn absent_claim_report_cannot_match_current_implementation() {
         &public,
         &implementation
     ));
+}
+
+#[test]
+fn unverified_security_authority_hides_security_scorecard_numbers() {
+    let public = PublicEvidence {
+        report: None,
+        report_error: Some("missing".to_string()),
+        security: Some(serde_json::json!({
+            "aggregate_metrics": {
+                "policy": {
+                    "non_retention_cases": 4,
+                    "non_retention_leak_rate": 0.0
+                }
+            }
+        })),
+        security_error: None,
+        security_authority: SecurityAuthority {
+            passed: false,
+            benchmark_commit: None,
+            diagnostics: vec!["invalid".to_string()],
+        },
+        claim_authority: ClaimAuthority {
+            coding_passed: false,
+            level3_passed: false,
+            diagnostics: Vec::new(),
+        },
+    };
+    let scorecard = build_scorecard(&public);
+    let security = scorecard
+        .fields
+        .iter()
+        .find(|field| field.id == "poison_policy_leak_rate")
+        .unwrap();
+    assert_eq!(security.measurement_state, MeasurementState::Unavailable);
+    assert_eq!(security.denominator.value, None);
+}
+
+fn metric_set_hash(metrics: &[&str]) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut metrics = metrics.to_vec();
+    metrics.sort_unstable();
+    let mut hasher = Sha256::new();
+    for metric in metrics {
+        hasher.update(metric.as_bytes());
+        hasher.update(b"\n");
+    }
+    format!("{:x}", hasher.finalize())
 }
 
 fn test_gate(

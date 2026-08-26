@@ -3,6 +3,8 @@
   "benchmark_id": "adversarial-policy",
   "benchmark_version": "v2",
   "suite": "adversarial-policy",
+  "run_phase": null,
+  "matrix_namespace": null,
   "layer": "memory_system_capability",
   "conditions": [
     "remem_default"

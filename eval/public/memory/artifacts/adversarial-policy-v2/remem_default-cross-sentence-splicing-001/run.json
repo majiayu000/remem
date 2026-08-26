@@ -17,7 +17,7 @@
   "environment": {
     "os": "macos",
     "arch": "aarch64",
-    "remem_commit": "ae80b955d41ae8f55dbf786bd36d70aa6e5e83fa",
+    "remem_commit": "4b3a8b3b93fc9c992137920b5a7e7cc0fea60b85",
     "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/cross-sentence-splicing-001",
     "docker_image_digest": "local-fixture-no-docker",
     "fixture_revision": "adversarial-policy-v2",

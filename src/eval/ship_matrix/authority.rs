@@ -1,0 +1,272 @@
+use std::collections::BTreeSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+
+use super::{ImplementationIdentity, ShipMatrixOptions};
+use crate::eval::bench_artifact::PublicBaselineReport;
+
+const CODING_CLAIM_IDS: [&str; 3] = [
+    "remem-e2e-vs-no-memory-v1",
+    "remem-e2e-vs-curated-file-budgeted-v1",
+    "remem-e2e-stop-loss-v1",
+];
+
+pub(super) struct SecurityAuthority {
+    pub(super) passed: bool,
+    pub(super) benchmark_commit: Option<String>,
+    pub(super) diagnostics: Vec<String>,
+}
+
+pub(super) struct ClaimAuthority {
+    pub(super) coding_passed: bool,
+    pub(super) level3_passed: bool,
+    pub(super) diagnostics: Vec<String>,
+}
+
+pub(super) fn verify_security_authority(
+    options: &ShipMatrixOptions,
+    report: Option<&PublicBaselineReport>,
+    security: Option<&Value>,
+    implementation: &ImplementationIdentity,
+) -> SecurityAuthority {
+    let mut diagnostics = Vec::new();
+    if !report.is_some_and(|value| value.artifact_verifier.passed) {
+        diagnostics.push("public artifact verifier did not pass".to_string());
+    }
+    if !report.is_some_and(|value| {
+        value.reports.iter().any(|entry| {
+            entry.benchmark_id == "adversarial-policy" && entry.benchmark_version == "v2"
+        })
+    }) {
+        diagnostics.push("verified public manifest omitted adversarial-policy v2".to_string());
+    }
+
+    let commits = security
+        .and_then(|value| value.get("run_artifacts"))
+        .and_then(Value::as_array)
+        .map(|paths| collect_security_commits(&options.public_root, paths, &mut diagnostics))
+        .unwrap_or_else(|| {
+            diagnostics.push("security report has no run_artifacts array".to_string());
+            BTreeSet::new()
+        });
+    let benchmark_commit = if commits.len() == 1 {
+        commits.first().cloned()
+    } else {
+        diagnostics.push(format!(
+            "security runs must bind exactly one implementation commit; found {}",
+            commits.len()
+        ));
+        None
+    };
+
+    if let Some(commit) = benchmark_commit.as_deref() {
+        if !is_full_git_sha(commit) {
+            diagnostics.push(format!(
+                "security run commit is not a full Git SHA: {commit}"
+            ));
+        } else if !security_source_equivalent(commit, implementation, &mut diagnostics) {
+            diagnostics.push(
+                "security artifact is stale for the current production source tree".to_string(),
+            );
+        }
+    }
+
+    SecurityAuthority {
+        passed: diagnostics.is_empty(),
+        benchmark_commit,
+        diagnostics,
+    }
+}
+
+fn collect_security_commits(
+    public_root: &Path,
+    paths: &[Value],
+    diagnostics: &mut Vec<String>,
+) -> BTreeSet<String> {
+    let mut commits = BTreeSet::new();
+    let root = match public_root.canonicalize() {
+        Ok(root) => root,
+        Err(error) => {
+            diagnostics.push(format!(
+                "cannot resolve public root {}: {error}",
+                public_root.display()
+            ));
+            return commits;
+        }
+    };
+    if paths.is_empty() {
+        diagnostics.push("security report run_artifacts is empty".to_string());
+    }
+    for value in paths {
+        let Some(relative) = value.as_str() else {
+            diagnostics.push("security run_artifacts contains a non-string path".to_string());
+            continue;
+        };
+        let candidate = public_root.join(relative);
+        let resolved = match candidate.canonicalize() {
+            Ok(path) if path.starts_with(&root) => path,
+            Ok(_) => {
+                diagnostics.push(format!("security run path escapes public root: {relative}"));
+                continue;
+            }
+            Err(error) => {
+                diagnostics.push(format!("cannot resolve security run {relative}: {error}"));
+                continue;
+            }
+        };
+        match super::read_json_value(&resolved).ok().and_then(|run| {
+            run.pointer("/environment/remem_commit")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        }) {
+            Some(commit) => {
+                commits.insert(commit);
+            }
+            None => diagnostics.push(format!(
+                "security run lacks environment.remem_commit: {relative}"
+            )),
+        }
+    }
+    commits
+}
+
+fn security_source_equivalent(
+    benchmark_commit: &str,
+    implementation: &ImplementationIdentity,
+    diagnostics: &mut Vec<String>,
+) -> bool {
+    let Some(current) = implementation.git_sha.as_deref() else {
+        diagnostics.push("current implementation Git SHA is unavailable".to_string());
+        return false;
+    };
+    if !git_succeeds(&["merge-base", "--is-ancestor", benchmark_commit, current]) {
+        diagnostics.push(format!(
+            "security benchmark commit {benchmark_commit} is not an ancestor of {current}"
+        ));
+        return false;
+    }
+    let production_pathspec = [
+        "src",
+        ":(exclude)src/eval/ship_matrix.rs",
+        ":(exclude)src/eval/ship_matrix/**",
+    ];
+    let mut committed_args = vec!["diff", "--quiet", benchmark_commit, current, "--"];
+    committed_args.extend(production_pathspec);
+    if !git_succeeds(&committed_args) {
+        diagnostics.push(format!(
+            "production source changed after security benchmark commit {benchmark_commit}"
+        ));
+        return false;
+    }
+    let mut worktree_args = vec!["diff", "--quiet", "--"];
+    worktree_args.extend(production_pathspec);
+    let mut index_args = vec!["diff", "--cached", "--quiet", "--"];
+    index_args.extend(production_pathspec);
+    if !git_succeeds(&worktree_args) || !git_succeeds(&index_args) {
+        diagnostics
+            .push("uncommitted production-source changes invalidate security evidence".to_string());
+        return false;
+    }
+    true
+}
+
+fn git_succeeds(args: &[&str]) -> bool {
+    crate::git_util::git_output_soft(Path::new("."), args)
+        .is_some_and(|output| output.status.success())
+}
+
+fn is_full_git_sha(value: &str) -> bool {
+    value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+pub(super) fn verify_claim_authority(path: &Path) -> ClaimAuthority {
+    let mut diagnostics = Vec::new();
+    let registry = match super::read_json_value(path) {
+        Ok(value) => value,
+        Err(error) => {
+            return ClaimAuthority {
+                coding_passed: false,
+                level3_passed: false,
+                diagnostics: vec![error],
+            };
+        }
+    };
+    let schema_valid = registry.get("schema_version").and_then(Value::as_u64) == Some(1);
+    if !schema_valid {
+        diagnostics.push("claim registry schema_version must be 1".to_string());
+    }
+    let locked = registry.get("locked").and_then(Value::as_bool) == Some(true);
+    if !locked {
+        diagnostics.push("claim registry is not locked".to_string());
+    }
+    let claims = registry
+        .get("claims")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_else(|| {
+            diagnostics.push("claim registry has no claims array".to_string());
+            Vec::new()
+        });
+    let repo_root =
+        crate::git_util::resolve_toplevel(Path::new(".")).unwrap_or_else(|| PathBuf::from("."));
+    let mut claims_passed = true;
+    for id in CODING_CLAIM_IDS {
+        let Some(claim) = claims
+            .iter()
+            .find(|claim| claim.get("id").and_then(Value::as_str) == Some(id))
+        else {
+            diagnostics.push(format!("claim registry is missing required claim {id}"));
+            claims_passed = false;
+            continue;
+        };
+        claims_passed &= verify_pass_claim(claim, id, &repo_root, &mut diagnostics);
+    }
+    diagnostics.push(
+        "claim registry schema has no independently verified Level 3 claim authority".to_string(),
+    );
+    ClaimAuthority {
+        coding_passed: schema_valid && locked && claims_passed,
+        level3_passed: false,
+        diagnostics,
+    }
+}
+
+fn verify_pass_claim(
+    claim: &Value,
+    id: &str,
+    repo_root: &Path,
+    diagnostics: &mut Vec<String>,
+) -> bool {
+    if claim.get("status").and_then(Value::as_str) != Some("PASS") {
+        diagnostics.push(format!("claim {id} is not PASS"));
+        return false;
+    }
+    let Some(report) = claim.get("supporting_report") else {
+        diagnostics.push(format!("claim {id} has no supporting_report"));
+        return false;
+    };
+    let Some(relative) = report.get("path").and_then(Value::as_str) else {
+        diagnostics.push(format!("claim {id} supporting_report has no path"));
+        return false;
+    };
+    let Some(expected) = report.get("sha256").and_then(Value::as_str) else {
+        diagnostics.push(format!("claim {id} supporting_report has no sha256"));
+        return false;
+    };
+    match fs::read(repo_root.join(relative)) {
+        Ok(bytes) if format!("{:x}", Sha256::digest(&bytes)) == expected => true,
+        Ok(_) => {
+            diagnostics.push(format!("claim {id} supporting_report sha256 mismatch"));
+            false
+        }
+        Err(error) => {
+            diagnostics.push(format!(
+                "claim {id} supporting_report is unreadable: {error}"
+            ));
+            false
+        }
+    }
+}

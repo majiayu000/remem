@@ -237,5 +237,8 @@ fn latency_field(public: &PublicEvidence) -> ScorecardField {
 }
 
 fn security_number(public: &PublicEvidence, pointer: &str) -> Option<f64> {
+    if !public.security_authority.passed {
+        return None;
+    }
     public.security.as_ref()?.pointer(pointer)?.as_f64()
 }

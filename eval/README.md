@@ -144,10 +144,14 @@ and public-claim readiness. Each row records its claim level, condition
 completeness, implementation/config/model identity, artifact hashes, deltas,
 stop-loss verdict, and diagnostics. Deterministic retrieval, capacity,
 SessionStart, and production-security rows are required for command success;
-missing required evidence fails the command. GH931 coding outcomes, GH935
-cross-host runs, and Level 3 public-claim evidence remain claim-scoped: until
-their governed artifacts exist they are `unavailable`, never synthetic zeroes
-or passes.
+missing required evidence or an incomplete metric-name set fails the command.
+The security row verifies every run's implementation commit and rejects later
+production-source changes; release readiness additionally requires an exact
+Git SHA and a clean source tree. GH931 coding outcomes are authorized only by
+the locked, hash-bound claim registry. GH935 cross-host results, capability-
+specific default-on decisions, and Level 3 public-claim evidence remain scoped
+`unavailable` until their governed result/authority artifacts exist; a charter,
+ordinary regression pass, or directional report cannot promote them.
 
 Every outcome-scorecard field declares its eligible population, numerator,
 denominator, measurement state, source, and claim level. A null value paired

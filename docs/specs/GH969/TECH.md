@@ -493,11 +493,20 @@ The executable matrix must distinguish these gates:
 | Cross-host | GH935 sealed matrix | Cross-host continuity claims |
 | Coding outcome | GH931 official matrix and stop-loss artifact | Default/public claims about coding-task improvement |
 | Public claim | Hash-bound public report plus independent verification/authority | Any comparative, superiority, or SOTA wording |
+| Retrieval default decision | Accepted same-head baseline/enhanced ablation, thresholds, latency budget, and rollback artifact | Retrieval default-on |
+| Context default decision | Accepted capability-specific Context Bundle decision artifact with thresholds and rollback | Context default-on |
 
 Each report must include implementation SHA, dataset/fixture hash, config and
 model identity, environment/platform, condition completeness, metric deltas,
 stop-loss verdict, exclusions, and claim level. A missing arm is `incomplete`,
-not zero and not pass.
+not zero and not pass. Component gates bind the exact expected metric-name set,
+not only a prefix match. Security evidence binds every run to one ancestor
+commit and remains valid only while production source is equivalent. A charter
+is not a cross-host result, ordinary regressions are not default-on authority,
+and directional baseline strings are not coding/public claim authority.
+Release readiness requires a resolvable implementation SHA and clean source;
+claim readiness requires the owning locked, hash-bound registry or independent
+Level 3 authority.
 
 ## Outcome Scorecard
 
@@ -575,7 +584,9 @@ one cross-repository PR:
      artifacts.
    - Primary scope: existing eval gate/report aggregation.
    - Acceptance: gate scope and claim level are machine-readable; unavailable
-     measures cannot appear as pass.
+     measures cannot appear as pass; exact metric sets, production-source
+     binding, claim authority, clean release identity, and capability-specific
+     default decisions fail closed.
 5. **Architecture/current-spec synchronization**
    - Primary scope: `docs/ARCHITECTURE.md`, specs index, manifest-linked drift
      checks.
@@ -611,8 +622,8 @@ cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json
 
 The final command is also the deterministic #1049 acceptance command. Its
 required merge/release rows fail on missing or invalid repository evidence,
-while absent GH931/GH935/public-claim runs remain explicit claim-scoped
-`unavailable` rows and null scorecard values.
+while absent GH931/GH935/public-claim/default-decision runs remain explicit
+scoped `unavailable` rows and null scorecard values.
 
 Binary-impacting implementation PRs also satisfy the version-bump guard.
 Passing historical output from another SHA is not completion evidence.

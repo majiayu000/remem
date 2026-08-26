@@ -2,12 +2,20 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use super::{
     evidence_for_path, public_model_identity, read_json_value, ArtifactState,
     ImplementationIdentity, PublicEvidence, ShipGateRow, ShipGateStatus, ShipMatrixOptions,
 };
 use crate::eval::gates::{EvalGateDelta, EvalGateStatus};
+
+const GOLDEN_METRIC_SET_SHA256: &str =
+    "d6fc5c39586c3665293bfcca366491f5c1bb93444d3adff3d84b311b4a347611";
+const CAPACITY_METRIC_SET_SHA256: &str =
+    "cb83441e26b37a06803b6eadbb3dd5592b9b9ab3d8307d8ed00b3296f52bb038";
+const SESSION_METRIC_SET_SHA256: &str =
+    "f97ebbf86b72e58327683405cd0df4c078607cfad4e7aa65815f5b78e21c0926";
 
 pub(super) fn build_gate_rows(
     deltas: &[EvalGateDelta],
@@ -20,6 +28,7 @@ pub(super) fn build_gate_rows(
         "deterministic_retrieval",
         "src/eval/gates.rs",
         &["golden."],
+        GOLDEN_METRIC_SET_SHA256,
         deltas,
         vec![
             evidence_for_path(
@@ -36,6 +45,7 @@ pub(super) fn build_gate_rows(
             "capacity",
             "src/eval/capacity.rs",
             &["capacity."],
+            CAPACITY_METRIC_SET_SHA256,
             deltas,
             vec![evidence_for_path(
                 Path::new(&options.golden_dataset_path),
@@ -53,6 +63,7 @@ pub(super) fn build_gate_rows(
             "session_start",
             "src/eval/injection.rs + src/eval/current_memory_contracts.rs",
             &["injection.", "current_memory_contracts."],
+            SESSION_METRIC_SET_SHA256,
             deltas,
             vec![evidence_for_path(
                 Path::new(&options.baseline_path),
@@ -64,6 +75,18 @@ pub(super) fn build_gate_rows(
         cross_host_gate(options),
         coding_gate(options, public, implementation),
         public_claim_gate(options, public, implementation),
+        default_decision_gate(
+            "retrieval_default_decision",
+            "retrieval_default",
+            "docs/specs/GH934 + eval/provider-comparison",
+            "No accepted same-head baseline/enhanced retrieval ablation and rollback decision artifact exists.",
+        ),
+        default_decision_gate(
+            "context_default_decision",
+            "context_default",
+            "docs/specs/GH932 + eval/injection",
+            "No accepted capability-specific Context Bundle default decision artifact exists.",
+        ),
     ]
 }
 
@@ -71,6 +94,7 @@ pub(super) fn component_gate(
     id: &'static str,
     owner: &'static str,
     prefixes: &[&str],
+    expected_metric_set_sha256: &str,
     deltas: &[EvalGateDelta],
     evidence: Vec<super::ArtifactEvidence>,
     blocks: Vec<&'static str>,
@@ -86,7 +110,9 @@ pub(super) fn component_gate(
     let evidence_complete = evidence
         .iter()
         .all(|item| item.state == ArtifactState::Verified);
-    let status = if relevant.is_empty() {
+    let actual_metric_set_sha256 = metric_set_sha256(&relevant);
+    let metric_set_complete = actual_metric_set_sha256 == expected_metric_set_sha256;
+    let status = if relevant.is_empty() || !metric_set_complete {
         ShipGateStatus::Incomplete
     } else if !evidence_complete {
         ShipGateStatus::Fail
@@ -109,6 +135,11 @@ pub(super) fn component_gate(
             .filter(|item| item.state != ArtifactState::Verified)
             .map(|item| format!("required evidence is {:?}: {}", item.state, item.path)),
     );
+    if !metric_set_complete {
+        diagnostics.push(format!(
+            "metric set identity mismatch: expected {expected_metric_set_sha256}, got {actual_metric_set_sha256}"
+        ));
+    }
     ShipGateRow {
         id,
         owner,
@@ -118,6 +149,8 @@ pub(super) fn component_gate(
         claim_level: "component_gate_only".to_string(),
         condition_completeness: if relevant.is_empty() {
             "no matching metrics".to_string()
+        } else if !metric_set_complete {
+            format!("incomplete metric set; {} matching metrics", relevant.len())
         } else {
             format!("{} checked metrics", relevant.len())
         },
@@ -136,6 +169,20 @@ pub(super) fn component_gate(
         evidence,
         diagnostics,
     }
+}
+
+fn metric_set_sha256(relevant: &[&EvalGateDelta]) -> String {
+    let mut names = relevant
+        .iter()
+        .map(|delta| delta.metric.as_str())
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    let mut hasher = Sha256::new();
+    for name in names {
+        hasher.update(name.as_bytes());
+        hasher.update(b"\n");
+    }
+    format!("{:x}", hasher.finalize())
 }
 
 fn not_applicable_capacity(options: &ShipMatrixOptions) -> ShipGateRow {
@@ -162,16 +209,7 @@ fn not_applicable_capacity(options: &ShipMatrixOptions) -> ShipGateRow {
 }
 
 fn security_gate(options: &ShipMatrixOptions, public: &PublicEvidence) -> ShipGateRow {
-    let verifier_passed = public
-        .report
-        .as_ref()
-        .is_some_and(|report| report.artifact_verifier.passed);
-    let included = public.report.as_ref().is_some_and(|report| {
-        report.reports.iter().any(|entry| {
-            entry.benchmark_id == "adversarial-policy" && entry.benchmark_version == "v2"
-        })
-    });
-    let status = if verifier_passed && included && public.security.is_some() {
+    let status = if public.security_authority.passed && public.security.is_some() {
         ShipGateStatus::Pass
     } else {
         ShipGateStatus::Fail
@@ -179,9 +217,7 @@ fn security_gate(options: &ShipMatrixOptions, public: &PublicEvidence) -> ShipGa
     let mut diagnostics = Vec::new();
     diagnostics.extend(public.report_error.iter().cloned());
     diagnostics.extend(public.security_error.iter().cloned());
-    if !included {
-        diagnostics.push("verified public manifest omitted adversarial-policy v2".to_string());
-    }
+    diagnostics.extend(public.security_authority.diagnostics.iter().cloned());
     ShipGateRow {
         id: "production_security_e2e",
         owner: "src/eval/memory_bench + eval/public/memory",
@@ -195,8 +231,15 @@ fn security_gate(options: &ShipMatrixOptions, public: &PublicEvidence) -> ShipGa
             .and_then(Value::as_str)
             .unwrap_or("unavailable_no_public_claim")
             .to_string(),
-        condition_completeness: if included {
-            "production-path adversarial-policy v2 is manifest-bound".to_string()
+        condition_completeness: if public.security_authority.passed {
+            format!(
+                "production-path adversarial-policy v2 is manifest- and source-bound to {}",
+                public
+                    .security_authority
+                    .benchmark_commit
+                    .as_deref()
+                    .unwrap_or("unavailable")
+            )
         } else {
             "missing verified production-path adversarial-policy v2".to_string()
         },
@@ -223,26 +266,13 @@ fn security_gate(options: &ShipMatrixOptions, public: &PublicEvidence) -> ShipGa
 
 fn cross_host_gate(options: &ShipMatrixOptions) -> ShipGateRow {
     let charter = read_json_value(&options.cross_host_charter_path);
-    let ready = charter.as_ref().ok().is_some_and(|value| {
-        value.get("status").and_then(Value::as_str) == Some("PASS")
-            && value.get("executable_ready").and_then(Value::as_bool) == Some(true)
-    });
     ShipGateRow {
         id: "cross_host",
         owner: "docs/specs/GH935 + eval/cross-host",
-        status: if ready {
-            ShipGateStatus::Pass
-        } else {
-            ShipGateStatus::Unavailable
-        },
+        status: ShipGateStatus::Unavailable,
         blocks: vec!["cross_host", "public_claim"],
         required_for_command_success: false,
-        claim_level: if ready {
-            "verified_cross_host_claim"
-        } else {
-            "infrastructure_only_no_cross_host_claim"
-        }
-        .to_string(),
+        claim_level: "infrastructure_only_no_cross_host_claim".to_string(),
         condition_completeness: charter
             .as_ref()
             .ok()
@@ -253,12 +283,7 @@ fn cross_host_gate(options: &ShipMatrixOptions) -> ShipGateRow {
         config_identity: "GH935 sealed matrix charter".to_string(),
         model_identity: "unavailable_until_governed_runs".to_string(),
         metric_deltas: BTreeMap::new(),
-        stop_loss_verdict: if ready {
-            "passed"
-        } else {
-            "unavailable_no_live_runs"
-        }
-        .to_string(),
+        stop_loss_verdict: "unavailable_no_verified_sealed_result".to_string(),
         evidence: vec![evidence_for_path(
             &options.cross_host_charter_path,
             if charter.is_ok() {
@@ -267,14 +292,10 @@ fn cross_host_gate(options: &ShipMatrixOptions) -> ShipGateRow {
                 ArtifactState::Invalid
             },
         )],
-        diagnostics: if ready {
-            Vec::new()
-        } else {
-            vec![
-                "GH935 has infrastructure and skeleton tasks but no governed live matrix."
-                    .to_string(),
-            ]
-        },
+        diagnostics: vec![
+            "The charter is configuration, not a sealed execution result; GH935 has no result verifier yet."
+                .to_string(),
+        ],
     }
 }
 
@@ -283,13 +304,8 @@ fn coding_gate(
     public: &PublicEvidence,
     implementation: &ImplementationIdentity,
 ) -> ShipGateRow {
-    let gate = public.report.as_ref().map(|report| &report.claim_gate);
     let implementation_current = claim_artifact_matches_implementation(public, implementation);
-    let passed = gate.is_some_and(|gate| {
-        gate.artifact_verifier_passed
-            && gate.coding_outcome_stop_loss_status == "passed_coding_outcome_stop_loss"
-            && gate.coding_claim_level == "level_2_coding_outcome_improvement"
-    }) && implementation_current;
+    let passed = public.claim_authority.coding_passed && implementation_current;
     ShipGateRow {
         id: "coding_outcome",
         owner: "docs/specs/GH931 + src/eval/bench_artifact",
@@ -300,18 +316,22 @@ fn coding_gate(
         },
         blocks: vec!["coding_outcome", "public_claim"],
         required_for_command_success: false,
-        claim_level: gate
-            .map(|value| value.coding_claim_level.clone())
-            .unwrap_or_else(|| "unavailable_no_public_claim".to_string()),
-        condition_completeness: gate
-            .map(|value| value.coding_outcome_stop_loss_status.clone())
-            .unwrap_or_else(|| "missing_or_invalid_public_baseline".to_string()),
+        claim_level: if passed {
+            "level_2_registered_coding_outcome_claim"
+        } else {
+            "unavailable_no_authorized_coding_claim"
+        }
+        .to_string(),
+        condition_completeness: if public.claim_authority.coding_passed {
+            "all registered coding claims are locked, PASS, and hash-bound"
+        } else {
+            "registered coding claim authority is incomplete"
+        }
+        .to_string(),
         config_identity: "GH931 registered 16 x 3 x 3 official matrix".to_string(),
         model_identity: public_model_identity(public),
         metric_deltas: BTreeMap::new(),
-        stop_loss_verdict: gate
-            .map(|value| value.coding_outcome_stop_loss_status.clone())
-            .unwrap_or_else(|| "unavailable".to_string()),
+        stop_loss_verdict: if passed { "passed" } else { "unavailable" }.to_string(),
         evidence: vec![evidence_for_path(
             &options.public_root.join("reports/baseline.json"),
             if public.report.is_some() {
@@ -323,7 +343,7 @@ fn coding_gate(
         diagnostics: claim_diagnostics(
             public,
             implementation,
-            gate.map(|value| value.notes.as_slice()),
+            Some(&public.claim_authority.diagnostics),
         ),
     }
 }
@@ -333,11 +353,8 @@ fn public_claim_gate(
     public: &PublicEvidence,
     implementation: &ImplementationIdentity,
 ) -> ShipGateRow {
-    let gate = public.report.as_ref().map(|report| &report.claim_gate);
     let implementation_current = claim_artifact_matches_implementation(public, implementation);
-    let passed = gate.is_some_and(|value| {
-        value.artifact_verifier_passed && value.public_sota_status == "passed_level3_public_sota"
-    }) && implementation_current;
+    let passed = public.claim_authority.level3_passed && implementation_current;
     ShipGateRow {
         id: "public_claim",
         owner: "eval/claims + scripts/ci/check_public_claims.py",
@@ -348,9 +365,12 @@ fn public_claim_gate(
         },
         blocks: vec!["public_claim"],
         required_for_command_success: false,
-        claim_level: gate
-            .map(|value| value.public_sota_status.clone())
-            .unwrap_or_else(|| "unavailable_no_public_claim".to_string()),
+        claim_level: if passed {
+            "level_3_independently_verified_public_claim"
+        } else {
+            "unavailable_no_level_3_claim_authority"
+        }
+        .to_string(),
         condition_completeness: if passed {
             "complete independently verified claim artifact"
         } else {
@@ -360,9 +380,7 @@ fn public_claim_gate(
         config_identity: "claim registry and public wording guard".to_string(),
         model_identity: public_model_identity(public),
         metric_deltas: BTreeMap::new(),
-        stop_loss_verdict: gate
-            .map(|value| value.public_sota_status.clone())
-            .unwrap_or_else(|| "unavailable".to_string()),
+        stop_loss_verdict: if passed { "passed" } else { "unavailable" }.to_string(),
         evidence: vec![evidence_for_path(
             &options.claim_registry_path,
             if options.claim_registry_path.is_file() {
@@ -374,11 +392,41 @@ fn public_claim_gate(
         diagnostics: if passed {
             Vec::new()
         } else {
-            let mut diagnostics = claim_diagnostics(public, implementation, None);
+            let mut diagnostics = claim_diagnostics(
+                public,
+                implementation,
+                Some(&public.claim_authority.diagnostics),
+            );
             diagnostics
                 .push("Comparative, superiority, and SOTA wording remains blocked.".to_string());
             diagnostics
         },
+    }
+}
+
+fn default_decision_gate(
+    id: &'static str,
+    scope: &'static str,
+    owner: &'static str,
+    diagnostic: &'static str,
+) -> ShipGateRow {
+    ShipGateRow {
+        id,
+        owner,
+        status: ShipGateStatus::Unavailable,
+        blocks: vec![scope],
+        required_for_command_success: false,
+        claim_level: "no_default_on_claim".to_string(),
+        condition_completeness: "missing accepted capability-specific decision artifact"
+            .to_string(),
+        config_identity:
+            "same-head baseline/enhanced ablation, thresholds, latency budget, and rollback"
+                .to_string(),
+        model_identity: "must be declared by decision artifact".to_string(),
+        metric_deltas: BTreeMap::new(),
+        stop_loss_verdict: "unavailable_no_default_decision".to_string(),
+        evidence: Vec::new(),
+        diagnostics: vec![diagnostic.to_string()],
     }
 }
 

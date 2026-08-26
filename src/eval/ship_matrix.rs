@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 use crate::eval::bench_artifact::PublicBaselineReport;
 use crate::eval::gates::EvalGateDelta;
 
+mod authority;
 mod rows;
 mod scorecard;
 
@@ -75,6 +76,8 @@ pub struct ShipMatrixSummary {
     pub command_passed: bool,
     pub merge_ready: bool,
     pub release_ready: bool,
+    pub implementation_identified: bool,
+    pub source_clean: bool,
     pub default_on_ready: bool,
     pub cross_host_claim_ready: bool,
     pub coding_outcome_claim_ready: bool,
@@ -165,6 +168,8 @@ pub(super) struct PublicEvidence {
     pub(super) report_error: Option<String>,
     pub(super) security: Option<Value>,
     pub(super) security_error: Option<String>,
+    security_authority: authority::SecurityAuthority,
+    claim_authority: authority::ClaimAuthority,
 }
 
 pub fn build_ship_evidence(
@@ -172,8 +177,8 @@ pub fn build_ship_evidence(
     capacity_applicable: bool,
     options: ShipMatrixOptions,
 ) -> ShipEvidence {
-    let public = load_public_evidence(&options);
     let implementation = implementation_identity();
+    let public = load_public_evidence(&options, &implementation);
     let gates = rows::build_gate_rows(
         deltas,
         capacity_applicable,
@@ -185,10 +190,16 @@ pub fn build_ship_evidence(
         .iter()
         .filter(|gate| gate.required_for_command_success)
         .all(pass_or_not_applicable);
+    let implementation_identified = implementation.git_sha.is_some();
+    let source_clean = implementation.source_dirty == Some(false);
     let summary = ShipMatrixSummary {
         command_passed,
         merge_ready: required_rows_pass(&gates, "merge"),
-        release_ready: required_rows_pass(&gates, "release"),
+        release_ready: implementation_identified
+            && source_clean
+            && required_rows_pass(&gates, "release"),
+        implementation_identified,
+        source_clean,
         default_on_ready: required_rows_pass(&gates, "retrieval_default")
             && required_rows_pass(&gates, "context_default"),
         cross_host_claim_ready: gate_passes(&gates, "cross_host"),
@@ -206,7 +217,10 @@ pub fn build_ship_evidence(
     }
 }
 
-fn load_public_evidence(options: &ShipMatrixOptions) -> PublicEvidence {
+fn load_public_evidence(
+    options: &ShipMatrixOptions,
+    implementation: &ImplementationIdentity,
+) -> PublicEvidence {
     let (report, report_error) =
         match crate::eval::bench_artifact::generate_public_baseline_report(&options.public_root) {
             Ok(report) => (Some(report), None),
@@ -219,11 +233,20 @@ fn load_public_evidence(options: &ShipMatrixOptions) -> PublicEvidence {
         Ok(value) => (Some(value), None),
         Err(error) => (None, Some(error)),
     };
+    let security_authority = authority::verify_security_authority(
+        options,
+        report.as_ref(),
+        security.as_ref(),
+        implementation,
+    );
+    let claim_authority = authority::verify_claim_authority(&options.claim_registry_path);
     PublicEvidence {
         report,
         report_error,
         security,
         security_error,
+        security_authority,
+        claim_authority,
     }
 }
 
