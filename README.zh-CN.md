@@ -146,8 +146,10 @@ FTS、entity、temporal、vector、graph 与可选本地 reranker
 ```
 
 hooks 完成可靠捕获或入队后就会返回。后台 worker 负责提炼、candidate 治理、
-压缩、检索增强和生命周期清理。MCP、CLI、REST 与 SessionStart 使用同一份存储
-和可见性规则。
+压缩、检索增强和生命周期清理。MCP、CLI、REST 与 SessionStart 使用同一份本地
+存储和治理模型，但各自应用不同的 eligibility policy。显式检索是检查与恢复
+surface，因此可能返回带 `legacy-unverified` 标签的 memory；默认 SessionStart 与
+CurrentTruth 会隔离这些记录，并留下原因。
 
 模型生成的内容要经过来源支持、secret、instruction pattern、scope 和生命周期
 检查。没有通过的内容会被丢弃或进入 review，并留下可以诊断的原因。
@@ -168,7 +170,7 @@ remem search "database encryption"
 remem search "deployment decision" --branch main --explain
 remem show <memory-id>
 remem why <memory-id>
-remem current <state-key> --project .
+remem current <state-key>
 ```
 
 agent 通过 MCP `search` 取得简短结果，再用 `get_observations` 读取选中的细节。

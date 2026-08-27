@@ -3,9 +3,9 @@
 Use these read-only commands after context compiler changes:
 
 ```bash
-REMEM_CONTEXT_HOST=codex-cli cargo run --quiet -- context --cwd /Users/lifcc/Desktop/code/AI/tools/remem
-REMEM_CONTEXT_HOST=claude-code cargo run --quiet -- context --cwd /Users/lifcc/Desktop/code/AI/tools/remem
-REMEM_CONTEXT_DEBUG=1 REMEM_CONTEXT_HOST=codex-cli cargo run --quiet -- context --cwd /Users/lifcc/Desktop/code/AI/tools/remem
+REMEM_CONTEXT_HOST=codex-cli cargo run --quiet -- context --cwd "$PWD"
+REMEM_CONTEXT_HOST=claude-code cargo run --quiet -- context --cwd "$PWD"
+REMEM_CONTEXT_DEBUG=1 REMEM_CONTEXT_HOST=codex-cli cargo run --quiet -- context --cwd "$PWD"
 ```
 
 Codex duplicate-injection gate:

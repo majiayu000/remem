@@ -105,11 +105,27 @@ especially important after a manual copy, source build, or change of install
 path.
 
 If moving between installation channels, first use the old binary to preview
-and remove its owned host entries, then configure the new binary:
+and remove its owned host entries. This does not remove the executable:
 
 ```bash
 /old/path/remem uninstall --dry-run
 /old/path/remem uninstall
+```
+
+Next, remove the old package or exact manual binary with the command matching
+the channel that installed it. Run only one applicable command:
+
+```bash
+brew uninstall remem                    # Homebrew
+npm uninstall -g @remem-ai/remem        # npm
+cargo uninstall remem-ai                # Cargo
+rm /exact/path/to/old/remem              # standalone, release, or manual copy
+```
+
+Install the new channel, then configure hosts with that channel's canonical
+executable:
+
+```bash
 /new/path/remem install --target codex
 ```
 

@@ -160,8 +160,11 @@ budgeted, source-attributed SessionStart context
 
 Hooks return quickly after durable capture or queueing. Background workers
 perform extraction, candidate governance, compression, retrieval enrichment,
-and lifecycle cleanup. MCP, CLI, REST, and SessionStart reads share the same
-store and visibility rules.
+and lifecycle cleanup. MCP, CLI, REST, and SessionStart share the same local
+store and governance model, but apply surface-specific eligibility policies.
+Explicit search is an inspection and recovery surface, so it may return
+labeled `legacy-unverified` memories; default SessionStart and CurrentTruth
+exclude those rows and record the reason.
 
 Generated memory is treated as untrusted until it passes source-support,
 secret, instruction-pattern, scope, and lifecycle checks. Unsafe content is
@@ -185,7 +188,7 @@ remem search "database encryption"
 remem search "deployment decision" --branch main --explain
 remem show <memory-id>
 remem why <memory-id>
-remem current <state-key> --project .
+remem current <state-key>
 ```
 
 Agents can use MCP `search` for compact results, then `get_observations` for
