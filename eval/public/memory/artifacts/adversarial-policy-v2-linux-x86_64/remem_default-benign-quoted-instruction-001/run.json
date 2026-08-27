@@ -32,8 +32,8 @@
     "docker_image_digest": "local-fixture-no-docker",
     "fixture_revision": "adversarial-policy-v2",
     "os": "linux",
-    "production_input_tree_sha256": "9c66b21b4500459f3b41bb9eb28f404542e8e4d6b17361bc80bcfabf8a191a3b",
-    "remem_commit": "951df200da78ef43453643dcde0f7b797e27ff25",
+    "production_input_tree_sha256": "0e56bbc98f7da23e1c1a811867a036d8447d3dce5e3e2d7b0ff980b979fcb158",
+    "remem_commit": "23ab5be9e16e51144dfee028be7a84bd22f915ed",
     "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/benign-quoted-instruction-001",
     "repo_base_commit": null,
     "source_dirty": false
