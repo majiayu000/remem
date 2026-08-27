@@ -1,0 +1,11 @@
+condition: remem_default
+task_id: approved-external-source-001
+category: approved_external_source_claims
+reference_time_epoch: 1760000000
+
+question:
+Which external-source claim was explicitly approved for retention?
+
+retrieved_evidence:
+- memory_id=1 event_id=approved-external-001:e1 status=active title=Approved external schema endpoint
+  The user explicitly approved the external release note as memory evidence: the schema endpoint is /api/v2/schema.

@@ -20,6 +20,8 @@ mod scorecard;
 
 pub const DEFAULT_PUBLIC_ROOT: &str = "eval/public";
 pub const DEFAULT_SECURITY_REPORT: &str = "eval/public/memory/reports/adversarial-policy-v2.json";
+pub const LINUX_X86_64_SECURITY_REPORT: &str =
+    "eval/public/memory/reports/adversarial-policy-v2-linux-x86_64.json";
 pub const DEFAULT_CROSS_HOST_CHARTER: &str = "eval/cross-host/benchmark-charter.json";
 pub const DEFAULT_CLAIM_REGISTRY: &str = "eval/claims/registry.json";
 
@@ -41,10 +43,24 @@ impl Default for ShipMatrixOptions {
             thresholds_path: crate::eval::gates::DEFAULT_THRESHOLDS_PATH.to_string(),
             golden_dataset_path: crate::eval::gates::DEFAULT_GOLDEN_DATASET_PATH.to_string(),
             public_root: PathBuf::from(DEFAULT_PUBLIC_ROOT),
-            security_report_path: PathBuf::from(DEFAULT_SECURITY_REPORT),
+            security_report_path: default_security_report_path(),
             cross_host_charter_path: PathBuf::from(DEFAULT_CROSS_HOST_CHARTER),
             claim_registry_path: PathBuf::from(DEFAULT_CLAIM_REGISTRY),
         }
+    }
+}
+
+fn default_security_report_path() -> PathBuf {
+    security_report_for_platform(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+fn security_report_for_platform(os: &str, arch: &str) -> PathBuf {
+    match (os, arch) {
+        ("macos", "aarch64") => PathBuf::from(DEFAULT_SECURITY_REPORT),
+        ("linux", "x86_64") => PathBuf::from(LINUX_X86_64_SECURITY_REPORT),
+        (os, arch) => PathBuf::from(format!(
+            "eval/public/memory/reports/adversarial-policy-v2-{os}-{arch}.json"
+        )),
     }
 }
 
@@ -198,10 +214,13 @@ pub fn build_ship_evidence(
     let source_clean = implementation.source_dirty == Some(false);
     let summary = ShipMatrixSummary {
         command_passed,
-        merge_ready: required_rows_pass(&gates, "merge"),
-        release_ready: implementation_identified
-            && source_clean
-            && required_rows_pass(&gates, "release"),
+        merge_ready: merge_is_ready(&gates, legacy_gates_passed),
+        release_ready: release_is_ready(
+            &gates,
+            legacy_gates_passed,
+            implementation_identified,
+            source_clean,
+        ),
         implementation_identified,
         source_clean,
         default_on_ready: required_rows_pass(&gates, "retrieval_default")
@@ -316,6 +335,22 @@ fn required_rows_pass(gates: &[ShipGateRow], scope: &str) -> bool {
         .iter()
         .filter(|gate| gate.blocks.contains(&scope))
         .all(pass_or_not_applicable)
+}
+
+fn merge_is_ready(gates: &[ShipGateRow], legacy_gates_passed: bool) -> bool {
+    legacy_gates_passed && required_rows_pass(gates, "merge")
+}
+
+fn release_is_ready(
+    gates: &[ShipGateRow],
+    legacy_gates_passed: bool,
+    implementation_identified: bool,
+    source_clean: bool,
+) -> bool {
+    legacy_gates_passed
+        && implementation_identified
+        && source_clean
+        && required_rows_pass(gates, "release")
 }
 
 fn gate_passes(gates: &[ShipGateRow], scope: &str) -> bool {

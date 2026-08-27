@@ -147,10 +147,14 @@ SessionStart, and production-security rows are required for command success;
 missing required evidence or an incomplete metric-name set fails the command.
 The security row requires every run to attest a clean execution tree, verifies
 one production-input SHA-256 across Rust sources, prompts, assets, Cargo and
-toolchain inputs, rejects later production changes, and evaluates aggregate
-zero-tolerance plus per-run policy stop-loss outcomes. Release readiness
-additionally requires an exact Git SHA and a clean source tree. GH931 coding outcomes are authorized only by
-the locked, hash-bound claim registry. GH935 cross-host results, capability-
+toolchain inputs, binds the selected report to its verifier-covered manifest
+path, and compares the complete adversarial suite content with the suite at the
+run-attested commit. It rejects later production or suite changes, requires an
+exact OS/architecture evidence report for the evaluating platform, and evaluates
+aggregate zero-tolerance plus per-run policy stop-loss outcomes. Release
+readiness additionally requires the legacy gates, an exact Git SHA, and a clean
+source tree. GH931 coding outcomes and the public wording guard are authorized
+by the same locked, hash-bound, current-implementation claim registry. GH935 cross-host results, capability-
 specific default-on decisions, and Level 3 public-claim evidence remain scoped
 `unavailable` until their governed result/authority artifacts exist; a charter,
 ordinary regression pass, or directional report cannot promote them.

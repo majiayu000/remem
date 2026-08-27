@@ -341,14 +341,24 @@ fn coding_gate(
         metric_deltas: BTreeMap::new(),
         stop_loss_verdict: if passed { "passed" } else { "unavailable" }.to_string(),
         exclusions: vec!["smoke_or_unregistered_coding_runs".to_string()],
-        evidence: vec![evidence_for_path(
-            &options.public_root.join("reports/baseline.json"),
-            if public.report.is_some() {
-                ArtifactState::Verified
-            } else {
-                ArtifactState::Invalid
-            },
-        )],
+        evidence: vec![
+            evidence_for_path(
+                &options.public_root.join("reports/baseline.json"),
+                if public.report.is_some() {
+                    ArtifactState::Verified
+                } else {
+                    ArtifactState::Invalid
+                },
+            ),
+            evidence_for_path(
+                &options.claim_registry_path,
+                if public.claim_authority.coding_passed {
+                    ArtifactState::Verified
+                } else {
+                    ArtifactState::Present
+                },
+            ),
+        ],
         diagnostics: claim_diagnostics(
             public,
             implementation,

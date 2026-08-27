@@ -36,13 +36,7 @@ pub(super) fn verify_security_authority(
     if !report.is_some_and(|value| value.artifact_verifier.passed) {
         diagnostics.push("public artifact verifier did not pass".to_string());
     }
-    if !report.is_some_and(|value| {
-        value.reports.iter().any(|entry| {
-            entry.benchmark_id == "adversarial-policy" && entry.benchmark_version == "v2"
-        })
-    }) {
-        diagnostics.push("verified public manifest omitted adversarial-policy v2".to_string());
-    }
+    verify_security_report_binding(options, report, &mut diagnostics);
 
     verify_security_outcomes(security, &mut diagnostics);
     let identities = security
@@ -72,21 +66,30 @@ pub(super) fn verify_security_authority(
         ));
         None
     };
+    verify_security_platforms(
+        &identities.platforms,
+        implementation.os,
+        implementation.arch,
+        &mut diagnostics,
+    );
 
     if let Some(commit) = benchmark_commit.as_deref() {
         if !is_full_git_sha(commit) {
             diagnostics.push(format!(
                 "security run commit is not a full Git SHA: {commit}"
             ));
-        } else if !security_source_equivalent(
-            commit,
-            benchmark_tree.as_deref(),
-            implementation,
-            &mut diagnostics,
-        ) {
-            diagnostics.push(
-                "security artifact is stale for the current production source tree".to_string(),
-            );
+        } else {
+            verify_security_suite_binding(options, commit, &identities, &mut diagnostics);
+            if !security_source_equivalent(
+                commit,
+                benchmark_tree.as_deref(),
+                implementation,
+                &mut diagnostics,
+            ) {
+                diagnostics.push(
+                    "security artifact is stale for the current production source tree".to_string(),
+                );
+            }
         }
     }
 
@@ -102,6 +105,52 @@ struct SecurityRunIdentities {
     commits: BTreeSet<String>,
     production_trees: BTreeSet<String>,
     task_ids: BTreeSet<String>,
+    fixture_revisions: BTreeSet<String>,
+    platforms: BTreeSet<(String, String)>,
+}
+
+fn verify_security_report_binding(
+    options: &ShipMatrixOptions,
+    report: Option<&PublicBaselineReport>,
+    diagnostics: &mut Vec<String>,
+) {
+    let Some(report) = report else {
+        diagnostics.push("verified public manifest omitted adversarial-policy v2".to_string());
+        return;
+    };
+    let selected = match options.security_report_path.canonicalize() {
+        Ok(path) => path,
+        Err(error) => {
+            diagnostics.push(format!(
+                "cannot resolve selected security report {}: {error}",
+                options.security_report_path.display()
+            ));
+            return;
+        }
+    };
+    let covered = report.reports.iter().any(|entry| {
+        entry.benchmark_id == "adversarial-policy"
+            && entry.benchmark_version == "v2"
+            && security_report_path_matches(options, &entry.path, &selected)
+    });
+    if !covered {
+        diagnostics.push(format!(
+            "verified public manifest does not cover selected adversarial-policy v2 report {}",
+            options.security_report_path.display()
+        ));
+    }
+}
+
+pub(super) fn security_report_path_matches(
+    options: &ShipMatrixOptions,
+    manifest_entry_path: &str,
+    selected: &Path,
+) -> bool {
+    options
+        .public_root
+        .join(manifest_entry_path)
+        .canonicalize()
+        .is_ok_and(|path| path == selected)
 }
 
 fn collect_security_identities(
@@ -162,6 +211,30 @@ fn collect_security_identities(
                 "security run lacks environment.remem_commit: {relative}"
             )),
         }
+        match run
+            .pointer("/environment/fixture_revision")
+            .and_then(Value::as_str)
+        {
+            Some(revision) => {
+                identities.fixture_revisions.insert(revision.to_string());
+            }
+            None => diagnostics.push(format!(
+                "security run lacks environment.fixture_revision: {relative}"
+            )),
+        }
+        match (
+            run.pointer("/environment/os").and_then(Value::as_str),
+            run.pointer("/environment/arch").and_then(Value::as_str),
+        ) {
+            (Some(os), Some(arch)) if !os.trim().is_empty() && !arch.trim().is_empty() => {
+                identities
+                    .platforms
+                    .insert((os.to_string(), arch.to_string()));
+            }
+            _ => diagnostics.push(format!(
+                "security run lacks a complete environment.os/arch identity: {relative}"
+            )),
+        }
         if run
             .pointer("/environment/source_dirty")
             .and_then(Value::as_bool)
@@ -191,6 +264,105 @@ fn collect_security_identities(
         }
     }
     identities
+}
+
+fn verify_security_suite_binding(
+    options: &ShipMatrixOptions,
+    benchmark_commit: &str,
+    identities: &SecurityRunIdentities,
+    diagnostics: &mut Vec<String>,
+) {
+    let suite_path = options
+        .public_root
+        .join("memory/suites/adversarial-policy/suite.json");
+    let current_bytes = match fs::read(&suite_path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            diagnostics.push(format!(
+                "cannot read current adversarial-policy v2 suite {}: {error}",
+                suite_path.display()
+            ));
+            return;
+        }
+    };
+    let repo_root = match crate::git_util::resolve_toplevel(Path::new(".")) {
+        Some(path) => path,
+        None => {
+            diagnostics.push("cannot resolve repository root for security suite".to_string());
+            return;
+        }
+    };
+    let suite_path = match suite_path.canonicalize() {
+        Ok(path) => path,
+        Err(error) => {
+            diagnostics.push(format!("cannot resolve security suite path: {error}"));
+            return;
+        }
+    };
+    let relative = match suite_path.strip_prefix(&repo_root) {
+        Ok(path) => path,
+        Err(_) => {
+            diagnostics.push(format!(
+                "security suite {} is outside repository root {}",
+                suite_path.display(),
+                repo_root.display()
+            ));
+            return;
+        }
+    };
+    let object = format!("{benchmark_commit}:{}", relative.to_string_lossy());
+    let benchmark_bytes = match crate::git_util::git_output_soft(&repo_root, &["show", &object]) {
+        Some(output) if output.status.success() => output.stdout,
+        _ => {
+            diagnostics.push(format!(
+                "security benchmark commit {benchmark_commit} does not expose {}",
+                relative.display()
+            ));
+            return;
+        }
+    };
+    verify_security_suite_bytes(&current_bytes, &benchmark_bytes, diagnostics);
+
+    let expected_revision = super::read_json_value(&suite_path).ok().and_then(|suite| {
+        suite
+            .get("fixture_revision")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    });
+    let expected_revisions = expected_revision.into_iter().collect::<BTreeSet<_>>();
+    if identities.fixture_revisions != expected_revisions {
+        diagnostics.push(format!(
+            "security run fixture revisions do not exactly bind the current suite: expected={expected_revisions:?} actual={:?}",
+            identities.fixture_revisions
+        ));
+    }
+}
+
+pub(super) fn verify_security_suite_bytes(
+    current_bytes: &[u8],
+    benchmark_bytes: &[u8],
+    diagnostics: &mut Vec<String>,
+) {
+    let current = format!("{:x}", Sha256::digest(current_bytes));
+    let benchmark = format!("{:x}", Sha256::digest(benchmark_bytes));
+    if current != benchmark {
+        diagnostics.push(format!(
+            "adversarial-policy v2 suite content identity changed: benchmark={benchmark} current={current}"
+        ));
+    }
+}
+
+pub(super) fn verify_security_platforms(
+    actual: &BTreeSet<(String, String)>,
+    os: &str,
+    arch: &str,
+    diagnostics: &mut Vec<String>,
+) {
+    if actual != &BTreeSet::from([(os.to_string(), arch.to_string())]) {
+        diagnostics.push(format!(
+            "security report does not exactly cover the evaluated platform {os}/{arch}; found {actual:?}"
+        ));
+    }
 }
 
 pub(super) fn verify_security_task_set(

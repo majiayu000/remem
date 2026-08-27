@@ -501,12 +501,17 @@ model identity, environment/platform, condition completeness, metric deltas,
 stop-loss verdict, exclusions, and claim level. A missing arm is `incomplete`,
 not zero and not pass. Component gates bind the exact expected metric-name set,
 not only a prefix match. Security evidence binds every run to one ancestor
-commit and remains valid only while production source is equivalent. A charter
-is not a cross-host result, ordinary regressions are not default-on authority,
-and directional baseline strings are not coding/public claim authority.
-Release readiness requires a resolvable implementation SHA and clean source;
-claim readiness requires the owning locked, hash-bound registry or independent
-Level 3 authority.
+commit, the exact verifier-covered selected report path, the complete suite
+content identity at that commit, and one exact OS/architecture. It remains
+valid only while production source and suite content are equivalent; an
+unsupported current platform fails closed until its own verified report is in
+the manifest. A charter is not a cross-host result, ordinary regressions are
+not default-on authority, and directional baseline strings are not
+coding/public claim authority. Merge and release readiness inherit the legacy
+eval-gate verdict; release readiness also requires a resolvable implementation
+SHA and clean source. Coding claim readiness and the public wording guard share
+the owning locked, hash-bound, current-implementation registry; Level 3 claims
+still require independent authority.
 
 ## Outcome Scorecard
 

@@ -4,14 +4,22 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE_REPORT = ROOT / "eval/public/reports/baseline.json"
+CLAIM_REGISTRY = ROOT / "eval/claims/registry.json"
+CODING_CLAIM_IDS = {
+    "remem-e2e-vs-no-memory-v1",
+    "remem-e2e-vs-curated-file-budgeted-v1",
+    "remem-e2e-stop-loss-v1",
+}
 
 CLAIM_SURFACES = [
     "README.md",
@@ -71,15 +79,70 @@ def load_claim_gate() -> dict[str, str | bool]:
     gate = report.get("claim_gate")
     if not isinstance(gate, dict):
         die("baseline report is missing claim_gate")
-    return gate
+    return {
+        **gate,
+        "registered_coding_claims_passed": registered_coding_claims_passed(),
+    }
+
+
+def registered_coding_claims_passed() -> bool:
+    if not CLAIM_REGISTRY.is_file():
+        return False
+    try:
+        registry = json.loads(CLAIM_REGISTRY.read_text(encoding="utf-8"))
+        head = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD^{commit}"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
+        return False
+    if registry.get("schema_version") != 1 or registry.get("locked") is not True:
+        return False
+    claims = registry.get("claims")
+    if not isinstance(claims, list):
+        return False
+    for claim_id in CODING_CLAIM_IDS:
+        claim = next(
+            (
+                candidate
+                for candidate in claims
+                if isinstance(candidate, dict) and candidate.get("id") == claim_id
+            ),
+            None,
+        )
+        if not isinstance(claim, dict) or claim.get("status") != "PASS":
+            return False
+        supporting_report = claim.get("supporting_report")
+        if not isinstance(supporting_report, dict):
+            return False
+        relative = supporting_report.get("path")
+        expected_hash = supporting_report.get("sha256")
+        if not isinstance(relative, str) or not isinstance(expected_hash, str):
+            return False
+        report_path = ROOT / relative
+        try:
+            report_bytes = report_path.read_bytes()
+            supporting = json.loads(report_bytes)
+        except (OSError, json.JSONDecodeError):
+            return False
+        if hashlib.sha256(report_bytes).hexdigest() != expected_hash:
+            return False
+        reproducibility = supporting.get("reproducibility")
+        if not isinstance(reproducibility, dict):
+            return False
+        commits = reproducibility.get("remem_commits")
+        if not isinstance(commits, list) or head not in commits:
+            return False
+    return True
 
 
 def coding_claim_ready(gate: dict[str, str | bool]) -> bool:
     return (
         gate.get("artifact_verifier_passed") is True
-        and gate.get("coding_claim_level") == "level_2_coding_outcome_improvement"
-        and gate.get("coding_outcome_stop_loss_status")
-        == "passed_coding_outcome_stop_loss"
+        and gate.get("registered_coding_claims_passed") is True
     )
 
 
@@ -158,9 +221,10 @@ def run_self_test() -> int:
     }
     passed_gate = {
         "artifact_verifier_passed": True,
-        "coding_claim_level": "level_2_coding_outcome_improvement",
-        "coding_outcome_stop_loss_status": "passed_coding_outcome_stop_loss",
+        "coding_claim_level": "directional_only_no_public_claim",
+        "coding_outcome_stop_loss_status": "ready_for_stop_loss_evaluation",
         "public_sota_status": "passed_level3_public_sota",
+        "registered_coding_claims_passed": True,
     }
 
     cases = [
@@ -213,7 +277,7 @@ def run_self_test() -> int:
             "coding-outcome superiority",
         ),
         (
-            "fully passed grounded coding claim passes",
+            "registered and hash-bound coding claim passes",
             "remem outperforms no_memory on fixture X; see eval/public/reports/baseline.md.",
             passed_gate,
             None,

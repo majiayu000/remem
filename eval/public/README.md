@@ -102,6 +102,14 @@ Regenerate the committed adversarial-policy report and artifacts:
 cargo run -- bench memory --suite adversarial-policy --condition remem_default --root eval/public --artifact-prefix memory/artifacts/adversarial-policy-v2 --json-out eval/public/memory/reports/adversarial-policy-v2.json
 ```
 
+The ship matrix selects an exact verifier-covered adversarial report for the
+current OS and architecture. The checked-in reports currently cover
+`macos/aarch64` and `linux/x86_64`; another platform remains fail-closed until
+the same suite is executed there and its report is added to the manifest.
+Every selected report is also bound to the complete suite bytes at its runs'
+single attested benchmark commit, so an old task-ID set cannot authorize a
+changed suite.
+
 Invalid examples under `invalid-examples/` are not discovered by the verifier
 because they are not under a `manifests/` directory. Unit tests use equivalent
 fixtures to prove negative cases.

@@ -1,6 +1,7 @@
 use super::authority::{
-    supporting_report_binds_implementation, verify_security_task_set, ClaimAuthority,
-    SecurityAuthority,
+    security_report_path_matches, supporting_report_binds_implementation,
+    verify_security_platforms, verify_security_suite_bytes, verify_security_task_set,
+    ClaimAuthority, SecurityAuthority,
 };
 use super::rows::component_gate;
 use super::scorecard::{build_scorecard, ratio_field, unavailable_field};
@@ -252,6 +253,93 @@ fn security_task_set_requires_every_suite_task() {
         .iter()
         .any(|item| item.contains("missing=[two]")));
     std::fs::remove_dir_all(temp).unwrap();
+}
+
+#[test]
+fn security_suite_identity_rejects_changed_task_content_with_same_id() {
+    let benchmark = br#"{"tasks":[{"id":"same","prompt":"old","expected":"allow"}]}"#;
+    let current = br#"{"tasks":[{"id":"same","prompt":"changed","expected":"deny"}]}"#;
+    let mut diagnostics = Vec::new();
+    verify_security_suite_bytes(current, benchmark, &mut diagnostics);
+    assert!(diagnostics
+        .iter()
+        .any(|item| item.contains("suite content identity changed")));
+}
+
+#[test]
+fn selected_security_report_must_match_manifest_entry_path() {
+    let temp = unique_temp_dir("security-report-binding");
+    let reports = temp.join("memory/reports");
+    std::fs::create_dir_all(&reports).unwrap();
+    let selected = reports.join("selected.json");
+    let other = reports.join("other.json");
+    std::fs::write(&selected, b"{}").unwrap();
+    std::fs::write(&other, b"{}").unwrap();
+    let options = ShipMatrixOptions {
+        public_root: temp.clone(),
+        security_report_path: selected.clone(),
+        ..Default::default()
+    };
+    let selected = selected.canonicalize().unwrap();
+    assert!(security_report_path_matches(
+        &options,
+        "memory/reports/selected.json",
+        &selected
+    ));
+    assert!(!security_report_path_matches(
+        &options,
+        "memory/reports/other.json",
+        &selected
+    ));
+    std::fs::remove_dir_all(temp).unwrap();
+}
+
+#[test]
+fn security_platform_must_exactly_match_current_os_and_arch() {
+    let macos = std::collections::BTreeSet::from([("macos".to_string(), "aarch64".to_string())]);
+    let mut diagnostics = Vec::new();
+    verify_security_platforms(&macos, "linux", "x86_64", &mut diagnostics);
+    assert!(diagnostics
+        .iter()
+        .any(|item| item.contains("does not exactly cover")));
+
+    diagnostics.clear();
+    verify_security_platforms(&macos, "macos", "aarch64", &mut diagnostics);
+    assert!(diagnostics.is_empty());
+}
+
+#[test]
+fn default_security_report_is_platform_specific() {
+    assert_eq!(
+        security_report_for_platform("macos", "aarch64"),
+        PathBuf::from(DEFAULT_SECURITY_REPORT)
+    );
+    assert_eq!(
+        security_report_for_platform("linux", "x86_64"),
+        PathBuf::from(LINUX_X86_64_SECURITY_REPORT)
+    );
+    assert_eq!(
+        security_report_for_platform("windows", "x86_64"),
+        PathBuf::from("eval/public/memory/reports/adversarial-policy-v2-windows-x86_64.json")
+    );
+}
+
+#[test]
+fn legacy_gate_failure_blocks_merge_and_release_readiness() {
+    let gates = vec![
+        test_gate("merge", ShipGateStatus::Pass, vec!["merge"], true),
+        test_gate("release", ShipGateStatus::Pass, vec!["release"], true),
+    ];
+    let legacy_gates_passed = false;
+    let implementation_identified = true;
+    let source_clean = true;
+    assert!(!merge_is_ready(&gates, legacy_gates_passed));
+    assert!(!release_is_ready(
+        &gates,
+        legacy_gates_passed,
+        implementation_identified,
+        source_clean
+    ));
 }
 
 #[test]

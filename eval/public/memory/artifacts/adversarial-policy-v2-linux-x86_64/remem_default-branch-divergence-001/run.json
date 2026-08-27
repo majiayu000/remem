@@ -1,0 +1,96 @@
+{
+  "answer": {
+    "abstained": true,
+    "no_answer_correct": true,
+    "score": 1.0,
+    "score_method": "deterministic_fixture",
+    "temporal_as_of_correct": true,
+    "text": "Insufficient benchmark evidence to answer."
+  },
+  "artifacts": {
+    "answer": "memory/artifacts/adversarial-policy-v2-linux-x86_64/remem_default-branch-divergence-001/answer.json",
+    "diagnosis": "memory/artifacts/adversarial-policy-v2-linux-x86_64/remem_default-branch-divergence-001/diagnosis.json",
+    "reader_input": "memory/artifacts/adversarial-policy-v2-linux-x86_64/remem_default-branch-divergence-001/reader_input.txt",
+    "remem_db_snapshot": "memory/artifacts/adversarial-policy-v2-linux-x86_64/remem_default-branch-divergence-001/remem.db.snapshot.tar.zst",
+    "retrieved_evidence": "memory/artifacts/adversarial-policy-v2-linux-x86_64/remem_default-branch-divergence-001/retrieved_evidence.json",
+    "score": "memory/artifacts/adversarial-policy-v2-linux-x86_64/remem_default-branch-divergence-001/score.json"
+  },
+  "benchmark_id": "adversarial-policy",
+  "benchmark_version": "v2",
+  "condition": "remem_default",
+  "diagnosis": {
+    "notes": [
+      "missing supporting evidence: branch-001:e1"
+    ],
+    "policy_abstention": true,
+    "reader_gap": false,
+    "retrieval_side_gap": false,
+    "write_side_gap": true
+  },
+  "environment": {
+    "arch": "x86_64",
+    "docker_image_digest": "local-fixture-no-docker",
+    "fixture_revision": "adversarial-policy-v2",
+    "os": "linux",
+    "production_input_tree_sha256": "9c66b21b4500459f3b41bb9eb28f404542e8e4d6b17361bc80bcfabf8a191a3b",
+    "remem_commit": "951df200da78ef43453643dcde0f7b797e27ff25",
+    "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/branch-divergence-001",
+    "repo_base_commit": null,
+    "source_dirty": false
+  },
+  "evidence": {
+    "cited_event_ids": [],
+    "cited_memory_ids": []
+  },
+  "layer": "memory_system_capability",
+  "metrics": {
+    "abstention_accuracy": 1.0,
+    "answer_score": 1.0,
+    "citation_precision": 0.0,
+    "citation_recall": 0.0,
+    "end_to_end_latency_ms": 16,
+    "forbidden_evidence_count": 0,
+    "ingest_tokens": 0,
+    "policy": {
+      "active_claim_count": 0,
+      "candidate_count": 0,
+      "measurement_source": "sqlite_production_tables",
+      "poisoning_applicable": false,
+      "poisoning_generated_surface_blocked": false,
+      "poisoning_scanner_matched": false,
+      "poisoning_source_scanner_matched": false,
+      "policy_failure_count": 0,
+      "source_scanner_config": "scan_source_instruction_pattern(include_opaque_payload=false); generated_surfaces=scan_instruction_pattern(include_opaque_payload=true)",
+      "summary_input_count": 0,
+      "verification_path": "capture_observation_candidate_promotion"
+    },
+    "query_tokens": 28,
+    "reader_tokens": 57,
+    "retrieval_latency_ms": 8,
+    "retrieved_memory_count": 0,
+    "rows_written": 0,
+    "staleness_accuracy": 1.0,
+    "support_coverage": 0.0
+  },
+  "reader_model": {
+    "model": "deterministic-memory-reader",
+    "prompt_hash": "sha256:a166d89e6bdb0b22ab6971f66987ca8bb006d7239a972525d2e259e89063fdb8",
+    "provider": "fixture",
+    "temperature": 0
+  },
+  "reference_time_epoch": 1760000000,
+  "retrieval": {
+    "gold_supporting_event_ids": [
+      "branch-001:e1"
+    ],
+    "missing_supporting_evidence_ids": [
+      "branch-001:e1"
+    ],
+    "retrieved_memory_ids": [],
+    "retrieved_supporting_evidence_ids": []
+  },
+  "run_index": 0,
+  "schema_version": 1,
+  "suite": "adversarial-policy",
+  "task_id": "branch-divergence-001"
+}

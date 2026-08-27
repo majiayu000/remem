@@ -747,8 +747,8 @@ cargo run -- bench verify --root eval/public --json-out /tmp/remem-bench-verify.
 cargo run -- bench report --root eval/public --json-out eval/public/reports/baseline.json --markdown-out eval/public/reports/baseline.md
 ```
 
-The current directional report verifies 5 manifests, 5 reports, 45 run
-artifacts, and 225 artifact files. It includes:
+The current directional report verifies 5 manifests, 6 reports, 65 run
+artifacts, and 325 artifact files. It includes:
 
 - `remem-code-memory`: 8 memory QA runs covering temporal/as-of answers, stale
   decision avoidance, conflicts, workstream continuity, prior bug root cause,
