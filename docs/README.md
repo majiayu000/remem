@@ -34,14 +34,16 @@ the integration behaves that way.
 
 | Topic | Current document |
 |---|---|
-| Memory AI hosts, profiles, models, and executors | [Memory AI config](spec-memory-ai-config.md) |
+| Memory AI hosts, profiles, models, and executors | [Current CLI workflow](../README.md#configure-memory-ai-and-retrieval), `remem config show`, and `remem config --help` |
 | SessionStart budgets and selection | [Current context-budget contract](specs/context-budget-config/PRODUCT.md) |
 | Local semantic embeddings | [Local embedding product contract](specs/local-semantic-embedding/PRODUCT.md) |
 | SQLite cache and durability policy | [SQLite tuning contract](specs/GH949/PRODUCT.md) |
 | Usage and cost reporting | [Memory usage guide](memory-usage-guide.md) and `remem usage --help` |
 
-Use `remem config show` to inspect the effective runtime configuration. Use
-the command-specific `--help` output for the exact current option set.
+Use `remem config show` to inspect the effective runtime configuration. Fresh
+Claude host configuration defaults `context_gate` to `auto`; explicit stored
+values remain visible in that output. Use command-specific `--help` output for
+the exact current option set.
 
 ## Using and governing memory
 

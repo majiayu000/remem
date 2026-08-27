@@ -296,8 +296,9 @@ remem uninstall --dry-run
 remem uninstall
 ```
 
-加密数据库会保留在配置的 `REMEM_DATA_DIR`。确实需要永久删除数据时，先备份，
-再人工删除该目录。
+加密数据库会保留在配置的 `REMEM_DATA_DIR`。确实需要移除本机数据时，先备份，
+再人工删除该目录。普通文件删除只能移除 remem 的本地数据，并不保证从文件系统
+快照、备份或底层存储介质中安全擦除这些数据。
 
 ## License
 

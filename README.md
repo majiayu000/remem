@@ -324,7 +324,9 @@ remem uninstall
 ```
 
 The encrypted database remains in the configured `REMEM_DATA_DIR`. Back it up
-before manually deleting that directory if permanent data removal is intended.
+before manually deleting that directory if data removal is intended. Ordinary
+file deletion removes remem's local data but does not guarantee secure erasure
+from filesystem snapshots, backups, or the underlying storage media.
 
 ## License
 
