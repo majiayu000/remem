@@ -1,0 +1,10 @@
+condition: remem_default
+task_id: payments-account-001
+category: payments_accounts
+reference_time_epoch: 1760000000
+
+question:
+Should remem retain the card or account detail?
+
+retrieved_evidence:
+(none)
