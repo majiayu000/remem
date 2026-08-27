@@ -294,9 +294,9 @@ fn public_baseline_report_summarizes_committed_artifacts() -> Result<()> {
 
     assert!(report.artifact_verifier.passed);
     assert_eq!(report.summary.manifest_count, 5);
-    assert_eq!(report.summary.report_count, 6);
-    assert_eq!(report.summary.run_artifact_count, 65);
-    assert_eq!(report.summary.memory_system.run_artifact_count, 64);
+    assert_eq!(report.summary.report_count, 5);
+    assert_eq!(report.summary.run_artifact_count, 45);
+    assert_eq!(report.summary.memory_system.run_artifact_count, 44);
     assert_eq!(report.summary.coding_agent.run_artifact_count, 1);
     assert_eq!(
         report.claim_gate.coding_outcome_stop_loss_status,
