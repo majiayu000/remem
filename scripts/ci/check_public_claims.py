@@ -15,10 +15,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE_REPORT = ROOT / "eval/public/reports/baseline.json"
 CLAIM_REGISTRY = ROOT / "eval/claims/registry.json"
-CODING_CLAIM_IDS = {
-    "remem-e2e-vs-no-memory-v1",
-    "remem-e2e-vs-curated-file-budgeted-v1",
-    "remem-e2e-stop-loss-v1",
+CODING_CLAIM_CONTRACTS = {
+    "remem-e2e-vs-no-memory-v1": {
+        "comparison": {"treatment": "remem_e2e", "control": "no_memory"},
+        "metric": "resolved_rate",
+    },
+    "remem-e2e-vs-curated-file-budgeted-v1": {
+        "comparison": {
+            "treatment": "remem_e2e",
+            "control": "curated_file_budgeted",
+        },
+        "metric": "resolved_rate",
+    },
+    "remem-e2e-stop-loss-v1": {
+        "comparison": {"treatment": "remem_e2e", "control": "no_memory"},
+        "metric": "memory_harm",
+    },
 }
 
 CLAIM_SURFACES = [
@@ -60,10 +72,11 @@ CONSERVATIVE_CONTEXT_RE = re.compile(
 )
 
 REPORT_LINK_RE = re.compile(
-    r"(eval/public/reports/baseline\.(?:json|md)|public-baseline-directional-v1|"
-    r"docs/specs/public-memory-benchmark/PRODUCT\.md)",
+    r"(eval/public/reports/baseline\.(?:json|md)|public-baseline-directional-v1)",
     re.I,
 )
+
+CLAIM_MARKER_RE = re.compile(r"<!--\s*remem-claim:([a-z0-9][a-z0-9-]*)\s*-->")
 
 
 def die(message: str) -> None:
@@ -71,7 +84,7 @@ def die(message: str) -> None:
     sys.exit(1)
 
 
-def load_claim_gate() -> dict[str, str | bool]:
+def load_claim_gate() -> dict[str, object]:
     if not BASELINE_REPORT.is_file():
         die(f"missing baseline report: {BASELINE_REPORT.relative_to(ROOT)}")
     with BASELINE_REPORT.open("r", encoding="utf-8") as handle:
@@ -79,15 +92,17 @@ def load_claim_gate() -> dict[str, str | bool]:
     gate = report.get("claim_gate")
     if not isinstance(gate, dict):
         die("baseline report is missing claim_gate")
+    registered_claims = load_registered_coding_claims()
     return {
         **gate,
-        "registered_coding_claims_passed": registered_coding_claims_passed(),
+        "registered_coding_claims_passed": registered_claims is not None,
+        "registered_coding_claims": registered_claims or [],
     }
 
 
-def registered_coding_claims_passed() -> bool:
+def load_registered_coding_claims() -> list[dict[str, object]] | None:
     if not CLAIM_REGISTRY.is_file():
-        return False
+        return None
     try:
         registry = json.loads(CLAIM_REGISTRY.read_text(encoding="utf-8"))
         head = subprocess.run(
@@ -98,13 +113,14 @@ def registered_coding_claims_passed() -> bool:
             text=True,
         ).stdout.strip()
     except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
-        return False
+        return None
     if registry.get("schema_version") != 1 or registry.get("locked") is not True:
-        return False
+        return None
     claims = registry.get("claims")
     if not isinstance(claims, list):
-        return False
-    for claim_id in CODING_CLAIM_IDS:
+        return None
+    verified_claims: list[dict[str, object]] = []
+    for claim_id, contract in CODING_CLAIM_CONTRACTS.items():
         claim = next(
             (
                 candidate
@@ -114,39 +130,70 @@ def registered_coding_claims_passed() -> bool:
             None,
         )
         if not isinstance(claim, dict) or claim.get("status") != "PASS":
-            return False
+            return None
+        if claim.get("comparison") != contract["comparison"]:
+            return None
+        if claim.get("metric") != contract["metric"]:
+            return None
+        allowed_wording = claim.get("allowed_wording")
+        forbidden_wording = claim.get("forbidden_wording")
+        if not isinstance(allowed_wording, list) or not allowed_wording:
+            return None
+        if not all(isinstance(item, str) and item.strip() for item in allowed_wording):
+            return None
+        if not isinstance(forbidden_wording, list) or not forbidden_wording:
+            return None
+        if not all(isinstance(item, str) and item.strip() for item in forbidden_wording):
+            return None
         supporting_report = claim.get("supporting_report")
         if not isinstance(supporting_report, dict):
-            return False
+            return None
         relative = supporting_report.get("path")
         expected_hash = supporting_report.get("sha256")
         if not isinstance(relative, str) or not isinstance(expected_hash, str):
-            return False
-        report_path = ROOT / relative
+            return None
+        if re.fullmatch(r"[0-9a-f]{64}", expected_hash) is None:
+            return None
+        report_path = (ROOT / relative).resolve()
+        if not report_path.is_relative_to(ROOT):
+            return None
         try:
             report_bytes = report_path.read_bytes()
             supporting = json.loads(report_bytes)
         except (OSError, json.JSONDecodeError):
-            return False
+            return None
         if hashlib.sha256(report_bytes).hexdigest() != expected_hash:
-            return False
+            return None
         reproducibility = supporting.get("reproducibility")
         if not isinstance(reproducibility, dict):
             return False
         commits = reproducibility.get("remem_commits")
         if not isinstance(commits, list) or head not in commits:
-            return False
-    return True
+            return None
+        verified_claims.append(
+            {
+                "id": claim_id,
+                "comparison": contract["comparison"],
+                "metric": contract["metric"],
+                "allowed_wording": allowed_wording,
+                "forbidden_wording": forbidden_wording,
+                "supporting_report": {
+                    "path": relative,
+                    "sha256": expected_hash,
+                },
+            }
+        )
+    return verified_claims
 
 
-def coding_claim_ready(gate: dict[str, str | bool]) -> bool:
+def coding_claim_ready(gate: dict[str, object]) -> bool:
     return (
         gate.get("artifact_verifier_passed") is True
         and gate.get("registered_coding_claims_passed") is True
     )
 
 
-def sota_claim_ready(gate: dict[str, str | bool]) -> bool:
+def sota_claim_ready(gate: dict[str, object]) -> bool:
     return gate.get("public_sota_status") == "passed_level3_public_sota"
 
 
@@ -158,8 +205,53 @@ def line_has_report_link(text: str) -> bool:
     return REPORT_LINK_RE.search(text) is not None
 
 
+def registered_coding_claim_violation(
+    text: str, gate: dict[str, object]
+) -> str | None:
+    markers = CLAIM_MARKER_RE.findall(text)
+    if len(markers) != 1:
+        return "coding claim must carry exactly one registered claim marker"
+    claims = gate.get("registered_coding_claims")
+    if not isinstance(claims, list):
+        return "registered coding claim contract is unavailable"
+    claim = next(
+        (
+            candidate
+            for candidate in claims
+            if isinstance(candidate, dict) and candidate.get("id") == markers[0]
+        ),
+        None,
+    )
+    if not isinstance(claim, dict):
+        return "coding claim marker is not backed by a verified registry entry"
+    forbidden = claim.get("forbidden_wording")
+    if not isinstance(forbidden, list):
+        return "registered coding claim has no forbidden-wording contract"
+    lowered = text.casefold()
+    if any(isinstance(phrase, str) and phrase.casefold() in lowered for phrase in forbidden):
+        return "coding claim contains registry-forbidden wording"
+    report = claim.get("supporting_report")
+    allowed = claim.get("allowed_wording")
+    if not isinstance(report, dict) or not isinstance(allowed, list):
+        return "registered coding claim authority is incomplete"
+    report_path = report.get("path")
+    if not isinstance(report_path, str):
+        return "registered coding claim has no exact supporting-report path"
+    expected_lines = {
+        f"<!-- remem-claim:{markers[0]} --> {wording} [evidence]({report_path})"
+        for wording in allowed
+        if isinstance(wording, str)
+    }
+    if text.strip() not in expected_lines:
+        return (
+            "coding claim must exactly match registry allowed_wording and its "
+            "hash-bound supporting-report path"
+        )
+    return None
+
+
 def classify_violation(
-    text: str, gate: dict[str, str | bool], context: str | None = None
+    text: str, gate: dict[str, object], context: str | None = None
 ) -> str | None:
     if not STRONG_CLAIM_RE.search(text):
         return None
@@ -173,17 +265,17 @@ def classify_violation(
         return "SOTA/best claim lacks a passed Level 3 public claim gate and report link"
 
     if CODING_CLAIM_RE.search(text):
-        if coding_claim_ready(gate) and line_has_report_link(text):
-            return None
-        return (
-            "coding-outcome superiority claim lacks a passed stop-loss gate "
-            "and report link"
-        )
+        if not coding_claim_ready(gate):
+            return (
+                "coding-outcome superiority claim lacks verified registry authority "
+                "and a hash-bound supporting report"
+            )
+        return registered_coding_claim_violation(text, gate)
 
     return "strong public claim is not grounded in an approved report"
 
 
-def check_surfaces(gate: dict[str, str | bool]) -> list[str]:
+def check_surfaces(gate: dict[str, object]) -> list[str]:
     failures: list[str] = []
     for rel_path in CLAIM_SURFACES:
         path = ROOT / rel_path
@@ -199,6 +291,19 @@ def check_surfaces(gate: dict[str, str | bool]) -> list[str]:
 
 
 def run_self_test() -> int:
+    registered_claim = {
+        "id": "remem-e2e-vs-no-memory-v1",
+        "comparison": {"treatment": "remem_e2e", "control": "no_memory"},
+        "metric": "resolved_rate",
+        "allowed_wording": [
+            "On the registered fixture, remem_e2e outperforms no_memory on resolved_rate."
+        ],
+        "forbidden_wording": ["universally", "every coding workload"],
+        "supporting_report": {
+            "path": "eval/public/reports/coding-claim.json",
+            "sha256": "1" * 64,
+        },
+    }
     blocked_gate = {
         "artifact_verifier_passed": True,
         "coding_claim_level": "directional_only_no_public_claim",
@@ -225,6 +330,7 @@ def run_self_test() -> int:
         "coding_outcome_stop_loss_status": "ready_for_stop_loss_evaluation",
         "public_sota_status": "passed_level3_public_sota",
         "registered_coding_claims_passed": True,
+        "registered_coding_claims": [registered_claim],
     }
 
     cases = [
@@ -278,9 +384,27 @@ def run_self_test() -> int:
         ),
         (
             "registered and hash-bound coding claim passes",
-            "remem outperforms no_memory on fixture X; see eval/public/reports/baseline.md.",
+            "<!-- remem-claim:remem-e2e-vs-no-memory-v1 --> On the registered fixture, remem_e2e outperforms no_memory on resolved_rate. [evidence](eval/public/reports/coding-claim.json)",
             passed_gate,
             None,
+        ),
+        (
+            "spec link cannot authorize universal overclaim",
+            "remem outperforms MEMORY.md universally; see docs/specs/public-memory-benchmark/PRODUCT.md.",
+            passed_gate,
+            "registered claim marker",
+        ),
+        (
+            "report link cannot authorize universal overclaim",
+            "remem outperforms every maintained context file on every coding workload; see eval/public/reports/baseline.md.",
+            passed_gate,
+            "registered claim marker",
+        ),
+        (
+            "correct report cannot authorize unregistered wording",
+            "<!-- remem-claim:remem-e2e-vs-no-memory-v1 --> remem outperforms no_memory universally. [evidence](eval/public/reports/coding-claim.json)",
+            passed_gate,
+            "registry-forbidden wording",
         ),
     ]
 

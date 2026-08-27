@@ -304,7 +304,7 @@ fn cross_host_gate(options: &ShipMatrixOptions) -> ShipGateRow {
     }
 }
 
-fn coding_gate(
+pub(super) fn coding_gate(
     options: &ShipMatrixOptions,
     public: &PublicEvidence,
     implementation: &ImplementationIdentity,
@@ -344,7 +344,7 @@ fn coding_gate(
         evidence: vec![
             evidence_for_path(
                 &options.public_root.join("reports/baseline.json"),
-                if public.report.is_some() {
+                if artifacts_verified {
                     ArtifactState::Verified
                 } else {
                     ArtifactState::Invalid

@@ -1,11 +1,14 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use super::{
     MeasurementState, OutcomeScorecard, PublicEvidence, ScorecardComponent, ScorecardField,
-    DEFAULT_SECURITY_REPORT,
 };
 
-pub(super) fn build_scorecard(public: &PublicEvidence) -> OutcomeScorecard {
+pub(super) fn build_scorecard(
+    public: &PublicEvidence,
+    security_report_path: &Path,
+) -> OutcomeScorecard {
     let coding = public
         .report
         .as_ref()
@@ -70,7 +73,7 @@ pub(super) fn build_scorecard(public: &PublicEvidence) -> OutcomeScorecard {
         ),
         security_ratio_field(public),
         abstention_field(public),
-        latency_field(public),
+        latency_field(public, security_report_path),
         unavailable_field(
             "maintenance_time_and_ai_usage",
             "official GH931 target-blind curator and remem_e2e runs",
@@ -198,7 +201,7 @@ fn abstention_field(public: &PublicEvidence) -> ScorecardField {
     )
 }
 
-fn latency_field(public: &PublicEvidence) -> ScorecardField {
+fn latency_field(public: &PublicEvidence, security_report_path: &Path) -> ScorecardField {
     let p50 = security_number(
         public,
         "/aggregate_metrics/performance/remem_default/end_to_end_latency_p50_ms",
@@ -232,7 +235,7 @@ fn latency_field(public: &PublicEvidence) -> ScorecardField {
         },
         values,
         threshold: "reported; owning latency contract supplies release threshold".to_string(),
-        source: measured.then(|| DEFAULT_SECURITY_REPORT.to_string()),
+        source: measured.then(|| security_report_path.to_string_lossy().to_string()),
         claim_level: "directional_memory_suite_no_public_claim".to_string(),
         note: "Percentiles are not ratio metrics; numerator is explicitly not applicable."
             .to_string(),

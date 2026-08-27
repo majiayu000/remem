@@ -1,12 +1,13 @@
 use super::authority::{
     security_report_path_matches, supporting_report_binds_implementation,
-    verify_security_platforms, verify_security_suite_bytes, verify_security_task_set,
-    ClaimAuthority, SecurityAuthority,
+    verify_executed_suite_identity, verify_security_platforms, verify_security_suite_bytes,
+    verify_security_task_set, ClaimAuthority, SecurityAuthority,
 };
-use super::rows::component_gate;
+use super::rows::{coding_gate, component_gate};
 use super::scorecard::{build_scorecard, ratio_field, unavailable_field};
 use super::*;
 use crate::eval::gates::{EvalGateDelta, EvalGateStatus};
+use sha2::Digest;
 
 fn delta(metric: &str, status: EvalGateStatus) -> EvalGateDelta {
     EvalGateDelta {
@@ -218,7 +219,7 @@ fn partial_latency_evidence_is_fully_unavailable() {
             diagnostics: Vec::new(),
         },
     };
-    let scorecard = build_scorecard(&public);
+    let scorecard = build_scorecard(&public, Path::new(DEFAULT_SECURITY_REPORT));
     let latency = scorecard
         .fields
         .iter()
@@ -264,6 +265,26 @@ fn security_suite_identity_rejects_changed_task_content_with_same_id() {
     assert!(diagnostics
         .iter()
         .any(|item| item.contains("suite content identity changed")));
+}
+
+#[test]
+fn executed_suite_identity_rejects_old_runs_after_same_id_runtime_edit() {
+    let original = br#"{"tasks":[{"id":"same","prompt":"old","expected":"allow"}]}"#;
+    let mutated = br#"{"tasks":[{"id":"same","prompt":"changed","expected":"deny"}]}"#;
+    let original_identity = format!("sha256-raw-suite-v1:{:x}", sha2::Sha256::digest(original));
+    let mut diagnostics = Vec::new();
+    verify_executed_suite_identity(
+        mutated,
+        Some(&original_identity),
+        &std::collections::BTreeSet::from([original_identity.clone()]),
+        &mut diagnostics,
+    );
+    assert!(diagnostics
+        .iter()
+        .any(|item| item.contains("report suite content identity mismatch")));
+    assert!(diagnostics
+        .iter()
+        .any(|item| item.contains("runs do not exactly bind")));
 }
 
 #[test]
@@ -444,7 +465,7 @@ fn unverified_security_authority_hides_security_scorecard_numbers() {
             diagnostics: Vec::new(),
         },
     };
-    let scorecard = build_scorecard(&public);
+    let scorecard = build_scorecard(&public, Path::new(DEFAULT_SECURITY_REPORT));
     let security = scorecard
         .fields
         .iter()
@@ -452,6 +473,80 @@ fn unverified_security_authority_hides_security_scorecard_numbers() {
         .unwrap();
     assert_eq!(security.measurement_state, MeasurementState::Unavailable);
     assert_eq!(security.denominator.value, None);
+}
+
+#[test]
+fn latency_source_is_the_selected_platform_security_report() {
+    let public = PublicEvidence {
+        report: None,
+        report_error: None,
+        security: Some(serde_json::json!({
+            "aggregate_metrics": {
+                "performance": {
+                    "remem_default": {
+                        "end_to_end_latency_p50_ms": 10.0,
+                        "end_to_end_latency_p95_ms": 20.0,
+                        "tasks": 20
+                    }
+                }
+            }
+        })),
+        security_error: None,
+        security_authority: SecurityAuthority {
+            passed: true,
+            benchmark_commit: None,
+            diagnostics: Vec::new(),
+        },
+        claim_authority: ClaimAuthority {
+            coding_passed: false,
+            level3_passed: false,
+            diagnostics: Vec::new(),
+        },
+    };
+    let selected = Path::new(LINUX_X86_64_SECURITY_REPORT);
+    let scorecard = build_scorecard(&public, selected);
+    let latency = scorecard
+        .fields
+        .iter()
+        .find(|field| field.id == "foreground_latency_p50_p95")
+        .unwrap();
+    assert_eq!(latency.measurement_state, MeasurementState::Measured);
+    assert_eq!(latency.source.as_deref(), selected.to_str());
+}
+
+#[test]
+fn coding_baseline_evidence_is_unverified_when_artifact_verifier_fails() {
+    let mut report = crate::eval::bench_artifact::generate_public_baseline_report(Path::new(
+        DEFAULT_PUBLIC_ROOT,
+    ))
+    .unwrap();
+    report.artifact_verifier.passed = false;
+    let public = PublicEvidence {
+        report: Some(report),
+        report_error: None,
+        security: None,
+        security_error: None,
+        security_authority: SecurityAuthority {
+            passed: false,
+            benchmark_commit: None,
+            diagnostics: Vec::new(),
+        },
+        claim_authority: ClaimAuthority {
+            coding_passed: true,
+            level3_passed: false,
+            diagnostics: Vec::new(),
+        },
+    };
+    let implementation = ImplementationIdentity {
+        git_sha: Some("0123456789abcdef0123456789abcdef01234567".to_string()),
+        source_dirty: Some(false),
+        package_version: env!("CARGO_PKG_VERSION"),
+        os: std::env::consts::OS,
+        arch: std::env::consts::ARCH,
+    };
+    let gate = coding_gate(&ShipMatrixOptions::default(), &public, &implementation);
+    assert_eq!(gate.status, ShipGateStatus::Unavailable);
+    assert_eq!(gate.evidence[0].state, ArtifactState::Invalid);
 }
 
 fn metric_set_hash(metrics: &[&str]) -> String {

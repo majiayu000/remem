@@ -10,6 +10,10 @@
     "benchmark_id": { "type": "string", "minLength": 1 },
     "benchmark_version": { "type": "string", "minLength": 1 },
     "suite": { "type": "string", "minLength": 1 },
+    "suite_content_identity": {
+      "type": "string",
+      "pattern": "^sha256-raw-suite-v1:[0-9a-f]{64}$"
+    },
     "condition": { "type": "string", "minLength": 1 },
     "task_id": { "type": "string", "minLength": 1 },
     "run_index": { "type": "integer", "minimum": 0 },
@@ -23,6 +27,18 @@
     "diagnosis": { "type": "object" },
     "artifacts": { "type": "object" }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "benchmark_id": { "const": "adversarial-policy" },
+          "benchmark_version": { "const": "v2" }
+        },
+        "required": ["benchmark_id", "benchmark_version"]
+      },
+      "then": { "required": ["suite_content_identity"] }
+    }
+  ],
   "$defs": {
     "environment": {
       "type": "object",

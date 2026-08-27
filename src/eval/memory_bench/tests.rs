@@ -3,7 +3,9 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use super::fixture::{load_suite, validate_suite, validate_suite_selection};
+use super::fixture::{
+    load_suite, load_suite_file_with_content_identity, validate_suite, validate_suite_selection,
+};
 use super::runner::{run_memory_bench, MemoryBenchOptions};
 use super::types::{
     MemoryBenchCondition, ADVERSARIAL_POLICY_SUITE, DEFAULT_PUBLIC_ROOT, DEFAULT_SUITE,
@@ -163,6 +165,31 @@ fn adversarial_policy_fixture_covers_required_categories() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn runtime_suite_identity_changes_when_same_task_prompt_and_expected_change() -> Result<()> {
+    let temp = unique_temp_dir("remem-runtime-suite-identity")?;
+    fs::create_dir_all(&temp)?;
+    let path = temp.join("suite.json");
+    let mut suite: serde_json::Value = serde_json::from_slice(&fs::read(
+        super::fixture::suite_path(ADVERSARIAL_POLICY_SUITE),
+    )?)?;
+    fs::write(&path, serde_json::to_vec_pretty(&suite)?)?;
+    let (original, original_identity) =
+        load_suite_file_with_content_identity(&path, ADVERSARIAL_POLICY_SUITE)?;
+
+    suite["tasks"][0]["prompt"] = serde_json::json!("runtime-mutated prompt");
+    suite["tasks"][0]["expected_answer"] = serde_json::json!("runtime-mutated expected");
+    fs::write(&path, serde_json::to_vec_pretty(&suite)?)?;
+    let (mutated, mutated_identity) =
+        load_suite_file_with_content_identity(&path, ADVERSARIAL_POLICY_SUITE)?;
+
+    assert_eq!(original.tasks[0].id, mutated.tasks[0].id);
+    assert_ne!(original_identity, mutated_identity);
+    assert!(mutated_identity.starts_with("sha256-raw-suite-v1:"));
+    fs::remove_dir_all(temp)?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn remem_default_memory_bench_writes_verifiable_public_artifacts() -> Result<()> {
     let root = unique_temp_dir("remem-memory-bench-public")?;
@@ -210,12 +237,19 @@ async fn adversarial_policy_bench_reports_zero_policy_leaks() -> Result<()> {
     assert_eq!(report.conditions, vec!["remem_default"]);
     assert_eq!(report.benchmark_version, "v2");
     assert_eq!(report.run_artifacts.len(), 20);
+    let suite_content_identity = report.aggregate_metrics["suite_content_identity"]
+        .as_str()
+        .expect("report suite content identity");
     for run_path in &report.run_artifacts {
         let run: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(root.join(run_path))?)?;
         assert_eq!(
             run["benchmark_version"], report.benchmark_version,
             "generated run {run_path} must inherit the suite version"
+        );
+        assert_eq!(
+            run["suite_content_identity"], suite_content_identity,
+            "generated run {run_path} must bind the exact suite bytes consumed by the runner"
         );
         assert!(run["environment"]["source_dirty"].is_boolean());
         assert_eq!(

@@ -79,7 +79,7 @@ pub(super) fn verify_security_authority(
                 "security run commit is not a full Git SHA: {commit}"
             ));
         } else {
-            verify_security_suite_binding(options, commit, &identities, &mut diagnostics);
+            verify_security_suite_binding(options, security, commit, &identities, &mut diagnostics);
             if !security_source_equivalent(
                 commit,
                 benchmark_tree.as_deref(),
@@ -106,6 +106,7 @@ struct SecurityRunIdentities {
     production_trees: BTreeSet<String>,
     task_ids: BTreeSet<String>,
     fixture_revisions: BTreeSet<String>,
+    suite_content_identities: BTreeSet<String>,
     platforms: BTreeSet<(String, String)>,
 }
 
@@ -222,6 +223,16 @@ fn collect_security_identities(
                 "security run lacks environment.fixture_revision: {relative}"
             )),
         }
+        match run.get("suite_content_identity").and_then(Value::as_str) {
+            Some(identity) => {
+                identities
+                    .suite_content_identities
+                    .insert(identity.to_string());
+            }
+            None => diagnostics.push(format!(
+                "security run lacks suite_content_identity: {relative}"
+            )),
+        }
         match (
             run.pointer("/environment/os").and_then(Value::as_str),
             run.pointer("/environment/arch").and_then(Value::as_str),
@@ -268,6 +279,7 @@ fn collect_security_identities(
 
 fn verify_security_suite_binding(
     options: &ShipMatrixOptions,
+    security: Option<&Value>,
     benchmark_commit: &str,
     identities: &SecurityRunIdentities,
     diagnostics: &mut Vec<String>,
@@ -285,6 +297,15 @@ fn verify_security_suite_binding(
             return;
         }
     };
+    let report_identity = security
+        .and_then(|value| value.pointer("/aggregate_metrics/suite_content_identity"))
+        .and_then(Value::as_str);
+    verify_executed_suite_identity(
+        &current_bytes,
+        report_identity,
+        &identities.suite_content_identities,
+        diagnostics,
+    );
     let repo_root = match crate::git_util::resolve_toplevel(Path::new(".")) {
         Some(path) => path,
         None => {
@@ -336,6 +357,31 @@ fn verify_security_suite_binding(
             identities.fixture_revisions
         ));
     }
+}
+
+pub(super) fn verify_executed_suite_identity(
+    current_bytes: &[u8],
+    report_identity: Option<&str>,
+    run_identities: &BTreeSet<String>,
+    diagnostics: &mut Vec<String>,
+) {
+    let expected = suite_content_identity(current_bytes);
+    if report_identity != Some(expected.as_str()) {
+        diagnostics.push(format!(
+            "security report suite content identity mismatch: expected={expected} actual={}",
+            report_identity.unwrap_or("unavailable")
+        ));
+    }
+    let expected_runs = BTreeSet::from([expected.clone()]);
+    if run_identities != &expected_runs {
+        diagnostics.push(format!(
+            "security runs do not exactly bind the executed suite content: expected={expected_runs:?} actual={run_identities:?}"
+        ));
+    }
+}
+
+fn suite_content_identity(bytes: &[u8]) -> String {
+    format!("sha256-raw-suite-v1:{:x}", Sha256::digest(bytes))
 }
 
 pub(super) fn verify_security_suite_bytes(

@@ -17,7 +17,7 @@ use super::diagnostics::{
     classify_diagnosis, failure_decomposition, performance_by_condition, performance_metrics,
     score_policy,
 };
-use super::fixture::load_suite;
+use super::fixture::load_suite_with_content_identity;
 use super::production_pipeline::retrieve_with_production_pipeline;
 use super::types::{
     summarize_by_category, summarize_metrics, summarize_policy, MemoryBenchCondition,
@@ -46,7 +46,7 @@ pub struct MemoryBenchOptions {
 }
 
 pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBenchmarkReport> {
-    let fixture = load_suite(&options.suite)?;
+    let (fixture, suite_content_identity) = load_suite_with_content_identity(&options.suite)?;
     let conditions = selected_conditions(options.condition.as_deref())?;
     let public_root = PathBuf::from(if options.root.trim().is_empty() {
         DEFAULT_PUBLIC_ROOT
@@ -94,6 +94,7 @@ pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBench
                 &public_root,
                 public_layout,
                 &execution_identity,
+                &suite_content_identity,
             )?;
             run_artifacts.push(run_json_path);
             outcomes.push(outcome);
@@ -104,6 +105,7 @@ pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBench
         "suite": fixture.suite,
         "suite_version": fixture.version,
         "fixture_revision": fixture.fixture_revision,
+        "suite_content_identity": suite_content_identity,
         "run_count": outcomes.len(),
         "overall": summarize_metrics(&outcomes),
         "by_category": summarize_by_category(&outcomes),
@@ -447,6 +449,7 @@ fn write_run_artifacts(
     public_root: &Path,
     public_layout: bool,
     execution_identity: &ExecutionIdentity,
+    suite_content_identity: &str,
 ) -> Result<String> {
     let run_dir = artifact_root.join(format!(
         "{}-{}",
@@ -617,6 +620,13 @@ fn write_run_artifacts(
         artifacts,
     };
     let mut run_value = serde_json::to_value(&run)?;
+    run_value
+        .as_object_mut()
+        .context("memory benchmark run must serialize as an object")?
+        .insert(
+            "suite_content_identity".to_string(),
+            json!(suite_content_identity),
+        );
     let environment = run_value
         .get_mut("environment")
         .and_then(Value::as_object_mut)

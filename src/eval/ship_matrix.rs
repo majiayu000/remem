@@ -236,7 +236,7 @@ pub fn build_ship_evidence(
             summary,
             gates,
         },
-        outcome_scorecard: scorecard::build_scorecard(&public),
+        outcome_scorecard: scorecard::build_scorecard(&public, &options.security_report_path),
     }
 }
 

@@ -13,8 +13,32 @@
     "conditions": { "type": "array", "minItems": 1 },
     "schema_refs": { "type": "array", "minItems": 1 },
     "run_artifacts": { "type": "array", "minItems": 1 },
-    "aggregate_metrics": { "type": "object" },
+    "aggregate_metrics": {
+      "type": "object",
+      "properties": {
+        "suite_content_identity": {
+          "type": "string",
+          "pattern": "^sha256-raw-suite-v1:[0-9a-f]{64}$"
+        }
+      }
+    },
     "claim_level": { "type": "string", "minLength": 1 },
     "verifier": { "type": "object" }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "benchmark_id": { "const": "adversarial-policy" },
+          "benchmark_version": { "const": "v2" }
+        },
+        "required": ["benchmark_id", "benchmark_version"]
+      },
+      "then": {
+        "properties": {
+          "aggregate_metrics": { "required": ["suite_content_identity"] }
+        }
+      }
+    }
+  ]
 }
