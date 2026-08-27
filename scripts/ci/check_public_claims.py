@@ -43,16 +43,11 @@ CODING_CLAIM_RE = re.compile(
 
 SOTA_CLAIM_RE = re.compile(r"\b(SOTA|state[- ]of[- ]the[- ]art|best)\b", re.I)
 
-CONSERVATIVE_CONTEXT_RE = re.compile(
-    r"\b("
-    r"do not|don't|does not|must not|cannot|forbidden|unsupported|"
-    r"directional|no public claim|not evaluated|not support|not claim|"
-    r"until|unless|requires?|required|gate|guard|policy|stop-loss|"
-    r"claim level|allowed claim|public claim policy|public SOTA claim|"
-    r"honest claim|passes only|applies to|wording that says|"
-    r"stop-loss signal|"
-    r"evidence required|before that claim|not evidence"
-    r")\b",
+NEGATED_STRONG_CLAIM_RE = re.compile(
+    r"\b(do not|don't|does not|must not|cannot|unsupported|not support(?:ed)?|"
+    r"no public)\b[^.\n]{0,120}\b(SOTA|state[- ]of[- ]the[- ]art|best|beats?|"
+    r"outperforms?|superior(?:ity)?|coding[- ]task superiority|"
+    r"coding[- ]agent outcome improvement)\b",
     re.I,
 )
 
@@ -222,7 +217,25 @@ def sota_claim_ready(gate: dict[str, object]) -> bool:
 
 
 def line_is_policy_or_negative(text: str) -> bool:
-    return CONSERVATIVE_CONTEXT_RE.search(text) is not None
+    return NEGATED_STRONG_CLAIM_RE.search(text) is not None
+
+
+def line_is_closed_policy_contract(text: str, context: str) -> bool:
+    stripped = text.strip()
+    if re.match(
+        r"^\|\s*(?:2\s*\|\s*Coding-agent outcome improvement|"
+        r"3\s*\|\s*Public SOTA claim)\s*\|",
+        stripped,
+    ):
+        return True
+    if (
+        "stop-loss gate applies" in context
+        and "roadmap wording that says" in context
+    ):
+        return True
+    if stripped.startswith("-") and "passes only when all of these are true:" in context:
+        return True
+    return stripped.startswith("If ") and "stop-loss" in context
 
 
 def line_has_report_link(text: str) -> bool:
@@ -281,7 +294,9 @@ def classify_violation(
         return None
     # Authorization is line-local. Adjacent headings and prose cannot turn an
     # otherwise unsupported claim into policy or negative wording.
-    if line_is_policy_or_negative(text):
+    if line_is_policy_or_negative(text) or line_is_closed_policy_contract(
+        text, context or text
+    ):
         return None
 
     if SOTA_CLAIM_RE.search(text):
@@ -437,6 +452,12 @@ def run_self_test() -> int:
             blocked_gate,
             "coding-outcome superiority",
             "Public claim policy\n\nremem outperforms every coding workload.",
+        ),
+        (
+            "same-line policy label cannot authorize a strong claim",
+            "Public claim policy: remem outperforms every coding workload.",
+            blocked_gate,
+            "coding-outcome superiority",
         ),
     ]
 

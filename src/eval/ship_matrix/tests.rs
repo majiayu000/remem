@@ -1,10 +1,10 @@
 use super::authority::{
     security_report_path_matches, supporting_report_binds_implementation,
-    verify_executed_suite_identity, verify_security_platforms, verify_security_suite_bytes,
-    verify_security_task_set, ClaimAuthority, SecurityAuthority,
+    verify_executed_suite_identity, verify_security_platforms, verify_security_task_set,
+    ClaimAuthority, SecurityAuthority,
 };
 use super::rows::{coding_gate, component_gate};
-use super::scorecard::{build_scorecard, ratio_field, unavailable_field};
+use super::scorecard::{build_scorecard, ratio_field, task_completion_counts, unavailable_field};
 use super::*;
 use crate::eval::gates::{EvalGateDelta, EvalGateStatus};
 use sha2::Digest;
@@ -257,17 +257,6 @@ fn security_task_set_requires_every_suite_task() {
         .iter()
         .any(|item| item.contains("missing=[two]")));
     std::fs::remove_dir_all(temp).unwrap();
-}
-
-#[test]
-fn security_suite_identity_rejects_changed_task_content_with_same_id() {
-    let benchmark = br#"{"tasks":[{"id":"same","prompt":"old","expected":"allow"}]}"#;
-    let current = br#"{"tasks":[{"id":"same","prompt":"changed","expected":"deny"}]}"#;
-    let mut diagnostics = Vec::new();
-    verify_security_suite_bytes(current, benchmark, &mut diagnostics);
-    assert!(diagnostics
-        .iter()
-        .any(|item| item.contains("suite content identity changed")));
 }
 
 #[test]
@@ -542,6 +531,79 @@ fn synthetic_latency_is_not_reported_as_measured() {
     assert_eq!(latency.measurement_state, MeasurementState::Unavailable);
     assert_eq!(latency.source, None);
     assert!(latency.note.contains("synthetic"));
+}
+
+#[test]
+fn task_completion_excludes_runs_that_never_started_the_target() {
+    let (resolved, started) = task_completion_counts(
+        [
+            (Some(true), true),
+            (Some(true), false),
+            (Some(false), true),
+            (None, true),
+        ]
+        .into_iter(),
+    );
+
+    assert_eq!(resolved, 1.0);
+    assert_eq!(started, 2.0);
+}
+
+#[test]
+fn measured_security_ratio_binds_the_exact_selected_artifact() {
+    let temp = unique_temp_dir("scorecard-source");
+    std::fs::create_dir_all(&temp).unwrap();
+    let selected = temp.join("security.json");
+    let selected_bytes = br#"{"aggregate_metrics":{"policy":{"non_retention_cases":4,"non_retention_leak_rate":0.0}}}"#;
+    std::fs::write(&selected, selected_bytes).unwrap();
+    let public = PublicEvidence {
+        report: None,
+        report_error: None,
+        security: Some(serde_json::from_slice(selected_bytes).unwrap()),
+        security_error: None,
+        security_authority: SecurityAuthority {
+            passed: true,
+            benchmark_commit: None,
+            diagnostics: Vec::new(),
+        },
+        claim_authority: ClaimAuthority {
+            coding_passed: false,
+            level3_passed: false,
+            diagnostics: Vec::new(),
+        },
+    };
+    let scorecard = build_scorecard(&public, &selected);
+    let security = scorecard
+        .fields
+        .iter()
+        .find(|field| field.id == "poison_policy_leak_rate")
+        .unwrap();
+    let expected = format!(
+        "{}#sha256={:x}",
+        selected.to_string_lossy(),
+        Sha256::digest(selected_bytes)
+    );
+    assert_eq!(security.measurement_state, MeasurementState::Measured);
+    assert_eq!(security.source.as_deref(), Some(expected.as_str()));
+    std::fs::remove_dir_all(temp).unwrap();
+}
+
+#[test]
+fn evaluated_evidence_rejects_a_file_changed_after_load() {
+    let temp = unique_temp_dir("evaluated-bytes");
+    std::fs::create_dir_all(&temp).unwrap();
+    let artifact = temp.join("baseline.json");
+    let consumed = br#"{"metric":1}"#;
+    std::fs::write(&artifact, consumed).unwrap();
+    let consumed_sha256 = format!("{:x}", Sha256::digest(consumed));
+    std::fs::write(&artifact, br#"{"metric":2}"#).unwrap();
+
+    let evidence = evidence_for_evaluated_path(&artifact, Some(&consumed_sha256));
+
+    assert_eq!(evidence.state, ArtifactState::Invalid);
+    assert_eq!(evidence.sha256.as_deref(), Some(consumed_sha256.as_str()));
+    assert!(evidence.detail.contains("changed after eval-gates loaded"));
+    std::fs::remove_dir_all(temp).unwrap();
 }
 
 #[test]

@@ -25,20 +25,15 @@ pub(super) fn build_scorecard(
                 .collect(),
         )
     });
+    let task_completion = coding.map(|runs| {
+        task_completion_counts(runs.iter().map(|run| (run.target_started, run.resolved)))
+    });
     let security_source = exact_artifact_source(security_report_path);
     let fields = vec![
         ratio_field(
             "task_completion_rate",
-            coding.map(|runs| {
-                runs.iter()
-                    .filter(|run| run.target_started == Some(true) && run.resolved)
-                    .count() as f64
-            }),
-            coding.map(|runs| {
-                runs.iter()
-                    .filter(|run| run.target_started == Some(true))
-                    .count() as f64
-            }),
+            task_completion.map(|(resolved, _)| resolved),
+            task_completion.map(|(_, started)| started),
             "verified committed coding outcomes; current artifacts may be smoke-only",
             "resolved coding runs",
             "all eligible coding runs",
@@ -113,6 +108,15 @@ pub(super) fn build_scorecard(
         ],
         fields,
     }
+}
+
+pub(super) fn task_completion_counts(
+    runs: impl Iterator<Item = (Option<bool>, bool)>,
+) -> (f64, f64) {
+    runs.filter(|(target_started, _)| *target_started == Some(true))
+        .fold((0.0, 0.0), |(resolved, started), (_, did_resolve)| {
+            (resolved + f64::from(did_resolve), started + 1.0)
+        })
 }
 
 pub(super) fn ratio_field(

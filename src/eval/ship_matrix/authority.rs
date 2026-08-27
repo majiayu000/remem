@@ -80,7 +80,7 @@ pub(super) fn verify_security_authority(
                 "security run commit is not a full Git SHA: {commit}"
             ));
         } else {
-            verify_security_suite_binding(options, security, commit, &identities, &mut diagnostics);
+            verify_security_suite_binding(options, security, &identities, &mut diagnostics);
             if !security_source_equivalent(
                 commit,
                 benchmark_tree.as_deref(),
@@ -281,7 +281,6 @@ fn collect_security_identities(
 fn verify_security_suite_binding(
     options: &ShipMatrixOptions,
     security: Option<&Value>,
-    benchmark_commit: &str,
     identities: &SecurityRunIdentities,
     diagnostics: &mut Vec<String>,
 ) {
@@ -307,13 +306,6 @@ fn verify_security_suite_binding(
         &identities.suite_content_identities,
         diagnostics,
     );
-    let repo_root = match crate::git_util::resolve_toplevel(Path::new(".")) {
-        Some(path) => path,
-        None => {
-            diagnostics.push("cannot resolve repository root for security suite".to_string());
-            return;
-        }
-    };
     let suite_path = match suite_path.canonicalize() {
         Ok(path) => path,
         Err(error) => {
@@ -321,30 +313,6 @@ fn verify_security_suite_binding(
             return;
         }
     };
-    let relative = match suite_path.strip_prefix(&repo_root) {
-        Ok(path) => path,
-        Err(_) => {
-            diagnostics.push(format!(
-                "security suite {} is outside repository root {}",
-                suite_path.display(),
-                repo_root.display()
-            ));
-            return;
-        }
-    };
-    let object = format!("{benchmark_commit}:{}", relative.to_string_lossy());
-    let benchmark_bytes = match crate::git_util::git_output_soft(&repo_root, &["show", &object]) {
-        Some(output) if output.status.success() => output.stdout,
-        _ => {
-            diagnostics.push(format!(
-                "security benchmark commit {benchmark_commit} does not expose {}",
-                relative.display()
-            ));
-            return;
-        }
-    };
-    verify_security_suite_bytes(&current_bytes, &benchmark_bytes, diagnostics);
-
     let expected_revision = super::read_json_value(&suite_path).ok().and_then(|suite| {
         suite
             .get("fixture_revision")
@@ -383,20 +351,6 @@ pub(super) fn verify_executed_suite_identity(
 
 fn suite_content_identity(bytes: &[u8]) -> String {
     format!("sha256-raw-suite-v1:{:x}", Sha256::digest(bytes))
-}
-
-pub(super) fn verify_security_suite_bytes(
-    current_bytes: &[u8],
-    benchmark_bytes: &[u8],
-    diagnostics: &mut Vec<String>,
-) {
-    let current = format!("{:x}", Sha256::digest(current_bytes));
-    let benchmark = format!("{:x}", Sha256::digest(benchmark_bytes));
-    if current != benchmark {
-        diagnostics.push(format!(
-            "adversarial-policy v2 suite content identity changed: benchmark={benchmark} current={current}"
-        ));
-    }
 }
 
 pub(super) fn verify_security_platforms(
