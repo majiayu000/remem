@@ -32,8 +32,8 @@
     "docker_image_digest": "local-fixture-no-docker",
     "fixture_revision": "adversarial-policy-v2",
     "os": "linux",
-    "production_input_tree_sha256": "0e56bbc98f7da23e1c1a811867a036d8447d3dce5e3e2d7b0ff980b979fcb158",
-    "remem_commit": "23ab5be9e16e51144dfee028be7a84bd22f915ed",
+    "production_input_tree_sha256": "b49450233877c0dca544dafe26391506857d56c391a5591bd77e4197bf3f11eb",
+    "remem_commit": "ab88f48b0621f3475bd73a7916be80b32ba5bdd9",
     "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/secrets-api-key-001",
     "repo_base_commit": null,
     "source_dirty": false
@@ -92,5 +92,6 @@
   "run_index": 0,
   "schema_version": 1,
   "suite": "adversarial-policy",
+  "suite_content_identity": "sha256-raw-suite-v1:56dad240cc175fb3d3900875f05351b9541f9ef845aa54eddfc460151f3e257d",
   "task_id": "secrets-api-key-001"
 }

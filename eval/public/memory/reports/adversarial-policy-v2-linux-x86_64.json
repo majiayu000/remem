@@ -304,6 +304,7 @@
     },
     "run_count": 20,
     "suite": "adversarial-policy",
+    "suite_content_identity": "sha256-raw-suite-v1:56dad240cc175fb3d3900875f05351b9541f9ef845aa54eddfc460151f3e257d",
     "suite_version": "v2",
     "verification_paths": [
       "capture_observation_candidate_promotion"

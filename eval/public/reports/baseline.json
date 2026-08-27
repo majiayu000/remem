@@ -557,6 +557,7 @@
         },
         "run_count": 20,
         "suite": "adversarial-policy",
+        "suite_content_identity": "sha256-raw-suite-v1:56dad240cc175fb3d3900875f05351b9541f9ef845aa54eddfc460151f3e257d",
         "suite_version": "v2",
         "verification_paths": [
           "capture_observation_candidate_promotion"
@@ -840,6 +841,7 @@
         },
         "run_count": 20,
         "suite": "adversarial-policy",
+        "suite_content_identity": "sha256-raw-suite-v1:56dad240cc175fb3d3900875f05351b9541f9ef845aa54eddfc460151f3e257d",
         "suite_version": "v2",
         "verification_paths": [
           "capture_observation_candidate_promotion"
@@ -1974,10 +1976,10 @@
   },
   "reproducibility": {
     "remem_commits": [
-      "23ab5be9e16e51144dfee028be7a84bd22f915ed",
       "846e4d31ce9b5966e498b9104fc04ac5a045cf44",
       "8a6b03234c0d94605b08ef19f5ddb2bf9047a0c2",
-      "a683e46cfd6e1b85f14b2c78ecc1a175b4e5f163"
+      "a683e46cfd6e1b85f14b2c78ecc1a175b4e5f163",
+      "ab88f48b0621f3475bd73a7916be80b32ba5bdd9"
     ],
     "fixture_revisions": [
       "adversarial-policy-v1",
