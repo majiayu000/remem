@@ -43,14 +43,6 @@ CODING_CLAIM_RE = re.compile(
 
 SOTA_CLAIM_RE = re.compile(r"\b(SOTA|state[- ]of[- ]the[- ]art|best)\b", re.I)
 
-NEGATED_STRONG_CLAIM_RE = re.compile(
-    r"\b(do not|don't|does not|must not|cannot|unsupported|not support(?:ed)?|"
-    r"no public)\b[^.\n]{0,120}\b(SOTA|state[- ]of[- ]the[- ]art|best|beats?|"
-    r"outperforms?|superior(?:ity)?|coding[- ]task superiority|"
-    r"coding[- ]agent outcome improvement)\b",
-    re.I,
-)
-
 REPORT_LINK_RE = re.compile(
     r"(eval/public/reports/baseline\.(?:json|md)|public-baseline-directional-v1)",
     re.I,
@@ -59,6 +51,8 @@ REPORT_LINK_RE = re.compile(
 CLAIM_MARKER_RE = re.compile(r"<!--\s*remem-claim:([a-z0-9][a-z0-9-]*)\s*-->")
 
 RELEASE_POLICY_CONTRACT_LINES = {
+    "Do not read this as a published claim that remem beats a carefully maintained",
+    "do not support SOTA, broad superiority, or coding-task superiority wording.",
     "| 2 | Coding-agent outcome improvement | A passing artifact verifier; the #931 `no_memory` / `remem_e2e` / `curated_file_budgeted` matrix on the registered 16-task set, exactly registered run indices 0/1/2 per task and condition; positive remem delta versus `no_memory`; reported token/turn/wall-time regressions; and the coding outcome stop-loss gate. |",
     "| 3 | Public SOTA claim | A public benchmark comparison using the same model, budget, harness, and published artifacts; wording must name the benchmark and condition instead of generalizing to all long-term memory or all coding agents. |",
     "roadmap wording that says remem improves coding-agent outcomes, beats a",
@@ -225,10 +219,6 @@ def sota_claim_ready(gate: dict[str, object]) -> bool:
     return gate.get("public_sota_status") == "passed_level3_public_sota"
 
 
-def line_is_policy_or_negative(text: str) -> bool:
-    return NEGATED_STRONG_CLAIM_RE.search(text) is not None
-
-
 def line_is_closed_policy_contract(text: str) -> bool:
     return text.strip() in RELEASE_POLICY_CONTRACT_LINES
 
@@ -289,7 +279,7 @@ def classify_violation(
         return None
     # Authorization is line-local. Adjacent headings and prose cannot turn an
     # otherwise unsupported claim into policy or negative wording.
-    if line_is_policy_or_negative(text) or line_is_closed_policy_contract(text):
+    if line_is_closed_policy_contract(text):
         return None
 
     if SOTA_CLAIM_RE.search(text):
@@ -368,10 +358,10 @@ def run_self_test() -> int:
 
     cases = [
         (
-            "negative SOTA wording passes",
+            "unregistered negative SOTA wording fails closed",
             "README and release wording must not claim SOTA from this report.",
             blocked_gate,
-            None,
+            "SOTA/best claim",
         ),
         (
             "policy wording passes",
@@ -449,6 +439,18 @@ def run_self_test() -> int:
         (
             "same-line policy label cannot authorize a strong claim",
             "Public claim policy: remem outperforms every coding workload.",
+            blocked_gate,
+            "coding-outcome superiority",
+        ),
+        (
+            "partial negation cannot hide a SOTA overclaim",
+            "remem does not merely outperform no_memory; it is the best memory system.",
+            blocked_gate,
+            "SOTA/best claim",
+        ),
+        (
+            "competitor-subject negation cannot authorize remem superiority",
+            "Competitors cannot outperform remem on coding tasks.",
             blocked_gate,
             "coding-outcome superiority",
         ),

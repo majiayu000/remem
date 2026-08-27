@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use rusqlite::{Connection, OpenFlags};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -9,10 +8,11 @@ use std::path::{Component, Path, PathBuf};
 
 use super::types::{
     BenchVerifyFailure, BenchVerifyOptions, BenchVerifyReport, BenchmarkLayer, MemoryRunArtifact,
-    PublicBenchmarkManifest, PublicBenchmarkReport,
+    PublicBenchmarkManifest, PublicBenchmarkReport, VerifiedArtifact, VerifiedBenchmarkArtifacts,
 };
 
 pub(super) mod coding;
+mod security_snapshot;
 
 const REQUIRED_SCHEMA_FILES: [&str; 6] = [
     "schemas/benchmark-manifest.schema.json",
@@ -56,17 +56,22 @@ pub fn verify_benchmark_artifacts(options: BenchVerifyOptions) -> Result<BenchVe
 
     for manifest_path in manifest_paths {
         state.manifests_checked += 1;
-        let Some(manifest) =
-            read_json::<PublicBenchmarkManifest>(&manifest_path, &mut state, "manifest")
+        let Some(manifest_artifact) =
+            read_json_artifact::<PublicBenchmarkManifest>(&manifest_path, &mut state, "manifest")
         else {
             continue;
         };
-        validate_manifest(&manifest_path, &manifest, &mut state);
+        let manifest = &manifest_artifact.value;
+        state
+            .verified_artifacts
+            .manifests
+            .push(manifest_artifact.clone());
+        validate_manifest(&manifest_path, manifest, &mut state);
         for report_path in &manifest.reports {
             let Some(report_abs) = resolve_public_path(&mut state, report_path, report_path) else {
                 continue;
             };
-            validate_report_path_layer(&manifest_path, &manifest, &report_abs, &mut state);
+            validate_report_path_layer(&manifest_path, manifest, &report_abs, &mut state);
         }
     }
 
@@ -153,9 +158,16 @@ fn validate_report_path_layer(
     state: &mut VerifyState,
 ) {
     state.reports_checked += 1;
-    let Some(report) = read_json::<PublicBenchmarkReport>(report_path, state, "report") else {
+    let Some(report_artifact) =
+        read_json_artifact::<PublicBenchmarkReport>(report_path, state, "report")
+    else {
         return;
     };
+    let report = &report_artifact.value;
+    state
+        .verified_artifacts
+        .reports
+        .push(report_artifact.clone());
     let label = rel_display(&state.root, report_path);
     if report.schema_version != 1 {
         state.fail(label.clone(), "report schema_version must be 1");
@@ -231,7 +243,7 @@ fn validate_report_path_layer(
         state.fail(label.clone(), "report aggregate_metrics must be present");
     }
     scan_private_json(
-        &serde_json::to_value(&report).unwrap_or(Value::Null),
+        &serde_json::to_value(report).unwrap_or(Value::Null),
         report_path,
         "$",
         state,
@@ -256,10 +268,10 @@ fn validate_report_path_layer(
         }
         let represented_condition = match report.layer {
             BenchmarkLayer::MemorySystemCapability => {
-                validate_memory_run_artifact(&run_path, &report, manifest_path, state)
+                validate_memory_run_artifact(&run_path, report, manifest_path, state)
             }
             BenchmarkLayer::CodingAgentOutcome => {
-                coding::validate_coding_run_artifact(&run_path, &report, manifest_path, state)
+                coding::validate_coding_run_artifact(&run_path, report, manifest_path, state)
             }
         };
         if let Some(condition) = represented_condition {
@@ -281,7 +293,10 @@ fn validate_memory_run_artifact(
     state: &mut VerifyState,
 ) -> Option<String> {
     state.run_artifacts_checked += 1;
-    let run = read_json::<MemoryRunArtifact>(run_path, state, "memory run artifact")?;
+    let run_artifact =
+        read_json_artifact::<MemoryRunArtifact>(run_path, state, "memory run artifact")?;
+    let run = run_artifact.value.clone();
+    state.verified_artifacts.memory_runs.push(run_artifact);
     let label = rel_display(&state.root, run_path);
     if run.schema_version != 1 {
         state.fail(label.clone(), "memory run schema_version must be 1");
@@ -413,7 +428,7 @@ fn validate_memory_run_artifact(
     if run.benchmark_id == "adversarial-policy" && run.benchmark_version == "v2" {
         require_artifact_key(&run.artifacts, "remem_db_snapshot", &label, state);
         validate_v2_memory_artifact_hashes(&run, &label, state);
-        validate_security_snapshot(&run, &label, state);
+        security_snapshot::validate_security_snapshot(&run, &label, state);
     }
     scan_private_json(
         &serde_json::to_value(&run).unwrap_or(Value::Null),
@@ -452,69 +467,6 @@ fn validate_v2_memory_artifact_hashes(
             Ok(_) => state.fail(raw_path.clone(), format!("artifact {key} SHA-256 mismatch")),
             Err(error) => state.fail(raw_path.clone(), format!("read artifact {key}: {error}")),
         }
-    }
-}
-
-fn validate_security_snapshot(run: &MemoryRunArtifact, label: &str, state: &mut VerifyState) {
-    let Some(raw_path) = run.artifacts.get("remem_db_snapshot") else {
-        return;
-    };
-    let Some(path) = resolve_public_path(state, raw_path, raw_path) else {
-        return;
-    };
-    if path.extension().and_then(|value| value.to_str()) != Some("sqlite3") {
-        state.fail(
-            raw_path.clone(),
-            "security snapshot must be an explicit SQLite file",
-        );
-        return;
-    }
-    let connection = match Connection::open_with_flags(
-        &path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    ) {
-        Ok(connection) => connection,
-        Err(error) => {
-            state.fail(
-                raw_path.clone(),
-                format!("open security SQLite snapshot: {error}"),
-            );
-            return;
-        }
-    };
-    let captured: rusqlite::Result<i64> = connection.query_row(
-        "SELECT COUNT(*) FROM captured_events WHERE session_id = ?1",
-        [&run.task_id],
-        |row| row.get(0),
-    );
-    match captured {
-        Ok(count) if count > 0 => {}
-        Ok(_) => state.fail(
-            raw_path.clone(),
-            format!("snapshot does not contain task {}", run.task_id),
-        ),
-        Err(error) => state.fail(
-            raw_path.clone(),
-            format!("verify persisted security state: {error}"),
-        ),
-    }
-    let integrity: rusqlite::Result<String> =
-        connection.query_row("PRAGMA quick_check", [], |row| row.get(0));
-    if integrity.as_deref() != Ok("ok") {
-        state.fail(
-            raw_path.clone(),
-            "security SQLite snapshot failed quick_check",
-        );
-    }
-    if run
-        .suite_content_identity
-        .as_deref()
-        .is_none_or(str::is_empty)
-    {
-        state.fail(
-            label.to_string(),
-            "v2 memory run lacks suite_content_identity",
-        );
     }
 }
 
@@ -617,15 +569,23 @@ fn condition_set(conditions: &[String]) -> BTreeSet<String> {
 }
 
 fn read_json<T: DeserializeOwned>(path: &Path, state: &mut VerifyState, label: &str) -> Option<T> {
+    read_json_artifact(path, state, label).map(|artifact| artifact.value)
+}
+
+fn read_json_artifact<T: DeserializeOwned>(
+    path: &Path,
+    state: &mut VerifyState,
+    label: &str,
+) -> Option<VerifiedArtifact<T>> {
     let display = rel_display(&state.root, path);
-    let content = match fs::read_to_string(path) {
-        Ok(content) => content,
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
         Err(err) => {
             state.fail(display, format!("read {label}: {err}"));
             return None;
         }
     };
-    let value = match serde_json::from_str::<Value>(&content) {
+    let value = match serde_json::from_slice::<Value>(&bytes) {
         Ok(value) => value,
         Err(err) => {
             state.fail(display, format!("parse {label} JSON: {err}"));
@@ -634,7 +594,11 @@ fn read_json<T: DeserializeOwned>(path: &Path, state: &mut VerifyState, label: &
     };
     scan_private_json(&value, path, "$", state);
     match serde_json::from_value::<T>(value) {
-        Ok(parsed) => Some(parsed),
+        Ok(parsed) => Some(VerifiedArtifact {
+            path: display,
+            sha256: format!("{:x}", Sha256::digest(&bytes)),
+            value: parsed,
+        }),
         Err(err) => {
             state.fail(display, format!("validate {label} schema: {err}"));
             None
@@ -755,6 +719,7 @@ struct VerifyState {
     coding_run_keys: BTreeSet<String>,
     coding_attempt_ids: BTreeSet<String>,
     failures: Vec<BenchVerifyFailure>,
+    verified_artifacts: VerifiedBenchmarkArtifacts,
 }
 
 impl VerifyState {
@@ -769,6 +734,7 @@ impl VerifyState {
             coding_run_keys: BTreeSet::new(),
             coding_attempt_ids: BTreeSet::new(),
             failures: Vec::new(),
+            verified_artifacts: VerifiedBenchmarkArtifacts::default(),
         }
     }
 
@@ -780,15 +746,17 @@ impl VerifyState {
     }
 
     fn finish(self) -> BenchVerifyReport {
+        let passed = self.failures.is_empty();
         BenchVerifyReport {
             schema_version: 1,
             root: self.root.to_string_lossy().into_owned(),
-            passed: self.failures.is_empty(),
+            passed,
             manifests_checked: self.manifests_checked,
             reports_checked: self.reports_checked,
             run_artifacts_checked: self.run_artifacts_checked,
             artifact_files_checked: self.artifact_files.len(),
             failures: self.failures,
+            verified_artifacts: self.verified_artifacts,
         }
     }
 }

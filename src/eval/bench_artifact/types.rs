@@ -4,10 +4,18 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::eval::coding_bench::{RememContextAuditSnapshot, RememContextAuditStatus};
+use crate::eval::memory_bench::types::MemoryBenchSuiteFixture;
 
 #[derive(Debug, Clone)]
 pub struct BenchVerifyOptions {
     pub root: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct VerifiedArtifact<T> {
+    pub path: String,
+    pub sha256: String,
+    pub value: T,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -16,7 +24,7 @@ pub struct BenchVerifyFailure {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BenchVerifyReport {
     pub schema_version: u32,
     pub root: String,
@@ -26,6 +34,17 @@ pub struct BenchVerifyReport {
     pub run_artifacts_checked: usize,
     pub artifact_files_checked: usize,
     pub failures: Vec<BenchVerifyFailure>,
+    #[serde(skip)]
+    pub(crate) verified_artifacts: VerifiedBenchmarkArtifacts,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct VerifiedBenchmarkArtifacts {
+    pub memory_suites: Vec<VerifiedArtifact<MemoryBenchSuiteFixture>>,
+    pub manifests: Vec<VerifiedArtifact<PublicBenchmarkManifest>>,
+    pub reports: Vec<VerifiedArtifact<PublicBenchmarkReport>>,
+    pub memory_runs: Vec<VerifiedArtifact<MemoryRunArtifact>>,
+    pub coding_runs: Vec<VerifiedArtifact<CodingRunArtifact>>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -98,6 +117,10 @@ pub struct RunEnvironment {
     pub fixture_revision: Option<String>,
     #[serde(default)]
     pub repo_base_commit: Option<String>,
+    #[serde(default)]
+    pub source_dirty: Option<bool>,
+    #[serde(default)]
+    pub production_input_tree_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

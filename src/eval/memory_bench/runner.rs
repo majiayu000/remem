@@ -573,9 +573,11 @@ fn write_run_artifacts(
                 outcome.condition.as_str(),
                 outcome.task_id
             ),
-            docker_image_digest: Some("local-fixture-no-docker".to_string()),
+            docker_image_digest: benchmark_container_image_digest(),
             fixture_revision: Some(fixture.fixture_revision.clone()),
             repo_base_commit: None,
+            source_dirty: execution_identity.source_dirty,
+            production_input_tree_sha256: execution_identity.production_input_tree_sha256.clone(),
         },
         answer: json!({
             "text": outcome.answer_text,
@@ -635,20 +637,7 @@ fn write_run_artifacts(
         artifact_sha256,
         suite_content_identity: Some(suite_content_identity.to_string()),
     };
-    let mut run_value = serde_json::to_value(&run)?;
-    let environment = run_value
-        .get_mut("environment")
-        .and_then(Value::as_object_mut)
-        .context("memory benchmark environment must serialize as an object")?;
-    environment.insert(
-        "source_dirty".to_string(),
-        json!(execution_identity.source_dirty),
-    );
-    environment.insert(
-        "production_input_tree_sha256".to_string(),
-        json!(execution_identity.production_input_tree_sha256),
-    );
-    fs::write(&run_path, serde_json::to_string_pretty(&run_value)?)?;
+    fs::write(&run_path, serde_json::to_string_pretty(&run)?)?;
     artifact_path(&run_path, public_root, public_layout)
 }
 
@@ -729,6 +718,13 @@ fn execution_identity() -> ExecutionIdentity {
         production_input_tree_sha256: option_env!("REMEM_BUILD_PRODUCTION_INPUT_TREE_SHA256")
             .map(str::to_string),
     }
+}
+
+fn benchmark_container_image_digest() -> Option<String> {
+    std::env::var("REMEM_BENCH_CONTAINER_IMAGE_DIGEST")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| Some("local-fixture-no-docker".to_string()))
 }
 
 fn is_checked_in_public_root(public_root: &Path) -> bool {

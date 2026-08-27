@@ -9,6 +9,7 @@ pub use report::{
     generate_public_baseline_report, render_public_baseline_markdown, write_public_baseline_report,
     BaselineReportEntry, BenchReportOptions, PublicBaselineReport,
 };
+pub(crate) use types::VerifiedArtifact;
 pub use types::{
     BenchVerifyFailure, BenchVerifyOptions, BenchVerifyReport, BenchmarkLayer, CodingRunArtifact,
     MemoryCitationEvidence, MemoryDiagnosis, MemoryRetrievalEvidence, MemoryRunArtifact,

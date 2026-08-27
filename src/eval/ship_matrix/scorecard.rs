@@ -1,8 +1,5 @@
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::Path;
-
-use sha2::{Digest, Sha256};
 
 use super::{
     MeasurementState, OutcomeScorecard, PublicEvidence, ScorecardComponent, ScorecardField,
@@ -23,6 +20,7 @@ pub(super) fn build_scorecard(
                 .filter(|run| run.target_started == Some(true))
                 .map(|run| run.report_path.as_str())
                 .collect(),
+            &public.verified_report_sources,
         )
     });
     let memory_help_source = coding.and_then(|runs| {
@@ -31,12 +29,13 @@ pub(super) fn build_scorecard(
                 .filter(|run| run.memory_helped.is_some())
                 .map(|run| run.report_path.as_str())
                 .collect(),
+            &public.verified_report_sources,
         )
     });
     let task_completion = coding.map(|runs| {
         task_completion_counts(runs.iter().map(|run| (run.target_started, run.resolved)))
     });
-    let security_source = exact_artifact_source(security_report_path);
+    let security_source = public.security_source.clone();
     let fields = vec![
         ratio_field(
             "task_completion_rate",
@@ -260,28 +259,16 @@ fn latency_field(_public: &PublicEvidence, _security_report_path: &Path) -> Scor
     }
 }
 
-fn exact_artifact_source(path: &Path) -> Option<String> {
-    let bytes = fs::read(path).ok()?;
-    Some(format!(
-        "{}#sha256={:x}",
-        path.to_string_lossy(),
-        Sha256::digest(bytes)
-    ))
-}
-
-fn artifact_sources(paths: std::collections::BTreeSet<&str>) -> Option<String> {
+fn artifact_sources(
+    paths: std::collections::BTreeSet<&str>,
+    verified_sources: &BTreeMap<String, String>,
+) -> Option<String> {
     if paths.is_empty() {
         return None;
     }
     paths
         .into_iter()
-        .map(|relative| {
-            exact_artifact_source(
-                Path::new(super::DEFAULT_PUBLIC_ROOT)
-                    .join(relative)
-                    .as_path(),
-            )
-        })
+        .map(|relative| verified_sources.get(relative).cloned())
         .collect::<Option<Vec<_>>>()
         .map(|sources| sources.join(","))
 }
@@ -290,5 +277,10 @@ fn security_number(public: &PublicEvidence, pointer: &str) -> Option<f64> {
     if !public.security_authority.passed {
         return None;
     }
-    public.security.as_ref()?.pointer(pointer)?.as_f64()
+    public
+        .security
+        .as_ref()?
+        .aggregate_metrics
+        .pointer(pointer.trim_start_matches("/aggregate_metrics"))?
+        .as_f64()
 }

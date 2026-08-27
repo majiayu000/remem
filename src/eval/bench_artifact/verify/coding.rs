@@ -7,7 +7,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::{
-    read_json, rel_display, require_artifact_key, require_non_blank, scan_private_json,
+    read_json_artifact, rel_display, require_artifact_key, require_non_blank, scan_private_json,
     validate_artifact_map, validate_environment, VerifyState,
 };
 use crate::eval::bench_artifact::types::{
@@ -58,7 +58,8 @@ pub(super) fn validate_coding_run_artifact(
     state: &mut VerifyState,
 ) -> Option<String> {
     state.run_artifacts_checked += 1;
-    let raw_run = read_json::<Value>(run_path, state, "coding run artifact")?;
+    let raw_artifact = read_json_artifact::<Value>(run_path, state, "coding run artifact")?;
+    let raw_run = raw_artifact.value;
     let run = match serde_json::from_value::<CodingRunArtifact>(raw_run.clone()) {
         Ok(run) => run,
         Err(error) => {
@@ -69,6 +70,13 @@ pub(super) fn validate_coding_run_artifact(
             return None;
         }
     };
+    state.verified_artifacts.coding_runs.push(
+        crate::eval::bench_artifact::types::VerifiedArtifact {
+            path: raw_artifact.path,
+            sha256: raw_artifact.sha256,
+            value: run.clone(),
+        },
+    );
     let label = rel_display(&state.root, run_path);
     if run.schema_version != 1 {
         state.fail(label.clone(), "coding run schema_version must be 1");

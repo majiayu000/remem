@@ -200,16 +200,16 @@ fn partial_latency_evidence_is_fully_unavailable() {
     let public = PublicEvidence {
         report: None,
         report_error: None,
-        security: Some(serde_json::json!({
-            "aggregate_metrics": {
+        security: Some(security_report(serde_json::json!({
                 "performance": {
                     "remem_default": {
                         "end_to_end_latency_p50_ms": 12.0,
                         "tasks": 20
                     }
                 }
-            }
-        })),
+        }))),
+        security_source: None,
+        verified_report_sources: BTreeMap::new(),
         security_error: None,
         security_authority: SecurityAuthority {
             passed: true,
@@ -463,14 +463,14 @@ fn unverified_security_authority_hides_security_scorecard_numbers() {
     let public = PublicEvidence {
         report: None,
         report_error: Some("missing".to_string()),
-        security: Some(serde_json::json!({
-            "aggregate_metrics": {
+        security: Some(security_report(serde_json::json!({
                 "policy": {
                     "non_retention_cases": 4,
                     "non_retention_leak_rate": 0.0
                 }
-            }
-        })),
+        }))),
+        security_source: None,
+        verified_report_sources: BTreeMap::new(),
         security_error: None,
         security_authority: SecurityAuthority {
             passed: false,
@@ -498,8 +498,7 @@ fn synthetic_latency_is_not_reported_as_measured() {
     let public = PublicEvidence {
         report: None,
         report_error: None,
-        security: Some(serde_json::json!({
-            "aggregate_metrics": {
+        security: Some(security_report(serde_json::json!({
                 "performance": {
                     "remem_default": {
                         "end_to_end_latency_p50_ms": 10.0,
@@ -507,8 +506,9 @@ fn synthetic_latency_is_not_reported_as_measured() {
                         "tasks": 20
                     }
                 }
-            }
-        })),
+        }))),
+        security_source: None,
+        verified_report_sources: BTreeMap::new(),
         security_error: None,
         security_authority: SecurityAuthority {
             passed: true,
@@ -559,7 +559,18 @@ fn measured_security_ratio_binds_the_exact_selected_artifact() {
     let public = PublicEvidence {
         report: None,
         report_error: None,
-        security: Some(serde_json::from_slice(selected_bytes).unwrap()),
+        security: Some(security_report(serde_json::json!({
+            "policy": {
+                "non_retention_cases": 4,
+                "non_retention_leak_rate": 0.0
+            }
+        }))),
+        security_source: Some(format!(
+            "{}#sha256={:x}",
+            selected.to_string_lossy(),
+            Sha256::digest(selected_bytes)
+        )),
+        verified_report_sources: BTreeMap::new(),
         security_error: None,
         security_authority: SecurityAuthority {
             passed: true,
@@ -594,10 +605,13 @@ fn measured_memory_help_ratio_binds_its_eligible_artifacts() {
         DEFAULT_PUBLIC_ROOT,
     ))
     .unwrap();
+    let verified_report_sources = verified_report_sources(&report);
     let public = PublicEvidence {
         report: Some(report),
         report_error: None,
         security: None,
+        security_source: None,
+        verified_report_sources,
         security_error: None,
         security_authority: SecurityAuthority {
             passed: false,
@@ -654,6 +668,8 @@ fn coding_baseline_evidence_is_unverified_when_artifact_verifier_fails() {
         report: Some(report),
         report_error: None,
         security: None,
+        security_source: None,
+        verified_report_sources: BTreeMap::new(),
         security_error: None,
         security_authority: SecurityAuthority {
             passed: false,
@@ -680,6 +696,48 @@ fn coding_baseline_evidence_is_unverified_when_artifact_verifier_fails() {
     let gate = coding_gate(&ShipMatrixOptions::default(), &public, &implementation);
     assert_eq!(gate.status, ShipGateStatus::Unavailable);
     assert_eq!(gate.evidence[0].state, ArtifactState::Invalid);
+}
+
+fn security_report(aggregate_metrics: serde_json::Value) -> PublicBenchmarkReport {
+    PublicBenchmarkReport {
+        schema_version: 1,
+        benchmark_id: "adversarial-policy".to_string(),
+        benchmark_version: "v2".to_string(),
+        suite: Some("adversarial-policy".to_string()),
+        run_phase: None,
+        matrix_namespace: None,
+        layer: crate::eval::bench_artifact::BenchmarkLayer::MemorySystemCapability,
+        conditions: vec!["remem_default".to_string()],
+        schema_refs: Vec::new(),
+        run_artifacts: Vec::new(),
+        aggregate_metrics,
+        claim_level: "directional_memory_suite_no_public_claim".to_string(),
+        verifier: crate::eval::bench_artifact::ReportVerifierMetadata {
+            required: true,
+            schema_version: 1,
+        },
+    }
+}
+
+fn verified_report_sources(report: &PublicBaselineReport) -> BTreeMap<String, String> {
+    report
+        .artifact_verifier
+        .verified_artifacts
+        .reports
+        .iter()
+        .map(|artifact| {
+            (
+                artifact.path.clone(),
+                format!(
+                    "{}#sha256={}",
+                    Path::new(DEFAULT_PUBLIC_ROOT)
+                        .join(&artifact.path)
+                        .to_string_lossy(),
+                    artifact.sha256
+                ),
+            )
+        })
+        .collect()
 }
 
 fn metric_set_hash(metrics: &[&str]) -> String {

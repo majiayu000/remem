@@ -11,7 +11,7 @@ use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::eval::bench_artifact::PublicBaselineReport;
+use crate::eval::bench_artifact::{PublicBaselineReport, PublicBenchmarkReport};
 use crate::eval::gates::EvalGateDelta;
 
 mod authority;
@@ -193,7 +193,9 @@ pub struct ScorecardComponent {
 pub(super) struct PublicEvidence {
     pub(super) report: Option<PublicBaselineReport>,
     pub(super) report_error: Option<String>,
-    pub(super) security: Option<Value>,
+    pub(super) security: Option<PublicBenchmarkReport>,
+    pub(super) security_source: Option<String>,
+    pub(super) verified_report_sources: BTreeMap<String, String>,
     pub(super) security_error: Option<String>,
     security_authority: authority::SecurityAuthority,
     claim_authority: authority::ClaimAuthority,
@@ -263,14 +265,68 @@ fn load_public_evidence(
                 Some(format!("public artifact verification failed: {error:#}")),
             ),
         };
-    let (security, security_error) = match read_json_value(&options.security_report_path) {
-        Ok(value) => (Some(value), None),
-        Err(error) => (None, Some(error)),
-    };
+    let selected_relative = options
+        .security_report_path
+        .strip_prefix(&options.public_root)
+        .ok()
+        .map(|path| path.to_string_lossy().replace('\\', "/"));
+    let verified = report
+        .as_ref()
+        .map(|baseline| &baseline.artifact_verifier.verified_artifacts);
+    let selected = selected_relative.as_deref().and_then(|relative| {
+        verified?
+            .reports
+            .iter()
+            .find(|artifact| artifact.path == relative)
+    });
+    let security = selected.map(|artifact| artifact.value.clone());
+    let security_source = selected.map(|artifact| {
+        format!(
+            "{}#sha256={}",
+            options.security_report_path.to_string_lossy(),
+            artifact.sha256
+        )
+    });
+    let verified_memory_runs = verified
+        .map(|artifacts| artifacts.memory_runs.clone())
+        .unwrap_or_default();
+    let verified_security_suite = verified.and_then(|artifacts| {
+        artifacts
+            .memory_suites
+            .iter()
+            .find(|artifact| artifact.path == "memory/suites/adversarial-policy/suite.json")
+            .cloned()
+    });
+    let verified_report_sources = verified
+        .map(|artifacts| {
+            artifacts
+                .reports
+                .iter()
+                .map(|artifact| {
+                    (
+                        artifact.path.clone(),
+                        format!(
+                            "{}#sha256={}",
+                            options.public_root.join(&artifact.path).to_string_lossy(),
+                            artifact.sha256
+                        ),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let security_error = security.is_none().then(|| {
+        format!(
+            "verified artifact snapshot omitted selected security report {}",
+            options.security_report_path.display()
+        )
+    });
     let security_authority = authority::verify_security_authority(
         options,
         report.as_ref(),
         security.as_ref(),
+        &verified_memory_runs,
+        verified_security_suite.as_ref(),
         implementation,
     );
     let claim_authority = authority::verify_claim_authority(
@@ -282,6 +338,8 @@ fn load_public_evidence(
         report,
         report_error,
         security,
+        security_source,
+        verified_report_sources,
         security_error,
         security_authority,
         claim_authority,

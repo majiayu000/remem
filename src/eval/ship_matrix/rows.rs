@@ -228,10 +228,8 @@ fn security_gate(options: &ShipMatrixOptions, public: &PublicEvidence) -> ShipGa
         claim_level: public
             .security
             .as_ref()
-            .and_then(|value| value.get("claim_level"))
-            .and_then(Value::as_str)
-            .unwrap_or("unavailable_no_public_claim")
-            .to_string(),
+            .map(|value| value.claim_level.clone())
+            .unwrap_or_else(|| "unavailable_no_public_claim".to_string()),
         condition_completeness: if public.security_authority.passed {
             format!(
                 "production-path adversarial-policy v2 is manifest- and source-bound to {}",

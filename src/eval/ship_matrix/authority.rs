@@ -6,7 +6,10 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::{ImplementationIdentity, ShipMatrixOptions};
-use crate::eval::bench_artifact::PublicBaselineReport;
+use crate::eval::bench_artifact::{
+    MemoryRunArtifact, PublicBaselineReport, PublicBenchmarkReport, VerifiedArtifact,
+};
+use crate::eval::memory_bench::types::MemoryBenchSuiteFixture;
 
 pub(super) struct SecurityAuthority {
     pub(super) passed: bool,
@@ -23,7 +26,9 @@ pub(super) struct ClaimAuthority {
 pub(super) fn verify_security_authority(
     options: &ShipMatrixOptions,
     report: Option<&PublicBaselineReport>,
-    security: Option<&Value>,
+    security: Option<&PublicBenchmarkReport>,
+    verified_memory_runs: &[VerifiedArtifact<MemoryRunArtifact>],
+    verified_security_suite: Option<&VerifiedArtifact<MemoryBenchSuiteFixture>>,
     implementation: &ImplementationIdentity,
 ) -> SecurityAuthority {
     let mut diagnostics = Vec::new();
@@ -41,14 +46,22 @@ pub(super) fn verify_security_authority(
 
     verify_security_outcomes(security, &mut diagnostics);
     let identities = security
-        .and_then(|value| value.get("run_artifacts"))
-        .and_then(Value::as_array)
-        .map(|paths| collect_security_identities(&options.public_root, paths, &mut diagnostics))
+        .map(|value| {
+            collect_security_identities(
+                &value.run_artifacts,
+                verified_memory_runs,
+                &mut diagnostics,
+            )
+        })
         .unwrap_or_else(|| {
             diagnostics.push("security report has no run_artifacts array".to_string());
             SecurityRunIdentities::default()
         });
-    verify_security_task_set(options, &identities.task_ids, &mut diagnostics);
+    verify_typed_security_task_set(
+        verified_security_suite,
+        &identities.task_ids,
+        &mut diagnostics,
+    );
     let benchmark_commit = if identities.commits.len() == 1 {
         identities.commits.first().cloned()
     } else {
@@ -80,7 +93,12 @@ pub(super) fn verify_security_authority(
                 "security run commit is not a full Git SHA: {commit}"
             ));
         } else {
-            verify_security_suite_binding(options, security, &identities, &mut diagnostics);
+            verify_security_suite_binding(
+                security,
+                verified_security_suite,
+                &identities,
+                &mut diagnostics,
+            );
             if !security_source_equivalent(
                 commit,
                 benchmark_tree.as_deref(),
@@ -120,20 +138,15 @@ fn verify_security_report_binding(
         diagnostics.push("verified public manifest omitted adversarial-policy v2".to_string());
         return;
     };
-    let selected = match options.security_report_path.canonicalize() {
-        Ok(path) => path,
-        Err(error) => {
-            diagnostics.push(format!(
-                "cannot resolve selected security report {}: {error}",
-                options.security_report_path.display()
-            ));
-            return;
-        }
-    };
+    let selected = options
+        .security_report_path
+        .strip_prefix(&options.public_root)
+        .ok()
+        .map(|path| path.to_string_lossy().replace('\\', "/"));
     let covered = report.reports.iter().any(|entry| {
         entry.benchmark_id == "adversarial-policy"
             && entry.benchmark_version == "v2"
-            && security_report_path_matches(options, &entry.path, &selected)
+            && selected.as_deref() == Some(entry.path.as_str())
     });
     if !covered {
         diagnostics.push(format!(
@@ -143,6 +156,7 @@ fn verify_security_report_binding(
     }
 }
 
+#[cfg(test)]
 pub(super) fn security_report_path_matches(
     options: &ShipMatrixOptions,
     manifest_entry_path: &str,
@@ -156,67 +170,41 @@ pub(super) fn security_report_path_matches(
 }
 
 fn collect_security_identities(
-    public_root: &Path,
-    paths: &[Value],
+    paths: &[String],
+    verified_runs: &[VerifiedArtifact<MemoryRunArtifact>],
     diagnostics: &mut Vec<String>,
 ) -> SecurityRunIdentities {
     let mut identities = SecurityRunIdentities::default();
-    let root = match public_root.canonicalize() {
-        Ok(root) => root,
-        Err(error) => {
-            diagnostics.push(format!(
-                "cannot resolve public root {}: {error}",
-                public_root.display()
-            ));
-            return identities;
-        }
-    };
     if paths.is_empty() {
         diagnostics.push("security report run_artifacts is empty".to_string());
     }
-    for value in paths {
-        let Some(relative) = value.as_str() else {
-            diagnostics.push("security run_artifacts contains a non-string path".to_string());
+    for relative in paths {
+        let Some(run) = verified_runs
+            .iter()
+            .find(|artifact| artifact.path == *relative)
+            .map(|artifact| &artifact.value)
+        else {
+            diagnostics.push(format!(
+                "security run is absent from verifier snapshot: {relative}"
+            ));
             continue;
         };
-        let candidate = public_root.join(relative);
-        let resolved = match candidate.canonicalize() {
-            Ok(path) if path.starts_with(&root) => path,
-            Ok(_) => {
-                diagnostics.push(format!("security run path escapes public root: {relative}"));
-                continue;
-            }
-            Err(error) => {
-                diagnostics.push(format!("cannot resolve security run {relative}: {error}"));
-                continue;
-            }
-        };
-        let Some(run) = super::read_json_value(&resolved).ok() else {
-            diagnostics.push(format!("security run is invalid JSON: {relative}"));
-            continue;
-        };
-        match run.get("task_id").and_then(Value::as_str) {
-            Some(task_id) if identities.task_ids.insert(task_id.to_string()) => {}
-            Some(task_id) => {
-                diagnostics.push(format!("security run task_id is duplicated: {task_id}"))
-            }
-            None => diagnostics.push(format!("security run lacks task_id: {relative}")),
+        if !identities.task_ids.insert(run.task_id.clone()) {
+            diagnostics.push(format!(
+                "security run task_id is duplicated: {}",
+                run.task_id
+            ));
         }
-        match run
-            .pointer("/environment/remem_commit")
-            .and_then(Value::as_str)
-        {
-            Some(commit) => {
-                identities.commits.insert(commit.to_string());
-            }
-            None => diagnostics.push(format!(
+        if run.environment.remem_commit.trim().is_empty() {
+            diagnostics.push(format!(
                 "security run lacks environment.remem_commit: {relative}"
-            )),
+            ));
+        } else {
+            identities
+                .commits
+                .insert(run.environment.remem_commit.clone());
         }
-        match run
-            .pointer("/environment/fixture_revision")
-            .and_then(Value::as_str)
-        {
+        match run.environment.fixture_revision.as_deref() {
             Some(revision) => {
                 identities.fixture_revisions.insert(revision.to_string());
             }
@@ -224,7 +212,7 @@ fn collect_security_identities(
                 "security run lacks environment.fixture_revision: {relative}"
             )),
         }
-        match run.get("suite_content_identity").and_then(Value::as_str) {
+        match run.suite_content_identity.as_deref() {
             Some(identity) => {
                 identities
                     .suite_content_identities
@@ -234,11 +222,8 @@ fn collect_security_identities(
                 "security run lacks suite_content_identity: {relative}"
             )),
         }
-        match (
-            run.pointer("/environment/os").and_then(Value::as_str),
-            run.pointer("/environment/arch").and_then(Value::as_str),
-        ) {
-            (Some(os), Some(arch)) if !os.trim().is_empty() && !arch.trim().is_empty() => {
+        match (&run.environment.os, &run.environment.arch) {
+            (os, arch) if !os.trim().is_empty() && !arch.trim().is_empty() => {
                 identities
                     .platforms
                     .insert((os.to_string(), arch.to_string()));
@@ -247,19 +232,12 @@ fn collect_security_identities(
                 "security run lacks a complete environment.os/arch identity: {relative}"
             )),
         }
-        if run
-            .pointer("/environment/source_dirty")
-            .and_then(Value::as_bool)
-            != Some(false)
-        {
+        if run.environment.source_dirty != Some(false) {
             diagnostics.push(format!(
                 "security run lacks clean-source attestation: {relative}"
             ));
         }
-        match run
-            .pointer("/environment/production_input_tree_sha256")
-            .and_then(Value::as_str)
-        {
+        match run.environment.production_input_tree_sha256.as_deref() {
             Some(tree) if is_sha256(tree) => {
                 identities.production_trees.insert(tree.to_string());
             }
@@ -268,7 +246,8 @@ fn collect_security_identities(
             )),
         }
         if run
-            .pointer("/metrics/policy/policy_failure_count")
+            .metrics
+            .pointer("/policy/policy_failure_count")
             .and_then(Value::as_u64)
             != Some(0)
         {
@@ -279,47 +258,25 @@ fn collect_security_identities(
 }
 
 fn verify_security_suite_binding(
-    options: &ShipMatrixOptions,
-    security: Option<&Value>,
+    security: Option<&PublicBenchmarkReport>,
+    suite: Option<&VerifiedArtifact<MemoryBenchSuiteFixture>>,
     identities: &SecurityRunIdentities,
     diagnostics: &mut Vec<String>,
 ) {
-    let suite_path = options
-        .public_root
-        .join("memory/suites/adversarial-policy/suite.json");
-    let current_bytes = match fs::read(&suite_path) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            diagnostics.push(format!(
-                "cannot read current adversarial-policy v2 suite {}: {error}",
-                suite_path.display()
-            ));
-            return;
-        }
+    let Some(suite) = suite else {
+        diagnostics.push("verified snapshot omitted adversarial-policy v2 suite".to_string());
+        return;
     };
     let report_identity = security
-        .and_then(|value| value.pointer("/aggregate_metrics/suite_content_identity"))
+        .and_then(|value| value.aggregate_metrics.pointer("/suite_content_identity"))
         .and_then(Value::as_str);
-    verify_executed_suite_identity(
-        &current_bytes,
+    verify_executed_suite_digest(
+        &suite.sha256,
         report_identity,
         &identities.suite_content_identities,
         diagnostics,
     );
-    let suite_path = match suite_path.canonicalize() {
-        Ok(path) => path,
-        Err(error) => {
-            diagnostics.push(format!("cannot resolve security suite path: {error}"));
-            return;
-        }
-    };
-    let expected_revision = super::read_json_value(&suite_path).ok().and_then(|suite| {
-        suite
-            .get("fixture_revision")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-    });
-    let expected_revisions = expected_revision.into_iter().collect::<BTreeSet<_>>();
+    let expected_revisions = BTreeSet::from([suite.value.fixture_revision.clone()]);
     if identities.fixture_revisions != expected_revisions {
         diagnostics.push(format!(
             "security run fixture revisions do not exactly bind the current suite: expected={expected_revisions:?} actual={:?}",
@@ -328,13 +285,28 @@ fn verify_security_suite_binding(
     }
 }
 
+#[cfg(test)]
 pub(super) fn verify_executed_suite_identity(
     current_bytes: &[u8],
     report_identity: Option<&str>,
     run_identities: &BTreeSet<String>,
     diagnostics: &mut Vec<String>,
 ) {
-    let expected = suite_content_identity(current_bytes);
+    verify_executed_suite_digest(
+        &format!("{:x}", Sha256::digest(current_bytes)),
+        report_identity,
+        run_identities,
+        diagnostics,
+    );
+}
+
+fn verify_executed_suite_digest(
+    digest: &str,
+    report_identity: Option<&str>,
+    run_identities: &BTreeSet<String>,
+    diagnostics: &mut Vec<String>,
+) {
+    let expected = format!("sha256-raw-suite-v1:{digest}");
     if report_identity != Some(expected.as_str()) {
         diagnostics.push(format!(
             "security report suite content identity mismatch: expected={expected} actual={}",
@@ -347,10 +319,6 @@ pub(super) fn verify_executed_suite_identity(
             "security runs do not exactly bind the executed suite content: expected={expected_runs:?} actual={run_identities:?}"
         ));
     }
-}
-
-fn suite_content_identity(bytes: &[u8]) -> String {
-    format!("sha256-raw-suite-v1:{:x}", Sha256::digest(bytes))
 }
 
 pub(super) fn verify_security_platforms(
@@ -366,6 +334,7 @@ pub(super) fn verify_security_platforms(
     }
 }
 
+#[cfg(test)]
 pub(super) fn verify_security_task_set(
     options: &ShipMatrixOptions,
     actual: &BTreeSet<String>,
@@ -402,6 +371,45 @@ pub(super) fn verify_security_task_set(
             )),
             None => diagnostics
                 .push("adversarial-policy v2 suite contains a task without an id".to_string()),
+        }
+    }
+    if expected.is_empty() {
+        diagnostics.push("adversarial-policy v2 suite task set is empty".to_string());
+        return;
+    }
+    let missing = expected.difference(actual).cloned().collect::<Vec<_>>();
+    let unexpected = actual.difference(&expected).cloned().collect::<Vec<_>>();
+    if !missing.is_empty() || !unexpected.is_empty() {
+        diagnostics.push(format!(
+            "security run task set mismatch: missing=[{}] unexpected=[{}]",
+            missing.join(","),
+            unexpected.join(",")
+        ));
+    }
+}
+
+fn verify_typed_security_task_set(
+    suite: Option<&VerifiedArtifact<MemoryBenchSuiteFixture>>,
+    actual: &BTreeSet<String>,
+    diagnostics: &mut Vec<String>,
+) {
+    let Some(suite) = suite else {
+        diagnostics.push("verified snapshot omitted adversarial-policy v2 suite".to_string());
+        return;
+    };
+    if suite.value.version != "v2" || suite.value.fixture_revision != "adversarial-policy-v2" {
+        diagnostics.push(
+            "adversarial-policy suite identity must be version v2 and fixture_revision adversarial-policy-v2"
+                .to_string(),
+        );
+    }
+    let mut expected = BTreeSet::new();
+    for task in &suite.value.tasks {
+        if !expected.insert(task.id.clone()) {
+            diagnostics.push(format!(
+                "adversarial-policy v2 suite task_id is duplicated: {}",
+                task.id
+            ));
         }
     }
     if expected.is_empty() {
@@ -502,7 +510,10 @@ fn production_pathspec() -> [&'static str; 11] {
     ]
 }
 
-fn verify_security_outcomes(security: Option<&Value>, diagnostics: &mut Vec<String>) {
+fn verify_security_outcomes(
+    security: Option<&PublicBenchmarkReport>,
+    diagnostics: &mut Vec<String>,
+) {
     let required = [
         ("/aggregate_metrics/policy/non_retention_leak_rate", 0.0),
         ("/aggregate_metrics/policy/policy_failure_rate", 0.0),
@@ -516,7 +527,11 @@ fn verify_security_outcomes(security: Option<&Value>, diagnostics: &mut Vec<Stri
     ];
     for (pointer, expected) in required {
         let actual = security
-            .and_then(|value| value.pointer(pointer))
+            .and_then(|value| {
+                value
+                    .aggregate_metrics
+                    .pointer(pointer.trim_start_matches("/aggregate_metrics"))
+            })
             .and_then(Value::as_f64);
         if actual != Some(expected) {
             diagnostics.push(format!(
