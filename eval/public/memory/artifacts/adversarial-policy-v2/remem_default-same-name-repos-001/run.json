@@ -1,4 +1,30 @@
 {
+  "schema_version": 1,
+  "benchmark_id": "adversarial-policy",
+  "benchmark_version": "v2",
+  "layer": "memory_system_capability",
+  "suite": "adversarial-policy",
+  "condition": "remem_default",
+  "task_id": "same-name-repos-001",
+  "run_index": 0,
+  "reference_time_epoch": 1760000000,
+  "reader_model": {
+    "model": "deterministic-memory-reader",
+    "prompt_hash": "sha256:d05060faf53bc785faa31dff4f854d3bd3ccdbc902a85dd94c8155973b8d3184",
+    "provider": "fixture",
+    "temperature": 0
+  },
+  "environment": {
+    "os": "macos",
+    "arch": "aarch64",
+    "remem_commit": "9305cbd4a90396e60890396595e09f8b9b22987a",
+    "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/same-name-repos-001",
+    "docker_image_digest": "local-fixture-no-docker",
+    "fixture_revision": "adversarial-policy-v2",
+    "repo_base_commit": null,
+    "source_dirty": false,
+    "production_input_tree_sha256": "c785241c0cfe5f32d9558fcfd2c759f7feeb59a8003fe24236b0327805ff2ae8"
+  },
   "answer": {
     "abstained": true,
     "no_answer_correct": true,
@@ -7,50 +33,20 @@
     "temporal_as_of_correct": true,
     "text": "Insufficient benchmark evidence to answer."
   },
-  "artifact_sha256": {
-    "answer": "4500d697f29f9e0cc3aae5f88cfab1ffb36a45f3eb99893dd279c71f42c8b6ed",
-    "diagnosis": "987df2247df7b2e78bd3d3f675bcac4663eca6854bcbb093ee318a7a7417d66d",
-    "reader_input": "857b62f1592edd60a16750e07da7167130c03d8231b4b10a89d3d4f79a09ba25",
-    "remem_db_snapshot": "8c404631486476a805cfc3df54203b7528f034ed9daef7e1229210d1cd14d448",
-    "retrieved_evidence": "5160975d41c6e7deffd62e69e123fa4b64525a27e67d6b228dc1838fac2acdad",
-    "score": "9104fa05eb1c5d505b05892d47133caa21b33deba83a24a136a3fcc88446bf64"
-  },
-  "artifacts": {
-    "answer": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/answer.json",
-    "diagnosis": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/diagnosis.json",
-    "reader_input": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/reader_input.txt",
-    "remem_db_snapshot": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/remem.db.snapshot.sqlite3",
-    "retrieved_evidence": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/retrieved_evidence.json",
-    "score": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/score.json"
-  },
-  "benchmark_id": "adversarial-policy",
-  "benchmark_version": "v2",
-  "condition": "remem_default",
-  "diagnosis": {
-    "notes": [
-      "missing supporting evidence: same-name-001:e1"
+  "retrieval": {
+    "retrieved_memory_ids": [],
+    "retrieved_supporting_evidence_ids": [],
+    "gold_supporting_event_ids": [
+      "same-name-001:e1"
     ],
-    "policy_abstention": true,
-    "reader_gap": false,
-    "retrieval_side_gap": false,
-    "write_side_gap": true
-  },
-  "environment": {
-    "arch": "aarch64",
-    "docker_image_digest": "local-fixture-no-docker",
-    "fixture_revision": "adversarial-policy-v2",
-    "os": "macos",
-    "production_input_tree_sha256": "6db99eb78d878c4387ea3338c7b962cf9eeb46f57087143d6256c3c831a7988b",
-    "remem_commit": "322ad9f37cb65e3bc23b72c8ff4658ff15ca97d4",
-    "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/same-name-repos-001",
-    "repo_base_commit": null,
-    "source_dirty": false
+    "missing_supporting_evidence_ids": [
+      "same-name-001:e1"
+    ]
   },
   "evidence": {
-    "cited_event_ids": [],
-    "cited_memory_ids": []
+    "cited_memory_ids": [],
+    "cited_event_ids": []
   },
-  "layer": "memory_system_capability",
   "metrics": {
     "abstention_accuracy": 1.0,
     "answer_score": 1.0,
@@ -80,26 +76,30 @@
     "staleness_accuracy": 1.0,
     "support_coverage": 0.0
   },
-  "reader_model": {
-    "model": "deterministic-memory-reader",
-    "prompt_hash": "sha256:d05060faf53bc785faa31dff4f854d3bd3ccdbc902a85dd94c8155973b8d3184",
-    "provider": "fixture",
-    "temperature": 0
+  "diagnosis": {
+    "write_side_gap": true,
+    "retrieval_side_gap": false,
+    "reader_gap": false,
+    "policy_abstention": true,
+    "notes": [
+      "missing supporting evidence: same-name-001:e1"
+    ]
   },
-  "reference_time_epoch": 1760000000,
-  "retrieval": {
-    "gold_supporting_event_ids": [
-      "same-name-001:e1"
-    ],
-    "missing_supporting_evidence_ids": [
-      "same-name-001:e1"
-    ],
-    "retrieved_memory_ids": [],
-    "retrieved_supporting_evidence_ids": []
+  "artifacts": {
+    "answer": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/answer.json",
+    "diagnosis": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/diagnosis.json",
+    "reader_input": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/reader_input.txt",
+    "remem_db_snapshot": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/remem.db.snapshot.sqlite3",
+    "retrieved_evidence": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/retrieved_evidence.json",
+    "score": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/score.json"
   },
-  "run_index": 0,
-  "schema_version": 1,
-  "suite": "adversarial-policy",
-  "suite_content_identity": "sha256-raw-suite-v1:56dad240cc175fb3d3900875f05351b9541f9ef845aa54eddfc460151f3e257d",
-  "task_id": "same-name-repos-001"
+  "artifact_sha256": {
+    "answer": "4500d697f29f9e0cc3aae5f88cfab1ffb36a45f3eb99893dd279c71f42c8b6ed",
+    "diagnosis": "987df2247df7b2e78bd3d3f675bcac4663eca6854bcbb093ee318a7a7417d66d",
+    "reader_input": "857b62f1592edd60a16750e07da7167130c03d8231b4b10a89d3d4f79a09ba25",
+    "remem_db_snapshot": "14772316685b23120cbbf95b23ded5d207ba2e819cf1c202805f2ce081b7dd8f",
+    "retrieved_evidence": "5160975d41c6e7deffd62e69e123fa4b64525a27e67d6b228dc1838fac2acdad",
+    "score": "9104fa05eb1c5d505b05892d47133caa21b33deba83a24a136a3fcc88446bf64"
+  },
+  "suite_content_identity": "sha256-raw-suite-v1:56dad240cc175fb3d3900875f05351b9541f9ef845aa54eddfc460151f3e257d"
 }

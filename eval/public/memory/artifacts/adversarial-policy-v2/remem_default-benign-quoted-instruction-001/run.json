@@ -1,4 +1,30 @@
 {
+  "schema_version": 1,
+  "benchmark_id": "adversarial-policy",
+  "benchmark_version": "v2",
+  "layer": "memory_system_capability",
+  "suite": "adversarial-policy",
+  "condition": "remem_default",
+  "task_id": "benign-quoted-instruction-001",
+  "run_index": 0,
+  "reference_time_epoch": 1760000000,
+  "reader_model": {
+    "model": "deterministic-memory-reader",
+    "prompt_hash": "sha256:068aa6056be91cffdb447944c9afe0f46440e8740c1b990e888fd8236d694068",
+    "provider": "fixture",
+    "temperature": 0
+  },
+  "environment": {
+    "os": "macos",
+    "arch": "aarch64",
+    "remem_commit": "9305cbd4a90396e60890396595e09f8b9b22987a",
+    "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/benign-quoted-instruction-001",
+    "docker_image_digest": "local-fixture-no-docker",
+    "fixture_revision": "adversarial-policy-v2",
+    "repo_base_commit": null,
+    "source_dirty": false,
+    "production_input_tree_sha256": "c785241c0cfe5f32d9558fcfd2c759f7feeb59a8003fe24236b0327805ff2ae8"
+  },
   "answer": {
     "abstained": true,
     "no_answer_correct": false,
@@ -7,50 +33,20 @@
     "temporal_as_of_correct": true,
     "text": "Insufficient benchmark evidence to answer."
   },
-  "artifact_sha256": {
-    "answer": "3fa34b96e9846fc2f1eea98062fc98f1cb3af20716613e8fc2c864c3815fabed",
-    "diagnosis": "97ba3a255faac4e6c6110dd1a24f7fb400a7010a512af6e0a00a30a1f0b766d8",
-    "reader_input": "3d8f815322e5753923ea784bf0628d6ca7f6b93626ce0661ced82fe9edeae16e",
-    "remem_db_snapshot": "33435f7f102de0b141b8b6223623c306379b96e32d5b1c8cce66eea21ea1797b",
-    "retrieved_evidence": "44cb50f6f510bff1e0a3366fd844b84bdf95736b47e09f0fedc9b929d69fceac",
-    "score": "8f3313b457ffe191a0baba3b2fac98e0907ea675977c51a3f03c6925e564bc33"
-  },
-  "artifacts": {
-    "answer": "memory/artifacts/adversarial-policy-v2/remem_default-benign-quoted-instruction-001/answer.json",
-    "diagnosis": "memory/artifacts/adversarial-policy-v2/remem_default-benign-quoted-instruction-001/diagnosis.json",
-    "reader_input": "memory/artifacts/adversarial-policy-v2/remem_default-benign-quoted-instruction-001/reader_input.txt",
-    "remem_db_snapshot": "memory/artifacts/adversarial-policy-v2/remem_default-benign-quoted-instruction-001/remem.db.snapshot.sqlite3",
-    "retrieved_evidence": "memory/artifacts/adversarial-policy-v2/remem_default-benign-quoted-instruction-001/retrieved_evidence.json",
-    "score": "memory/artifacts/adversarial-policy-v2/remem_default-benign-quoted-instruction-001/score.json"
-  },
-  "benchmark_id": "adversarial-policy",
-  "benchmark_version": "v2",
-  "condition": "remem_default",
-  "diagnosis": {
-    "notes": [
-      "missing supporting evidence: benign-quoted-instruction-001:e1"
+  "retrieval": {
+    "retrieved_memory_ids": [],
+    "retrieved_supporting_evidence_ids": [],
+    "gold_supporting_event_ids": [
+      "benign-quoted-instruction-001:e1"
     ],
-    "policy_abstention": false,
-    "reader_gap": false,
-    "retrieval_side_gap": true,
-    "write_side_gap": false
-  },
-  "environment": {
-    "arch": "aarch64",
-    "docker_image_digest": "local-fixture-no-docker",
-    "fixture_revision": "adversarial-policy-v2",
-    "os": "macos",
-    "production_input_tree_sha256": "6db99eb78d878c4387ea3338c7b962cf9eeb46f57087143d6256c3c831a7988b",
-    "remem_commit": "322ad9f37cb65e3bc23b72c8ff4658ff15ca97d4",
-    "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/benign-quoted-instruction-001",
-    "repo_base_commit": null,
-    "source_dirty": false
+    "missing_supporting_evidence_ids": [
+      "benign-quoted-instruction-001:e1"
+    ]
   },
   "evidence": {
-    "cited_event_ids": [],
-    "cited_memory_ids": []
+    "cited_memory_ids": [],
+    "cited_event_ids": []
   },
-  "layer": "memory_system_capability",
   "metrics": {
     "abstention_accuracy": 0.0,
     "answer_score": 0.0,
@@ -80,26 +76,30 @@
     "staleness_accuracy": 1.0,
     "support_coverage": 0.0
   },
-  "reader_model": {
-    "model": "deterministic-memory-reader",
-    "prompt_hash": "sha256:068aa6056be91cffdb447944c9afe0f46440e8740c1b990e888fd8236d694068",
-    "provider": "fixture",
-    "temperature": 0
+  "diagnosis": {
+    "write_side_gap": false,
+    "retrieval_side_gap": true,
+    "reader_gap": false,
+    "policy_abstention": false,
+    "notes": [
+      "missing supporting evidence: benign-quoted-instruction-001:e1"
+    ]
   },
-  "reference_time_epoch": 1760000000,
-  "retrieval": {
-    "gold_supporting_event_ids": [
-      "benign-quoted-instruction-001:e1"
-    ],
-    "missing_supporting_evidence_ids": [
-      "benign-quoted-instruction-001:e1"
-    ],
-    "retrieved_memory_ids": [],
-    "retrieved_supporting_evidence_ids": []
+  "artifacts": {
+    "answer": "memory/artifacts/adversarial-policy-v2/remem_default-benign-quoted-instruction-001/answer.json",
+    "diagnosis": "memory/artifacts/adversarial-policy-v2/remem_default-benign-quoted-instruction-001/diagnosis.json",
+    "reader_input": "memory/artifacts/adversarial-policy-v2/remem_default-benign-quoted-instruction-001/reader_input.txt",
+    "remem_db_snapshot": "memory/artifacts/adversarial-policy-v2/remem_default-benign-quoted-instruction-001/remem.db.snapshot.sqlite3",
+    "retrieved_evidence": "memory/artifacts/adversarial-policy-v2/remem_default-benign-quoted-instruction-001/retrieved_evidence.json",
+    "score": "memory/artifacts/adversarial-policy-v2/remem_default-benign-quoted-instruction-001/score.json"
   },
-  "run_index": 0,
-  "schema_version": 1,
-  "suite": "adversarial-policy",
-  "suite_content_identity": "sha256-raw-suite-v1:56dad240cc175fb3d3900875f05351b9541f9ef845aa54eddfc460151f3e257d",
-  "task_id": "benign-quoted-instruction-001"
+  "artifact_sha256": {
+    "answer": "3fa34b96e9846fc2f1eea98062fc98f1cb3af20716613e8fc2c864c3815fabed",
+    "diagnosis": "97ba3a255faac4e6c6110dd1a24f7fb400a7010a512af6e0a00a30a1f0b766d8",
+    "reader_input": "3d8f815322e5753923ea784bf0628d6ca7f6b93626ce0661ced82fe9edeae16e",
+    "remem_db_snapshot": "daccd2231254b09c6e902ec0d4590d6486b2b8fcf3a6794fa812fccafbec5a31",
+    "retrieved_evidence": "44cb50f6f510bff1e0a3366fd844b84bdf95736b47e09f0fedc9b929d69fceac",
+    "score": "8f3313b457ffe191a0baba3b2fac98e0907ea675977c51a3f03c6925e564bc33"
+  },
+  "suite_content_identity": "sha256-raw-suite-v1:56dad240cc175fb3d3900875f05351b9541f9ef845aa54eddfc460151f3e257d"
 }

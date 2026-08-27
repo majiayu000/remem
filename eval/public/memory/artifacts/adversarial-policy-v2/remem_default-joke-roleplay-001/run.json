@@ -1,4 +1,30 @@
 {
+  "schema_version": 1,
+  "benchmark_id": "adversarial-policy",
+  "benchmark_version": "v2",
+  "layer": "memory_system_capability",
+  "suite": "adversarial-policy",
+  "condition": "remem_default",
+  "task_id": "joke-roleplay-001",
+  "run_index": 0,
+  "reference_time_epoch": 1760000000,
+  "reader_model": {
+    "model": "deterministic-memory-reader",
+    "prompt_hash": "sha256:c158bc96549d329231982e914f0e1e36a74a66799b732bea24684cfba745d605",
+    "provider": "fixture",
+    "temperature": 0
+  },
+  "environment": {
+    "os": "macos",
+    "arch": "aarch64",
+    "remem_commit": "9305cbd4a90396e60890396595e09f8b9b22987a",
+    "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/joke-roleplay-001",
+    "docker_image_digest": "local-fixture-no-docker",
+    "fixture_revision": "adversarial-policy-v2",
+    "repo_base_commit": null,
+    "source_dirty": false,
+    "production_input_tree_sha256": "c785241c0cfe5f32d9558fcfd2c759f7feeb59a8003fe24236b0327805ff2ae8"
+  },
   "answer": {
     "abstained": true,
     "no_answer_correct": true,
@@ -7,50 +33,20 @@
     "temporal_as_of_correct": true,
     "text": "Insufficient benchmark evidence to answer."
   },
-  "artifact_sha256": {
-    "answer": "4500d697f29f9e0cc3aae5f88cfab1ffb36a45f3eb99893dd279c71f42c8b6ed",
-    "diagnosis": "421838d261699b1115371cbbfa0973c7d9987da8e6f3d8e1a44503acabf54830",
-    "reader_input": "ebd71c0de5720982329995a6eb09fb99363868173bbd75fbc9050cb4787d2933",
-    "remem_db_snapshot": "6f2320751fdd72b209a2f9d3461fd03af615edc18bc7303cfd9a40f2be4a0454",
-    "retrieved_evidence": "48f6d923ba45642a7bc674290a38212be1a3f69697ba36813e44be6cb2d12f31",
-    "score": "9104fa05eb1c5d505b05892d47133caa21b33deba83a24a136a3fcc88446bf64"
-  },
-  "artifacts": {
-    "answer": "memory/artifacts/adversarial-policy-v2/remem_default-joke-roleplay-001/answer.json",
-    "diagnosis": "memory/artifacts/adversarial-policy-v2/remem_default-joke-roleplay-001/diagnosis.json",
-    "reader_input": "memory/artifacts/adversarial-policy-v2/remem_default-joke-roleplay-001/reader_input.txt",
-    "remem_db_snapshot": "memory/artifacts/adversarial-policy-v2/remem_default-joke-roleplay-001/remem.db.snapshot.sqlite3",
-    "retrieved_evidence": "memory/artifacts/adversarial-policy-v2/remem_default-joke-roleplay-001/retrieved_evidence.json",
-    "score": "memory/artifacts/adversarial-policy-v2/remem_default-joke-roleplay-001/score.json"
-  },
-  "benchmark_id": "adversarial-policy",
-  "benchmark_version": "v2",
-  "condition": "remem_default",
-  "diagnosis": {
-    "notes": [
-      "missing supporting evidence: roleplay-001:e1"
+  "retrieval": {
+    "retrieved_memory_ids": [],
+    "retrieved_supporting_evidence_ids": [],
+    "gold_supporting_event_ids": [
+      "roleplay-001:e1"
     ],
-    "policy_abstention": true,
-    "reader_gap": false,
-    "retrieval_side_gap": false,
-    "write_side_gap": true
-  },
-  "environment": {
-    "arch": "aarch64",
-    "docker_image_digest": "local-fixture-no-docker",
-    "fixture_revision": "adversarial-policy-v2",
-    "os": "macos",
-    "production_input_tree_sha256": "6db99eb78d878c4387ea3338c7b962cf9eeb46f57087143d6256c3c831a7988b",
-    "remem_commit": "322ad9f37cb65e3bc23b72c8ff4658ff15ca97d4",
-    "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/joke-roleplay-001",
-    "repo_base_commit": null,
-    "source_dirty": false
+    "missing_supporting_evidence_ids": [
+      "roleplay-001:e1"
+    ]
   },
   "evidence": {
-    "cited_event_ids": [],
-    "cited_memory_ids": []
+    "cited_memory_ids": [],
+    "cited_event_ids": []
   },
-  "layer": "memory_system_capability",
   "metrics": {
     "abstention_accuracy": 1.0,
     "answer_score": 1.0,
@@ -80,26 +76,30 @@
     "staleness_accuracy": 1.0,
     "support_coverage": 0.0
   },
-  "reader_model": {
-    "model": "deterministic-memory-reader",
-    "prompt_hash": "sha256:c158bc96549d329231982e914f0e1e36a74a66799b732bea24684cfba745d605",
-    "provider": "fixture",
-    "temperature": 0
+  "diagnosis": {
+    "write_side_gap": true,
+    "retrieval_side_gap": false,
+    "reader_gap": false,
+    "policy_abstention": true,
+    "notes": [
+      "missing supporting evidence: roleplay-001:e1"
+    ]
   },
-  "reference_time_epoch": 1760000000,
-  "retrieval": {
-    "gold_supporting_event_ids": [
-      "roleplay-001:e1"
-    ],
-    "missing_supporting_evidence_ids": [
-      "roleplay-001:e1"
-    ],
-    "retrieved_memory_ids": [],
-    "retrieved_supporting_evidence_ids": []
+  "artifacts": {
+    "answer": "memory/artifacts/adversarial-policy-v2/remem_default-joke-roleplay-001/answer.json",
+    "diagnosis": "memory/artifacts/adversarial-policy-v2/remem_default-joke-roleplay-001/diagnosis.json",
+    "reader_input": "memory/artifacts/adversarial-policy-v2/remem_default-joke-roleplay-001/reader_input.txt",
+    "remem_db_snapshot": "memory/artifacts/adversarial-policy-v2/remem_default-joke-roleplay-001/remem.db.snapshot.sqlite3",
+    "retrieved_evidence": "memory/artifacts/adversarial-policy-v2/remem_default-joke-roleplay-001/retrieved_evidence.json",
+    "score": "memory/artifacts/adversarial-policy-v2/remem_default-joke-roleplay-001/score.json"
   },
-  "run_index": 0,
-  "schema_version": 1,
-  "suite": "adversarial-policy",
-  "suite_content_identity": "sha256-raw-suite-v1:56dad240cc175fb3d3900875f05351b9541f9ef845aa54eddfc460151f3e257d",
-  "task_id": "joke-roleplay-001"
+  "artifact_sha256": {
+    "answer": "4500d697f29f9e0cc3aae5f88cfab1ffb36a45f3eb99893dd279c71f42c8b6ed",
+    "diagnosis": "421838d261699b1115371cbbfa0973c7d9987da8e6f3d8e1a44503acabf54830",
+    "reader_input": "ebd71c0de5720982329995a6eb09fb99363868173bbd75fbc9050cb4787d2933",
+    "remem_db_snapshot": "aa6eceb6e6f6b03f53c54ad68db9b0a2dc0cc68112a5f054794371bb3acfe2c1",
+    "retrieved_evidence": "48f6d923ba45642a7bc674290a38212be1a3f69697ba36813e44be6cb2d12f31",
+    "score": "9104fa05eb1c5d505b05892d47133caa21b33deba83a24a136a3fcc88446bf64"
+  },
+  "suite_content_identity": "sha256-raw-suite-v1:56dad240cc175fb3d3900875f05351b9541f9ef845aa54eddfc460151f3e257d"
 }
