@@ -6,11 +6,13 @@ use. Use this page when you need configuration, operations, architecture, API,
 or evidence details.
 
 Each route below identifies its authority. **Current executable** means the
-installed CLI or runtime reports the effective behavior. **Current contract**
-means the architecture or an entry marked current in the
-[spec index](specs/README.md). **Current guide** explains those surfaces but
-does not override executable help or a current contract. Dated research and
-historical design references are labeled explicitly and are not runtime truth.
+installed CLI or runtime reports the effective behavior. **Current
+architecture** is the module and data-flow source in `docs/ARCHITECTURE.md`.
+**Current contract** means an entry marked current in the
+[spec index](specs/README.md). **Current guide** explains shipped behavior but
+does not override executable help, current architecture, or a current
+contract. Dated research and historical design references are labeled
+explicitly and are not runtime truth.
 
 ## Start here
 
@@ -31,7 +33,7 @@ historical design references are labeled explicitly and are not runtime truth.
 | SessionStart injection and cache stability | [Architecture](ARCHITECTURE.md) and [cache-stability contract](specs/cache-stable-injection/PRODUCT.md) | Current architecture and contract |
 | Cursor host evidence and limitations | [Cursor contract research](research/cursor-hooks-contract-2026-07-23.md) | Dated research snapshot; verify with `remem doctor` |
 | Plugin target design | [Codex plugin complete design](spec-codex-plugin-complete-design.md) | Historical target design; use the Plugin README for shipped behavior |
-| Release channels and artifact policy | [Release lifecycle](release-lifecycle.md) | Current release contract |
+| Release channels and artifact policy | [Release lifecycle](release-lifecycle.md) | Current guide |
 
 Host behavior changes quickly. `remem doctor` and `remem install --dry-run`
 are the current executable checks for a machine; design documents explain why
@@ -57,7 +59,7 @@ the exact current option set.
 | Topic | Primary route | Authority |
 |---|---|---|
 | MCP search, detail retrieval, saving, and workstreams | [Memory usage guide](memory-usage-guide.md) | Current guide |
-| Curated-memory lifecycle | [Memory lifecycle](memory-lifecycle.md) | Current implementation guide |
+| Curated-memory lifecycle and stored status | [Memory lifecycle](memory-lifecycle.md) | Current implementation guide; visibility authority is the [legacy-unverified contract](specs/legacy-unverified-context/PRODUCT.md) |
 | Temporal and as-of facts | [Temporal facts](temporal-facts.md) | Current implementation guide |
 | Procedure export | [Procedural memory](procedural-memory.md) | Current implementation guide |
 | User claims, profiles, recall, and review | [User-context contract](specs/user-context-layer/PRODUCT.md) | Current contract |
@@ -95,7 +97,7 @@ assuming an older tool count or schema.
 ## Architecture and data flow
 
 - [Current architecture overview and module map](ARCHITECTURE.md)
-- [Current graph contract](graph-contract.md)
+- [Current graph implementation guide](graph-contract.md)
 - [Current memory ownership and visibility](ARCHITECTURE.md#memory-scope-project-vs-global) and [legacy-unverified quarantine contract](specs/legacy-unverified-context/PRODUCT.md)
 - [Current SessionStart compiler architecture](ARCHITECTURE.md#4-context-injection-sessionstart--context) and [Context Bundle contract](specs/GH932/PRODUCT.md)
 - [Current workstream operations](memory-usage-guide.md#workstreams), [architecture](ARCHITECTURE.md), and [identity-continuity contract](specs/workstream-identity-continuity/PRODUCT.md)

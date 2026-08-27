@@ -20,9 +20,19 @@ soft state transition to preserve provenance and debugging history.
 
 ## State Semantics
 
-`active` memories are the current facts used by default retrieval. `stale`
-memories remain in the database as historical evidence but should not rank as
-current facts unless a caller explicitly asks to include stale entries.
+`active` is a stored lifecycle state, not by itself proof that a memory is
+current or eligible for every read surface. Current-memory classification also
+checks provenance, confidence, validity, state identity, and quarantine state.
+An active row that cannot prove those requirements is classified
+`legacy_unverified`: explicit search and detail remain inspection/recovery
+surfaces and may return it with a visible classification and reason, while
+CurrentTruth and default SessionStart exclude it and audit the exclusion.
+
+The [legacy-unverified visibility contract](specs/legacy-unverified-context/PRODUCT.md)
+is authoritative for the ordered current-memory classes and the difference
+between recovery reads and implicit context. `stale` rows remain historical
+evidence and are excluded from default search unless a caller explicitly asks
+to include them.
 
 Current operational facts can also carry `expires_at_epoch`. Default retrieval
 treats an expired active row as non-current even before cleanup runs. Cleanup
@@ -100,13 +110,17 @@ rows are preserved by `status='stale'`.
 ## Retrieval Rules
 
 Default search excludes stale memories, so corrected facts outrank obsolete
-facts by visibility rather than only by score tuning. Historical/debug flows can
-set `include_stale=true` or query ids directly when they need to inspect the old
-facts.
+facts by visibility rather than only by score tuning. As an explicit
+inspection/recovery surface, search may still return active rows excluded from
+CurrentTruth, including labeled `legacy_unverified` rows. Historical/debug
+flows can set `include_stale=true` or query ids directly when they need to
+inspect old facts.
 
-FTS maintenance follows the same rule: active memories are searchable as current
-facts, while stale rows are removed from the active FTS index by the existing
-status triggers.
+FTS maintenance follows the stored lifecycle state: active rows remain
+searchable, while stale rows are removed from the active FTS index by the
+existing status triggers. Being present in that index does not itself establish
+CurrentTruth or default SessionStart eligibility; the current-memory
+classification applies the additional proof and quarantine checks.
 
 ## Failure Handling
 
