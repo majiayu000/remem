@@ -58,6 +58,15 @@ REPORT_LINK_RE = re.compile(
 
 CLAIM_MARKER_RE = re.compile(r"<!--\s*remem-claim:([a-z0-9][a-z0-9-]*)\s*-->")
 
+RELEASE_POLICY_CONTRACT_LINES = {
+    "| 2 | Coding-agent outcome improvement | A passing artifact verifier; the #931 `no_memory` / `remem_e2e` / `curated_file_budgeted` matrix on the registered 16-task set, exactly registered run indices 0/1/2 per task and condition; positive remem delta versus `no_memory`; reported token/turn/wall-time regressions; and the coding outcome stop-loss gate. |",
+    "| 3 | Public SOTA claim | A public benchmark comparison using the same model, budget, harness, and published artifacts; wording must name the benchmark and condition instead of generalizing to all long-term memory or all coding agents. |",
+    "roadmap wording that says remem improves coding-agent outcomes, beats a",
+    "maintained context file, or is broadly superior for coding workflows. The gate",
+    "- `remem_e2e` beats `no_memory` on resolved rate by at least 10 percentage",
+    "If `curated_file_budgeted` ties or beats remem with lower cost and no material usability",
+}
+
 
 def die(message: str) -> None:
     print(f"FAIL: {message}", file=sys.stderr)
@@ -220,22 +229,8 @@ def line_is_policy_or_negative(text: str) -> bool:
     return NEGATED_STRONG_CLAIM_RE.search(text) is not None
 
 
-def line_is_closed_policy_contract(text: str, context: str) -> bool:
-    stripped = text.strip()
-    if re.match(
-        r"^\|\s*(?:2\s*\|\s*Coding-agent outcome improvement|"
-        r"3\s*\|\s*Public SOTA claim)\s*\|",
-        stripped,
-    ):
-        return True
-    if (
-        "stop-loss gate applies" in context
-        and "roadmap wording that says" in context
-    ):
-        return True
-    if stripped.startswith("-") and "passes only when all of these are true:" in context:
-        return True
-    return stripped.startswith("If ") and "stop-loss" in context
+def line_is_closed_policy_contract(text: str) -> bool:
+    return text.strip() in RELEASE_POLICY_CONTRACT_LINES
 
 
 def line_has_report_link(text: str) -> bool:
@@ -288,15 +283,13 @@ def registered_coding_claim_violation(
 
 
 def classify_violation(
-    text: str, gate: dict[str, object], context: str | None = None
+    text: str, gate: dict[str, object], _context: str | None = None
 ) -> str | None:
     if not STRONG_CLAIM_RE.search(text):
         return None
     # Authorization is line-local. Adjacent headings and prose cannot turn an
     # otherwise unsupported claim into policy or negative wording.
-    if line_is_policy_or_negative(text) or line_is_closed_policy_contract(
-        text, context or text
-    ):
+    if line_is_policy_or_negative(text) or line_is_closed_policy_contract(text):
         return None
 
     if SOTA_CLAIM_RE.search(text):
