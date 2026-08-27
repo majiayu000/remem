@@ -228,7 +228,7 @@ The verified local model is optional; the labeled feature-hash fallback remains
 available. The second-stage local reranker is also optional and disabled until
 configured.
 
-See the [memory-AI config contract](docs/spec-memory-ai-config.md),
+Use the [current configuration routes](docs/README.md#configuration), the
 [local embedding contract](docs/specs/local-semantic-embedding/PRODUCT.md), and
 `remem config`, `remem embedding`, or `remem reranker` help for details.
 

@@ -207,7 +207,7 @@ remem embedding backfill --limit 1000
 经过验证的本地模型可以选择安装，也可以继续使用带明确标签的 feature-hash
 fallback。第二阶段本地 reranker 同样是可选能力，配置前保持关闭。
 
-详细说明见 [Memory AI 配置契约](docs/spec-memory-ai-config.md)、
+详细说明见[当前配置入口](docs/README.md#configuration)、
 [本地 embedding 契约](docs/specs/local-semantic-embedding/PRODUCT.md)，以及
 `remem config`、`remem embedding`、`remem reranker` 的命令帮助。
 
