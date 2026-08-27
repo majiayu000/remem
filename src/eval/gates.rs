@@ -123,26 +123,14 @@ pub(crate) struct EvalGateExecution {
 pub(crate) fn run_eval_gates_with_ship_evidence(
     options: EvalGateOptions,
 ) -> Result<EvalGateExecution> {
+    let baseline_path = options.baseline_path.clone();
+    let thresholds_path = options.thresholds_path.clone();
+    let golden_dataset_path = options.golden_dataset_path.clone();
     let report = run_eval_gates(options)?;
     let ship_options = crate::eval::ship_matrix::ShipMatrixOptions {
-        baseline_path: report
-            .source_artifacts
-            .keys()
-            .find(|path| path.ends_with("baseline.json"))
-            .cloned()
-            .unwrap_or_else(|| DEFAULT_BASELINE_PATH.to_string()),
-        thresholds_path: report
-            .source_artifacts
-            .keys()
-            .find(|path| path.ends_with("thresholds.json"))
-            .cloned()
-            .unwrap_or_else(|| DEFAULT_THRESHOLDS_PATH.to_string()),
-        golden_dataset_path: report
-            .source_artifacts
-            .keys()
-            .find(|path| path.ends_with("golden.json"))
-            .cloned()
-            .unwrap_or_else(|| DEFAULT_GOLDEN_DATASET_PATH.to_string()),
+        baseline_path,
+        thresholds_path,
+        golden_dataset_path,
         input_artifact_sha256: report
             .source_artifacts
             .iter()

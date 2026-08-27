@@ -67,6 +67,12 @@ matrix and outcome scorecard. Remaining material work is final
 architecture/current-spec synchronization and explicit lifecycle decisions for
 the referenced experimental surfaces.
 
+The executable matrix fails closed on evidence identity: the running binary
+must match the checkout, every input hash names the bytes actually consumed,
+and claim authorization comes from one closed machine-readable contract shared
+by the Rust matrix and Python wording guard. Platform evidence is never copied
+or relabeled; a platform without a real persisted-state run is `incomplete`.
+
 ## Active-Memory Safety Boundary
 
 An **activation** is any insert or update that leaves a curated memory row

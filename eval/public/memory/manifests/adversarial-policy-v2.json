@@ -13,7 +13,6 @@
     "remem_default"
   ],
   "reports": [
-    "memory/reports/adversarial-policy-v2.json",
-    "memory/reports/adversarial-policy-v2-linux-x86_64.json"
+    "memory/reports/adversarial-policy-v2.json"
   ]
 }

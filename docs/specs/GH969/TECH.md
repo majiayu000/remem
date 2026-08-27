@@ -500,18 +500,23 @@ Each report must include implementation SHA, dataset/fixture hash, config and
 model identity, environment/platform, condition completeness, metric deltas,
 stop-loss verdict, exclusions, and claim level. A missing arm is `incomplete`,
 not zero and not pass. Component gates bind the exact expected metric-name set,
-not only a prefix match. Security evidence binds every run to one ancestor
-commit, the exact verifier-covered selected report path, the complete suite
-content identity at that commit, and one exact OS/architecture. It remains
-valid only while production source and suite content are equivalent; an
-unsupported current platform fails closed until its own verified report is in
-the manifest. A charter is not a cross-host result, ordinary regressions are
-not default-on authority, and directional baseline strings are not
-coding/public claim authority. Merge and release readiness inherit the legacy
-eval-gate verdict; release readiness also requires a resolvable implementation
-SHA and clean source. Coding claim readiness and the public wording guard share
-the owning locked, hash-bound, current-implementation registry; Level 3 claims
-still require independent authority.
+not only a prefix match. Security evidence binds every run to one producing
+revision, the exact verifier-covered selected report path, the complete
+runtime-consumed suite identity, the persisted SQLite snapshot and all artifact
+hashes, and one exact OS/architecture. Acceptance uses an attested
+production-input tree, not Git ancestry, so an equivalent squash/rebase remains
+valid while changed production inputs fail. Unsupported platforms remain
+`incomplete` until their own genuine report is verified; evidence is never
+copied or relabeled across platforms. A charter is not a cross-host result,
+ordinary regressions are not default-on authority, and directional baseline
+strings are not coding/public claim authority. Merge and release readiness
+inherit the legacy eval-gate verdict; the running binary SHA/tree must match the
+clean checkout before security, merge, release, or claim authority can pass.
+Coding claim readiness and the Python public wording guard consume the same
+closed machine-readable contract and validate exact IDs, comparison, metric,
+allowed/forbidden wording, repository-relative supporting-report path/hash,
+and producing-source equivalence. Policy prose on adjacent lines never
+authorizes claim wording. Level 3 claims still require independent authority.
 
 ## Outcome Scorecard
 
@@ -534,7 +539,10 @@ maintenance_time_and_ai_usage
 Every field must declare its numerator, denominator, eligible population, and
 whether it is measured, unavailable, or not applicable. Unavailable fields do
 not pass a gate. Security leak metrics have a zero-tolerance threshold unless a
-narrower contract is stricter.
+narrower contract is stricter. Task completion excludes runs where the target
+never started. Every measured ratio identifies the exact contributing report
+path and SHA-256. Deterministic fixture latency estimates remain unavailable
+rather than being labeled as measured wall-clock percentiles.
 
 ## Migration And Compatibility
 

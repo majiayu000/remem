@@ -173,9 +173,29 @@ fn committed_public_fixture_passes() -> Result<()> {
 
     assert!(report.passed, "{:#?}", report.failures);
     assert_eq!(report.manifests_checked, 5);
-    assert_eq!(report.reports_checked, 6);
-    assert_eq!(report.run_artifacts_checked, 65);
-    assert_eq!(report.artifact_files_checked, 325);
+    assert_eq!(report.reports_checked, 5);
+    assert_eq!(report.run_artifacts_checked, 45);
+    assert_eq!(report.artifact_files_checked, 245);
+    Ok(())
+}
+
+#[test]
+fn verifier_rejects_placeholder_security_snapshot() -> Result<()> {
+    let root = copy_public_fixture("placeholder-security-snapshot")?;
+    let snapshot = root.join(
+        "memory/artifacts/adversarial-policy-v2/\
+         remem_default-secrets-api-key-001/remem.db.snapshot.sqlite3",
+    );
+    std::fs::write(&snapshot, b"fixture placeholder\n")?;
+
+    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+
+    assert!(!report.passed);
+    assert!(report.failures.iter().any(|failure| {
+        failure.path.ends_with("remem.db.snapshot.sqlite3")
+            && (failure.message.contains("SHA-256 mismatch")
+                || failure.message.contains("open security SQLite snapshot"))
+    }));
     Ok(())
 }
 

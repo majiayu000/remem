@@ -7,11 +7,19 @@
     "temporal_as_of_correct": true,
     "text": "Insufficient benchmark evidence to answer."
   },
+  "artifact_sha256": {
+    "answer": "4500d697f29f9e0cc3aae5f88cfab1ffb36a45f3eb99893dd279c71f42c8b6ed",
+    "diagnosis": "987df2247df7b2e78bd3d3f675bcac4663eca6854bcbb093ee318a7a7417d66d",
+    "reader_input": "857b62f1592edd60a16750e07da7167130c03d8231b4b10a89d3d4f79a09ba25",
+    "remem_db_snapshot": "983946dc466b4f5dcbf568e2bc8e2576709f72e3c5e0f2cfc87fa0f3d0a5ebc7",
+    "retrieved_evidence": "5160975d41c6e7deffd62e69e123fa4b64525a27e67d6b228dc1838fac2acdad",
+    "score": "9104fa05eb1c5d505b05892d47133caa21b33deba83a24a136a3fcc88446bf64"
+  },
   "artifacts": {
     "answer": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/answer.json",
     "diagnosis": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/diagnosis.json",
     "reader_input": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/reader_input.txt",
-    "remem_db_snapshot": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/remem.db.snapshot.tar.zst",
+    "remem_db_snapshot": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/remem.db.snapshot.sqlite3",
     "retrieved_evidence": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/retrieved_evidence.json",
     "score": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/score.json"
   },
@@ -32,8 +40,8 @@
     "docker_image_digest": "local-fixture-no-docker",
     "fixture_revision": "adversarial-policy-v2",
     "os": "macos",
-    "production_input_tree_sha256": "b49450233877c0dca544dafe26391506857d56c391a5591bd77e4197bf3f11eb",
-    "remem_commit": "ab88f48b0621f3475bd73a7916be80b32ba5bdd9",
+    "production_input_tree_sha256": "cda739f2e8dd9bdc7cb503a8c1c6d68c3939e5dd30f6799b45906acf99b81140",
+    "remem_commit": "87e11bdc3fc2f60c058f0698362bfcf5184e18c3",
     "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/same-name-repos-001",
     "repo_base_commit": null,
     "source_dirty": false
