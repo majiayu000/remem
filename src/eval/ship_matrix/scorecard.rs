@@ -17,10 +17,18 @@ pub(super) fn build_scorecard(
         .as_ref()
         .filter(|report| report.artifact_verifier.passed)
         .map(|report| &report.coding_task_outcomes);
-    let coding_source = coding.and_then(|runs| {
+    let task_completion_source = coding.and_then(|runs| {
         artifact_sources(
             runs.iter()
                 .filter(|run| run.target_started == Some(true))
+                .map(|run| run.report_path.as_str())
+                .collect(),
+        )
+    });
+    let memory_help_source = coding.and_then(|runs| {
+        artifact_sources(
+            runs.iter()
+                .filter(|run| run.memory_helped.is_some())
                 .map(|run| run.report_path.as_str())
                 .collect(),
         )
@@ -39,7 +47,7 @@ pub(super) fn build_scorecard(
             "all eligible coding runs",
             "registered GH931 threshold when official matrix is complete",
             "smoke_or_official_as_declared_by_source",
-            coding_source.clone(),
+            task_completion_source,
         ),
         ratio_field(
             "correct_memory_help_rate",
@@ -58,7 +66,7 @@ pub(super) fn build_scorecard(
             "runs with a measured memory_helped verdict",
             "reported; no public threshold until GH931 official matrix",
             "smoke_or_official_as_declared_by_source",
-            coding_source,
+            memory_help_source,
         ),
         unavailable_field(
             "repeated_explanation_rate",

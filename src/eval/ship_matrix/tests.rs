@@ -589,6 +589,43 @@ fn measured_security_ratio_binds_the_exact_selected_artifact() {
 }
 
 #[test]
+fn measured_memory_help_ratio_binds_its_eligible_artifacts() {
+    let report = crate::eval::bench_artifact::generate_public_baseline_report(Path::new(
+        DEFAULT_PUBLIC_ROOT,
+    ))
+    .unwrap();
+    let public = PublicEvidence {
+        report: Some(report),
+        report_error: None,
+        security: None,
+        security_error: None,
+        security_authority: SecurityAuthority {
+            passed: false,
+            benchmark_commit: None,
+            diagnostics: Vec::new(),
+        },
+        claim_authority: ClaimAuthority {
+            coding_passed: false,
+            level3_passed: false,
+            diagnostics: Vec::new(),
+        },
+    };
+
+    let scorecard = build_scorecard(&public, Path::new(DEFAULT_SECURITY_REPORT));
+    let memory_help = scorecard
+        .fields
+        .iter()
+        .find(|field| field.id == "correct_memory_help_rate")
+        .unwrap();
+
+    assert_eq!(memory_help.measurement_state, MeasurementState::Measured);
+    assert!(memory_help
+        .source
+        .as_deref()
+        .is_some_and(|source| source.contains("coding/reports/coding-report-v1.json#sha256=")));
+}
+
+#[test]
 fn evaluated_evidence_rejects_a_file_changed_after_load() {
     let temp = unique_temp_dir("evaluated-bytes");
     std::fs::create_dir_all(&temp).unwrap();
