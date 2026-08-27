@@ -11,7 +11,7 @@
     "answer": "4500d697f29f9e0cc3aae5f88cfab1ffb36a45f3eb99893dd279c71f42c8b6ed",
     "diagnosis": "987df2247df7b2e78bd3d3f675bcac4663eca6854bcbb093ee318a7a7417d66d",
     "reader_input": "857b62f1592edd60a16750e07da7167130c03d8231b4b10a89d3d4f79a09ba25",
-    "remem_db_snapshot": "983946dc466b4f5dcbf568e2bc8e2576709f72e3c5e0f2cfc87fa0f3d0a5ebc7",
+    "remem_db_snapshot": "247302f3dc18f5bf77f05b49319c8884b9cde7b9f2e93e612865788359ff5a8a",
     "retrieved_evidence": "5160975d41c6e7deffd62e69e123fa4b64525a27e67d6b228dc1838fac2acdad",
     "score": "9104fa05eb1c5d505b05892d47133caa21b33deba83a24a136a3fcc88446bf64"
   },
@@ -40,8 +40,8 @@
     "docker_image_digest": "local-fixture-no-docker",
     "fixture_revision": "adversarial-policy-v2",
     "os": "macos",
-    "production_input_tree_sha256": "cda739f2e8dd9bdc7cb503a8c1c6d68c3939e5dd30f6799b45906acf99b81140",
-    "remem_commit": "87e11bdc3fc2f60c058f0698362bfcf5184e18c3",
+    "production_input_tree_sha256": "a92d7519183c4573a3ff2f1a5111a9a9172a9c263ebe39d06b4b27c1151175a4",
+    "remem_commit": "da6cb532ef84010a12206965b275fc7d0aba93c5",
     "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/same-name-repos-001",
     "repo_base_commit": null,
     "source_dirty": false
