@@ -8,12 +8,6 @@ use sha2::{Digest, Sha256};
 use super::{ImplementationIdentity, ShipMatrixOptions};
 use crate::eval::bench_artifact::PublicBaselineReport;
 
-const CODING_CLAIM_IDS: [&str; 3] = [
-    "remem-e2e-vs-no-memory-v1",
-    "remem-e2e-vs-curated-file-budgeted-v1",
-    "remem-e2e-stop-loss-v1",
-];
-
 pub(super) struct SecurityAuthority {
     pub(super) passed: bool,
     pub(super) benchmark_commit: Option<String>,
@@ -33,6 +27,13 @@ pub(super) fn verify_security_authority(
     implementation: &ImplementationIdentity,
 ) -> SecurityAuthority {
     let mut diagnostics = Vec::new();
+    if !implementation.executable_source_equivalent {
+        diagnostics
+            .push("executing eval binary does not match the checkout source identity".to_string());
+    }
+    if implementation.source_dirty != Some(false) {
+        diagnostics.push("current checkout is not clean for security evaluation".to_string());
+    }
     if !report.is_some_and(|value| value.artifact_verifier.passed) {
         diagnostics.push("public artifact verifier did not pass".to_string());
     }
@@ -465,21 +466,11 @@ pub(super) fn verify_security_task_set(
 }
 
 fn security_source_equivalent(
-    benchmark_commit: &str,
+    _benchmark_commit: &str,
     benchmark_tree: Option<&str>,
-    implementation: &ImplementationIdentity,
+    _implementation: &ImplementationIdentity,
     diagnostics: &mut Vec<String>,
 ) -> bool {
-    let Some(current) = implementation.git_sha.as_deref() else {
-        diagnostics.push("current implementation Git SHA is unavailable".to_string());
-        return false;
-    };
-    if !git_succeeds(&["merge-base", "--is-ancestor", benchmark_commit, current]) {
-        diagnostics.push(format!(
-            "security benchmark commit {benchmark_commit} is not an ancestor of {current}"
-        ));
-        return false;
-    }
     let current_tree = production_input_tree_sha256();
     if benchmark_tree.is_none() || current_tree.as_deref() != benchmark_tree {
         diagnostics.push(format!(
@@ -489,27 +480,7 @@ fn security_source_equivalent(
         ));
         return false;
     }
-    let production_pathspec = [
-        "Cargo.toml",
-        "Cargo.lock",
-        "build.rs",
-        ".cargo",
-        "rust-toolchain.toml",
-        "src",
-        "prompts",
-        "assets",
-        ":(exclude)src/eval/ship_matrix.rs",
-        ":(exclude)src/eval/ship_matrix/**",
-        ":(exclude)src/eval/gates.rs",
-    ];
-    let mut committed_args = vec!["diff", "--quiet", benchmark_commit, current, "--"];
-    committed_args.extend(production_pathspec);
-    if !git_succeeds(&committed_args) {
-        diagnostics.push(format!(
-            "production source changed after security benchmark commit {benchmark_commit}"
-        ));
-        return false;
-    }
+    let production_pathspec = production_pathspec();
     let mut worktree_args = vec!["diff", "--quiet", "--"];
     worktree_args.extend(production_pathspec);
     let mut index_args = vec!["diff", "--cached", "--quiet", "--"];
@@ -535,30 +506,46 @@ fn is_sha256(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn production_input_tree_sha256() -> Option<String> {
+pub(super) fn production_input_tree_sha256() -> Option<String> {
     let output = crate::git_util::git_output_soft(
         Path::new("."),
         &[
             "ls-files",
             "-s",
             "--",
-            "Cargo.toml",
-            "Cargo.lock",
-            "build.rs",
-            ".cargo",
-            "rust-toolchain.toml",
-            "src",
-            "prompts",
-            "assets",
-            ":(exclude)src/eval/ship_matrix.rs",
-            ":(exclude)src/eval/ship_matrix/**",
-            ":(exclude)src/eval/gates.rs",
+            production_pathspec()[0],
+            production_pathspec()[1],
+            production_pathspec()[2],
+            production_pathspec()[3],
+            production_pathspec()[4],
+            production_pathspec()[5],
+            production_pathspec()[6],
+            production_pathspec()[7],
+            production_pathspec()[8],
+            production_pathspec()[9],
+            production_pathspec()[10],
         ],
     )?;
     if !output.status.success() || output.stdout.is_empty() {
         return None;
     }
     Some(format!("{:x}", Sha256::digest(&output.stdout)))
+}
+
+fn production_pathspec() -> [&'static str; 11] {
+    [
+        "Cargo.toml",
+        "Cargo.lock",
+        "build.rs",
+        ".cargo",
+        "rust-toolchain.toml",
+        "src",
+        "prompts",
+        "assets",
+        ":(exclude)src/eval/ship_matrix.rs",
+        ":(exclude)src/eval/ship_matrix/**",
+        ":(exclude)src/eval/gates.rs",
+    ]
 }
 
 fn verify_security_outcomes(security: Option<&Value>, diagnostics: &mut Vec<String>) {
@@ -588,6 +575,7 @@ fn verify_security_outcomes(security: Option<&Value>, diagnostics: &mut Vec<Stri
 
 pub(super) fn verify_claim_authority(
     path: &Path,
+    contract_path: &Path,
     implementation: &ImplementationIdentity,
 ) -> ClaimAuthority {
     let mut diagnostics = Vec::new();
@@ -609,6 +597,19 @@ pub(super) fn verify_claim_authority(
     if !locked {
         diagnostics.push("claim registry is not locked".to_string());
     }
+    let contract = match super::read_json_value(contract_path) {
+        Ok(value) => value,
+        Err(error) => {
+            diagnostics.push(error);
+            Value::Null
+        }
+    };
+    let contract_valid = contract.get("schema_version").and_then(Value::as_u64) == Some(1)
+        && contract.get("closed").and_then(Value::as_bool) == Some(true)
+        && contract.get("contract_id").and_then(Value::as_str) == Some("gh931-coding-claims-v1");
+    if !contract_valid {
+        diagnostics.push("coding claim contract is not closed schema v1".to_string());
+    }
     let claims = registry
         .get("claims")
         .and_then(Value::as_array)
@@ -619,8 +620,21 @@ pub(super) fn verify_claim_authority(
         });
     let repo_root =
         crate::git_util::resolve_toplevel(Path::new(".")).unwrap_or_else(|| PathBuf::from("."));
-    let mut claims_passed = true;
-    for id in CODING_CLAIM_IDS {
+    let expected_claims = contract
+        .get("claims")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut claims_passed = expected_claims.len() == claims.len() && !expected_claims.is_empty();
+    if expected_claims.len() != claims.len() {
+        diagnostics.push("claim registry does not exactly match the closed claim set".to_string());
+    }
+    for expected_claim in &expected_claims {
+        let Some(id) = expected_claim.get("id").and_then(Value::as_str) else {
+            diagnostics.push("coding claim contract contains a claim without id".to_string());
+            claims_passed = false;
+            continue;
+        };
         let Some(claim) = claims
             .iter()
             .find(|claim| claim.get("id").and_then(Value::as_str) == Some(id))
@@ -631,9 +645,11 @@ pub(super) fn verify_claim_authority(
         };
         claims_passed &= verify_pass_claim(
             claim,
+            expected_claim,
             id,
             &repo_root,
             implementation.git_sha.as_deref(),
+            implementation.production_input_tree_sha256.as_deref(),
             &mut diagnostics,
         );
     }
@@ -641,7 +657,12 @@ pub(super) fn verify_claim_authority(
         "claim registry schema has no independently verified Level 3 claim authority".to_string(),
     );
     ClaimAuthority {
-        coding_passed: schema_valid && locked && claims_passed,
+        coding_passed: schema_valid
+            && locked
+            && contract_valid
+            && claims_passed
+            && implementation.executable_source_equivalent
+            && implementation.source_dirty == Some(false),
         level3_passed: false,
         diagnostics,
     }
@@ -649,14 +670,29 @@ pub(super) fn verify_claim_authority(
 
 fn verify_pass_claim(
     claim: &Value,
+    expected_claim: &Value,
     id: &str,
     repo_root: &Path,
     implementation_sha: Option<&str>,
+    implementation_tree: Option<&str>,
     diagnostics: &mut Vec<String>,
 ) -> bool {
     if claim.get("status").and_then(Value::as_str) != Some("PASS") {
         diagnostics.push(format!("claim {id} is not PASS"));
         return false;
+    }
+    for field in [
+        "comparison",
+        "metric",
+        "allowed_wording",
+        "forbidden_wording",
+    ] {
+        if claim.get(field) != expected_claim.get(field) {
+            diagnostics.push(format!(
+                "claim {id} does not match closed contract field {field}"
+            ));
+            return false;
+        }
     }
     let Some(report) = claim.get("supporting_report") else {
         diagnostics.push(format!("claim {id} has no supporting_report"));
@@ -670,9 +706,33 @@ fn verify_pass_claim(
         diagnostics.push(format!("claim {id} supporting_report has no sha256"));
         return false;
     };
-    match fs::read(repo_root.join(relative)) {
+    let relative_path = Path::new(relative);
+    if relative_path.is_absolute()
+        || relative_path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        || !relative.starts_with("eval/public/")
+    {
+        diagnostics.push(format!(
+            "claim {id} supporting_report path is not repository-relative public evidence"
+        ));
+        return false;
+    }
+    if !is_sha256(expected) || expected.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        diagnostics.push(format!(
+            "claim {id} supporting_report sha256 is not lowercase hex"
+        ));
+        return false;
+    }
+    match fs::read(repo_root.join(relative_path)) {
         Ok(bytes) if format!("{:x}", Sha256::digest(&bytes)) == expected => {
-            supporting_report_binds_implementation(&bytes, id, implementation_sha, diagnostics)
+            supporting_report_binds_implementation(
+                &bytes,
+                id,
+                implementation_sha,
+                implementation_tree,
+                diagnostics,
+            )
         }
         Ok(_) => {
             diagnostics.push(format!("claim {id} supporting_report sha256 mismatch"));
@@ -691,6 +751,7 @@ pub(super) fn supporting_report_binds_implementation(
     bytes: &[u8],
     id: &str,
     implementation_sha: Option<&str>,
+    implementation_tree: Option<&str>,
     diagnostics: &mut Vec<String>,
 ) -> bool {
     let Some(implementation_sha) = implementation_sha else {
@@ -708,18 +769,29 @@ pub(super) fn supporting_report_binds_implementation(
             return false;
         }
     };
-    let bound = report
+    let revision_bound = report
         .pointer("/reproducibility/remem_commits")
         .and_then(Value::as_array)
         .is_some_and(|commits| {
-            commits
-                .iter()
-                .any(|commit| commit.as_str() == Some(implementation_sha))
+            !commits.is_empty()
+                && commits
+                    .iter()
+                    .all(|commit| commit.as_str().is_some_and(is_full_git_sha))
         });
-    if !bound {
+    if !revision_bound {
         diagnostics.push(format!(
-            "claim {id} supporting_report does not bind current implementation SHA {implementation_sha}"
+            "claim {id} supporting_report lacks valid producing revisions"
         ));
     }
-    bound
+    let source_bound = report
+        .pointer("/reproducibility/production_input_tree_sha256")
+        .and_then(Value::as_str)
+        .zip(implementation_tree)
+        .is_some_and(|(expected, current)| expected == current);
+    if !source_bound {
+        diagnostics.push(format!(
+            "claim {id} supporting_report production source is not equivalent to executable {implementation_sha}"
+        ));
+    }
+    revision_bound && source_bound
 }

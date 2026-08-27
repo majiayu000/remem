@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
+use rusqlite::{Connection, OpenFlags};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -408,6 +410,11 @@ fn validate_memory_run_artifact(
         require_non_blank(id, &label, "missing_supporting_evidence_ids", state);
     }
     validate_artifact_map(&run.artifacts, MEMORY_ARTIFACT_KEYS, &label, state);
+    if run.benchmark_id == "adversarial-policy" && run.benchmark_version == "v2" {
+        require_artifact_key(&run.artifacts, "remem_db_snapshot", &label, state);
+        validate_v2_memory_artifact_hashes(&run, &label, state);
+        validate_security_snapshot(&run, &label, state);
+    }
     scan_private_json(
         &serde_json::to_value(&run).unwrap_or(Value::Null),
         run_path,
@@ -415,6 +422,100 @@ fn validate_memory_run_artifact(
         state,
     );
     Some(run.condition)
+}
+
+fn validate_v2_memory_artifact_hashes(
+    run: &MemoryRunArtifact,
+    label: &str,
+    state: &mut VerifyState,
+) {
+    if run.artifact_sha256.len() != run.artifacts.len() {
+        state.fail(
+            label.to_string(),
+            "v2 memory run must hash every declared artifact",
+        );
+        return;
+    }
+    for (key, raw_path) in &run.artifacts {
+        let Some(expected) = run.artifact_sha256.get(key) else {
+            state.fail(
+                label.to_string(),
+                format!("artifact {key} has no SHA-256 binding"),
+            );
+            continue;
+        };
+        let Some(path) = resolve_public_path(state, raw_path, raw_path) else {
+            continue;
+        };
+        match fs::read(&path) {
+            Ok(bytes) if format!("{:x}", Sha256::digest(&bytes)) == *expected => {}
+            Ok(_) => state.fail(raw_path.clone(), format!("artifact {key} SHA-256 mismatch")),
+            Err(error) => state.fail(raw_path.clone(), format!("read artifact {key}: {error}")),
+        }
+    }
+}
+
+fn validate_security_snapshot(run: &MemoryRunArtifact, label: &str, state: &mut VerifyState) {
+    let Some(raw_path) = run.artifacts.get("remem_db_snapshot") else {
+        return;
+    };
+    let Some(path) = resolve_public_path(state, raw_path, raw_path) else {
+        return;
+    };
+    if path.extension().and_then(|value| value.to_str()) != Some("sqlite3") {
+        state.fail(
+            raw_path.clone(),
+            "security snapshot must be an explicit SQLite file",
+        );
+        return;
+    }
+    let connection = match Connection::open_with_flags(
+        &path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) {
+        Ok(connection) => connection,
+        Err(error) => {
+            state.fail(
+                raw_path.clone(),
+                format!("open security SQLite snapshot: {error}"),
+            );
+            return;
+        }
+    };
+    let captured: rusqlite::Result<i64> = connection.query_row(
+        "SELECT COUNT(*) FROM captured_events WHERE session_id = ?1",
+        [&run.task_id],
+        |row| row.get(0),
+    );
+    match captured {
+        Ok(count) if count > 0 => {}
+        Ok(_) => state.fail(
+            raw_path.clone(),
+            format!("snapshot does not contain task {}", run.task_id),
+        ),
+        Err(error) => state.fail(
+            raw_path.clone(),
+            format!("verify persisted security state: {error}"),
+        ),
+    }
+    let integrity: rusqlite::Result<String> =
+        connection.query_row("PRAGMA quick_check", [], |row| row.get(0));
+    if integrity.as_deref() != Ok("ok") {
+        state.fail(
+            raw_path.clone(),
+            "security SQLite snapshot failed quick_check",
+        );
+    }
+    if run
+        .suite_content_identity
+        .as_deref()
+        .is_none_or(str::is_empty)
+    {
+        state.fail(
+            label.to_string(),
+            "v2 memory run lacks suite_content_identity",
+        );
+    }
 }
 
 fn validate_environment(env: &super::types::RunEnvironment, label: &str, state: &mut VerifyState) {

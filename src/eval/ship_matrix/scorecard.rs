@@ -1,5 +1,8 @@
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::Path;
+
+use sha2::{Digest, Sha256};
 
 use super::{
     MeasurementState, OutcomeScorecard, PublicEvidence, ScorecardComponent, ScorecardField,
@@ -14,16 +17,34 @@ pub(super) fn build_scorecard(
         .as_ref()
         .filter(|report| report.artifact_verifier.passed)
         .map(|report| &report.coding_task_outcomes);
+    let coding_source = coding.and_then(|runs| {
+        artifact_sources(
+            runs.iter()
+                .filter(|run| run.target_started == Some(true))
+                .map(|run| run.report_path.as_str())
+                .collect(),
+        )
+    });
+    let security_source = exact_artifact_source(security_report_path);
     let fields = vec![
         ratio_field(
             "task_completion_rate",
-            coding.map(|runs| runs.iter().filter(|run| run.resolved).count() as f64),
-            coding.map(|runs| runs.len() as f64),
+            coding.map(|runs| {
+                runs.iter()
+                    .filter(|run| run.target_started == Some(true) && run.resolved)
+                    .count() as f64
+            }),
+            coding.map(|runs| {
+                runs.iter()
+                    .filter(|run| run.target_started == Some(true))
+                    .count() as f64
+            }),
             "verified committed coding outcomes; current artifacts may be smoke-only",
             "resolved coding runs",
             "all eligible coding runs",
             "registered GH931 threshold when official matrix is complete",
             "smoke_or_official_as_declared_by_source",
+            coding_source.clone(),
         ),
         ratio_field(
             "correct_memory_help_rate",
@@ -42,6 +63,7 @@ pub(super) fn build_scorecard(
             "runs with a measured memory_helped verdict",
             "reported; no public threshold until GH931 official matrix",
             "smoke_or_official_as_declared_by_source",
+            coding_source,
         ),
         unavailable_field(
             "repeated_explanation_rate",
@@ -71,8 +93,8 @@ pub(super) fn build_scorecard(
             "eligible context emissions",
             "GH935 live artifacts are unavailable",
         ),
-        security_ratio_field(public),
-        abstention_field(public),
+        security_ratio_field(public, security_source.clone()),
+        abstention_field(public, security_source),
         latency_field(public, security_report_path),
         unavailable_field(
             "maintenance_time_and_ai_usage",
@@ -102,6 +124,7 @@ pub(super) fn ratio_field(
     denominator_definition: &str,
     threshold: &str,
     claim_level: &str,
+    source: Option<String>,
 ) -> ScorecardField {
     let measured = numerator.is_some() && denominator.is_some_and(|value| value > 0.0);
     let (numerator, denominator) = if measured {
@@ -133,7 +156,7 @@ pub(super) fn ratio_field(
         },
         values,
         threshold: threshold.to_string(),
-        source: measured.then(|| "eval/public verified artifacts".to_string()),
+        source: measured.then_some(source).flatten(),
         claim_level: claim_level.to_string(),
         note: if measured {
             "Measured only for the population and claim level declared here.".to_string()
@@ -170,7 +193,7 @@ pub(super) fn unavailable_field(
     }
 }
 
-fn security_ratio_field(public: &PublicEvidence) -> ScorecardField {
+fn security_ratio_field(public: &PublicEvidence, source: Option<String>) -> ScorecardField {
     let denominator = security_number(public, "/aggregate_metrics/policy/non_retention_cases");
     let rate = security_number(public, "/aggregate_metrics/policy/non_retention_leak_rate");
     ratio_field(
@@ -182,10 +205,11 @@ fn security_ratio_field(public: &PublicEvidence) -> ScorecardField {
         "eligible non-retention cases",
         "rate == 0",
         "directional_memory_suite_no_public_claim",
+        source,
     )
 }
 
-fn abstention_field(public: &PublicEvidence) -> ScorecardField {
+fn abstention_field(public: &PublicEvidence, source: Option<String>) -> ScorecardField {
     ratio_field(
         "abstention_rate",
         security_number(
@@ -198,32 +222,14 @@ fn abstention_field(public: &PublicEvidence) -> ScorecardField {
         "verified adversarial runs",
         "reported with accuracy; rate alone is not a pass criterion",
         "directional_memory_suite_no_public_claim",
+        source,
     )
 }
 
-fn latency_field(public: &PublicEvidence, security_report_path: &Path) -> ScorecardField {
-    let p50 = security_number(
-        public,
-        "/aggregate_metrics/performance/remem_default/end_to_end_latency_p50_ms",
-    );
-    let p95 = security_number(
-        public,
-        "/aggregate_metrics/performance/remem_default/end_to_end_latency_p95_ms",
-    );
-    let denominator = security_number(public, "/aggregate_metrics/performance/remem_default/tasks");
-    let measured = p50.is_some() && p95.is_some() && denominator.is_some_and(|value| value > 0.0);
-    let mut values = BTreeMap::new();
-    if measured {
-        values.insert("p50_ms".to_string(), p50.expect("measured p50"));
-        values.insert("p95_ms".to_string(), p95.expect("measured p95"));
-    }
+fn latency_field(_public: &PublicEvidence, _security_report_path: &Path) -> ScorecardField {
     ScorecardField {
         id: "foreground_latency_p50_p95",
-        measurement_state: if measured {
-            MeasurementState::Measured
-        } else {
-            MeasurementState::Unavailable
-        },
+        measurement_state: MeasurementState::Unavailable,
         eligible_population: "production-path adversarial-policy v2 remem_default runs".to_string(),
         numerator: ScorecardComponent {
             definition: "not applicable: percentile statistic".to_string(),
@@ -231,15 +237,41 @@ fn latency_field(public: &PublicEvidence, security_report_path: &Path) -> Scorec
         },
         denominator: ScorecardComponent {
             definition: "timed verified runs".to_string(),
-            value: measured.then_some(denominator).flatten(),
+            value: None,
         },
-        values,
-        threshold: "reported; owning latency contract supplies release threshold".to_string(),
-        source: measured.then(|| security_report_path.to_string_lossy().to_string()),
-        claim_level: "directional_memory_suite_no_public_claim".to_string(),
-        note: "Percentiles are not ratio metrics; numerator is explicitly not applicable."
+        values: BTreeMap::new(),
+        threshold: "unavailable_cannot_pass".to_string(),
+        source: None,
+        claim_level: "no_claim".to_string(),
+        note: "Current benchmark latency values are synthetic fixture estimates, not wall-clock measurements."
             .to_string(),
     }
+}
+
+fn exact_artifact_source(path: &Path) -> Option<String> {
+    let bytes = fs::read(path).ok()?;
+    Some(format!(
+        "{}#sha256={:x}",
+        path.to_string_lossy(),
+        Sha256::digest(bytes)
+    ))
+}
+
+fn artifact_sources(paths: std::collections::BTreeSet<&str>) -> Option<String> {
+    if paths.is_empty() {
+        return None;
+    }
+    paths
+        .into_iter()
+        .map(|relative| {
+            exact_artifact_source(
+                Path::new(super::DEFAULT_PUBLIC_ROOT)
+                    .join(relative)
+                    .as_path(),
+            )
+        })
+        .collect::<Option<Vec<_>>>()
+        .map(|sources| sources.join(","))
 }
 
 fn security_number(public: &PublicEvidence, pointer: &str) -> Option<f64> {

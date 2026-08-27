@@ -85,7 +85,7 @@ pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBench
     let mut run_artifacts = Vec::new();
     for condition in conditions {
         for task in &fixture.tasks {
-            let outcome = run_task(&fixture, condition, task).await?;
+            let (outcome, database_snapshot) = run_task(&fixture, condition, task).await?;
             let run_json_path = write_run_artifacts(
                 &fixture,
                 &outcome,
@@ -95,6 +95,7 @@ pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBench
                 public_layout,
                 &execution_identity,
                 &suite_content_identity,
+                database_snapshot.as_deref(),
             )?;
             run_artifacts.push(run_json_path);
             outcomes.push(outcome);
@@ -176,16 +177,14 @@ async fn run_task(
     fixture: &MemoryBenchSuiteFixture,
     condition: MemoryBenchCondition,
     task: &MemoryBenchTask,
-) -> Result<MemoryBenchRunOutcome> {
+) -> Result<(MemoryBenchRunOutcome, Option<Vec<u8>>)> {
     if fixture.suite == ADVERSARIAL_POLICY_SUITE && condition == MemoryBenchCondition::RememDefault
     {
-        let (retrieved, measurement) = retrieve_with_production_pipeline(task).await?;
-        return Ok(score_task(
-            fixture,
-            condition,
-            task,
-            retrieved,
-            Some(&measurement),
+        let (retrieved, measurement, database_snapshot) =
+            retrieve_with_production_pipeline(task).await?;
+        return Ok((
+            score_task(fixture, condition, task, retrieved, Some(&measurement)),
+            Some(database_snapshot),
         ));
     }
     let retrieved = if let Some(indices) = fixture_retrieval_indices(condition, task) {
@@ -196,7 +195,7 @@ async fn run_task(
     } else {
         retrieve_with_remem_search(task)?
     };
-    Ok(score_task(fixture, condition, task, retrieved, None))
+    Ok((score_task(fixture, condition, task, retrieved, None), None))
 }
 
 fn retrieve_with_remem_search(task: &MemoryBenchTask) -> Result<Vec<RetrievedEvidence>> {
@@ -450,6 +449,7 @@ fn write_run_artifacts(
     public_layout: bool,
     execution_identity: &ExecutionIdentity,
     suite_content_identity: &str,
+    database_snapshot: Option<&[u8]>,
 ) -> Result<String> {
     let run_dir = artifact_root.join(format!(
         "{}-{}",
@@ -464,7 +464,7 @@ fn write_run_artifacts(
     let answer_path = run_dir.join("answer.json");
     let score_path = run_dir.join("score.json");
     let diagnosis_path = run_dir.join("diagnosis.json");
-    let snapshot_path = run_dir.join("remem.db.snapshot.tar.zst");
+    let snapshot_path = run_dir.join("remem.db.snapshot.sqlite3");
     let run_path = run_dir.join("run.json");
 
     fs::write(&reader_input_path, &outcome.reader_input)?;
@@ -499,12 +499,11 @@ fn write_run_artifacts(
             "missing_event_ids": outcome.missing_event_ids,
         }))?,
     )?;
-    fs::write(
-        &snapshot_path,
-        "fixture placeholder: in-memory sqlite seeded from public suite evidence\n",
-    )?;
+    if let Some(snapshot) = database_snapshot {
+        fs::write(&snapshot_path, snapshot)?;
+    }
 
-    let artifacts = BTreeMap::from([
+    let mut artifacts = BTreeMap::from([
         (
             "reader_input".to_string(),
             artifact_path(&reader_input_path, public_root, public_layout)?,
@@ -525,11 +524,26 @@ fn write_run_artifacts(
             "diagnosis".to_string(),
             artifact_path(&diagnosis_path, public_root, public_layout)?,
         ),
-        (
+    ]);
+    if database_snapshot.is_some() {
+        artifacts.insert(
             "remem_db_snapshot".to_string(),
             artifact_path(&snapshot_path, public_root, public_layout)?,
-        ),
-    ]);
+        );
+    }
+    let artifact_sha256 = artifacts
+        .iter()
+        .map(|(key, relative)| {
+            let path = if public_layout {
+                public_root.join(relative)
+            } else {
+                PathBuf::from(relative)
+            };
+            let bytes = fs::read(&path)
+                .with_context(|| format!("read generated artifact {}", path.display()))?;
+            Ok((key.clone(), format!("{:x}", Sha256::digest(bytes))))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
     let run = MemoryRunArtifact {
         schema_version: 1,
         benchmark_id: fixture.benchmark_id.clone(),
@@ -618,15 +632,10 @@ fn write_run_artifacts(
             notes: outcome.diagnosis_notes.clone(),
         },
         artifacts,
+        artifact_sha256,
+        suite_content_identity: Some(suite_content_identity.to_string()),
     };
     let mut run_value = serde_json::to_value(&run)?;
-    run_value
-        .as_object_mut()
-        .context("memory benchmark run must serialize as an object")?
-        .insert(
-            "suite_content_identity".to_string(),
-            json!(suite_content_identity),
-        );
     let environment = run_value
         .get_mut("environment")
         .and_then(Value::as_object_mut)

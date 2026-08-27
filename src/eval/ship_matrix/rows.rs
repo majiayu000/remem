@@ -5,8 +5,9 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::{
-    evidence_for_path, public_model_identity, read_json_value, ArtifactState,
-    ImplementationIdentity, PublicEvidence, ShipGateRow, ShipGateStatus, ShipMatrixOptions,
+    evidence_for_evaluated_path, evidence_for_path, public_model_identity, read_json_value,
+    ArtifactState, ImplementationIdentity, PublicEvidence, ShipGateRow, ShipGateStatus,
+    ShipMatrixOptions,
 };
 use crate::eval::gates::{EvalGateDelta, EvalGateStatus};
 
@@ -31,12 +32,9 @@ pub(super) fn build_gate_rows(
         GOLDEN_METRIC_SET_SHA256,
         deltas,
         vec![
-            evidence_for_path(
-                Path::new(&options.golden_dataset_path),
-                ArtifactState::Verified,
-            ),
-            evidence_for_path(Path::new(&options.baseline_path), ArtifactState::Verified),
-            evidence_for_path(Path::new(&options.thresholds_path), ArtifactState::Verified),
+            evaluated_evidence(options, &options.golden_dataset_path),
+            evaluated_evidence(options, &options.baseline_path),
+            evaluated_evidence(options, &options.thresholds_path),
         ],
         vec!["merge", "release", "retrieval_default"],
     );
@@ -47,10 +45,7 @@ pub(super) fn build_gate_rows(
             &["capacity."],
             CAPACITY_METRIC_SET_SHA256,
             deltas,
-            vec![evidence_for_path(
-                Path::new(&options.golden_dataset_path),
-                ArtifactState::Verified,
-            )],
+            vec![evaluated_evidence(options, &options.golden_dataset_path)],
             vec!["merge", "release", "retrieval_default"],
         )
     } else {
@@ -65,10 +60,7 @@ pub(super) fn build_gate_rows(
             &["injection.", "current_memory_contracts."],
             SESSION_METRIC_SET_SHA256,
             deltas,
-            vec![evidence_for_path(
-                Path::new(&options.baseline_path),
-                ArtifactState::Verified,
-            )],
+            vec![evaluated_evidence(options, &options.baseline_path)],
             vec!["merge", "release", "context_default"],
         ),
         security_gate(options, public),
@@ -88,6 +80,13 @@ pub(super) fn build_gate_rows(
             "No accepted capability-specific Context Bundle default decision artifact exists.",
         ),
     ]
+}
+
+fn evaluated_evidence(options: &ShipMatrixOptions, path: &str) -> super::ArtifactEvidence {
+    evidence_for_evaluated_path(
+        Path::new(path),
+        options.input_artifact_sha256.get(path).map(String::as_str),
+    )
 }
 
 pub(super) fn component_gate(
@@ -200,10 +199,7 @@ fn incomplete_capacity(options: &ShipMatrixOptions) -> ShipGateRow {
         metric_deltas: BTreeMap::new(),
         stop_loss_verdict: "incomplete_missing_capacity_evidence".to_string(),
         exclusions: Vec::new(),
-        evidence: vec![evidence_for_path(
-            Path::new(&options.golden_dataset_path),
-            ArtifactState::Verified,
-        )],
+        evidence: vec![evaluated_evidence(options, &options.golden_dataset_path)],
         diagnostics: vec![
             "Capacity evidence is required; a dataset without a fixture corpus cannot pass the gate."
                 .to_string(),
@@ -214,6 +210,8 @@ fn incomplete_capacity(options: &ShipMatrixOptions) -> ShipGateRow {
 fn security_gate(options: &ShipMatrixOptions, public: &PublicEvidence) -> ShipGateRow {
     let status = if public.security_authority.passed && public.security.is_some() {
         ShipGateStatus::Pass
+    } else if public.security.is_none() {
+        ShipGateStatus::Incomplete
     } else {
         ShipGateStatus::Fail
     };
@@ -260,6 +258,8 @@ fn security_gate(options: &ShipMatrixOptions, public: &PublicEvidence) -> ShipGa
             &options.security_report_path,
             if status == ShipGateStatus::Pass {
                 ArtifactState::Verified
+            } else if status == ShipGateStatus::Incomplete {
+                ArtifactState::Missing
             } else {
                 ArtifactState::Invalid
             },

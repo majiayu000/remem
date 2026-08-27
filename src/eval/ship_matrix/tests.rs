@@ -101,7 +101,7 @@ fn component_gate_rejects_a_shrunken_metric_set() {
 }
 
 #[test]
-fn invalid_public_evidence_blocks_required_security_row() {
+fn unreadable_security_evidence_is_incomplete_and_blocks_required_row() {
     let temp = std::env::temp_dir().join(format!(
         "remem-ship-matrix-test-{}-{}",
         std::process::id(),
@@ -137,6 +137,8 @@ fn invalid_public_evidence_blocks_required_security_row() {
             security_report_path: invalid_security,
             cross_host_charter_path: charter,
             claim_registry_path: claims,
+            claim_contract_path: temp.join("claim-contract.json"),
+            input_artifact_sha256: BTreeMap::new(),
         },
     );
     let security = evidence
@@ -145,7 +147,7 @@ fn invalid_public_evidence_blocks_required_security_row() {
         .iter()
         .find(|gate| gate.id == "production_security_e2e")
         .unwrap();
-    assert_eq!(security.status, ShipGateStatus::Fail);
+    assert_eq!(security.status, ShipGateStatus::Incomplete);
     let cross_host = evidence
         .ship_matrix
         .gates
@@ -185,6 +187,7 @@ fn ratio_requires_a_nonzero_denominator() {
         "runs",
         "threshold",
         "no_claim",
+        None,
     );
     assert_eq!(field.measurement_state, MeasurementState::Unavailable);
     assert_eq!(field.numerator.value, None);
@@ -377,11 +380,35 @@ fn supporting_claim_report_must_bind_current_sha() {
         &stale,
         "claim",
         Some(current),
+        Some(&"a".repeat(64)),
         &mut diagnostics,
     ));
     assert!(diagnostics
         .iter()
-        .any(|item| item.contains("does not bind current implementation SHA")));
+        .any(|item| item.contains("production source is not equivalent")));
+}
+
+#[test]
+fn supporting_claim_report_accepts_source_equivalent_producing_revision() {
+    let current = "0123456789abcdef0123456789abcdef01234567";
+    let producing = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let tree = "b".repeat(64);
+    let report = serde_json::to_vec(&serde_json::json!({
+        "reproducibility": {
+            "remem_commits": [producing],
+            "production_input_tree_sha256": tree,
+        }
+    }))
+    .unwrap();
+    let mut diagnostics = Vec::new();
+    assert!(supporting_report_binds_implementation(
+        &report,
+        "claim",
+        Some(current),
+        Some(&"b".repeat(64)),
+        &mut diagnostics,
+    ));
+    assert!(diagnostics.is_empty());
 }
 
 #[test]
@@ -409,6 +436,8 @@ fn missing_capacity_evidence_is_incomplete_and_blocks_command() {
             security_report_path: temp.join("security.json"),
             cross_host_charter_path: temp.join("charter.json"),
             claim_registry_path: temp.join("claims.json"),
+            claim_contract_path: temp.join("claim-contract.json"),
+            input_artifact_sha256: BTreeMap::new(),
         },
     );
     let capacity = evidence
@@ -476,7 +505,7 @@ fn unverified_security_authority_hides_security_scorecard_numbers() {
 }
 
 #[test]
-fn latency_source_is_the_selected_platform_security_report() {
+fn synthetic_latency_is_not_reported_as_measured() {
     let public = PublicEvidence {
         report: None,
         report_error: None,
@@ -510,8 +539,9 @@ fn latency_source_is_the_selected_platform_security_report() {
         .iter()
         .find(|field| field.id == "foreground_latency_p50_p95")
         .unwrap();
-    assert_eq!(latency.measurement_state, MeasurementState::Measured);
-    assert_eq!(latency.source.as_deref(), selected.to_str());
+    assert_eq!(latency.measurement_state, MeasurementState::Unavailable);
+    assert_eq!(latency.source, None);
+    assert!(latency.note.contains("synthetic"));
 }
 
 #[test]
@@ -539,7 +569,11 @@ fn coding_baseline_evidence_is_unverified_when_artifact_verifier_fails() {
     };
     let implementation = ImplementationIdentity {
         git_sha: Some("0123456789abcdef0123456789abcdef01234567".to_string()),
+        checkout_git_sha: Some("0123456789abcdef0123456789abcdef01234567".to_string()),
         source_dirty: Some(false),
+        production_input_tree_sha256: Some("a".repeat(64)),
+        checkout_production_input_tree_sha256: Some("a".repeat(64)),
+        executable_source_equivalent: true,
         package_version: env!("CARGO_PKG_VERSION"),
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,

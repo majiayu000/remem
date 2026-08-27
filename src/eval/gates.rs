@@ -8,6 +8,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 pub const DEFAULT_BASELINE_PATH: &str = "eval/gates/baseline.json";
 pub const DEFAULT_THRESHOLDS_PATH: &str = "eval/gates/thresholds.json";
@@ -70,6 +71,12 @@ pub struct EvalGateReport {
     pub deltas: Vec<EvalGateDelta>,
     pub failures: Vec<String>,
     pub source_reports: EvalSourceReports,
+    pub source_artifacts: BTreeMap<String, EvalSourceArtifact>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EvalSourceArtifact {
+    pub sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -116,13 +123,33 @@ pub(crate) struct EvalGateExecution {
 pub(crate) fn run_eval_gates_with_ship_evidence(
     options: EvalGateOptions,
 ) -> Result<EvalGateExecution> {
+    let report = run_eval_gates(options)?;
     let ship_options = crate::eval::ship_matrix::ShipMatrixOptions {
-        baseline_path: options.baseline_path.clone(),
-        thresholds_path: options.thresholds_path.clone(),
-        golden_dataset_path: options.golden_dataset_path.clone(),
+        baseline_path: report
+            .source_artifacts
+            .keys()
+            .find(|path| path.ends_with("baseline.json"))
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_BASELINE_PATH.to_string()),
+        thresholds_path: report
+            .source_artifacts
+            .keys()
+            .find(|path| path.ends_with("thresholds.json"))
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_THRESHOLDS_PATH.to_string()),
+        golden_dataset_path: report
+            .source_artifacts
+            .keys()
+            .find(|path| path.ends_with("golden.json"))
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_GOLDEN_DATASET_PATH.to_string()),
+        input_artifact_sha256: report
+            .source_artifacts
+            .iter()
+            .map(|(path, artifact)| (path.clone(), artifact.sha256.clone()))
+            .collect(),
         ..Default::default()
     };
-    let report = run_eval_gates(options)?;
     let capacity_applicable = report
         .source_reports
         .capacity
@@ -177,9 +204,9 @@ fn format_ship_summary(summary: &crate::eval::ship_matrix::ShipMatrixSummary) ->
 }
 
 pub fn run_eval_gates(options: EvalGateOptions) -> Result<EvalGateReport> {
-    let mut baseline = load_baseline(&options.baseline_path)?;
-    let mut thresholds = load_thresholds(&options.thresholds_path)?;
-    let golden_dataset = crate::eval::golden::load_dataset(&options.golden_dataset_path)?;
+    let (mut baseline, baseline_artifact) = load_baseline(&options.baseline_path)?;
+    let (mut thresholds, thresholds_artifact) = load_thresholds(&options.thresholds_path)?;
+    let (golden_dataset, golden_artifact) = load_golden(&options.golden_dataset_path)?;
     let golden = run_golden(&golden_dataset)?;
     let capacity = if golden_dataset.has_fixture_corpus() {
         Some(crate::eval::capacity::run_capacity_eval_for_dataset(
@@ -242,21 +269,42 @@ pub fn run_eval_gates(options: EvalGateOptions) -> Result<EvalGateReport> {
         deltas,
         failures,
         source_reports,
+        source_artifacts: BTreeMap::from([
+            (options.baseline_path, baseline_artifact),
+            (options.thresholds_path, thresholds_artifact),
+            (options.golden_dataset_path, golden_artifact),
+        ]),
     })
 }
 
-fn load_baseline(path: &str) -> Result<EvalGateBaseline> {
-    let content = fs::read_to_string(path)
+fn load_baseline(path: &str) -> Result<(EvalGateBaseline, EvalSourceArtifact)> {
+    let content = fs::read(path)
         .with_context(|| format!("read eval gate baseline {}", Path::new(path).display()))?;
-    serde_json::from_str(&content)
-        .with_context(|| format!("parse eval gate baseline {}", Path::new(path).display()))
+    let parsed = serde_json::from_slice(&content)
+        .with_context(|| format!("parse eval gate baseline {}", Path::new(path).display()))?;
+    Ok((parsed, source_artifact(&content)))
 }
 
-fn load_thresholds(path: &str) -> Result<EvalGateThresholds> {
-    let content = fs::read_to_string(path)
+fn load_thresholds(path: &str) -> Result<(EvalGateThresholds, EvalSourceArtifact)> {
+    let content = fs::read(path)
         .with_context(|| format!("read eval gate thresholds {}", Path::new(path).display()))?;
-    serde_json::from_str(&content)
-        .with_context(|| format!("parse eval gate thresholds {}", Path::new(path).display()))
+    let parsed = serde_json::from_slice(&content)
+        .with_context(|| format!("parse eval gate thresholds {}", Path::new(path).display()))?;
+    Ok((parsed, source_artifact(&content)))
+}
+
+fn load_golden(path: &str) -> Result<(crate::eval::golden::GoldenDataset, EvalSourceArtifact)> {
+    let content = fs::read(path)
+        .with_context(|| format!("read golden eval dataset {}", Path::new(path).display()))?;
+    let parsed = serde_json::from_slice(&content)
+        .with_context(|| format!("parse golden eval dataset {}", Path::new(path).display()))?;
+    Ok((parsed, source_artifact(&content)))
+}
+
+fn source_artifact(bytes: &[u8]) -> EvalSourceArtifact {
+    EvalSourceArtifact {
+        sha256: format!("{:x}", Sha256::digest(bytes)),
+    }
 }
 
 fn run_golden(

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, DatabaseName};
 use serde_json::json;
 
 use super::runner::{RetrievedEvidence, PROJECT};
@@ -9,7 +9,11 @@ const LEASE_OWNER: &str = "memory-bench-production-pipeline";
 
 pub(super) async fn retrieve_with_production_pipeline(
     task: &MemoryBenchTask,
-) -> Result<(Vec<RetrievedEvidence>, MemoryBenchPolicyMeasurement)> {
+) -> Result<(
+    Vec<RetrievedEvidence>,
+    MemoryBenchPolicyMeasurement,
+    Vec<u8>,
+)> {
     let mut conn = Connection::open_in_memory()?;
     crate::migrate::run_migrations(&conn)?;
     let policy = task.policy.as_ref();
@@ -57,7 +61,8 @@ pub(super) async fn retrieve_with_production_pipeline(
         poisoning_generated_surface_blocked: quarantined_observations > 0
             || quarantined_candidates > 0,
     };
-    Ok((retrieved, measurement))
+    let snapshot = conn.serialize(DatabaseName::Main)?.to_vec();
+    Ok((retrieved, measurement, snapshot))
 }
 
 fn record_fixture_events(

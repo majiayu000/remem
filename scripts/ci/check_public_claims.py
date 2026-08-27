@@ -10,28 +10,13 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from pathlib import PurePosixPath
 
 
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE_REPORT = ROOT / "eval/public/reports/baseline.json"
 CLAIM_REGISTRY = ROOT / "eval/claims/registry.json"
-CODING_CLAIM_CONTRACTS = {
-    "remem-e2e-vs-no-memory-v1": {
-        "comparison": {"treatment": "remem_e2e", "control": "no_memory"},
-        "metric": "resolved_rate",
-    },
-    "remem-e2e-vs-curated-file-budgeted-v1": {
-        "comparison": {
-            "treatment": "remem_e2e",
-            "control": "curated_file_budgeted",
-        },
-        "metric": "resolved_rate",
-    },
-    "remem-e2e-stop-loss-v1": {
-        "comparison": {"treatment": "remem_e2e", "control": "no_memory"},
-        "metric": "memory_harm",
-    },
-}
+CLAIM_CONTRACT = ROOT / "eval/public/claims/coding-claim-contract-v1.json"
 
 CLAIM_SURFACES = [
     "README.md",
@@ -101,26 +86,36 @@ def load_claim_gate() -> dict[str, object]:
 
 
 def load_registered_coding_claims() -> list[dict[str, object]] | None:
-    if not CLAIM_REGISTRY.is_file():
+    if not CLAIM_REGISTRY.is_file() or not CLAIM_CONTRACT.is_file():
         return None
     try:
         registry = json.loads(CLAIM_REGISTRY.read_text(encoding="utf-8"))
-        head = subprocess.run(
-            ["git", "rev-parse", "--verify", "HEAD^{commit}"],
-            cwd=ROOT,
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
+        contract = json.loads(CLAIM_CONTRACT.read_text(encoding="utf-8"))
     except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
         return None
     if registry.get("schema_version") != 1 or registry.get("locked") is not True:
         return None
+    if (
+        contract.get("schema_version") != 1
+        or contract.get("closed") is not True
+        or contract.get("contract_id") != "gh931-coding-claims-v1"
+    ):
+        return None
     claims = registry.get("claims")
-    if not isinstance(claims, list):
+    contracts = contract.get("claims")
+    if not isinstance(claims, list) or not isinstance(contracts, list):
+        return None
+    claim_ids = [item.get("id") for item in claims if isinstance(item, dict)]
+    contract_ids = [item.get("id") for item in contracts if isinstance(item, dict)]
+    if len(claim_ids) != len(claims) or sorted(claim_ids) != sorted(contract_ids):
         return None
     verified_claims: list[dict[str, object]] = []
-    for claim_id, contract in CODING_CLAIM_CONTRACTS.items():
+    for expected_claim in contracts:
+        if not isinstance(expected_claim, dict):
+            return None
+        claim_id = expected_claim.get("id")
+        if not isinstance(claim_id, str):
+            return None
         claim = next(
             (
                 candidate
@@ -131,19 +126,16 @@ def load_registered_coding_claims() -> list[dict[str, object]] | None:
         )
         if not isinstance(claim, dict) or claim.get("status") != "PASS":
             return None
-        if claim.get("comparison") != contract["comparison"]:
+        if claim.get("comparison") != expected_claim.get("comparison"):
             return None
-        if claim.get("metric") != contract["metric"]:
+        if claim.get("metric") != expected_claim.get("metric"):
             return None
         allowed_wording = claim.get("allowed_wording")
         forbidden_wording = claim.get("forbidden_wording")
-        if not isinstance(allowed_wording, list) or not allowed_wording:
-            return None
-        if not all(isinstance(item, str) and item.strip() for item in allowed_wording):
-            return None
-        if not isinstance(forbidden_wording, list) or not forbidden_wording:
-            return None
-        if not all(isinstance(item, str) and item.strip() for item in forbidden_wording):
+        if (
+            allowed_wording != expected_claim.get("allowed_wording")
+            or forbidden_wording != expected_claim.get("forbidden_wording")
+        ):
             return None
         supporting_report = claim.get("supporting_report")
         if not isinstance(supporting_report, dict):
@@ -154,9 +146,10 @@ def load_registered_coding_claims() -> list[dict[str, object]] | None:
             return None
         if re.fullmatch(r"[0-9a-f]{64}", expected_hash) is None:
             return None
-        report_path = (ROOT / relative).resolve()
-        if not report_path.is_relative_to(ROOT):
+        path = PurePosixPath(relative)
+        if path.is_absolute() or ".." in path.parts or not relative.startswith("eval/public/"):
             return None
+        report_path = ROOT.joinpath(*path.parts)
         try:
             report_bytes = report_path.read_bytes()
             supporting = json.loads(report_bytes)
@@ -164,17 +157,13 @@ def load_registered_coding_claims() -> list[dict[str, object]] | None:
             return None
         if hashlib.sha256(report_bytes).hexdigest() != expected_hash:
             return None
-        reproducibility = supporting.get("reproducibility")
-        if not isinstance(reproducibility, dict):
-            return False
-        commits = reproducibility.get("remem_commits")
-        if not isinstance(commits, list) or head not in commits:
+        if not supporting_report_matches_current_source(supporting):
             return None
         verified_claims.append(
             {
                 "id": claim_id,
-                "comparison": contract["comparison"],
-                "metric": contract["metric"],
+                "comparison": expected_claim["comparison"],
+                "metric": expected_claim["metric"],
                 "allowed_wording": allowed_wording,
                 "forbidden_wording": forbidden_wording,
                 "supporting_report": {
@@ -184,6 +173,41 @@ def load_registered_coding_claims() -> list[dict[str, object]] | None:
             }
         )
     return verified_claims
+
+
+def production_input_tree_sha256() -> str | None:
+    paths = [
+        "Cargo.toml", "Cargo.lock", "build.rs", ".cargo", "rust-toolchain.toml",
+        "src", "prompts", "assets", ":(exclude)src/eval/ship_matrix.rs",
+        ":(exclude)src/eval/ship_matrix/**", ":(exclude)src/eval/gates.rs",
+    ]
+    try:
+        output = subprocess.run(
+            ["git", "ls-files", "-s", "--", *paths], cwd=ROOT, check=True,
+            capture_output=True,
+        ).stdout
+        clean = all(
+            subprocess.run(["git", *args, "--", *paths], cwd=ROOT).returncode == 0
+            for args in (["diff", "--quiet"], ["diff", "--cached", "--quiet"])
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return hashlib.sha256(output).hexdigest() if output and clean else None
+
+
+def supporting_report_matches_current_source(report: object) -> bool:
+    if not isinstance(report, dict):
+        return False
+    reproducibility = report.get("reproducibility")
+    if not isinstance(reproducibility, dict):
+        return False
+    commits = reproducibility.get("remem_commits")
+    if not isinstance(commits, list) or not commits:
+        return False
+    if not all(isinstance(item, str) and re.fullmatch(r"[0-9a-f]{40}", item) for item in commits):
+        return False
+    expected_tree = reproducibility.get("production_input_tree_sha256")
+    return isinstance(expected_tree, str) and expected_tree == production_input_tree_sha256()
 
 
 def coding_claim_ready(gate: dict[str, object]) -> bool:
@@ -255,8 +279,9 @@ def classify_violation(
 ) -> str | None:
     if not STRONG_CLAIM_RE.search(text):
         return None
-    context_text = context or text
-    if line_is_policy_or_negative(context_text):
+    # Authorization is line-local. Adjacent headings and prose cannot turn an
+    # otherwise unsupported claim into policy or negative wording.
+    if line_is_policy_or_negative(text):
         return None
 
     if SOTA_CLAIM_RE.search(text):
@@ -406,10 +431,18 @@ def run_self_test() -> int:
             passed_gate,
             "registry-forbidden wording",
         ),
+        (
+            "adjacent policy heading cannot authorize a strong claim",
+            "remem outperforms every coding workload.",
+            blocked_gate,
+            "coding-outcome superiority",
+            "Public claim policy\n\nremem outperforms every coding workload.",
+        ),
     ]
 
-    for name, text, gate, expected in cases:
-        actual = classify_violation(text, gate)
+    for case in cases:
+        name, text, gate, expected, *context = case
+        actual = classify_violation(text, gate, context[0] if context else None)
         if expected is None and actual is not None:
             print(f"self-test failed for {name}: {actual}", file=sys.stderr)
             return 1

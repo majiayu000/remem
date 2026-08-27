@@ -123,6 +123,10 @@ pub struct MemoryRunArtifact {
     pub diagnosis: MemoryDiagnosis,
     #[serde(default)]
     pub artifacts: BTreeMap<String, String>,
+    #[serde(default)]
+    pub artifact_sha256: BTreeMap<String, String>,
+    #[serde(default)]
+    pub suite_content_identity: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

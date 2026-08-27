@@ -25,7 +25,12 @@
     "evidence": { "type": "object" },
     "metrics": { "type": "object" },
     "diagnosis": { "type": "object" },
-    "artifacts": { "type": "object" }
+    "artifacts": { "type": "object" },
+    "artifact_sha256": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+    },
+    "suite_content_identity": { "type": ["string", "null"] }
   },
   "allOf": [
     {

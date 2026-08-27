@@ -24,6 +24,7 @@ pub const LINUX_X86_64_SECURITY_REPORT: &str =
     "eval/public/memory/reports/adversarial-policy-v2-linux-x86_64.json";
 pub const DEFAULT_CROSS_HOST_CHARTER: &str = "eval/cross-host/benchmark-charter.json";
 pub const DEFAULT_CLAIM_REGISTRY: &str = "eval/claims/registry.json";
+pub const DEFAULT_CLAIM_CONTRACT: &str = "eval/public/claims/coding-claim-contract-v1.json";
 
 #[derive(Debug, Clone)]
 pub struct ShipMatrixOptions {
@@ -34,6 +35,8 @@ pub struct ShipMatrixOptions {
     pub security_report_path: PathBuf,
     pub cross_host_charter_path: PathBuf,
     pub claim_registry_path: PathBuf,
+    pub claim_contract_path: PathBuf,
+    pub input_artifact_sha256: BTreeMap<String, String>,
 }
 
 impl Default for ShipMatrixOptions {
@@ -46,6 +49,8 @@ impl Default for ShipMatrixOptions {
             security_report_path: default_security_report_path(),
             cross_host_charter_path: PathBuf::from(DEFAULT_CROSS_HOST_CHARTER),
             claim_registry_path: PathBuf::from(DEFAULT_CLAIM_REGISTRY),
+            claim_contract_path: PathBuf::from(DEFAULT_CLAIM_CONTRACT),
+            input_artifact_sha256: BTreeMap::new(),
         }
     }
 }
@@ -81,7 +86,11 @@ pub struct ShipMatrixReport {
 #[derive(Debug, Clone, Serialize)]
 pub struct ImplementationIdentity {
     pub git_sha: Option<String>,
+    pub checkout_git_sha: Option<String>,
     pub source_dirty: Option<bool>,
+    pub production_input_tree_sha256: Option<String>,
+    pub checkout_production_input_tree_sha256: Option<String>,
+    pub executable_source_equivalent: bool,
     pub package_version: &'static str,
     pub os: &'static str,
     pub arch: &'static str,
@@ -210,7 +219,9 @@ pub fn build_ship_evidence(
             .iter()
             .filter(|gate| gate.required_for_command_success)
             .all(pass_or_not_applicable);
-    let implementation_identified = implementation.git_sha.is_some();
+    let implementation_identified = implementation.git_sha.is_some()
+        && implementation.checkout_git_sha.is_some()
+        && implementation.executable_source_equivalent;
     let source_clean = implementation.source_dirty == Some(false);
     let summary = ShipMatrixSummary {
         command_passed,
@@ -262,8 +273,11 @@ fn load_public_evidence(
         security.as_ref(),
         implementation,
     );
-    let claim_authority =
-        authority::verify_claim_authority(&options.claim_registry_path, implementation);
+    let claim_authority = authority::verify_claim_authority(
+        &options.claim_registry_path,
+        &options.claim_contract_path,
+        implementation,
+    );
     PublicEvidence {
         report,
         report_error,
@@ -296,6 +310,40 @@ pub(super) fn evidence_for_path(path: &Path, desired_state: ArtifactState) -> Ar
     }
 }
 
+pub(super) fn evidence_for_evaluated_path(
+    path: &Path,
+    expected_sha256: Option<&str>,
+) -> ArtifactEvidence {
+    match (fs::read(path), expected_sha256) {
+        (Ok(bytes), Some(expected)) if format!("{:x}", Sha256::digest(&bytes)) == expected => {
+            ArtifactEvidence {
+                path: path.to_string_lossy().to_string(),
+                state: ArtifactState::Verified,
+                sha256: Some(expected.to_string()),
+                detail: "exact bytes consumed by eval-gates".to_string(),
+            }
+        }
+        (Ok(_), Some(expected)) => ArtifactEvidence {
+            path: path.to_string_lossy().to_string(),
+            state: ArtifactState::Invalid,
+            sha256: Some(expected.to_string()),
+            detail: "file changed after eval-gates loaded it".to_string(),
+        },
+        (Ok(_), None) => ArtifactEvidence {
+            path: path.to_string_lossy().to_string(),
+            state: ArtifactState::Invalid,
+            sha256: None,
+            detail: "no consumed-byte identity was supplied".to_string(),
+        },
+        (Err(error), _) => ArtifactEvidence {
+            path: path.to_string_lossy().to_string(),
+            state: ArtifactState::Missing,
+            sha256: expected_sha256.map(str::to_string),
+            detail: error.to_string(),
+        },
+    }
+}
+
 pub(super) fn public_model_identity(public: &PublicEvidence) -> String {
     public
         .report
@@ -311,7 +359,7 @@ pub(super) fn public_model_identity(public: &PublicEvidence) -> String {
 }
 
 fn implementation_identity() -> ImplementationIdentity {
-    let git_sha = crate::git_util::git_output_soft(
+    let checkout_git_sha = crate::git_util::git_output_soft(
         Path::new("."),
         &["rev-parse", "--verify", "HEAD^{commit}"],
     )
@@ -321,9 +369,21 @@ fn implementation_identity() -> ImplementationIdentity {
     let source_dirty = crate::git_util::git_output_soft(Path::new("."), &["status", "--porcelain"])
         .filter(|output| output.status.success())
         .map(|output| !output.stdout.is_empty());
+    let git_sha = option_env!("REMEM_BUILD_GIT_SHA").map(str::to_string);
+    let production_input_tree_sha256 =
+        option_env!("REMEM_BUILD_PRODUCTION_INPUT_TREE_SHA256").map(str::to_string);
+    let checkout_production_input_tree_sha256 = authority::production_input_tree_sha256();
+    let executable_source_equivalent = git_sha == checkout_git_sha
+        && production_input_tree_sha256 == checkout_production_input_tree_sha256
+        && git_sha.is_some()
+        && production_input_tree_sha256.is_some();
     ImplementationIdentity {
         git_sha,
+        checkout_git_sha,
         source_dirty,
+        production_input_tree_sha256,
+        checkout_production_input_tree_sha256,
+        executable_source_equivalent,
         package_version: env!("CARGO_PKG_VERSION"),
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
