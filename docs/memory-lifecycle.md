@@ -116,12 +116,19 @@ CurrentTruth, including labeled `legacy_unverified` rows. Historical/debug
 flows can set `include_stale=true` or query ids directly when they need to
 inspect old facts.
 
-`memories_fts` deliberately indexes all stored statuses: `active`, `stale`, and
-`archived`. Lifecycle visibility is applied after the FTS JOIN at query time:
-default search excludes stale and archived rows, while `include_stale=true`
-enables historical reads. Being present in the index does not itself establish
-CurrentTruth or default SessionStart eligibility; the current-memory
-classification applies the additional proof and quarantine checks.
+The FTS/lifecycle boundary is a machine-checked contract:
+
+<!-- remem-doc-contract:memories-fts-lifecycle:start -->
+| Invariant | Value |
+|---|---|
+| Indexed statuses | active, stale, archived |
+| Lifecycle visibility | post-JOIN query-time filter |
+<!-- remem-doc-contract:memories-fts-lifecycle:end -->
+
+Default search excludes stale and archived rows, while `include_stale=true`
+enables historical reads. Index presence does not itself establish CurrentTruth
+or default SessionStart eligibility; the current-memory classification applies
+the additional proof and quarantine checks.
 
 ## Failure Handling
 

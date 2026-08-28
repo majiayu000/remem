@@ -1,5 +1,7 @@
 # SessionStart Context Smoke Matrix
 
+Status: Current verification guide
+
 Use these read-only commands after context compiler changes:
 
 ```bash
@@ -10,14 +12,18 @@ REMEM_CONTEXT_DEBUG=1 REMEM_CONTEXT_HOST=codex-cli cargo run --quiet -- context 
 
 Codex duplicate-injection gate:
 
+<!-- remem-doc-contract:isolated-sessionstart-smoke:start -->
 ```bash
 tmpdir="$(mktemp -d)"
+REMEM_DATA_DIR="$tmpdir" cargo run --quiet -- encrypt
 printf '{"session_id":"gate-smoke","cwd":"%s","transcript_path":"/tmp/remem-gate-smoke.jsonl"}' "$PWD" \
   | REMEM_DATA_DIR="$tmpdir" REMEM_CONTEXT_HOST=codex-cli cargo run --quiet -- context | wc -c
 printf '{"session_id":"gate-smoke","cwd":"%s","transcript_path":"/tmp/remem-gate-smoke.jsonl"}' "$PWD" \
   | REMEM_DATA_DIR="$tmpdir" REMEM_CONTEXT_HOST=codex-cli cargo run --quiet -- context | wc -c
-rm -rf "$tmpdir"
 ```
+<!-- remem-doc-contract:isolated-sessionstart-smoke:end -->
+
+Remove the disposable directory after the smoke test.
 
 Expected checks:
 

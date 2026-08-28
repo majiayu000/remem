@@ -234,11 +234,13 @@ Use the [current configuration routes](docs/README.md#configuration), the
 
 ### Share or edit memory outside the database
 
+<!-- remem-doc-contract:current-project-export:start -->
 ```bash
 remem sync-memory --cwd .
 remem export --markdown --output ./remem-memory
 remem export --pack .remem-pack
 ```
+<!-- remem-doc-contract:current-project-export:end -->
 
 Markdown mirrors are human-editable. Project memory packs are deterministic,
 git-committable exports with provenance-aware import and quarantine behavior.

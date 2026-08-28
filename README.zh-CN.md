@@ -213,11 +213,13 @@ fallback。第二阶段本地 reranker 同样是可选能力，配置前保持�
 
 ### 在数据库之外查看或共享记忆
 
+<!-- remem-doc-contract:current-project-export:start -->
 ```bash
 remem sync-memory --cwd .
 remem export --markdown --output ./remem-memory
 remem export --pack .remem-pack
 ```
+<!-- remem-doc-contract:current-project-export:end -->
 
 Markdown mirror 可以人工编辑。Project memory pack 是确定性、可提交到 Git 的
 导出格式，import 会处理来源、冲突和 quarantine。继续阅读

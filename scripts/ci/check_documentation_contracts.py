@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import re
+import shlex
 import sys
 import unicodedata
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -13,9 +15,20 @@ from urllib.parse import unquote
 ROOT = Path(__file__).resolve().parents[2]
 README_PATHS = (Path("README.md"), Path("README.zh-CN.md"))
 HOMEBREW_DOCS = (*README_PATHS, Path("docs/installation.md"))
-CANONICAL_BREW_INSTALL = '"$(brew --prefix remem)/bin/remem" install --target codex'
+CURRENT_EXPORT_DOCS = (*README_PATHS, Path("docs/specs/project-memory-pack/PRODUCT.md"))
 LINK_PATTERN = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 HEADING_PATTERN = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
+SHELL_FENCE_PATTERN = re.compile(
+    r"^[ \t]*```(?:bash|sh|shell)\s*\n(.*?)^[ \t]*```\s*$",
+    re.MULTILINE | re.DOTALL,
+)
+
+
+@dataclass(frozen=True)
+class ShellCommand:
+    raw: str
+    assignments: dict[str, str]
+    argv: tuple[str, ...]
 
 
 def read(root: Path, relative: Path) -> str:
@@ -51,32 +64,109 @@ def section(text: str, heading: str) -> str:
     return match.group(1) if match else ""
 
 
+def contract_region(text: str, contract: str) -> str | None:
+    start = f"<!-- remem-doc-contract:{contract}:start -->"
+    end = f"<!-- remem-doc-contract:{contract}:end -->"
+    if text.count(start) != 1 or text.count(end) != 1:
+        return None
+    before, region_and_end = text.split(start, maxsplit=1)
+    del before
+    region, trailing = region_and_end.split(end, maxsplit=1)
+    del trailing
+    return region
+
+
+def shell_tokens(line: str) -> list[str]:
+    lexer = shlex.shlex(line, posix=True, punctuation_chars="|")
+    lexer.whitespace_split = True
+    lexer.commenters = "#"
+    return list(lexer)
+
+
+def shell_commands(text: str) -> list[ShellCommand]:
+    commands: list[ShellCommand] = []
+    for fenced in SHELL_FENCE_PATTERN.findall(text):
+        logical = re.sub(r"\\\s*\n", " ", fenced)
+        for raw_line in logical.splitlines():
+            raw_line = raw_line.strip()
+            if not raw_line or raw_line.startswith("#"):
+                continue
+            tokens = shell_tokens(raw_line)
+            segment: list[str] = []
+            for token in [*tokens, "|"]:
+                if token == "|":
+                    if segment:
+                        assignments: dict[str, str] = {}
+                        while segment and re.fullmatch(
+                            r"[A-Za-z_][A-Za-z0-9_]*=.*", segment[0]
+                        ):
+                            name, value = segment.pop(0).split("=", maxsplit=1)
+                            assignments[name] = value
+                        commands.append(
+                            ShellCommand(raw_line, assignments, tuple(segment))
+                        )
+                    segment = []
+                else:
+                    segment.append(token)
+    return commands
+
+
+def invokes_remem(command: ShellCommand, subcommand: str) -> bool:
+    if not command.argv:
+        return False
+    executable = command.argv[0]
+    if executable == "remem" or executable.endswith("/bin/remem"):
+        return len(command.argv) > 1 and command.argv[1] == subcommand
+    if executable == "cargo" and "--" in command.argv:
+        separator = command.argv.index("--")
+        return len(command.argv) > separator + 1 and command.argv[separator + 1] == subcommand
+    return False
+
+
+def has_option(command: ShellCommand, option: str) -> bool:
+    return any(arg == option or arg.startswith(f"{option}=") for arg in command.argv)
+
+
 def check_homebrew_commands(root: Path, violations: list[str]) -> None:
-    unsafe = re.compile(
-        r'REMEM_INSTALL_BINARY=[^\n]*\$\(brew --prefix remem\)[^\n]*\bremem install'
-    )
     for path in HOMEBREW_DOCS:
-        text = read(root, path)
-        if unsafe.search(text) or CANONICAL_BREW_INSTALL not in text:
+        installs = [
+            command
+            for command in shell_commands(read(root, path))
+            if invokes_remem(command, "install")
+        ]
+        canonical = [
+            command
+            for command in installs
+            if command.argv[0] == "$(brew --prefix remem)/bin/remem"
+            and command.assignments.get("REMEM_INSTALL_BINARY") is None
+        ]
+        if not canonical:
             violations.append(
                 f"{path}: Homebrew setup must execute the canonical formula binary directly"
             )
 
 
 def check_exports(root: Path, violations: list[str]) -> None:
-    explicit_current_dir = re.compile(
-        r"^\s*remem export\b[^\n]*--project(?:=|\s+)(?:[\"']?\$PWD[\"']?|\.)",
-        flags=re.MULTILINE,
-    )
-    for path in README_PATHS:
-        text = read(root, path)
-        export_lines = re.findall(r"^\s*remem export\b.*$", text, flags=re.MULTILINE)
-        if len(export_lines) < 2:
-            violations.append(f"{path}: document both current-project export forms")
-        if explicit_current_dir.search(text):
+    for path in CURRENT_EXPORT_DOCS:
+        region = contract_region(read(root, path), "current-project-export")
+        if region is None:
+            violations.append(f"{path}: missing current-project export contract block")
+            continue
+        exports = [
+            command for command in shell_commands(region) if invokes_remem(command, "export")
+        ]
+        if not exports:
+            violations.append(f"{path}: current-project export contract has no export command")
+            continue
+        if any(has_option(command, "--project") for command in exports):
             violations.append(
                 f"{path}: omit --project for current-project export so the CLI can canonicalize it"
             )
+        if path in README_PATHS and not (
+            any(has_option(command, "--markdown") for command in exports)
+            and any(has_option(command, "--pack") for command in exports)
+        ):
+            violations.append(f"{path}: document both current-project export forms")
 
 
 def check_channel_switch(root: Path, violations: list[str]) -> None:
@@ -121,42 +211,81 @@ def check_hub_links(root: Path, violations: list[str]) -> None:
 
 
 def check_sessionstart_smoke(root: Path, violations: list[str]) -> None:
-    path = Path("docs/README.md")
-    text = read(root, path)
-    smoke = section(text, "SessionStart context smoke")
-    commands = [
-        line
-        for line in smoke.splitlines()
-        if re.search(r"(?:\bremem|\bcargo run\b.*\s--)\s+context\b", line)
+    path = Path("docs/sessionstart-context-smoke.md")
+    region = contract_region(read(root, path), "isolated-sessionstart-smoke")
+    if region is None:
+        violations.append(f"{path}: missing isolated SessionStart smoke contract block")
+        return
+    commands = shell_commands(region)
+    temp_assignments = [
+        (index, command)
+        for index, command in enumerate(commands)
+        if not command.argv and command.assignments.get("tmpdir") == "$(mktemp -d)"
     ]
-    initialization = re.search(
-        r'REMEM_DATA_DIR=["\']?\$tmpdir["\']?[^\n]*(?:\bremem|\bcargo run\b.*\s--)\s+encrypt\b',
-        smoke,
+    initializers = [
+        (index, command)
+        for index, command in enumerate(commands)
+        if invokes_remem(command, "encrypt")
+        and command.assignments.get("REMEM_DATA_DIR") == "$tmpdir"
+    ]
+    contexts = [
+        (index, command)
+        for index, command in enumerate(commands)
+        if invokes_remem(command, "context")
+    ]
+    context_envs_are_isolated = all(
+        command.assignments.get("REMEM_DATA_DIR") == "$tmpdir"
+        and command.assignments.get("REMEM_CONTEXT_HOST") == "codex-cli"
+        and "REMEM_ALLOW_PLAINTEXT_DB" not in command.assignments
+        for _, command in contexts
     )
-    valid_commands = [line for line in commands if "REMEM_DATA_DIR=" in line]
-    first_context = smoke.find(commands[0]) if commands else -1
-    if (
-        len(commands) != 2
-        or len(valid_commands) != 2
-        or initialization is None
-        or initialization.start() > first_context
+    ordered = bool(
+        temp_assignments
+        and initializers
+        and contexts
+        and temp_assignments[0][0] < initializers[0][0] < contexts[0][0]
+    )
+    payloads: list[tuple[str, ...]] = []
+    for index, _ in contexts:
+        if index == 0 or not commands[index - 1].argv or commands[index - 1].argv[0] != "printf":
+            payloads.append(())
+        else:
+            payloads.append(commands[index - 1].argv)
+    payloads_are_bound = bool(
+        len(payloads) == 2
+        and payloads[0] == payloads[1]
+        and len(payloads[0]) >= 3
+        and payloads[0][-1] == "$PWD"
+        and '"session_id":"gate-smoke"' in payloads[0][1]
+        and '"cwd":"%s"' in payloads[0][1]
+    )
+    if not (
+        len(temp_assignments) == 1
+        and len(initializers) == 1
+        and len(contexts) == 2
+        and context_envs_are_isolated
+        and ordered
+        and payloads_are_bound
     ):
         violations.append(
             f"{path}: isolated SessionStart smoke must initialize the encrypted store "
-            "before both context commands"
+            "and bind both equivalent context commands to it"
         )
 
 
 def check_fts_semantics(root: Path, violations: list[str]) -> None:
     path = Path("docs/memory-lifecycle.md")
-    text = " ".join(read(root, path).lower().split())
-    required = (
-        "memories_fts",
-        "`active`, `stale`, and `archived`",
-        "query time",
-        "include_stale=true",
-    )
-    if any(marker not in text for marker in required):
+    region = contract_region(read(root, path), "memories-fts-lifecycle")
+    fields: dict[str, str] = {}
+    if region is not None:
+        for line in region.splitlines():
+            cells = [cell.strip().strip("`") for cell in line.strip().strip("|").split("|")]
+            if len(cells) == 2 and cells[0] not in {"Invariant", "---"}:
+                fields[cells[0]] = cells[1]
+    if fields != {
+        "Indexed statuses": "active, stale, archived",
+        "Lifecycle visibility": "post-JOIN query-time filter",
+    }:
         violations.append(
             f"{path}: document the all-status FTS index and query-time lifecycle filtering"
         )
