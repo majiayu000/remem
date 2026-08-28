@@ -14,6 +14,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CARGO_TEST_THREADS = 4
+SESSIONSTART_SMOKE_COMMAND = [
+    "env",
+    "REMEM_CONTEXT_HOST=claude-code",
+    "REMEM_CONTEXT_GATE=off",
+    "REMEM_CONTEXT_GATE_HOSTS=claude-code",
+    "REMEM_CONTEXT_DEBUG=1",
+    "REMEM_CONTEXT_GATE_RETENTION_DAYS=0",
+    "scripts/ci/smoke_sessionstart_context_gate.sh",
+]
 
 
 @dataclass
@@ -118,8 +127,8 @@ def fast_steps(base: str, head: str) -> list[tuple[str, list[str]]]:
             ["python3", "scripts/ci/check_documentation_contracts.py"],
         ),
         (
-            "Run SessionStart context gate smoke",
-            ["scripts/ci/smoke_sessionstart_context_gate.sh"],
+            "Prove SessionStart smoke isolates parent gate environment",
+            SESSIONSTART_SMOKE_COMMAND,
         ),
         ("Check public surface", ["python3", "scripts/ci/check_public_surface.py"]),
         ("Check published surface baseline", ["python3", "scripts/ci/check_surface_baseline.py", base]),

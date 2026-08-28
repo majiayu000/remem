@@ -84,7 +84,7 @@ class PreflightCargoTestThreadsTests(unittest.TestCase):
             ["python3", "scripts/ci/test_check_documentation_contracts.py"], commands
         )
         self.assertEqual(
-            commands.count(["scripts/ci/smoke_sessionstart_context_gate.sh"]), 1
+            commands.count(check_pr_preflight.SESSIONSTART_SMOKE_COMMAND), 1
         )
         self.assertIn(["python3", "scripts/ci/check_public_surface.py"], commands)
         self.assertIn(
@@ -101,7 +101,7 @@ class PreflightCargoTestThreadsTests(unittest.TestCase):
         commands = self.run_main()
 
         self.assertEqual(
-            commands.count(["scripts/ci/smoke_sessionstart_context_gate.sh"]), 1
+            commands.count(check_pr_preflight.SESSIONSTART_SMOKE_COMMAND), 1
         )
 
 

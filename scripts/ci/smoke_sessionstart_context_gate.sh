@@ -51,6 +51,10 @@ common_env=(
   "REMEM_DATA_DIR=${data_dir}"
   "REMEM_CONFIG=${config_path}"
   "REMEM_CONTEXT_HOST=codex-cli"
+  "REMEM_CONTEXT_GATE=strict"
+  "REMEM_CONTEXT_GATE_HOSTS=codex-cli"
+  "REMEM_CONTEXT_DEBUG=0"
+  "REMEM_CONTEXT_GATE_RETENTION_DAYS=30"
 )
 
 if ! "${common_env[@]}" "${binary}" encrypt >"${scratch_dir}/encrypt.stdout"; then
