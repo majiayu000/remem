@@ -9,6 +9,8 @@ use super::*;
 use crate::eval::gates::{EvalGateDelta, EvalGateStatus};
 use sha2::Digest;
 
+mod implementation_identity;
+
 fn delta(metric: &str, status: EvalGateStatus) -> EvalGateDelta {
     EvalGateDelta {
         metric: metric.to_string(),
@@ -353,21 +355,6 @@ fn legacy_gate_failure_blocks_merge_and_release_readiness() {
         implementation_identified,
         source_clean
     ));
-}
-
-#[test]
-fn dirty_build_cannot_become_source_clean_after_checkout_is_reverted() {
-    assert!(!source_is_clean(Some(true), Some(false)));
-    assert!(!source_is_clean(None, Some(false)));
-    assert!(source_is_clean(Some(false), Some(false)));
-}
-
-#[test]
-fn build_script_watches_the_benchmark_authority_suite() {
-    let build_script = include_str!("../../../build.rs");
-    assert!(build_script.contains("eval/public/memory/suites/adversarial-policy/suite.json"));
-    assert!(!build_script.contains(":(exclude)src/eval/ship_matrix"));
-    assert!(!build_script.contains(":(exclude)src/eval/gates.rs"));
 }
 
 #[test]
