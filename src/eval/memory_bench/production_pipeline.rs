@@ -2,10 +2,79 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, DatabaseName};
 use serde_json::json;
 
+#[cfg(test)]
+use std::cell::RefCell;
+#[cfg(test)]
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
+
 use super::runner::{RetrievedEvidence, PROJECT};
 use super::types::{MemoryBenchEvidence, MemoryBenchPolicyMeasurement, MemoryBenchTask};
 
 const LEASE_OWNER: &str = "memory-bench-production-pipeline";
+
+#[cfg(test)]
+thread_local! {
+    static REPLAY_PROBE: RefCell<Option<ReplayProbe>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+pub(super) struct ReplayProbe {
+    replay_count: Arc<AtomicUsize>,
+}
+
+#[cfg(test)]
+impl ReplayProbe {
+    pub(super) fn count(&self) -> usize {
+        self.replay_count.load(Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+pub(super) struct ReplayProbeGuard {
+    previous: Option<ReplayProbe>,
+}
+
+#[cfg(test)]
+impl Drop for ReplayProbeGuard {
+    fn drop(&mut self) {
+        REPLAY_PROBE.with(|slot| {
+            slot.replace(self.previous.take());
+        });
+    }
+}
+
+#[cfg(test)]
+pub(super) fn scoped_replay_probe() -> (ReplayProbe, ReplayProbeGuard) {
+    let probe = ReplayProbe {
+        replay_count: Arc::new(AtomicUsize::new(0)),
+    };
+    let guard = attach_replay_probe(Some(probe.clone()));
+    (probe, guard)
+}
+
+#[cfg(test)]
+pub(super) fn current_replay_probe() -> Option<ReplayProbe> {
+    REPLAY_PROBE.with(|slot| slot.borrow().clone())
+}
+
+#[cfg(test)]
+pub(super) fn attach_replay_probe(probe: Option<ReplayProbe>) -> ReplayProbeGuard {
+    let previous = REPLAY_PROBE.with(|slot| slot.replace(probe));
+    ReplayProbeGuard { previous }
+}
+
+#[cfg(test)]
+fn record_trusted_replay() {
+    REPLAY_PROBE.with(|slot| {
+        if let Some(probe) = slot.borrow().as_ref() {
+            probe.replay_count.fetch_add(1, Ordering::SeqCst);
+        }
+    });
+}
 
 pub(super) async fn retrieve_with_production_pipeline(
     task: &MemoryBenchTask,
@@ -22,6 +91,9 @@ pub(super) async fn retrieve_with_production_pipeline(
 pub(super) async fn trusted_snapshot_identity(
     task: &MemoryBenchTask,
 ) -> Result<crate::eval::security_snapshot_identity::SnapshotIdentity> {
+    #[cfg(test)]
+    record_trusted_replay();
+
     let conn = trusted_schema_connection()?;
     let (conn, _, _) = execute_production_pipeline_with_connection(conn, task).await?;
     crate::eval::security_snapshot_identity::snapshot_identity(&conn)

@@ -13,8 +13,12 @@ pub use types::{MemoryBenchCondition, MemoryBenchSuiteFixture};
 pub(crate) fn replay_trusted_security_snapshot_identity(
     task: &types::MemoryBenchTask,
 ) -> anyhow::Result<crate::eval::security_snapshot_identity::SnapshotIdentity> {
+    #[cfg(test)]
+    let replay_probe = production_pipeline::current_replay_probe();
     let task = task.clone();
     std::thread::spawn(move || {
+        #[cfg(test)]
+        let _replay_probe_guard = production_pipeline::attach_replay_probe(replay_probe);
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?

@@ -28,14 +28,6 @@ impl Drop for PublicSecurityFixture {
     }
 }
 
-#[test]
-fn public_verifier_constructs_context_inside_each_call() {
-    let verifier_source = include_str!("../../bench_artifact/verify.rs");
-    assert!(verifier_source
-        .contains("let mut context = security_snapshot::VerificationContext::new();"));
-    assert!(!verifier_source.contains("static CONTEXT"));
-}
-
 #[tokio::test]
 async fn public_verifier_replays_same_task_id_after_suite_semantics_change() -> Result<()> {
     let first_task = approved_task()?;
@@ -53,7 +45,8 @@ async fn public_verifier_replays_same_task_id_after_suite_semantics_change() -> 
 }
 
 #[tokio::test]
-async fn parallel_public_verifier_invocations_do_not_share_replay_history() -> Result<()> {
+async fn parallel_public_verifier_invocations_cover_distinct_task_and_platform_keys() -> Result<()>
+{
     let mac_task = approved_task()?;
     let linux_task = changed_approved_task(&mac_task, "parallel");
     let mac = build_fixture("public-context-mac", &mac_task, "macos", "aarch64").await?;
@@ -76,6 +69,50 @@ async fn parallel_public_verifier_invocations_do_not_share_replay_history() -> R
             .join()
             .map_err(|_| anyhow::anyhow!("public verifier thread panicked"))??;
         assert!(report.passed, "{:#?}", report.failures);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn public_verifier_replays_identical_input_on_every_invocation() -> Result<()> {
+    let task = approved_task()?;
+    let fixture = build_fixture("public-context-identical", &task, "macos", "aarch64").await?;
+    let (probe, _probe_guard) = super::super::production_pipeline::scoped_replay_probe();
+
+    assert_public_verification_passes(&fixture.root)?;
+    assert_public_verification_passes(&fixture.root)?;
+    assert_eq!(
+        probe.count(),
+        2,
+        "each public verifier invocation must execute a trusted production replay"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn parallel_identical_public_verifier_invocations_have_thread_local_probes() -> Result<()> {
+    let task = approved_task()?;
+    let fixture = build_fixture("public-context-parallel", &task, "linux", "x86_64").await?;
+
+    let barrier = Arc::new(Barrier::new(2));
+    let handles = [fixture.root.clone(), fixture.root.clone()].map(|root| {
+        let barrier = Arc::clone(&barrier);
+        std::thread::spawn(move || -> Result<(BenchVerifyReport, usize)> {
+            let (probe, _probe_guard) = super::super::production_pipeline::scoped_replay_probe();
+            barrier.wait();
+            let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+            Ok((report, probe.count()))
+        })
+    });
+    for handle in handles {
+        let (report, replay_count) = handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("public verifier thread panicked"))??;
+        assert!(report.passed, "{:#?}", report.failures);
+        assert_eq!(
+            replay_count, 1,
+            "each verifier thread must observe only its own replay"
+        );
     }
     Ok(())
 }
