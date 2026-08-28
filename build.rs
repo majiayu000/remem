@@ -2,7 +2,7 @@ use std::process::Command;
 
 use sha2::{Digest, Sha256};
 
-const PRODUCTION_PATHS: &[&str] = &[
+const AUTHORITY_INPUT_PATHS: &[&str] = &[
     "Cargo.toml",
     "Cargo.lock",
     "build.rs",
@@ -11,16 +11,12 @@ const PRODUCTION_PATHS: &[&str] = &[
     "src",
     "prompts",
     "assets",
-    ":(exclude)src/eval/ship_matrix.rs",
-    ":(exclude)src/eval/ship_matrix/**",
-    ":(exclude)src/eval/gates.rs",
+    "eval/public/memory/suites/adversarial-policy/suite.json",
 ];
 
 fn main() {
-    for path in PRODUCTION_PATHS {
-        if !path.starts_with(":(exclude)") {
-            println!("cargo:rerun-if-changed={path}");
-        }
+    for path in AUTHORITY_INPUT_PATHS {
+        println!("cargo:rerun-if-changed={path}");
     }
     emit_git_rerun_paths();
 
@@ -70,7 +66,7 @@ fn git_dirty() -> Option<bool> {
 
 fn production_input_tree_sha256() -> Option<String> {
     let mut args = vec!["ls-files", "-s", "--"];
-    args.extend(PRODUCTION_PATHS);
+    args.extend(AUTHORITY_INPUT_PATHS);
     let output = Command::new("git").args(args).output().ok()?;
     if !output.status.success() || output.stdout.is_empty() {
         return None;

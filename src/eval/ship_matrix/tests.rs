@@ -356,6 +356,21 @@ fn legacy_gate_failure_blocks_merge_and_release_readiness() {
 }
 
 #[test]
+fn dirty_build_cannot_become_source_clean_after_checkout_is_reverted() {
+    assert!(!source_is_clean(Some(true), Some(false)));
+    assert!(!source_is_clean(None, Some(false)));
+    assert!(source_is_clean(Some(false), Some(false)));
+}
+
+#[test]
+fn build_script_watches_the_benchmark_authority_suite() {
+    let build_script = include_str!("../../../build.rs");
+    assert!(build_script.contains("eval/public/memory/suites/adversarial-policy/suite.json"));
+    assert!(!build_script.contains(":(exclude)src/eval/ship_matrix"));
+    assert!(!build_script.contains(":(exclude)src/eval/gates.rs"));
+}
+
+#[test]
 fn supporting_claim_report_must_bind_current_sha() {
     let current = "0123456789abcdef0123456789abcdef01234567";
     let stale = serde_json::to_vec(&serde_json::json!({
@@ -685,6 +700,7 @@ fn coding_baseline_evidence_is_unverified_when_artifact_verifier_fails() {
     let implementation = ImplementationIdentity {
         git_sha: Some("0123456789abcdef0123456789abcdef01234567".to_string()),
         checkout_git_sha: Some("0123456789abcdef0123456789abcdef01234567".to_string()),
+        build_source_dirty: Some(false),
         source_dirty: Some(false),
         production_input_tree_sha256: Some("a".repeat(64)),
         checkout_production_input_tree_sha256: Some("a".repeat(64)),

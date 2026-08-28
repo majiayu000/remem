@@ -7,6 +7,8 @@ use super::{resolve_public_path, VerifyState};
 use crate::eval::bench_artifact::{MemoryRunArtifact, VerifiedArtifact};
 use crate::eval::memory_bench::types::{MemoryBenchSuiteFixture, MemoryBenchTask};
 
+mod inventory;
+
 pub(super) fn validate_security_snapshot(
     run: &MemoryRunArtifact,
     label: &str,
@@ -106,6 +108,7 @@ fn validate_semantics(
         semantic_identity(&expected)?,
         semantic_identity(&actual)?
     );
+    inventory::validate_closed_world(connection, task, expected.len())?;
     validate_policy_state(connection, task)
 }
 

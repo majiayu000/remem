@@ -36,6 +36,9 @@ pub(super) fn verify_security_authority(
         diagnostics
             .push("executing eval binary does not match the checkout source identity".to_string());
     }
+    if implementation.build_source_dirty != Some(false) {
+        diagnostics.push("executing eval binary was built from dirty authority inputs".to_string());
+    }
     if implementation.source_dirty != Some(false) {
         diagnostics.push("current checkout is not clean for security evaluation".to_string());
     }
@@ -469,32 +472,17 @@ fn is_sha256(value: &str) -> bool {
 }
 
 pub(super) fn production_input_tree_sha256() -> Option<String> {
-    let output = crate::git_util::git_output_soft(
-        Path::new("."),
-        &[
-            "ls-files",
-            "-s",
-            "--",
-            production_pathspec()[0],
-            production_pathspec()[1],
-            production_pathspec()[2],
-            production_pathspec()[3],
-            production_pathspec()[4],
-            production_pathspec()[5],
-            production_pathspec()[6],
-            production_pathspec()[7],
-            production_pathspec()[8],
-            production_pathspec()[9],
-            production_pathspec()[10],
-        ],
-    )?;
+    let pathspec = production_pathspec();
+    let mut args = vec!["ls-files", "-s", "--"];
+    args.extend(pathspec);
+    let output = crate::git_util::git_output_soft(Path::new("."), &args)?;
     if !output.status.success() || output.stdout.is_empty() {
         return None;
     }
     Some(format!("{:x}", Sha256::digest(&output.stdout)))
 }
 
-fn production_pathspec() -> [&'static str; 11] {
+fn production_pathspec() -> [&'static str; 9] {
     [
         "Cargo.toml",
         "Cargo.lock",
@@ -504,9 +492,7 @@ fn production_pathspec() -> [&'static str; 11] {
         "src",
         "prompts",
         "assets",
-        ":(exclude)src/eval/ship_matrix.rs",
-        ":(exclude)src/eval/ship_matrix/**",
-        ":(exclude)src/eval/gates.rs",
+        "eval/public/memory/suites/adversarial-policy/suite.json",
     ]
 }
 
@@ -631,6 +617,7 @@ pub(super) fn verify_claim_authority(
             && contract_valid
             && claims_passed
             && implementation.executable_source_equivalent
+            && implementation.build_source_dirty == Some(false)
             && implementation.source_dirty == Some(false),
         level3_passed: false,
         diagnostics,

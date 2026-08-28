@@ -87,6 +87,7 @@ pub struct ShipMatrixReport {
 pub struct ImplementationIdentity {
     pub git_sha: Option<String>,
     pub checkout_git_sha: Option<String>,
+    pub build_source_dirty: Option<bool>,
     pub source_dirty: Option<bool>,
     pub production_input_tree_sha256: Option<String>,
     pub checkout_production_input_tree_sha256: Option<String>,
@@ -224,7 +225,10 @@ pub fn build_ship_evidence(
     let implementation_identified = implementation.git_sha.is_some()
         && implementation.checkout_git_sha.is_some()
         && implementation.executable_source_equivalent;
-    let source_clean = implementation.source_dirty == Some(false);
+    let source_clean = source_is_clean(
+        implementation.build_source_dirty,
+        implementation.source_dirty,
+    );
     let summary = ShipMatrixSummary {
         command_passed,
         merge_ready: merge_is_ready(&gates, legacy_gates_passed),
@@ -428,16 +432,19 @@ fn implementation_identity() -> ImplementationIdentity {
         .filter(|output| output.status.success())
         .map(|output| !output.stdout.is_empty());
     let git_sha = option_env!("REMEM_BUILD_GIT_SHA").map(str::to_string);
+    let build_source_dirty = option_env!("REMEM_BUILD_SOURCE_DIRTY").and_then(parse_bool);
     let production_input_tree_sha256 =
         option_env!("REMEM_BUILD_PRODUCTION_INPUT_TREE_SHA256").map(str::to_string);
     let checkout_production_input_tree_sha256 = authority::production_input_tree_sha256();
     let executable_source_equivalent = git_sha == checkout_git_sha
         && production_input_tree_sha256 == checkout_production_input_tree_sha256
         && git_sha.is_some()
-        && production_input_tree_sha256.is_some();
+        && production_input_tree_sha256.is_some()
+        && source_is_clean(build_source_dirty, source_dirty);
     ImplementationIdentity {
         git_sha,
         checkout_git_sha,
+        build_source_dirty,
         source_dirty,
         production_input_tree_sha256,
         checkout_production_input_tree_sha256,
@@ -446,6 +453,18 @@ fn implementation_identity() -> ImplementationIdentity {
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
     }
+}
+
+fn parse_bool(value: &str) -> Option<bool> {
+    match value {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+fn source_is_clean(build_source_dirty: Option<bool>, checkout_source_dirty: Option<bool>) -> bool {
+    build_source_dirty == Some(false) && checkout_source_dirty == Some(false)
 }
 
 fn required_rows_pass(gates: &[ShipGateRow], scope: &str) -> bool {
