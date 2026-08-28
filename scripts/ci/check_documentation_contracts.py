@@ -234,7 +234,8 @@ def check_sessionstart_smoke(root: Path, violations: list[str]) -> None:
     region = contract_region(guide, "isolated-sessionstart-smoke")
     expected_region = (
         "\n```bash\n"
-        f"{SESSIONSTART_SMOKE_SCRIPT.as_posix()}\n"
+        "cargo build --locked --bin remem\n"
+        f'{SESSIONSTART_SMOKE_SCRIPT.as_posix()} "$(pwd -P)/target/debug/remem"\n'
         "```\n"
     )
     if region != expected_region:

@@ -2,19 +2,23 @@
 
 Status: Current verification guide
 
-The executable fixture builds the current checkout once, initializes an
-encrypted store under an isolated temporary `HOME` and `REMEM_DATA_DIR`, and
-invokes the same Codex SessionStart request twice. Run it from the repository
-root:
+Build the current checkout, then pass its existing executable to the fixture.
+The fixture initializes an encrypted store under an isolated temporary `HOME`
+and `REMEM_DATA_DIR`, and invokes the same Codex SessionStart request twice.
+Run it from the repository root (use the corresponding absolute path when
+`CARGO_TARGET_DIR` is set):
 
 <!-- remem-doc-contract:isolated-sessionstart-smoke:start -->
 ```bash
-scripts/ci/smoke_sessionstart_context_gate.sh
+cargo build --locked --bin remem
+scripts/ci/smoke_sessionstart_context_gate.sh "$(pwd -P)/target/debug/remem"
 ```
 <!-- remem-doc-contract:isolated-sessionstart-smoke:end -->
 
-The fixture owns setup, assertions, and cleanup. Its implementation is the
-single source of truth; CI and local preflight execute the same entry point.
+The fixture requires exactly one existing, executable, absolute binary path.
+It owns setup, assertions, and cleanup. Its implementation is the single
+source of truth; CI and local preflight build first and then execute the same
+entry point.
 
 Expected checks:
 

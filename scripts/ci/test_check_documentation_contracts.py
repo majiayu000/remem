@@ -1,50 +1,146 @@
+import os
+import re
+import subprocess
 import tempfile
 import unittest
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import check_documentation_contracts
 
 
-EXPECTED_WORKFLOW_SMOKE_COMMAND = "scripts/ci/smoke_sessionstart_context_gate.sh"
+EXPECTED_WORKFLOW_BUILD_COMMAND = "cargo build --locked --bin remem"
+EXPECTED_WORKFLOW_SMOKE_COMMAND = (
+    'scripts/ci/smoke_sessionstart_context_gate.sh '
+    '"${{ github.workspace }}/target/debug/remem"'
+)
+SAFE_SHELLS = {"", "bash"}
+SAFE_WORKING_DIRECTORIES = {"", ".", "${{ github.workspace }}"}
 
 
-def workflow_steps(text: str) -> list[dict[str, str]]:
-    """Parse the scalar fields of top-level CI steps without production constants."""
-    steps: list[dict[str, str]] = []
-    current: dict[str, str] | None = None
+@dataclass
+class WorkflowJob:
+    fields: dict[str, str] = field(default_factory=dict)
+    inherited_execution_fields: dict[str, str] = field(default_factory=dict)
+    steps: list[dict[str, str]] = field(default_factory=list)
+
+
+def yaml_scalar(raw: str) -> str:
+    value = raw.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
+    return value
+
+
+def workflow_jobs(text: str) -> list[WorkflowJob]:
+    """Narrowly parse job and step execution fields without production constants."""
+    jobs: list[WorkflowJob] = []
+    current_job: WorkflowJob | None = None
+    current_step: dict[str, str] | None = None
+    in_jobs = False
     for line in text.splitlines():
-        if line.startswith("      - "):
-            if current is not None:
-                steps.append(current)
-            current = {}
-            field = line.removeprefix("      - ")
-        elif current is not None and line.startswith("        "):
-            field = line.removeprefix("        ")
-        else:
+        if line == "jobs:":
+            in_jobs = True
             continue
-        if ":" not in field:
+        if not in_jobs:
             continue
-        key, value = field.split(":", maxsplit=1)
-        current[key.strip()] = value.strip().strip('"\'')
-    if current is not None:
-        steps.append(current)
-    return steps
+        if re.fullmatch(r"  [A-Za-z0-9_-]+:\s*", line):
+            current_job = WorkflowJob()
+            jobs.append(current_job)
+            current_step = None
+            continue
+        if current_job is None:
+            continue
+        step_match = re.match(r"^      -\s+(.+)$", line)
+        if step_match:
+            current_step = {}
+            current_job.steps.append(current_step)
+            field_text = step_match.group(1)
+            if ":" in field_text:
+                key, value = field_text.split(":", maxsplit=1)
+                current_step[key.strip()] = yaml_scalar(value)
+            continue
+        step_field = re.match(r"^        ([A-Za-z0-9_-]+):\s*(.*)$", line)
+        if current_step is not None and step_field:
+            current_step[step_field.group(1)] = yaml_scalar(step_field.group(2))
+            continue
+        job_field = re.match(r"^    ([A-Za-z0-9_-]+):\s*(.*)$", line)
+        if current_step is None and job_field:
+            current_job.fields[job_field.group(1)] = yaml_scalar(job_field.group(2))
+            continue
+        inherited = re.match(
+            r"^\s{6,}((?:shell|working-directory)):\s*(.*)$", line
+        )
+        if current_step is None and inherited:
+            current_job.inherited_execution_fields[inherited.group(1)] = yaml_scalar(
+                inherited.group(2)
+            )
+    return jobs
+
+
+def execution_violations(
+    label: str,
+    fields: dict[str, str],
+    inherited: dict[str, str],
+) -> list[str]:
+    violations: list[str] = []
+    if "if" in fields:
+        violations.append(f"{label} must be unconditional")
+    if fields.get("continue-on-error", "").lower() not in {"", "false"}:
+        violations.append(f"{label} must fail CI on error")
+    shell = fields.get("shell", inherited.get("shell", ""))
+    if shell not in SAFE_SHELLS:
+        violations.append(f"{label} must use the default or standard bash shell")
+    working_directory = fields.get(
+        "working-directory", inherited.get("working-directory", "")
+    )
+    if working_directory not in SAFE_WORKING_DIRECTORIES:
+        violations.append(f"{label} must run from the repository root")
+    if "timeout-minutes" in fields:
+        violations.append(f"{label} must not be disabled by a local timeout")
+    return violations
 
 
 def workflow_smoke_registration_violations(text: str) -> list[str]:
-    """Independently enforce one unconditional, executable smoke step."""
-    matching = [
-        step
-        for step in workflow_steps(text)
-        if step.get("run") == EXPECTED_WORKFLOW_SMOKE_COMMAND
-    ]
+    """Independently enforce an executable build followed by an isolated smoke."""
+    matches: list[tuple[WorkflowJob, int, dict[str, str]]] = []
+    build_matches: list[tuple[WorkflowJob, int, dict[str, str]]] = []
+    for job in workflow_jobs(text):
+        for index, step in enumerate(job.steps):
+            if step.get("run") == EXPECTED_WORKFLOW_SMOKE_COMMAND:
+                matches.append((job, index, step))
+            if step.get("run") == EXPECTED_WORKFLOW_BUILD_COMMAND:
+                build_matches.append((job, index, step))
     violations: list[str] = []
-    if len(matching) != 1:
+    if len(matches) != 1:
         violations.append("CI must execute the exact SessionStart smoke command once")
-    elif "if" in matching[0]:
-        violations.append("SessionStart smoke step must be unconditional")
+    if len(build_matches) != 1:
+        violations.append("CI must build the exact SessionStart smoke binary once")
+    if len(matches) == 1:
+        smoke_job, smoke_index, smoke_step = matches[0]
+        violations.extend(execution_violations("SessionStart smoke job", smoke_job.fields, {}))
+        violations.extend(
+            execution_violations(
+                "SessionStart smoke step",
+                smoke_step,
+                smoke_job.inherited_execution_fields,
+            )
+        )
+        if len(build_matches) == 1:
+            build_job, build_index, build_step = build_matches[0]
+            if build_job is not smoke_job or build_index >= smoke_index:
+                violations.append("SessionStart binary build must precede smoke in the same job")
+            violations.extend(
+                execution_violations(
+                    "SessionStart binary build step",
+                    build_step,
+                    build_job.inherited_execution_fields,
+                )
+            )
     if text.count(EXPECTED_WORKFLOW_SMOKE_COMMAND) != 1:
         violations.append("SessionStart smoke command must appear exactly once")
+    if text.count(EXPECTED_WORKFLOW_BUILD_COMMAND) != 1:
+        violations.append("SessionStart binary build command must appear exactly once")
     return violations
 
 
@@ -126,7 +222,8 @@ rm /exact/path/to/old/remem
 
 <!-- remem-doc-contract:isolated-sessionstart-smoke:start -->
 ```bash
-scripts/ci/smoke_sessionstart_context_gate.sh
+cargo build --locked --bin remem
+scripts/ci/smoke_sessionstart_context_gate.sh "$(pwd -P)/target/debug/remem"
 ```
 <!-- remem-doc-contract:isolated-sessionstart-smoke:end -->
 
@@ -307,27 +404,111 @@ class RepositoryDocumentationContractTests(unittest.TestCase):
         self.assertEqual(workflow_smoke_registration_violations(workflow), [])
 
     def test_ci_registration_rejects_disabled_sessionstart_smoke_step(self) -> None:
-        workflow = f"""steps:
-      - name: SessionStart smoke
-        if: ${{{{ false }}}}
-        run: {EXPECTED_WORKFLOW_SMOKE_COMMAND}
-"""
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        mutated = workflow.replace(
+            f"        run: {EXPECTED_WORKFLOW_SMOKE_COMMAND}",
+            "        if: ${{ false }}\n"
+            f"        run: {EXPECTED_WORKFLOW_SMOKE_COMMAND}",
+        )
 
         self.assertIn(
             "SessionStart smoke step must be unconditional",
-            workflow_smoke_registration_violations(workflow),
+            workflow_smoke_registration_violations(mutated),
         )
 
     def test_ci_registration_rejects_noop_in_place_of_smoke_fixture(self) -> None:
-        workflow = """steps:
-      - name: SessionStart smoke
-        run: true
-"""
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        mutated = workflow.replace(EXPECTED_WORKFLOW_SMOKE_COMMAND, "true")
 
         self.assertIn(
             "CI must execute the exact SessionStart smoke command once",
-            workflow_smoke_registration_violations(workflow),
+            workflow_smoke_registration_violations(mutated),
         )
+
+    def test_ci_registration_rejects_job_level_disable(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        mutated = workflow.replace("  check:\n", "  check:\n    if: ${{ false }}\n")
+
+        self.assertIn(
+            "SessionStart smoke job must be unconditional",
+            workflow_smoke_registration_violations(mutated),
+        )
+
+    def test_ci_registration_rejects_continue_on_error(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        mutated = workflow.replace(
+            f"        run: {EXPECTED_WORKFLOW_SMOKE_COMMAND}",
+            "        continue-on-error: true\n"
+            f"        run: {EXPECTED_WORKFLOW_SMOKE_COMMAND}",
+        )
+
+        self.assertIn(
+            "SessionStart smoke step must fail CI on error",
+            workflow_smoke_registration_violations(mutated),
+        )
+
+    def test_ci_registration_rejects_noop_shell(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        mutated = workflow.replace(
+            f"        run: {EXPECTED_WORKFLOW_SMOKE_COMMAND}",
+            "        shell: true {0}\n"
+            f"        run: {EXPECTED_WORKFLOW_SMOKE_COMMAND}",
+        )
+
+        self.assertIn(
+            "SessionStart smoke step must use the default or standard bash shell",
+            workflow_smoke_registration_violations(mutated),
+        )
+
+    def test_ci_registration_rejects_wrong_working_directory_and_timeout(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        mutated = workflow.replace(
+            f"        run: {EXPECTED_WORKFLOW_SMOKE_COMMAND}",
+            "        working-directory: /tmp\n"
+            "        timeout-minutes: 1\n"
+            f"        run: {EXPECTED_WORKFLOW_SMOKE_COMMAND}",
+        )
+        violations = workflow_smoke_registration_violations(mutated)
+
+        self.assertIn("SessionStart smoke step must run from the repository root", violations)
+        self.assertIn(
+            "SessionStart smoke step must not be disabled by a local timeout", violations
+        )
+
+    def test_smoke_fixture_rejects_invalid_binary_arguments_before_toolchain_use(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        fixture = root / "scripts/ci/smoke_sessionstart_context_gate.sh"
+        with tempfile.TemporaryDirectory(prefix="remem-smoke-argv-") as raw_tmp:
+            temp_root = Path(raw_tmp)
+            non_executable = temp_root / "not-executable"
+            non_executable.write_text("not a binary", encoding="utf-8")
+            missing = temp_root / "missing-remem"
+            env = os.environ.copy()
+            env["PATH"] = "/usr/bin:/bin"
+            probes = (
+                ((), "requires exactly one absolute remem binary path"),
+                (("target/debug/remem",), "must be absolute"),
+                ((str(missing),), "does not exist"),
+                ((str(non_executable),), "is not executable"),
+            )
+            for arguments, expected in probes:
+                with self.subTest(arguments=arguments):
+                    result = subprocess.run(
+                        [str(fixture), *arguments],
+                        cwd=root,
+                        env=env,
+                        text=True,
+                        capture_output=True,
+                        check=False,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(expected, result.stderr)
 
 
 if __name__ == "__main__":

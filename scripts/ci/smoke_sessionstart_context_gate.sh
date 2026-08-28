@@ -1,6 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ $# -ne 1 ]]; then
+  echo "SessionStart smoke failed: requires exactly one absolute remem binary path" >&2
+  exit 2
+fi
+
+binary="$1"
+if [[ "${binary}" != /* ]]; then
+  echo "SessionStart smoke failed: remem binary path must be absolute: ${binary}" >&2
+  exit 2
+fi
+if [[ ! -e "${binary}" ]]; then
+  echo "SessionStart smoke failed: remem binary does not exist: ${binary}" >&2
+  exit 2
+fi
+if [[ ! -f "${binary}" ]]; then
+  echo "SessionStart smoke failed: remem binary is not a regular file: ${binary}" >&2
+  exit 2
+fi
+if [[ ! -x "${binary}" ]]; then
+  echo "SessionStart smoke failed: remem binary is not executable: ${binary}" >&2
+  exit 2
+fi
+
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 scratch_dir="$(mktemp -d "${TMPDIR:-/tmp}/remem-sessionstart-smoke.XXXXXX")"
 
@@ -18,32 +41,6 @@ config_path="${scratch_dir}/config.toml"
 mkdir -p -- "${smoke_home}" "${data_dir}"
 
 cd -- "${repo_root}"
-binary="$(
-  cargo build --locked --bin remem --message-format=json-render-diagnostics \
-    | python3 -c '
-import json
-import sys
-
-executables = []
-for line in sys.stdin:
-    artifact = json.loads(line)
-    if (
-        artifact.get("reason") == "compiler-artifact"
-        and artifact.get("target", {}).get("name") == "remem"
-        and artifact.get("executable")
-    ):
-        executables.append(artifact["executable"])
-if len(executables) != 1:
-    raise SystemExit(
-        f"expected one current remem executable from cargo, found {len(executables)}"
-    )
-print(executables[0])
-'
-)"
-if [[ ! -x "${binary}" ]]; then
-  echo "SessionStart smoke failed: built remem binary is not executable at ${binary}" >&2
-  exit 1
-fi
 
 common_env=(
   env
