@@ -7,6 +7,27 @@ from unittest import mock
 import check_pr_preflight
 
 
+EXPECTED_SESSIONSTART_SMOKE_COMMAND = [
+    "env",
+    "REMEM_CONTEXT_HOST=claude-code",
+    "REMEM_CONTEXT_GATE=off",
+    "REMEM_CONTEXT_GATE_HOSTS=claude-code",
+    "REMEM_CONTEXT_DEBUG=1",
+    "REMEM_CONTEXT_GATE_RETENTION_DAYS=0",
+    "REMEM_CONTEXT_BUNDLE_RENDER_MODE=invalid",
+    "REMEM_CONTEXT_TOTAL_CHAR_LIMIT=invalid",
+    "REMEM_UNDECLARED_PARENT_SENTINEL=hostile",
+    "scripts/ci/smoke_sessionstart_context_gate.sh",
+]
+
+
+def assert_sessionstart_smoke_registration(commands: list[list[str]]) -> None:
+    if commands.count(EXPECTED_SESSIONSTART_SMOKE_COMMAND) != 1:
+        raise AssertionError(
+            "preflight must execute the independent hostile-environment smoke argv once"
+        )
+
+
 class PreflightCargoTestThreadsTests(unittest.TestCase):
     def run_main(self, *arguments: str) -> list[list[str]]:
         commands: list[list[str]] = []
@@ -83,9 +104,7 @@ class PreflightCargoTestThreadsTests(unittest.TestCase):
         self.assertIn(
             ["python3", "scripts/ci/test_check_documentation_contracts.py"], commands
         )
-        self.assertEqual(
-            commands.count(check_pr_preflight.SESSIONSTART_SMOKE_COMMAND), 1
-        )
+        assert_sessionstart_smoke_registration(commands)
         self.assertIn(["python3", "scripts/ci/check_public_surface.py"], commands)
         self.assertIn(
             ["python3", "scripts/ci/check_surface_baseline.py", "origin/main"],
@@ -100,9 +119,14 @@ class PreflightCargoTestThreadsTests(unittest.TestCase):
     def test_full_mode_runs_sessionstart_smoke_once(self) -> None:
         commands = self.run_main()
 
-        self.assertEqual(
-            commands.count(check_pr_preflight.SESSIONSTART_SMOKE_COMMAND), 1
-        )
+        assert_sessionstart_smoke_registration(commands)
+
+    def test_noop_sessionstart_command_fails_independent_registration(self) -> None:
+        with mock.patch.object(check_pr_preflight, "SESSIONSTART_SMOKE_COMMAND", ["true"]):
+            commands = self.run_main("--fast")
+
+        with self.assertRaisesRegex(AssertionError, "hostile-environment smoke argv"):
+            assert_sessionstart_smoke_registration(commands)
 
 
 if __name__ == "__main__":

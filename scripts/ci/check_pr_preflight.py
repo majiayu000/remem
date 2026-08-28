@@ -21,6 +21,9 @@ SESSIONSTART_SMOKE_COMMAND = [
     "REMEM_CONTEXT_GATE_HOSTS=claude-code",
     "REMEM_CONTEXT_DEBUG=1",
     "REMEM_CONTEXT_GATE_RETENTION_DAYS=0",
+    "REMEM_CONTEXT_BUNDLE_RENDER_MODE=invalid",
+    "REMEM_CONTEXT_TOTAL_CHAR_LIMIT=invalid",
+    "REMEM_UNDECLARED_PARENT_SENTINEL=hostile",
     "scripts/ci/smoke_sessionstart_context_gate.sh",
 ]
 

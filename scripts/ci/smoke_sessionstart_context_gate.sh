@@ -47,12 +47,17 @@ fi
 
 common_env=(
   env
+  -i
+  "PATH=/usr/bin:/bin"
+  "LANG=C"
+  "LC_ALL=C"
   "HOME=${smoke_home}"
   "REMEM_DATA_DIR=${data_dir}"
   "REMEM_CONFIG=${config_path}"
   "REMEM_CONTEXT_HOST=codex-cli"
   "REMEM_CONTEXT_GATE=strict"
   "REMEM_CONTEXT_GATE_HOSTS=codex-cli"
+  "REMEM_CONTEXT_BUNDLE_RENDER_MODE=bundle"
   "REMEM_CONTEXT_DEBUG=0"
   "REMEM_CONTEXT_GATE_RETENTION_DAYS=30"
 )

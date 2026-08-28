@@ -5,6 +5,49 @@ from pathlib import Path
 import check_documentation_contracts
 
 
+EXPECTED_WORKFLOW_SMOKE_COMMAND = "scripts/ci/smoke_sessionstart_context_gate.sh"
+
+
+def workflow_steps(text: str) -> list[dict[str, str]]:
+    """Parse the scalar fields of top-level CI steps without production constants."""
+    steps: list[dict[str, str]] = []
+    current: dict[str, str] | None = None
+    for line in text.splitlines():
+        if line.startswith("      - "):
+            if current is not None:
+                steps.append(current)
+            current = {}
+            field = line.removeprefix("      - ")
+        elif current is not None and line.startswith("        "):
+            field = line.removeprefix("        ")
+        else:
+            continue
+        if ":" not in field:
+            continue
+        key, value = field.split(":", maxsplit=1)
+        current[key.strip()] = value.strip().strip('"\'')
+    if current is not None:
+        steps.append(current)
+    return steps
+
+
+def workflow_smoke_registration_violations(text: str) -> list[str]:
+    """Independently enforce one unconditional, executable smoke step."""
+    matching = [
+        step
+        for step in workflow_steps(text)
+        if step.get("run") == EXPECTED_WORKFLOW_SMOKE_COMMAND
+    ]
+    violations: list[str] = []
+    if len(matching) != 1:
+        violations.append("CI must execute the exact SessionStart smoke command once")
+    elif "if" in matching[0]:
+        violations.append("SessionStart smoke step must be unconditional")
+    if text.count(EXPECTED_WORKFLOW_SMOKE_COMMAND) != 1:
+        violations.append("SessionStart smoke command must appear exactly once")
+    return violations
+
+
 class DocumentationContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory(prefix="remem-doc-contract-")
@@ -261,8 +304,29 @@ class RepositoryDocumentationContractTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
-        self.assertEqual(
-            workflow.count("run: scripts/ci/smoke_sessionstart_context_gate.sh"), 1
+        self.assertEqual(workflow_smoke_registration_violations(workflow), [])
+
+    def test_ci_registration_rejects_disabled_sessionstart_smoke_step(self) -> None:
+        workflow = f"""steps:
+      - name: SessionStart smoke
+        if: ${{{{ false }}}}
+        run: {EXPECTED_WORKFLOW_SMOKE_COMMAND}
+"""
+
+        self.assertIn(
+            "SessionStart smoke step must be unconditional",
+            workflow_smoke_registration_violations(workflow),
+        )
+
+    def test_ci_registration_rejects_noop_in_place_of_smoke_fixture(self) -> None:
+        workflow = """steps:
+      - name: SessionStart smoke
+        run: true
+"""
+
+        self.assertIn(
+            "CI must execute the exact SessionStart smoke command once",
+            workflow_smoke_registration_violations(workflow),
         )
 
 
