@@ -109,7 +109,46 @@ fn validate_semantics(
         semantic_identity(&actual)?
     );
     inventory::validate_closed_world(connection, task, expected.len())?;
+    validate_full_snapshot_identity(connection, task, state)?;
     validate_policy_state(connection, task)
+}
+
+fn validate_full_snapshot_identity(
+    connection: &Connection,
+    task: &MemoryBenchTask,
+    state: &mut VerifyState,
+) -> Result<()> {
+    let actual = crate::eval::security_snapshot_identity::snapshot_identity(connection)?;
+    let expected = if let Some(identity) = state.trusted_security_snapshots.get(&task.id) {
+        identity.clone()
+    } else {
+        let identity = crate::eval::memory_bench::trusted_security_snapshot_identity(task)?;
+        state
+            .trusted_security_snapshots
+            .insert(task.id.clone(), identity.clone());
+        identity
+    };
+    ensure!(
+        actual == expected,
+        "complete typed snapshot identity differs: {}",
+        snapshot_identity_delta(&expected, &actual)
+    );
+    Ok(())
+}
+
+fn snapshot_identity_delta(
+    expected: &crate::eval::security_snapshot_identity::SnapshotIdentity,
+    actual: &crate::eval::security_snapshot_identity::SnapshotIdentity,
+) -> String {
+    expected
+        .keys()
+        .chain(actual.keys())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .filter(|key| expected.get(*key) != actual.get(*key))
+        .map(|key| key.as_str())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn verified_security_suite(

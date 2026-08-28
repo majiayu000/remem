@@ -86,7 +86,7 @@ pub struct MemoryBenchSuiteFixture {
     pub tasks: Vec<MemoryBenchTask>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MemoryBenchTask {
     pub id: String,
     pub category: String,
@@ -106,7 +106,7 @@ pub struct MemoryBenchTask {
     pub policy: Option<MemoryBenchPolicyExpectation>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MemoryBenchEvidence {
     pub event_id: String,
     pub title: String,
@@ -128,7 +128,7 @@ pub struct MemoryBenchEvidence {
     pub retention_allowed: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MemoryBenchPolicyExpectation {
     #[serde(default)]
     pub non_retention_required: bool,

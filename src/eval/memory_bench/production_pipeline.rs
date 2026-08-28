@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
-use rusqlite::{Connection, DatabaseName};
+use rusqlite::{backup::StepResult, Connection, DatabaseName};
 use serde_json::json;
+use std::sync::{Mutex, OnceLock};
 
 use super::runner::{RetrievedEvidence, PROJECT};
 use super::types::{MemoryBenchEvidence, MemoryBenchPolicyMeasurement, MemoryBenchTask};
@@ -14,8 +15,39 @@ pub(super) async fn retrieve_with_production_pipeline(
     MemoryBenchPolicyMeasurement,
     Vec<u8>,
 )> {
-    let mut conn = Connection::open_in_memory()?;
+    let (conn, retrieved, measurement) = execute_production_pipeline(task).await?;
+    let snapshot = conn.serialize(DatabaseName::Main)?.to_vec();
+    Ok((retrieved, measurement, snapshot))
+}
+
+pub(super) async fn trusted_snapshot_identity(
+    task: &MemoryBenchTask,
+) -> Result<crate::eval::security_snapshot_identity::SnapshotIdentity> {
+    let conn = trusted_schema_connection()?;
+    let (conn, _, _) = execute_production_pipeline_with_connection(conn, task).await?;
+    crate::eval::security_snapshot_identity::snapshot_identity(&conn)
+}
+
+async fn execute_production_pipeline(
+    task: &MemoryBenchTask,
+) -> Result<(
+    Connection,
+    Vec<RetrievedEvidence>,
+    MemoryBenchPolicyMeasurement,
+)> {
+    let conn = Connection::open_in_memory()?;
     crate::migrate::run_migrations(&conn)?;
+    execute_production_pipeline_with_connection(conn, task).await
+}
+
+async fn execute_production_pipeline_with_connection(
+    mut conn: Connection,
+    task: &MemoryBenchTask,
+) -> Result<(
+    Connection,
+    Vec<RetrievedEvidence>,
+    MemoryBenchPolicyMeasurement,
+)> {
     let policy = task.policy.as_ref();
     let poisoning_expected = policy.is_some_and(|policy| policy.poisoning_quarantine_expected);
     let explicitly_approved = policy.is_some_and(|policy| policy.explicit_approval);
@@ -61,8 +93,30 @@ pub(super) async fn retrieve_with_production_pipeline(
         poisoning_generated_surface_blocked: quarantined_observations > 0
             || quarantined_candidates > 0,
     };
-    let snapshot = conn.serialize(DatabaseName::Main)?.to_vec();
-    Ok((retrieved, measurement, snapshot))
+    Ok((conn, retrieved, measurement))
+}
+
+fn trusted_schema_connection() -> Result<Connection> {
+    static SCHEMA: OnceLock<Result<Mutex<Connection>, String>> = OnceLock::new();
+    let schema = SCHEMA
+        .get_or_init(|| {
+            let connection = Connection::open_in_memory().map_err(|error| error.to_string())?;
+            crate::migrate::run_migrations(&connection).map_err(|error| format!("{error:#}"))?;
+            Ok(Mutex::new(connection))
+        })
+        .as_ref()
+        .map_err(|error| anyhow::anyhow!("initialize trusted schema cache: {error}"))?;
+    let schema = schema
+        .lock()
+        .map_err(|_| anyhow::anyhow!("trusted schema cache is poisoned"))?;
+    let mut connection = Connection::open_in_memory()?;
+    let backup = rusqlite::backup::Backup::new(&schema, &mut connection)?;
+    anyhow::ensure!(
+        backup.step(-1)? == StepResult::Done,
+        "trusted schema cache backup did not complete"
+    );
+    drop(backup);
+    Ok(connection)
 }
 
 fn record_fixture_events(

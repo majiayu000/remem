@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 BASELINE_REPORT = ROOT / "eval/public/reports/baseline.json"
 CLAIM_REGISTRY = ROOT / "eval/claims/registry.json"
 CLAIM_CONTRACT = ROOT / "eval/public/claims/coding-claim-contract-v1.json"
+PRODUCTION_PATHSPEC_CONTRACT = ROOT / "eval/production-input-pathspec-v1.json"
 
 CLAIM_SURFACES = [
     "README.md",
@@ -173,12 +174,23 @@ def load_registered_coding_claims() -> list[dict[str, object]] | None:
     return verified_claims
 
 
-def production_input_tree_sha256() -> str | None:
-    paths = [
-        "Cargo.toml", "Cargo.lock", "build.rs", ".cargo", "rust-toolchain.toml",
-        "src", "prompts", "assets", ":(exclude)src/eval/ship_matrix.rs",
-        ":(exclude)src/eval/ship_matrix/**", ":(exclude)src/eval/gates.rs",
-    ]
+def production_input_tree_sha256(*, require_clean: bool = True) -> str | None:
+    try:
+        contract = json.loads(PRODUCTION_PATHSPEC_CONTRACT.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    paths = contract.get("paths")
+    if (
+        contract.get("schema_version") != 1
+        or contract.get("contract_id") != "remem-production-input-pathspec-v1"
+        or not isinstance(paths, list)
+        or not paths
+        or any(not isinstance(path, str) or not path for path in paths)
+        or len(paths) != len(set(paths))
+        or PRODUCTION_PATHSPEC_CONTRACT.relative_to(ROOT).as_posix() not in paths
+        or any(PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts for path in paths)
+    ):
+        return None
     try:
         output = subprocess.run(
             ["git", "ls-files", "-s", "--", *paths], cwd=ROOT, check=True,
@@ -190,7 +202,7 @@ def production_input_tree_sha256() -> str | None:
         )
     except (OSError, subprocess.CalledProcessError):
         return None
-    return hashlib.sha256(output).hexdigest() if output and clean else None
+    return hashlib.sha256(output).hexdigest() if output and (clean or not require_clean) else None
 
 
 def supporting_report_matches_current_source(report: object) -> bool:
@@ -474,10 +486,17 @@ def main() -> int:
         description="Fail on unsupported strong public benchmark claims."
     )
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--print-production-input-tree", action="store_true")
     args = parser.parse_args()
 
     if args.self_test:
         return run_self_test()
+    if args.print_production_input_tree:
+        identity = production_input_tree_sha256(require_clean=False)
+        if identity is None:
+            die("production input pathspec is unavailable or the tree is dirty")
+        print(identity)
+        return 0
 
     gate = load_claim_gate()
     failures = check_surfaces(gate)

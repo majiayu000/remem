@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "contract_id": "remem-production-input-pathspec-v1",
+  "paths": [
+    ".cargo",
+    "Cargo.lock",
+    "Cargo.toml",
+    "assets",
+    "build.rs",
+    "eval/production-input-pathspec-v1.json",
+    "eval/public/memory/suites/adversarial-policy/suite.json",
+    "prompts",
+    "rust-toolchain.toml",
+    "src"
+  ]
+}

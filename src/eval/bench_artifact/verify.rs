@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -719,6 +719,8 @@ struct VerifyState {
     coding_run_keys: BTreeSet<String>,
     coding_attempt_ids: BTreeSet<String>,
     failures: Vec<BenchVerifyFailure>,
+    trusted_security_snapshots:
+        BTreeMap<String, crate::eval::security_snapshot_identity::SnapshotIdentity>,
     verified_artifacts: VerifiedBenchmarkArtifacts,
 }
 
@@ -734,6 +736,7 @@ impl VerifyState {
             coding_run_keys: BTreeSet::new(),
             coding_attempt_ids: BTreeSet::new(),
             failures: Vec::new(),
+            trusted_security_snapshots: BTreeMap::new(),
             verified_artifacts: VerifiedBenchmarkArtifacts::default(),
         }
     }

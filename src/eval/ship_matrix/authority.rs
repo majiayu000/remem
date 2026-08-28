@@ -445,11 +445,14 @@ fn security_source_equivalent(
         ));
         return false;
     }
-    let production_pathspec = production_pathspec();
+    let Some(production_pathspec) = production_pathspec() else {
+        diagnostics.push("embedded production pathspec contract is invalid".to_string());
+        return false;
+    };
     let mut worktree_args = vec!["diff", "--quiet", "--"];
-    worktree_args.extend(production_pathspec);
+    worktree_args.extend(production_pathspec.iter().map(String::as_str));
     let mut index_args = vec!["diff", "--cached", "--quiet", "--"];
-    index_args.extend(production_pathspec);
+    index_args.extend(production_pathspec.iter().map(String::as_str));
     if !git_succeeds(&worktree_args) || !git_succeeds(&index_args) {
         diagnostics
             .push("uncommitted production-source changes invalidate security evidence".to_string());
@@ -472,9 +475,9 @@ fn is_sha256(value: &str) -> bool {
 }
 
 pub(super) fn production_input_tree_sha256() -> Option<String> {
-    let pathspec = production_pathspec();
+    let pathspec = production_pathspec()?;
     let mut args = vec!["ls-files", "-s", "--"];
-    args.extend(pathspec);
+    args.extend(pathspec.iter().map(String::as_str));
     let output = crate::git_util::git_output_soft(Path::new("."), &args)?;
     if !output.status.success() || output.stdout.is_empty() {
         return None;
@@ -482,18 +485,36 @@ pub(super) fn production_input_tree_sha256() -> Option<String> {
     Some(format!("{:x}", Sha256::digest(&output.stdout)))
 }
 
-fn production_pathspec() -> [&'static str; 9] {
-    [
-        "Cargo.toml",
-        "Cargo.lock",
-        "build.rs",
-        ".cargo",
-        "rust-toolchain.toml",
-        "src",
-        "prompts",
-        "assets",
-        "eval/public/memory/suites/adversarial-policy/suite.json",
-    ]
+fn production_pathspec() -> Option<Vec<String>> {
+    const PRODUCTION_PATHSPEC_CONTRACT: &str = "eval/production-input-pathspec-v1.json";
+    let embedded = option_env!("REMEM_BUILD_PRODUCTION_PATHSPEC_JSON")?;
+    let value: Value = serde_json::from_str(embedded).ok()?;
+    if value.get("schema_version").and_then(Value::as_u64) != Some(1)
+        || value.get("contract_id").and_then(Value::as_str)
+            != Some("remem-production-input-pathspec-v1")
+    {
+        return None;
+    }
+    let paths = value.get("paths")?.as_array()?;
+    let parsed = paths
+        .iter()
+        .map(Value::as_str)
+        .collect::<Option<Vec<_>>>()?;
+    if parsed.is_empty()
+        || parsed.iter().any(|path| path.is_empty())
+        || parsed.iter().any(|path| {
+            let path = Path::new(path);
+            path.is_absolute()
+                || path
+                    .components()
+                    .any(|component| matches!(component, std::path::Component::ParentDir))
+        })
+        || parsed.iter().collect::<BTreeSet<_>>().len() != parsed.len()
+        || !parsed.contains(&PRODUCTION_PATHSPEC_CONTRACT)
+    {
+        return None;
+    }
+    Some(parsed.into_iter().map(str::to_string).collect())
 }
 
 fn verify_security_outcomes(

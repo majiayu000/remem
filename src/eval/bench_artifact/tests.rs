@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::{verify_benchmark_artifacts, BenchVerifyOptions};
 
 mod schema;
+mod security_closed_world;
 mod security_verification;
 
 #[test]
