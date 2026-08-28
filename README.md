@@ -90,6 +90,9 @@ SessionStart and queues durable session distillation at Stop. `remem doctor`
 checks the schema, encryption key, database, hooks, MCP registration, worker,
 and common install-path drift.
 
+Repository contributors can verify duplicate SessionStart suppression with the
+[isolated executable smoke fixture](scripts/ci/smoke_sessionstart_context_gate.sh).
+
 For a focused, read-only view of current-memory truth:
 
 ```bash

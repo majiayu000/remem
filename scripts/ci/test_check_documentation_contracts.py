@@ -10,6 +10,7 @@ class DocumentationContractTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory(prefix="remem-doc-contract-")
         self.root = Path(self.temp_dir.name)
         (self.root / "docs/specs/project-memory-pack").mkdir(parents=True)
+        (self.root / "scripts/ci").mkdir(parents=True)
         (self.root / "README.md").write_text(
             """# remem
 
@@ -23,6 +24,8 @@ remem export --pack .remem-pack
 ```bash
 \"$(brew --prefix remem)/bin/remem\" install --target codex
 ```
+
+[SessionStart smoke](scripts/ci/smoke_sessionstart_context_gate.sh)
 """,
             encoding="utf-8",
         )
@@ -58,7 +61,8 @@ rm /exact/path/to/old/remem
             """# Documentation
 
 [Context](ARCHITECTURE.md#context-injection-sessionstart-context)
-[Smoke](sessionstart-context-smoke.md)
+[Smoke fixture](../scripts/ci/smoke_sessionstart_context_gate.sh)
+[Smoke guide](sessionstart-context-smoke.md)
 """,
             encoding="utf-8",
         )
@@ -79,15 +83,20 @@ rm /exact/path/to/old/remem
 
 <!-- remem-doc-contract:isolated-sessionstart-smoke:start -->
 ```bash
-tmpdir="$(mktemp -d)"
-REMEM_DATA_DIR="$tmpdir" remem encrypt
-printf '{"session_id":"gate-smoke","cwd":"%s","transcript_path":"/tmp/remem-gate-smoke.jsonl"}' "$PWD" | REMEM_DATA_DIR="$tmpdir" REMEM_CONTEXT_HOST=codex-cli remem context | wc -c
-printf '{"session_id":"gate-smoke","cwd":"%s","transcript_path":"/tmp/remem-gate-smoke.jsonl"}' "$PWD" | REMEM_DATA_DIR="$tmpdir" REMEM_CONTEXT_HOST=codex-cli remem context | wc -c
+scripts/ci/smoke_sessionstart_context_gate.sh
 ```
 <!-- remem-doc-contract:isolated-sessionstart-smoke:end -->
+
+[Fixture](../scripts/ci/smoke_sessionstart_context_gate.sh)
 """,
             encoding="utf-8",
         )
+        smoke_script = self.root / "scripts/ci/smoke_sessionstart_context_gate.sh"
+        smoke_script.write_text(
+            "#!/usr/bin/env bash\ntmpdir=fixture\nprintf '%s\\n' \"${tmpdir}\"\n",
+            encoding="utf-8",
+        )
+        smoke_script.chmod(0o755)
         (self.root / "docs/specs/project-memory-pack/PRODUCT.md").write_text(
             """# Project memory pack
 
@@ -162,33 +171,60 @@ remem export --pack .remem-pack/
 
         self.assertTrue(any("missing Markdown anchor" in item for item in violations))
 
-    def test_rejects_uninitialized_isolated_store(self) -> None:
+    def test_rejects_missing_executable_smoke_fixture(self) -> None:
+        (self.root / "scripts/ci/smoke_sessionstart_context_gate.sh").unlink()
+
+        violations = check_documentation_contracts.check(self.root)
+
+        self.assertTrue(any("must exist and be executable" in item for item in violations))
+
+    def test_rejects_smoke_guide_that_does_not_route_to_fixture(self) -> None:
         smoke = self.root / "docs/sessionstart-context-smoke.md"
         smoke.write_text(
             smoke.read_text(encoding="utf-8").replace(
-                'REMEM_DATA_DIR="$tmpdir" remem encrypt\n',
-                "",
+                "scripts/ci/smoke_sessionstart_context_gate.sh",
+                "scripts/ci/another-smoke.sh",
             ),
             encoding="utf-8",
         )
 
         violations = check_documentation_contracts.check(self.root)
 
-        self.assertTrue(any("isolated SessionStart" in item for item in violations))
+        self.assertTrue(any("route SessionStart smoke" in item for item in violations))
 
-    def test_rejects_nonisolated_canonical_smoke_guide(self) -> None:
-        smoke = self.root / "docs/sessionstart-context-smoke.md"
-        smoke.write_text(
-            smoke.read_text(encoding="utf-8").replace(
-                'REMEM_DATA_DIR="$tmpdir" ',
-                'REMEM_DATA_DIR="$HOME/.remem" ',
+    def test_rejects_readme_without_smoke_fixture_route(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8").replace(
+                "scripts/ci/smoke_sessionstart_context_gate.sh",
+                "docs/sessionstart-context-smoke.md",
             ),
             encoding="utf-8",
         )
 
         violations = check_documentation_contracts.check(self.root)
 
-        self.assertTrue(any("isolated SessionStart" in item for item in violations))
+        self.assertTrue(any(item.startswith("README.md: route") for item in violations))
+
+    def test_rejects_context_argument_drift_hidden_in_smoke_guide(self) -> None:
+        smoke = self.root / "docs/sessionstart-context-smoke.md"
+        smoke.write_text(
+            smoke.read_text(encoding="utf-8")
+            + "\n```bash\nprintf '{}' | remem context --force | wc -c\n```\n",
+            encoding="utf-8",
+        )
+
+        violations = check_documentation_contracts.check(self.root)
+
+        self.assertTrue(any("SessionStart" in item for item in violations))
+
+    def test_equivalent_shell_variable_spelling_is_not_a_document_contract(self) -> None:
+        fixture = self.root / "scripts/ci/smoke_sessionstart_context_gate.sh"
+        self.assertIn("${tmpdir}", fixture.read_text(encoding="utf-8"))
+
+        violations = check_documentation_contracts.check(self.root)
+
+        self.assertEqual(violations, [])
 
     def test_rejects_active_only_fts_description(self) -> None:
         lifecycle = self.root / "docs/memory-lifecycle.md"
@@ -220,6 +256,14 @@ class RepositoryDocumentationContractTests(unittest.TestCase):
     def test_repository_documentation_contract(self) -> None:
         root = Path(__file__).resolve().parents[2]
         self.assertEqual(check_documentation_contracts.check(root), [])
+
+    def test_ci_executes_the_canonical_sessionstart_smoke_fixture(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+
+        self.assertEqual(
+            workflow.count("run: scripts/ci/smoke_sessionstart_context_gate.sh"), 1
+        )
 
 
 if __name__ == "__main__":

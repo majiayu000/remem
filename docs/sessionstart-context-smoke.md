@@ -2,35 +2,23 @@
 
 Status: Current verification guide
 
-Use these read-only commands after context compiler changes:
-
-```bash
-REMEM_CONTEXT_HOST=codex-cli cargo run --quiet -- context --cwd "$PWD"
-REMEM_CONTEXT_HOST=claude-code cargo run --quiet -- context --cwd "$PWD"
-REMEM_CONTEXT_DEBUG=1 REMEM_CONTEXT_HOST=codex-cli cargo run --quiet -- context --cwd "$PWD"
-```
-
-Codex duplicate-injection gate:
+The executable fixture builds the current checkout once, initializes an
+encrypted store under an isolated temporary `HOME` and `REMEM_DATA_DIR`, and
+invokes the same Codex SessionStart request twice. Run it from the repository
+root:
 
 <!-- remem-doc-contract:isolated-sessionstart-smoke:start -->
 ```bash
-tmpdir="$(mktemp -d)"
-REMEM_DATA_DIR="$tmpdir" cargo run --quiet -- encrypt
-printf '{"session_id":"gate-smoke","cwd":"%s","transcript_path":"/tmp/remem-gate-smoke.jsonl"}' "$PWD" \
-  | REMEM_DATA_DIR="$tmpdir" REMEM_CONTEXT_HOST=codex-cli cargo run --quiet -- context | wc -c
-printf '{"session_id":"gate-smoke","cwd":"%s","transcript_path":"/tmp/remem-gate-smoke.jsonl"}' "$PWD" \
-  | REMEM_DATA_DIR="$tmpdir" REMEM_CONTEXT_HOST=codex-cli cargo run --quiet -- context | wc -c
+scripts/ci/smoke_sessionstart_context_gate.sh
 ```
 <!-- remem-doc-contract:isolated-sessionstart-smoke:end -->
 
-Remove the disposable directory after the smoke test.
+The fixture owns setup, assertions, and cleanup. Its implementation is the
+single source of truth; CI and local preflight execute the same entry point.
 
 Expected checks:
 
-- Normal output has no `## Debug Trace` section.
-- Footer includes host, branch, per-section chars, relevance state/k/threshold/drop counts, approximate tokens, and truncation status.
-- `REMEM_CONTEXT_RELEVANCE_K=0` restores legacy governed-section selection.
-- Project preferences render by default; global preferences require `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT`.
-- Long session requests are truncated inside the Sessions section.
-- Total truncation keeps the truncation marker and stats footer when both fit.
-- Codex gate smoke emits bytes on the first command and `0` bytes on the second unchanged same-session command.
+- The first invocation emits non-empty context.
+- The second byte-identical, unchanged-session invocation emits exactly zero bytes.
+- Initialization or assertion failures exit non-zero with a diagnostic.
+- The isolated temporary home, encrypted store, and captured output are removed on exit.

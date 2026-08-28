@@ -80,6 +80,9 @@ Claude Code 或 Codex 安装正常时，remem 会在 SessionStart 注入相关�
 并在 Stop 后排队提炼本次会话。`remem doctor` 会检查 schema、加密密钥、数据库、
 hooks、MCP 注册、worker 和常见的安装路径漂移。
 
+仓库贡献者可运行[隔离的可执行 smoke fixture](scripts/ci/smoke_sessionstart_context_gate.sh)，
+验证重复 SessionStart 注入抑制。
+
 下面的命令可以只读检查当前记忆状态。
 
 ```bash

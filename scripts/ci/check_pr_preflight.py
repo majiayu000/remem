@@ -117,6 +117,10 @@ def fast_steps(base: str, head: str) -> list[tuple[str, list[str]]]:
             "Check documentation contracts",
             ["python3", "scripts/ci/check_documentation_contracts.py"],
         ),
+        (
+            "Run SessionStart context gate smoke",
+            ["scripts/ci/smoke_sessionstart_context_gate.sh"],
+        ),
         ("Check public surface", ["python3", "scripts/ci/check_public_surface.py"]),
         ("Check published surface baseline", ["python3", "scripts/ci/check_surface_baseline.py", base]),
         (

@@ -16,6 +16,14 @@ ROOT = Path(__file__).resolve().parents[2]
 README_PATHS = (Path("README.md"), Path("README.zh-CN.md"))
 HOMEBREW_DOCS = (*README_PATHS, Path("docs/installation.md"))
 CURRENT_EXPORT_DOCS = (*README_PATHS, Path("docs/specs/project-memory-pack/PRODUCT.md"))
+SESSIONSTART_SMOKE_SCRIPT = Path("scripts/ci/smoke_sessionstart_context_gate.sh")
+SESSIONSTART_SMOKE_GUIDE = Path("docs/sessionstart-context-smoke.md")
+SESSIONSTART_SMOKE_ROUTES = {
+    Path("README.md"): "scripts/ci/smoke_sessionstart_context_gate.sh",
+    Path("README.zh-CN.md"): "scripts/ci/smoke_sessionstart_context_gate.sh",
+    Path("docs/README.md"): "../scripts/ci/smoke_sessionstart_context_gate.sh",
+    SESSIONSTART_SMOKE_GUIDE: "scripts/ci/smoke_sessionstart_context_gate.sh",
+}
 LINK_PATTERN = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 HEADING_PATTERN = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
 SHELL_FENCE_PATTERN = re.compile(
@@ -211,66 +219,43 @@ def check_hub_links(root: Path, violations: list[str]) -> None:
 
 
 def check_sessionstart_smoke(root: Path, violations: list[str]) -> None:
-    path = Path("docs/sessionstart-context-smoke.md")
-    region = contract_region(read(root, path), "isolated-sessionstart-smoke")
-    if region is None:
-        violations.append(f"{path}: missing isolated SessionStart smoke contract block")
-        return
-    commands = shell_commands(region)
-    temp_assignments = [
-        (index, command)
-        for index, command in enumerate(commands)
-        if not command.argv and command.assignments.get("tmpdir") == "$(mktemp -d)"
-    ]
-    initializers = [
-        (index, command)
-        for index, command in enumerate(commands)
-        if invokes_remem(command, "encrypt")
-        and command.assignments.get("REMEM_DATA_DIR") == "$tmpdir"
-    ]
-    contexts = [
-        (index, command)
-        for index, command in enumerate(commands)
-        if invokes_remem(command, "context")
-    ]
-    context_envs_are_isolated = all(
-        command.assignments.get("REMEM_DATA_DIR") == "$tmpdir"
-        and command.assignments.get("REMEM_CONTEXT_HOST") == "codex-cli"
-        and "REMEM_ALLOW_PLAINTEXT_DB" not in command.assignments
-        for _, command in contexts
-    )
-    ordered = bool(
-        temp_assignments
-        and initializers
-        and contexts
-        and temp_assignments[0][0] < initializers[0][0] < contexts[0][0]
-    )
-    payloads: list[tuple[str, ...]] = []
-    for index, _ in contexts:
-        if index == 0 or not commands[index - 1].argv or commands[index - 1].argv[0] != "printf":
-            payloads.append(())
-        else:
-            payloads.append(commands[index - 1].argv)
-    payloads_are_bound = bool(
-        len(payloads) == 2
-        and payloads[0] == payloads[1]
-        and len(payloads[0]) >= 3
-        and payloads[0][-1] == "$PWD"
-        and '"session_id":"gate-smoke"' in payloads[0][1]
-        and '"cwd":"%s"' in payloads[0][1]
-    )
-    if not (
-        len(temp_assignments) == 1
-        and len(initializers) == 1
-        and len(contexts) == 2
-        and context_envs_are_isolated
-        and ordered
-        and payloads_are_bound
-    ):
+    script = root / SESSIONSTART_SMOKE_SCRIPT
+    if not script.is_file() or script.stat().st_mode & 0o111 == 0:
         violations.append(
-            f"{path}: isolated SessionStart smoke must initialize the encrypted store "
-            "and bind both equivalent context commands to it"
+            f"{SESSIONSTART_SMOKE_SCRIPT}: SessionStart smoke entry must exist and be executable"
         )
+
+    for path, route in SESSIONSTART_SMOKE_ROUTES.items():
+        text = read(root, path)
+        if route not in text:
+            violations.append(f"{path}: route SessionStart smoke to {route}")
+
+    guide = read(root, SESSIONSTART_SMOKE_GUIDE)
+    region = contract_region(guide, "isolated-sessionstart-smoke")
+    expected_region = (
+        "\n```bash\n"
+        f"{SESSIONSTART_SMOKE_SCRIPT.as_posix()}\n"
+        "```\n"
+    )
+    if region != expected_region:
+        violations.append(
+            f"{SESSIONSTART_SMOKE_GUIDE}: SessionStart smoke contract must only invoke "
+            f"{SESSIONSTART_SMOKE_SCRIPT}"
+        )
+
+    direct_context = re.compile(
+        r"(?:\bremem[ \t]+context(?:[ \t]|$)|"
+        r"\bcargo[ \t]+run\b[^\n]*[ \t]--[ \t]+context(?:[ \t]|$))",
+        flags=re.MULTILINE,
+    )
+    copied_markers = ("gate-smoke", "mktemp -d", "wc -c")
+    for path in SESSIONSTART_SMOKE_ROUTES:
+        text = read(root, path)
+        if direct_context.search(text) or any(marker in text for marker in copied_markers):
+            violations.append(
+                f"{path}: do not copy SessionStart smoke implementation; invoke "
+                f"{SESSIONSTART_SMOKE_SCRIPT}"
+            )
 
 
 def check_fts_semantics(root: Path, violations: list[str]) -> None:

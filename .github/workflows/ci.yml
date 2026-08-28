@@ -48,6 +48,8 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - name: Run SessionStart context gate smoke
+        run: scripts/ci/smoke_sessionstart_context_gate.sh
       - name: Check public and lifecycle surfaces
         run: python3 scripts/ci/check_public_surface.py
       - name: Check published surface baseline

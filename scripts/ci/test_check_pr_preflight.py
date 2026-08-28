@@ -83,6 +83,9 @@ class PreflightCargoTestThreadsTests(unittest.TestCase):
         self.assertIn(
             ["python3", "scripts/ci/test_check_documentation_contracts.py"], commands
         )
+        self.assertEqual(
+            commands.count(["scripts/ci/smoke_sessionstart_context_gate.sh"]), 1
+        )
         self.assertIn(["python3", "scripts/ci/check_public_surface.py"], commands)
         self.assertIn(
             ["python3", "scripts/ci/check_surface_baseline.py", "origin/main"],
@@ -93,6 +96,13 @@ class PreflightCargoTestThreadsTests(unittest.TestCase):
             commands,
         )
         self.assertIn(["python3", "scripts/ci/surface_lifecycle_rest.py"], commands)
+
+    def test_full_mode_runs_sessionstart_smoke_once(self) -> None:
+        commands = self.run_main()
+
+        self.assertEqual(
+            commands.count(["scripts/ci/smoke_sessionstart_context_gate.sh"]), 1
+        )
 
 
 if __name__ == "__main__":

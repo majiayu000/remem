@@ -29,7 +29,7 @@ explicitly and are not runtime truth.
 | Quick installation and verification | [Root README](../README.md#install-in-five-minutes) | Current guide; verify with `remem doctor` |
 | Install channels, upgrades, platforms, and PATH drift | [Installation and upgrade guide](installation.md) | Current guide |
 | Codex plugin runtime and explicit hook activation | [Plugin README](../plugins/remem/README.md) | Current runtime guide |
-| SessionStart smoke test | [SessionStart context smoke](sessionstart-context-smoke.md) | Current verification guide |
+| SessionStart smoke test | [Executable fixture](../scripts/ci/smoke_sessionstart_context_gate.sh) and [expected outcomes](sessionstart-context-smoke.md) | Current executable verification |
 | SessionStart injection and cache stability | [Architecture](ARCHITECTURE.md) and [cache-stability contract](specs/cache-stable-injection/PRODUCT.md) | Current architecture and contract |
 | Cursor host evidence and limitations | [Cursor contract research](research/cursor-hooks-contract-2026-07-23.md) | Dated research snapshot; verify with `remem doctor` |
 | Plugin target design | [Codex plugin complete design](spec-codex-plugin-complete-design.md) | Historical target design; use the Plugin README for shipped behavior |
