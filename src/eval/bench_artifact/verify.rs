@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -34,6 +34,7 @@ const MEMORY_ARTIFACT_KEYS: [&str; 5] = [
 pub fn verify_benchmark_artifacts(options: BenchVerifyOptions) -> Result<BenchVerifyReport> {
     let root = options.root;
     let mut state = VerifyState::new(root.clone());
+    let mut context = security_snapshot::VerificationContext::new();
 
     if !root.exists() {
         state.fail(".".to_string(), "benchmark root does not exist");
@@ -71,7 +72,13 @@ pub fn verify_benchmark_artifacts(options: BenchVerifyOptions) -> Result<BenchVe
             let Some(report_abs) = resolve_public_path(&mut state, report_path, report_path) else {
                 continue;
             };
-            validate_report_path_layer(&manifest_path, manifest, &report_abs, &mut state);
+            validate_report_path_layer(
+                &manifest_path,
+                manifest,
+                &report_abs,
+                &mut state,
+                &mut context,
+            );
         }
     }
 
@@ -156,6 +163,7 @@ fn validate_report_path_layer(
     manifest: &PublicBenchmarkManifest,
     report_path: &Path,
     state: &mut VerifyState,
+    context: &mut security_snapshot::VerificationContext,
 ) {
     state.reports_checked += 1;
     let Some(report_artifact) =
@@ -268,7 +276,7 @@ fn validate_report_path_layer(
         }
         let represented_condition = match report.layer {
             BenchmarkLayer::MemorySystemCapability => {
-                validate_memory_run_artifact(&run_path, report, manifest_path, state)
+                validate_memory_run_artifact(&run_path, report, manifest_path, state, context)
             }
             BenchmarkLayer::CodingAgentOutcome => {
                 coding::validate_coding_run_artifact(&run_path, report, manifest_path, state)
@@ -291,6 +299,7 @@ fn validate_memory_run_artifact(
     report: &PublicBenchmarkReport,
     _manifest_path: &Path,
     state: &mut VerifyState,
+    context: &mut security_snapshot::VerificationContext,
 ) -> Option<String> {
     state.run_artifacts_checked += 1;
     let run_artifact =
@@ -428,7 +437,7 @@ fn validate_memory_run_artifact(
     if run.benchmark_id == "adversarial-policy" && run.benchmark_version == "v2" {
         require_artifact_key(&run.artifacts, "remem_db_snapshot", &label, state);
         validate_v2_memory_artifact_hashes(&run, &label, state);
-        security_snapshot::validate_security_snapshot(&run, &label, state);
+        security_snapshot::validate_security_snapshot(&run, &label, state, context);
     }
     scan_private_json(
         &serde_json::to_value(&run).unwrap_or(Value::Null),
@@ -719,8 +728,6 @@ struct VerifyState {
     coding_run_keys: BTreeSet<String>,
     coding_attempt_ids: BTreeSet<String>,
     failures: Vec<BenchVerifyFailure>,
-    trusted_security_snapshots:
-        BTreeMap<String, crate::eval::security_snapshot_identity::SnapshotIdentity>,
     verified_artifacts: VerifiedBenchmarkArtifacts,
 }
 
@@ -736,7 +743,6 @@ impl VerifyState {
             coding_run_keys: BTreeSet::new(),
             coding_attempt_ids: BTreeSet::new(),
             failures: Vec::new(),
-            trusted_security_snapshots: BTreeMap::new(),
             verified_artifacts: VerifiedBenchmarkArtifacts::default(),
         }
     }

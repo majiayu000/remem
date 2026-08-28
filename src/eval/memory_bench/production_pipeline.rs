@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
-use rusqlite::{backup::StepResult, Connection, DatabaseName};
+use rusqlite::{Connection, DatabaseName};
 use serde_json::json;
-use std::sync::{Mutex, OnceLock};
 
 use super::runner::{RetrievedEvidence, PROJECT};
 use super::types::{MemoryBenchEvidence, MemoryBenchPolicyMeasurement, MemoryBenchTask};
@@ -97,25 +96,8 @@ async fn execute_production_pipeline_with_connection(
 }
 
 fn trusted_schema_connection() -> Result<Connection> {
-    static SCHEMA: OnceLock<Result<Mutex<Connection>, String>> = OnceLock::new();
-    let schema = SCHEMA
-        .get_or_init(|| {
-            let connection = Connection::open_in_memory().map_err(|error| error.to_string())?;
-            crate::migrate::run_migrations(&connection).map_err(|error| format!("{error:#}"))?;
-            Ok(Mutex::new(connection))
-        })
-        .as_ref()
-        .map_err(|error| anyhow::anyhow!("initialize trusted schema cache: {error}"))?;
-    let schema = schema
-        .lock()
-        .map_err(|_| anyhow::anyhow!("trusted schema cache is poisoned"))?;
-    let mut connection = Connection::open_in_memory()?;
-    let backup = rusqlite::backup::Backup::new(&schema, &mut connection)?;
-    anyhow::ensure!(
-        backup.step(-1)? == StepResult::Done,
-        "trusted schema cache backup did not complete"
-    );
-    drop(backup);
+    let connection = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&connection)?;
     Ok(connection)
 }
 

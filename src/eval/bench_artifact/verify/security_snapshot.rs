@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use anyhow::{ensure, Context, Result};
 use rusqlite::{Connection, OpenFlags};
 use serde::Serialize;
@@ -8,11 +10,86 @@ use crate::eval::bench_artifact::{MemoryRunArtifact, VerifiedArtifact};
 use crate::eval::memory_bench::types::{MemoryBenchSuiteFixture, MemoryBenchTask};
 
 mod inventory;
+#[cfg(test)]
+mod tests;
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct TrustedSnapshotCacheKey {
+    suite_content_sha256: String,
+    task_semantic_sha256: String,
+    production_input_pathspec_sha256: String,
+    artifact_os: String,
+    artifact_arch: String,
+}
+
+impl TrustedSnapshotCacheKey {
+    fn new(
+        suite_content_sha256: &str,
+        task: &MemoryBenchTask,
+        artifact_os: &str,
+        artifact_arch: &str,
+    ) -> Result<Self> {
+        let task_bytes = serde_json::to_vec(task).context("serialize typed security task")?;
+        Ok(Self {
+            suite_content_sha256: suite_content_sha256.to_string(),
+            task_semantic_sha256: format!("{:x}", Sha256::digest(task_bytes)),
+            production_input_pathspec_sha256: production_input_pathspec_sha256(),
+            artifact_os: artifact_os.to_string(),
+            artifact_arch: artifact_arch.to_string(),
+        })
+    }
+}
+
+#[derive(Debug, Default)]
+pub(super) struct VerificationContext {
+    trusted_security_snapshots: BTreeMap<
+        TrustedSnapshotCacheKey,
+        crate::eval::security_snapshot_identity::SnapshotIdentity,
+    >,
+}
+
+impl VerificationContext {
+    pub(super) fn new() -> Self {
+        Self::default()
+    }
+
+    fn trusted_snapshot_identity(
+        &mut self,
+        suite_content_sha256: &str,
+        task: &MemoryBenchTask,
+        artifact_os: &str,
+        artifact_arch: &str,
+        replay: impl FnOnce(
+            &MemoryBenchTask,
+        )
+            -> Result<crate::eval::security_snapshot_identity::SnapshotIdentity>,
+    ) -> Result<crate::eval::security_snapshot_identity::SnapshotIdentity> {
+        let key =
+            TrustedSnapshotCacheKey::new(suite_content_sha256, task, artifact_os, artifact_arch)?;
+        if let Some(identity) = self.trusted_security_snapshots.get(&key) {
+            return Ok(identity.clone());
+        }
+        let identity = replay(task)?;
+        self.trusted_security_snapshots
+            .insert(key, identity.clone());
+        Ok(identity)
+    }
+}
+
+fn production_input_pathspec_sha256() -> String {
+    format!(
+        "{:x}",
+        Sha256::digest(include_bytes!(
+            "../../../../eval/production-input-pathspec-v1.json"
+        ))
+    )
+}
 
 pub(super) fn validate_security_snapshot(
     run: &MemoryRunArtifact,
     label: &str,
     state: &mut VerifyState,
+    context: &mut VerificationContext,
 ) {
     let Some(raw_path) = run.artifacts.get("remem_db_snapshot") else {
         return;
@@ -51,7 +128,7 @@ pub(super) fn validate_security_snapshot(
         );
         return;
     }
-    if let Err(error) = validate_semantics(&connection, run, state) {
+    if let Err(error) = validate_semantics(&connection, run, state, context) {
         state.fail(
             raw_path.clone(),
             format!("snapshot semantic contract mismatch: {error:#}"),
@@ -73,6 +150,7 @@ fn validate_semantics(
     connection: &Connection,
     run: &MemoryRunArtifact,
     state: &mut VerifyState,
+    context: &mut VerificationContext,
 ) -> Result<()> {
     let suite_artifact = verified_security_suite(state)?;
     let suite = &suite_artifact.value;
@@ -109,25 +187,33 @@ fn validate_semantics(
         semantic_identity(&actual)?
     );
     inventory::validate_closed_world(connection, task, expected.len())?;
-    validate_full_snapshot_identity(connection, task, state)?;
+    validate_full_snapshot_identity(
+        connection,
+        task,
+        &suite_artifact.sha256,
+        &run.environment.os,
+        &run.environment.arch,
+        context,
+    )?;
     validate_policy_state(connection, task)
 }
 
 fn validate_full_snapshot_identity(
     connection: &Connection,
     task: &MemoryBenchTask,
-    state: &mut VerifyState,
+    suite_content_sha256: &str,
+    artifact_os: &str,
+    artifact_arch: &str,
+    context: &mut VerificationContext,
 ) -> Result<()> {
     let actual = crate::eval::security_snapshot_identity::snapshot_identity(connection)?;
-    let expected = if let Some(identity) = state.trusted_security_snapshots.get(&task.id) {
-        identity.clone()
-    } else {
-        let identity = crate::eval::memory_bench::trusted_security_snapshot_identity(task)?;
-        state
-            .trusted_security_snapshots
-            .insert(task.id.clone(), identity.clone());
-        identity
-    };
+    let expected = context.trusted_snapshot_identity(
+        suite_content_sha256,
+        task,
+        artifact_os,
+        artifact_arch,
+        crate::eval::memory_bench::replay_trusted_security_snapshot_identity,
+    )?;
     ensure!(
         actual == expected,
         "complete typed snapshot identity differs: {}",
