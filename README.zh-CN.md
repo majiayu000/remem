@@ -36,7 +36,7 @@ remem 优先保证记忆质量。自动 hook 捕获承担主要工作，手动
 
 ```bash
 brew install majiayu000/tap/remem
-REMEM_INSTALL_BINARY="$(brew --prefix remem)/bin/remem" remem install --target codex
+"$(brew --prefix remem)/bin/remem" install --target codex
 ```
 
 Claude Code 使用 `--target claude`。`--target all` 会配置所有已知 host，
@@ -215,8 +215,8 @@ fallback。第二阶段本地 reranker 同样是可选能力，配置前保持�
 
 ```bash
 remem sync-memory --cwd .
-remem export --markdown --output ./remem-memory --project "$PWD"
-remem export --project "$PWD" --pack .remem-pack
+remem export --markdown --output ./remem-memory
+remem export --pack .remem-pack
 ```
 
 Markdown mirror 可以人工编辑。Project memory pack 是确定性、可提交到 Git 的

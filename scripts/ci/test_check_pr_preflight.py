@@ -77,6 +77,12 @@ class PreflightCargoTestThreadsTests(unittest.TestCase):
     def test_fast_mode_runs_surface_lifecycle_check_and_self_test(self) -> None:
         commands = self.run_main("--fast")
 
+        self.assertIn(
+            ["python3", "scripts/ci/check_documentation_contracts.py"], commands
+        )
+        self.assertIn(
+            ["python3", "scripts/ci/test_check_documentation_contracts.py"], commands
+        )
         self.assertIn(["python3", "scripts/ci/check_public_surface.py"], commands)
         self.assertIn(
             ["python3", "scripts/ci/check_surface_baseline.py", "origin/main"],

@@ -109,6 +109,14 @@ def add_pr_body_steps(
 def fast_steps(base: str, head: str) -> list[tuple[str, list[str]]]:
     return [
         ("Check plugin version sync", ["python3", "scripts/ci/check_plugin_version_sync.py"]),
+        (
+            "Test documentation contracts",
+            ["python3", "scripts/ci/test_check_documentation_contracts.py"],
+        ),
+        (
+            "Check documentation contracts",
+            ["python3", "scripts/ci/check_documentation_contracts.py"],
+        ),
         ("Check public surface", ["python3", "scripts/ci/check_public_surface.py"]),
         ("Check published surface baseline", ["python3", "scripts/ci/check_surface_baseline.py", base]),
         (

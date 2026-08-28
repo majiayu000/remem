@@ -29,7 +29,7 @@ explicitly and are not runtime truth.
 | Quick installation and verification | [Root README](../README.md#install-in-five-minutes) | Current guide; verify with `remem doctor` |
 | Install channels, upgrades, platforms, and PATH drift | [Installation and upgrade guide](installation.md) | Current guide |
 | Codex plugin runtime and explicit hook activation | [Plugin README](../plugins/remem/README.md) | Current runtime guide |
-| SessionStart smoke test | [SessionStart context smoke](sessionstart-context-smoke.md) | Current verification guide |
+| SessionStart smoke test | [Isolated gate smoke](#sessionstart-context-smoke) | Current verification guide |
 | SessionStart injection and cache stability | [Architecture](ARCHITECTURE.md) and [cache-stability contract](specs/cache-stable-injection/PRODUCT.md) | Current architecture and contract |
 | Cursor host evidence and limitations | [Cursor contract research](research/cursor-hooks-contract-2026-07-23.md) | Dated research snapshot; verify with `remem doctor` |
 | Plugin target design | [Codex plugin complete design](spec-codex-plugin-complete-design.md) | Historical target design; use the Plugin README for shipped behavior |
@@ -38,6 +38,21 @@ explicitly and are not runtime truth.
 Host behavior changes quickly. `remem doctor` and `remem install --dry-run`
 are the current executable checks for a machine; design documents explain why
 the integration behaves that way.
+
+## SessionStart context smoke
+
+The gate smoke initializes a disposable encrypted store before the first
+context command so the gate row can be persisted.
+
+```bash
+tmpdir="$(mktemp -d)"
+REMEM_DATA_DIR="$tmpdir" cargo run --quiet -- encrypt
+printf '{"session_id":"gate-smoke","cwd":"%s","transcript_path":"/tmp/remem-gate-smoke.jsonl"}' "$PWD" | REMEM_DATA_DIR="$tmpdir" REMEM_CONTEXT_HOST=codex-cli cargo run --quiet -- context | wc -c
+printf '{"session_id":"gate-smoke","cwd":"%s","transcript_path":"/tmp/remem-gate-smoke.jsonl"}' "$PWD" | REMEM_DATA_DIR="$tmpdir" REMEM_CONTEXT_HOST=codex-cli cargo run --quiet -- context | wc -c
+```
+
+The first count is nonzero; the second unchanged invocation is `0`. Remove the
+disposable directory after the smoke test.
 
 ## Configuration
 
@@ -99,7 +114,7 @@ assuming an older tool count or schema.
 - [Current architecture overview and module map](ARCHITECTURE.md)
 - [Current graph implementation guide](graph-contract.md)
 - [Current memory ownership and visibility](ARCHITECTURE.md#memory-scope-project-vs-global) and [legacy-unverified quarantine contract](specs/legacy-unverified-context/PRODUCT.md)
-- [Current SessionStart compiler architecture](ARCHITECTURE.md#4-context-injection-sessionstart--context) and [Context Bundle contract](specs/GH932/PRODUCT.md)
+- [Current SessionStart compiler architecture](ARCHITECTURE.md#4-context-injection-sessionstart-context) and [Context Bundle contract](specs/GH932/PRODUCT.md)
 - [Current workstream operations](memory-usage-guide.md#workstreams), [architecture](ARCHITECTURE.md), and [identity-continuity contract](specs/workstream-identity-continuity/PRODUCT.md)
 - [Current spec index and lifecycle status](specs/README.md)
 

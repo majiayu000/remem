@@ -43,7 +43,7 @@ immediately.
 
 ```bash
 brew install majiayu000/tap/remem
-REMEM_INSTALL_BINARY="$(brew --prefix remem)/bin/remem" remem install --target codex
+"$(brew --prefix remem)/bin/remem" install --target codex
 ```
 
 Use `--target claude` for Claude Code. `--target all` configures every known
@@ -236,8 +236,8 @@ Use the [current configuration routes](docs/README.md#configuration), the
 
 ```bash
 remem sync-memory --cwd .
-remem export --markdown --output ./remem-memory --project "$PWD"
-remem export --project "$PWD" --pack .remem-pack
+remem export --markdown --output ./remem-memory
+remem export --pack .remem-pack
 ```
 
 Markdown mirrors are human-editable. Project memory packs are deterministic,

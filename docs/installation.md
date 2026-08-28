@@ -52,7 +52,7 @@ For Homebrew, pass the canonical formula binary explicitly if another copy of
 `remem` may already be on `PATH`:
 
 ```bash
-REMEM_INSTALL_BINARY="$(brew --prefix remem)/bin/remem" remem install --target codex
+"$(brew --prefix remem)/bin/remem" install --target codex
 ```
 
 The standalone installer is normally used in two steps so installation and

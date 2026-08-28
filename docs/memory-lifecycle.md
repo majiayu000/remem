@@ -116,9 +116,10 @@ CurrentTruth, including labeled `legacy_unverified` rows. Historical/debug
 flows can set `include_stale=true` or query ids directly when they need to
 inspect old facts.
 
-FTS maintenance follows the stored lifecycle state: active rows remain
-searchable, while stale rows are removed from the active FTS index by the
-existing status triggers. Being present in that index does not itself establish
+`memories_fts` deliberately indexes all stored statuses: `active`, `stale`, and
+`archived`. Lifecycle visibility is applied after the FTS JOIN at query time:
+default search excludes stale and archived rows, while `include_stale=true`
+enables historical reads. Being present in the index does not itself establish
 CurrentTruth or default SessionStart eligibility; the current-memory
 classification applies the additional proof and quarantine checks.
 
