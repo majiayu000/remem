@@ -11,6 +11,8 @@ use super::types::{
     MemoryBenchCondition, ADVERSARIAL_POLICY_SUITE, DEFAULT_PUBLIC_ROOT, DEFAULT_SUITE,
 };
 
+mod invocation_isolation;
+
 #[test]
 fn remem_code_memory_fixture_covers_required_categories() -> Result<()> {
     let fixture = load_suite(DEFAULT_SUITE)?;
