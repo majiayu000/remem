@@ -12,6 +12,9 @@ import check_documentation_contracts
 EXPECTED_WORKFLOW_SMOKE_COMMAND = (
     "python3 scripts/ci/run_sessionstart_context_gate_smoke.py"
 )
+EXPECTED_WORKFLOW_RUNNER_TEST_COMMAND = (
+    "python3 scripts/ci/test_run_sessionstart_context_gate_smoke.py"
+)
 SAFE_SHELLS = {"", "bash"}
 SAFE_WORKING_DIRECTORIES = {"", ".", "${{ github.workspace }}"}
 
@@ -122,6 +125,28 @@ def workflow_smoke_registration_violations(text: str) -> list[str]:
         )
     if text.count(EXPECTED_WORKFLOW_SMOKE_COMMAND) != 1:
         violations.append("SessionStart smoke command must appear exactly once")
+    runner_test_matches = [
+        (job, step)
+        for job in workflow_jobs(text)
+        for step in job.steps
+        if step.get("run") == EXPECTED_WORKFLOW_RUNNER_TEST_COMMAND
+    ]
+    if len(runner_test_matches) != 1:
+        violations.append("CI must execute the exact SessionStart runner tests once")
+    if len(runner_test_matches) == 1:
+        test_job, test_step = runner_test_matches[0]
+        violations.extend(
+            execution_violations("SessionStart runner test job", test_job.fields, {})
+        )
+        violations.extend(
+            execution_violations(
+                "SessionStart runner test step",
+                test_step,
+                test_job.inherited_execution_fields,
+            )
+        )
+    if text.count(EXPECTED_WORKFLOW_RUNNER_TEST_COMMAND) != 1:
+        violations.append("SessionStart runner test command must appear exactly once")
     return violations
 
 
@@ -404,6 +429,16 @@ class RepositoryDocumentationContractTests(unittest.TestCase):
 
         self.assertIn(
             "CI must execute the exact SessionStart smoke command once",
+            workflow_smoke_registration_violations(mutated),
+        )
+
+    def test_ci_registration_rejects_missing_runner_tests(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        mutated = workflow.replace(EXPECTED_WORKFLOW_RUNNER_TEST_COMMAND, "true")
+
+        self.assertIn(
+            "CI must execute the exact SessionStart runner tests once",
             workflow_smoke_registration_violations(mutated),
         )
 

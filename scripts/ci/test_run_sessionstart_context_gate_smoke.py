@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import stat
@@ -94,6 +96,50 @@ class SessionStartSmokeRunnerTests(unittest.TestCase):
             self.assertEqual(run_sessionstart_context_gate_smoke.main(), 1)
 
         run.assert_called_once()
+
+    def test_missing_cargo_reports_clear_error(self) -> None:
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(
+                run_sessionstart_context_gate_smoke.subprocess,
+                "run",
+                side_effect=FileNotFoundError(2, "No such file or directory", "cargo"),
+            ),
+            contextlib.redirect_stderr(stderr),
+        ):
+            self.assertEqual(run_sessionstart_context_gate_smoke.main(), 1)
+
+        self.assertIn("error: failed to start Cargo", stderr.getvalue())
+        self.assertIn("cargo", stderr.getvalue())
+
+    def test_fixture_spawn_error_is_reported(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="remem-smoke-runner-") as raw_tmp:
+            executable = Path(raw_tmp) / "remem"
+            executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
+            cargo_output = json.dumps(
+                {
+                    "reason": "compiler-artifact",
+                    "target": {"name": "remem", "kind": ["bin"]},
+                    "executable": str(executable),
+                }
+            )
+            stderr = io.StringIO()
+            with (
+                mock.patch.object(
+                    run_sessionstart_context_gate_smoke.subprocess,
+                    "run",
+                    side_effect=[
+                        subprocess.CompletedProcess([], 0, cargo_output, ""),
+                        PermissionError(13, "Permission denied", "smoke fixture"),
+                    ],
+                ),
+                contextlib.redirect_stderr(stderr),
+            ):
+                self.assertEqual(run_sessionstart_context_gate_smoke.main(), 1)
+
+        self.assertIn("error: failed to start SessionStart smoke fixture", stderr.getvalue())
+        self.assertIn("smoke fixture", stderr.getvalue())
 
 
 if __name__ == "__main__":

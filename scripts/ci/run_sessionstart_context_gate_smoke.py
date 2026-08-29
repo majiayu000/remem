@@ -75,13 +75,20 @@ def print_cargo_diagnostics(output: str) -> None:
 
 
 def main() -> int:
-    build = subprocess.run(
-        CARGO_COMMAND,
-        cwd=ROOT,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        build = subprocess.run(
+            CARGO_COMMAND,
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except OSError as exc:
+        print(
+            f"error: failed to start Cargo command {' '.join(CARGO_COMMAND)}: {exc}",
+            file=sys.stderr,
+        )
+        return 1
     if build.stderr:
         sys.stderr.write(build.stderr)
     print_cargo_diagnostics(build.stdout)
@@ -109,12 +116,20 @@ def main() -> int:
 
     smoke_env = os.environ.copy()
     smoke_env.update(HOSTILE_PARENT_ENV)
-    smoke = subprocess.run(
-        [str(SMOKE_SCRIPT), str(executable)],
-        cwd=ROOT,
-        env=smoke_env,
-        check=False,
-    )
+    try:
+        smoke = subprocess.run(
+            [str(SMOKE_SCRIPT), str(executable)],
+            cwd=ROOT,
+            env=smoke_env,
+            check=False,
+        )
+    except OSError as exc:
+        print(
+            f"error: failed to start SessionStart smoke fixture "
+            f"{SMOKE_SCRIPT}: {exc}",
+            file=sys.stderr,
+        )
+        return 1
     return smoke.returncode
 
 

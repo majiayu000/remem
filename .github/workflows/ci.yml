@@ -17,6 +17,8 @@ jobs:
         run: python3 scripts/ci/test_check_documentation_contracts.py
       - name: Check documentation contracts
         run: python3 scripts/ci/check_documentation_contracts.py
+      - name: Test SessionStart artifact runner
+        run: python3 scripts/ci/test_run_sessionstart_context_gate_smoke.py
       - name: Check public benchmark claims
         run: python3 scripts/ci/check_public_claims.py
       - name: Check source file size guard

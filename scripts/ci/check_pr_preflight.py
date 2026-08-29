@@ -18,6 +18,10 @@ SESSIONSTART_SMOKE_COMMAND = [
     "python3",
     "scripts/ci/run_sessionstart_context_gate_smoke.py",
 ]
+SESSIONSTART_RUNNER_TEST_COMMAND = [
+    "python3",
+    "scripts/ci/test_run_sessionstart_context_gate_smoke.py",
+]
 
 
 @dataclass
@@ -120,6 +124,10 @@ def fast_steps(base: str, head: str) -> list[tuple[str, list[str]]]:
         (
             "Check documentation contracts",
             ["python3", "scripts/ci/check_documentation_contracts.py"],
+        ),
+        (
+            "Test SessionStart artifact runner",
+            SESSIONSTART_RUNNER_TEST_COMMAND,
         ),
         (
             "Build current remem and prove isolated SessionStart smoke",
