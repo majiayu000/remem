@@ -14,6 +14,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CARGO_TEST_THREADS = 4
+SESSIONSTART_SMOKE_COMMAND = [
+    "python3",
+    "scripts/ci/run_sessionstart_context_gate_smoke.py",
+]
+SESSIONSTART_RUNNER_TEST_COMMAND = [
+    "python3",
+    "scripts/ci/test_run_sessionstart_context_gate_smoke.py",
+]
 
 
 @dataclass
@@ -109,6 +117,22 @@ def add_pr_body_steps(
 def fast_steps(base: str, head: str) -> list[tuple[str, list[str]]]:
     return [
         ("Check plugin version sync", ["python3", "scripts/ci/check_plugin_version_sync.py"]),
+        (
+            "Test documentation contracts",
+            ["python3", "scripts/ci/test_check_documentation_contracts.py"],
+        ),
+        (
+            "Check documentation contracts",
+            ["python3", "scripts/ci/check_documentation_contracts.py"],
+        ),
+        (
+            "Test SessionStart artifact runner",
+            SESSIONSTART_RUNNER_TEST_COMMAND,
+        ),
+        (
+            "Build current remem and prove isolated SessionStart smoke",
+            SESSIONSTART_SMOKE_COMMAND,
+        ),
         ("Check public surface", ["python3", "scripts/ci/check_public_surface.py"]),
         ("Check published surface baseline", ["python3", "scripts/ci/check_surface_baseline.py", base]),
         (
@@ -211,7 +235,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--fast",
         action="store_true",
-        help="Run fast/mechanical gates only; omit smoke, eval, and cargo test",
+        help=(
+            "Run fast/mechanical gates only; omit native API smoke, eval, "
+            "and cargo test"
+        ),
     )
     parser.add_argument(
         "--cargo-test-threads",
