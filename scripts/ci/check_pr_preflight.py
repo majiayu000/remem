@@ -255,7 +255,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--fast",
         action="store_true",
-        help="Run fast/mechanical gates only; omit smoke, eval, and cargo test",
+        help=(
+            "Run fast/mechanical gates only; omit native API smoke, eval, "
+            "and cargo test"
+        ),
     )
     parser.add_argument(
         "--cargo-test-threads",

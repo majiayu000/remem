@@ -151,7 +151,7 @@ FTS、entity、temporal、vector、graph 与可选本地 reranker
 hooks 完成可靠捕获或入队后就会返回。后台 worker 负责提炼、candidate 治理、
 压缩、检索增强和生命周期清理。MCP、CLI、REST 与 SessionStart 使用同一份本地
 存储和治理模型，但各自应用不同的 eligibility policy。显式检索是检查与恢复
-surface，因此可能返回带 `legacy-unverified` 标签的 memory；默认 SessionStart 与
+surface，因此可能返回带 `legacy_unverified` 标签的 memory；默认 SessionStart 与
 CurrentTruth 会隔离这些记录，并留下原因。
 
 模型生成的内容要经过来源支持、secret、instruction pattern、scope 和生命周期

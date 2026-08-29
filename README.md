@@ -166,7 +166,7 @@ perform extraction, candidate governance, compression, retrieval enrichment,
 and lifecycle cleanup. MCP, CLI, REST, and SessionStart share the same local
 store and governance model, but apply surface-specific eligibility policies.
 Explicit search is an inspection and recovery surface, so it may return
-labeled `legacy-unverified` memories; default SessionStart and CurrentTruth
+labeled `legacy_unverified` memories; default SessionStart and CurrentTruth
 exclude those rows and record the reason.
 
 Generated memory is treated as untrusted until it passes source-support,
