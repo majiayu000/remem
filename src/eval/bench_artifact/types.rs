@@ -1,14 +1,26 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::eval::coding_bench::{RememContextAuditSnapshot, RememContextAuditStatus};
-use crate::eval::memory_bench::types::MemoryBenchSuiteFixture;
+use crate::eval::memory_bench::types::{
+    MemoryBenchPolicyOutcome, MemoryBenchPolicySummary, MemoryBenchSuiteFixture,
+};
 
 #[derive(Debug, Clone)]
 pub struct BenchVerifyOptions {
     pub root: PathBuf,
+    pub claim_registry_path: PathBuf,
+}
+
+impl BenchVerifyOptions {
+    pub fn new(root: impl Into<PathBuf>, claim_registry_path: impl Into<PathBuf>) -> Self {
+        Self {
+            root: root.into(),
+            claim_registry_path: claim_registry_path.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -34,8 +46,41 @@ pub struct BenchVerifyReport {
     pub run_artifacts_checked: usize,
     pub artifact_files_checked: usize,
     pub failures: Vec<BenchVerifyFailure>,
+    pub authority_verdict: AuthorityVerdict,
     #[serde(skip)]
     pub(crate) verified_artifacts: VerifiedBenchmarkArtifacts,
+}
+
+#[derive(Serialize)]
+struct PersistedBenchVerifyReport<'a> {
+    schema_version: u32,
+    root: &'a str,
+    passed: bool,
+    manifests_checked: usize,
+    reports_checked: usize,
+    run_artifacts_checked: usize,
+    artifact_files_checked: usize,
+    failures: &'a [BenchVerifyFailure],
+}
+
+pub(crate) fn serialize_persisted_bench_verify_report<S>(
+    report: &BenchVerifyReport,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    PersistedBenchVerifyReport {
+        schema_version: report.schema_version,
+        root: &report.root,
+        passed: report.passed,
+        manifests_checked: report.manifests_checked,
+        reports_checked: report.reports_checked,
+        run_artifacts_checked: report.run_artifacts_checked,
+        artifact_files_checked: report.artifact_files_checked,
+        failures: &report.failures,
+    }
+    .serialize(serializer)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -45,6 +90,275 @@ pub(crate) struct VerifiedBenchmarkArtifacts {
     pub reports: Vec<VerifiedArtifact<PublicBenchmarkReport>>,
     pub memory_runs: Vec<VerifiedArtifact<MemoryRunArtifact>>,
     pub coding_runs: Vec<VerifiedArtifact<CodingRunArtifact>>,
+    pub security_policy_outcomes: BTreeMap<String, MemoryBenchPolicyOutcome>,
+    pub claim_registry: Option<VerifiedArtifact<ClaimRegistryPolicy>>,
+    pub curator_logs: BTreeMap<String, VerifiedArtifact<CuratorLogArtifact>>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+pub enum AuthorityStatus {
+    #[serde(rename = "PASS")]
+    Pass,
+    #[serde(rename = "FAIL")]
+    Fail,
+    #[serde(rename = "INSUFFICIENT")]
+    Insufficient,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AuthorityVerdict {
+    pub schema_version: u32,
+    pub status: AuthorityStatus,
+    pub consumed_bytes: BTreeMap<String, String>,
+    pub implementation: ImplementationAuthorityBinding,
+    pub security: SecurityAuthorityVerdict,
+    pub gh931: Gh931AuthorityVerdict,
+    pub release: ReleaseAuthorityVerdict,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ImplementationAuthorityBinding {
+    pub build_git_sha: Option<String>,
+    pub checkout_git_sha: Option<String>,
+    pub build_source_dirty: Option<bool>,
+    pub checkout_source_dirty: Option<bool>,
+    pub build_production_input_tree_sha256: Option<String>,
+    pub checkout_production_input_tree_sha256: Option<String>,
+    pub production_pathspec_sha256: Option<String>,
+    pub executable_source_equivalent: bool,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Gh931AuthorityVerdict {
+    pub status: AuthorityStatus,
+    pub registry: Gh931RegistryBinding,
+    pub report: Option<Gh931ReportBinding>,
+    pub completeness: Gh931Completeness,
+    pub condition_completion: Vec<Gh931ConditionCompletion>,
+    pub paired_statistics: Vec<super::report::CodingPairedStatistic>,
+    pub maintenance: Gh931MaintenanceVerdict,
+    pub stop_loss: Gh931StopLossVerdict,
+    pub claims: Vec<Gh931ClaimVerdict>,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Gh931ConditionCompletion {
+    pub condition: String,
+    pub eligible_started: usize,
+    pub resolved: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Gh931MaintenanceVerdict {
+    pub status: AuthorityStatus,
+    pub curator_tasks: usize,
+    pub curator_sessions: usize,
+    pub curator_minutes: Option<f64>,
+    pub curated_minutes_per_100_sessions: Option<f64>,
+    pub remem_minutes_per_100_sessions: Option<f64>,
+    pub reduction_pct: Option<f64>,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Gh931RegistryBinding {
+    pub path: Option<String>,
+    pub sha256: Option<String>,
+    pub schema_version: Option<u32>,
+    pub issue: Option<String>,
+    pub locked: bool,
+    pub policy_valid: bool,
+    pub declared_statuses: Vec<AuthorityStatus>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Gh931ReportBinding {
+    pub path: String,
+    pub sha256: String,
+    pub conditions: Vec<String>,
+    pub models_by_condition: BTreeMap<String, Vec<Value>>,
+    pub platforms: Vec<String>,
+    pub producing_shas: Vec<String>,
+    pub production_input_trees: Vec<String>,
+    pub source_dirty_attestations: Vec<Option<bool>>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Gh931Completeness {
+    pub expected_tasks: usize,
+    pub expected_conditions: usize,
+    pub expected_runs_per_task: usize,
+    pub expected_runs: usize,
+    pub observed_runs: usize,
+    pub complete: bool,
+    pub attempts_ready: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Gh931StopLossVerdict {
+    pub status: AuthorityStatus,
+    pub eligible_runs: usize,
+    pub memory_hurt_rate_pct: Option<f64>,
+    pub stale_memory_followed_rate_pct: Option<f64>,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Gh931ClaimVerdict {
+    pub id: String,
+    pub status: AuthorityStatus,
+    pub declared_registry_status: AuthorityStatus,
+    pub treatment: String,
+    pub control: String,
+    pub metric: String,
+    pub allowed_wording: Vec<String>,
+    pub forbidden_wording: Vec<String>,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ClaimRegistryPolicy {
+    pub schema_version: u32,
+    pub issue: String,
+    pub locked: bool,
+    pub claims: Vec<ClaimRegistryClaimPolicy>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ClaimRegistryClaimPolicy {
+    pub id: String,
+    pub comparison: ClaimRegistryComparison,
+    pub metric: String,
+    pub gate: ClaimRegistryGate,
+    pub status: AuthorityStatus,
+    pub allowed_wording: Vec<String>,
+    pub forbidden_wording: Vec<String>,
+    pub supporting_report: Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ClaimRegistryComparison {
+    pub treatment: String,
+    pub control: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum ClaimRegistryGate {
+    Superiority(ClaimSuperiorityGate),
+    NonInferiority(ClaimNonInferiorityGate),
+    StopLoss(ClaimStopLossGate),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ClaimSuperiorityGate {
+    pub min_effect_pp: f64,
+    pub ci_lower_bound_pp_gt: f64,
+    pub ci_level: f64,
+    pub statistical_unit: String,
+    pub method: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ClaimNonInferiorityGate {
+    pub non_inferiority_margin_pp: f64,
+    pub human_maintenance_reduction_min_pct: f64,
+    pub ci_level: f64,
+    pub statistical_unit: String,
+    pub method: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ClaimStopLossGate {
+    pub memory_hurt_max_pct: f64,
+    pub stale_memory_followed_max_pct: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CuratorLogArtifact {
+    pub schema_version: u32,
+    pub condition: String,
+    pub task_id: String,
+    pub target_blind: bool,
+    pub budget: CuratorBudget,
+    pub sessions: Vec<CuratorSession>,
+    pub totals: CuratorTotals,
+    pub final_char_count: usize,
+    pub final_file_sha256: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CuratorBudget {
+    pub minutes_per_session: f64,
+    pub max_chars: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CuratorSession {
+    pub episode_id: String,
+    pub minutes_spent: f64,
+    pub edit_count: u64,
+    pub deletion_count: u64,
+    pub conflict_resolution_count: u64,
+    pub chars_after: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CuratorTotals {
+    pub maintenance_minutes: f64,
+    pub update_count: u64,
+    pub deletion_count: u64,
+    pub conflict_resolution_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SecurityAuthorityVerdict {
+    pub status: AuthorityStatus,
+    pub runs_recomputed: usize,
+    pub policy_failure_count: usize,
+    pub reports: Vec<SecurityReportAuthorityVerdict>,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SecurityReportAuthorityVerdict {
+    pub report_path: String,
+    pub report_sha256: String,
+    pub status: AuthorityStatus,
+    pub target: Option<String>,
+    pub models: Vec<Value>,
+    pub platforms: Vec<String>,
+    pub producing_shas: Vec<String>,
+    pub production_input_trees: Vec<String>,
+    pub source_dirty_attestations: Vec<Option<bool>>,
+    pub runs_recomputed: usize,
+    pub policy_failure_count: usize,
+    pub policy_summary: Option<MemoryBenchPolicySummary>,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ReleaseAuthorityVerdict {
+    pub status: AuthorityStatus,
+    pub ready: bool,
+    pub required_targets: Vec<String>,
+    pub current_targets: Vec<String>,
+    pub missing_targets: Vec<String>,
+    pub stale_targets: Vec<String>,
+    pub diagnostics: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]

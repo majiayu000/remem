@@ -4,68 +4,48 @@ use std::path::Path;
 use super::{
     MeasurementState, OutcomeScorecard, PublicEvidence, ScorecardComponent, ScorecardField,
 };
+use crate::eval::bench_artifact::AuthorityStatus;
 
 pub(super) fn build_scorecard(
     public: &PublicEvidence,
     security_report_path: &Path,
 ) -> OutcomeScorecard {
-    let coding = public
-        .report
-        .as_ref()
-        .filter(|report| report.artifact_verifier.passed)
-        .map(|report| &report.coding_task_outcomes);
-    let task_completion_source = coding.and_then(|runs| {
-        artifact_sources(
-            runs.iter()
-                .filter(|run| run.target_started == Some(true))
-                .map(|run| run.report_path.as_str())
-                .collect(),
-            &public.verified_report_sources,
-        )
-    });
-    let memory_help_source = coding.and_then(|runs| {
-        artifact_sources(
-            runs.iter()
-                .filter(|run| run.memory_helped.is_some())
-                .map(|run| run.report_path.as_str())
-                .collect(),
-            &public.verified_report_sources,
-        )
-    });
-    let task_completion = coding.map(|runs| {
-        task_completion_counts(runs.iter().map(|run| (run.target_started, run.resolved)))
+    let gh931 = public.authority_verdict().map(|verdict| &verdict.gh931);
+    let task_completion = gh931
+        .filter(|authority| {
+            authority.completeness.complete && authority.completeness.attempts_ready
+        })
+        .and_then(|authority| {
+            authority
+                .condition_completion
+                .iter()
+                .find(|completion| completion.condition == "remem_e2e")
+        });
+    let task_completion_source = gh931.and_then(|authority| {
+        authority
+            .report
+            .as_ref()
+            .map(|report| format!("{}#sha256={}", report.path, report.sha256))
     });
     let security_source = public.security_source.clone();
     let fields = vec![
         ratio_field(
             "task_completion_rate",
-            task_completion.map(|(resolved, _)| resolved),
-            task_completion.map(|(_, started)| started),
-            "verified committed coding outcomes; current artifacts may be smoke-only",
-            "resolved coding runs",
-            "all eligible coding runs",
+            task_completion.map(|completion| completion.resolved as f64),
+            task_completion.map(|completion| completion.eligible_started as f64),
+            "issue385-v1/official-v1 remem_e2e runs with target_started=true",
+            "resolved eligible remem_e2e runs",
+            "eligible started remem_e2e runs",
             "registered GH931 threshold when official matrix is complete",
-            "smoke_or_official_as_declared_by_source",
+            gh931_claim_level(gh931),
             task_completion_source,
         ),
-        ratio_field(
+        unavailable_field(
             "correct_memory_help_rate",
-            coding.map(|runs| {
-                runs.iter()
-                    .filter(|run| run.memory_helped == Some(true))
-                    .count() as f64
-            }),
-            coding.map(|runs| {
-                runs.iter()
-                    .filter(|run| run.memory_helped.is_some())
-                    .count() as f64
-            }),
-            "verified coding runs with an explicit memory_helped verdict",
+            "official remem_e2e runs with verifier-modeled memory-help authority",
             "runs where memory_helped is true",
             "runs with a measured memory_helped verdict",
-            "reported; no public threshold until GH931 official matrix",
-            "smoke_or_official_as_declared_by_source",
-            memory_help_source,
+            "the runtime verdict does not yet expose an authoritative memory-help population",
         ),
         unavailable_field(
             "repeated_explanation_rate",
@@ -115,15 +95,6 @@ pub(super) fn build_scorecard(
         ],
         fields,
     }
-}
-
-pub(super) fn task_completion_counts(
-    runs: impl Iterator<Item = (Option<bool>, bool)>,
-) -> (f64, f64) {
-    runs.filter(|(target_started, _)| *target_started == Some(true))
-        .fold((0.0, 0.0), |(resolved, started), (_, did_resolve)| {
-            (resolved + f64::from(did_resolve), started + 1.0)
-        })
 }
 
 pub(super) fn ratio_field(
@@ -205,8 +176,9 @@ pub(super) fn unavailable_field(
 }
 
 fn security_ratio_field(public: &PublicEvidence, source: Option<String>) -> ScorecardField {
-    let denominator = security_number(public, "/aggregate_metrics/policy/non_retention_cases");
-    let rate = security_number(public, "/aggregate_metrics/policy/non_retention_leak_rate");
+    let summary = verified_security_summary(public);
+    let denominator = summary.map(|summary| summary.non_retention_cases as f64);
+    let rate = summary.map(|summary| summary.non_retention_leak_rate);
     ratio_field(
         "poison_policy_leak_rate",
         denominator.zip(rate).map(|(count, value)| count * value),
@@ -220,20 +192,13 @@ fn security_ratio_field(public: &PublicEvidence, source: Option<String>) -> Scor
     )
 }
 
-fn abstention_field(public: &PublicEvidence, source: Option<String>) -> ScorecardField {
-    ratio_field(
+fn abstention_field(_public: &PublicEvidence, _source: Option<String>) -> ScorecardField {
+    unavailable_field(
         "abstention_rate",
-        security_number(
-            public,
-            "/aggregate_metrics/failure_decomposition/overall/policy_abstention",
-        ),
-        security_number(public, "/aggregate_metrics/run_count"),
         "production-path adversarial-policy v2 runs",
         "runs ending in policy abstention",
         "verified adversarial runs",
-        "reported with accuracy; rate alone is not a pass criterion",
-        "directional_memory_suite_no_public_claim",
-        source,
+        "the recomputed policy summary records abstention applicability/accuracy, not an authoritative abstention event count",
     )
 }
 
@@ -259,28 +224,27 @@ fn latency_field(_public: &PublicEvidence, _security_report_path: &Path) -> Scor
     }
 }
 
-fn artifact_sources(
-    paths: std::collections::BTreeSet<&str>,
-    verified_sources: &BTreeMap<String, String>,
-) -> Option<String> {
-    if paths.is_empty() {
-        return None;
+fn gh931_claim_level(
+    authority: Option<&crate::eval::bench_artifact::Gh931AuthorityVerdict>,
+) -> &'static str {
+    if authority.is_some_and(|authority| authority.status == AuthorityStatus::Pass) {
+        "level_2_registered_coding_outcome_claim"
+    } else {
+        "unavailable_no_authorized_coding_claim"
     }
-    paths
-        .into_iter()
-        .map(|relative| verified_sources.get(relative).cloned())
-        .collect::<Option<Vec<_>>>()
-        .map(|sources| sources.join(","))
 }
 
-fn security_number(public: &PublicEvidence, pointer: &str) -> Option<f64> {
-    if !public.security_authority.passed {
+fn verified_security_summary(
+    public: &PublicEvidence,
+) -> Option<&crate::eval::memory_bench::types::MemoryBenchPolicySummary> {
+    let authority = public.security_authority.as_ref()?;
+    if authority.status != AuthorityStatus::Pass
+        || authority.target.is_none()
+        || authority.models.is_empty()
+        || authority.platforms.len() != 1
+        || authority.report_sha256.len() != 64
+    {
         return None;
     }
-    public
-        .security
-        .as_ref()?
-        .aggregate_metrics
-        .pointer(pointer.trim_start_matches("/aggregate_metrics"))?
-        .as_f64()
+    authority.policy_summary.as_ref()
 }

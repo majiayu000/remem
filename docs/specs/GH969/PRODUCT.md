@@ -1,6 +1,6 @@
 # GH969 Product Contract — Stabilization And Surface Governance
 
-Status: Current contract; activation, surface, dependency-direction, and executable ship-matrix slices implemented; final reconciliation pending; Issue: #969
+Status: Current contract; activation, surface, dependency-direction, and executable ship-matrix slices implemented; PR #1052 authority-verdict convergence in progress; final reconciliation pending; Issue: #969
 
 Last reconciled against `origin/main`: 2026-08-26 (`36f3d38c`)
 
@@ -69,9 +69,10 @@ the referenced experimental surfaces.
 
 The executable matrix fails closed on evidence identity: the running binary
 must match the checkout, every input hash names the bytes actually consumed,
-and claim authorization comes from one closed machine-readable contract shared
-by the Rust matrix and Python wording guard. Platform evidence is never copied
-or relabeled; a platform without a real persisted-state run is `incomplete`.
+and claim authorization comes from one runtime-generated authority verdict
+projected by the Rust matrix. The Python guard only checks public wording against
+the verdict's policy and report binding. Platform evidence is never copied or
+relabeled; a platform without a real persisted-state run is `incomplete`.
 
 ## Active-Memory Safety Boundary
 
@@ -290,6 +291,38 @@ The #969 epic is complete only when:
   continue-with-date, or remove decision;
 - automatic capture, LLM extraction, memory quality, host compatibility, and
   visible failure behavior have not regressed.
+
+## PR #1052 authority-verdict convergence
+
+This convergence is in progress. Its completion requires the runtime verifier
+to become the sole authority for evidence decisions. One invocation must
+consume the typed manifests, reports, suites, memory/coding runs, referenced
+artifacts, and SQLite snapshots and emit a serializable verdict with exact
+consumed-byte hashes and runtime build/checkout identity. The verdict is never
+checked in and does not contain a self-referential hash.
+
+Completion also requires security policy outcomes to be recomputed from exact
+typed evidence and verified SQLite state using the canonical memory-benchmark
+scorer. GH931 must be recomputed for the complete issue385-v1/official-v1
+matrix (16 tasks × 3 conditions × 3 run indices), with unique attempts,
+`target_started=true`, the task-cluster paired bootstrap, frozen registry
+thresholds, and memory-harm/stale-followed stop-losses. Report aggregates, run
+policy counters, registry `status` and `supporting_report` fields, and duplicate
+claim-contract data must not authorize PASS. The duplicate coding claim contract
+is removed; Rust consumes the registry policy once and emits the wording policy
+needed by downstream guards.
+
+Ship rows and scorecards must only project verdict decisions. They must preserve
+condition-specific populations (`remem_e2e`, `no_memory`, and
+`curated_file_budgeted` are not blended), exclude pre-target failures, derive
+model identity from their own covered runs/reports, and keep synthetic latency
+unavailable. Legacy eval gates remain part of readiness.
+
+Release readiness must be a closed set over exactly `x86_64-apple-darwin`,
+`aarch64-apple-darwin`, `x86_64-unknown-linux-gnu`, and
+`aarch64-unknown-linux-gnu`. Missing or stale genuine evidence for any target
+makes readiness unavailable; implementation and CI must fail closed without
+fabricating unsupported platform artifacts.
 
 ## Related Current Contracts
 

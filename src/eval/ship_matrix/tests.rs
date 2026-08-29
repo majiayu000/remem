@@ -1,14 +1,10 @@
-use super::authority::{
-    security_report_path_matches, supporting_report_binds_implementation,
-    verify_executed_suite_identity, verify_security_platforms, verify_security_task_set,
-    ClaimAuthority, SecurityAuthority,
-};
 use super::rows::{coding_gate, component_gate};
-use super::scorecard::{build_scorecard, ratio_field, task_completion_counts, unavailable_field};
+use super::scorecard::{build_scorecard, ratio_field, unavailable_field};
 use super::*;
 use crate::eval::gates::{EvalGateDelta, EvalGateStatus};
 use sha2::Digest;
 
+mod consumer_convergence;
 mod implementation_identity;
 
 fn delta(metric: &str, status: EvalGateStatus) -> EvalGateDelta {
@@ -139,7 +135,6 @@ fn unreadable_security_evidence_is_incomplete_and_blocks_required_row() {
             security_report_path: invalid_security,
             cross_host_charter_path: charter,
             claim_registry_path: claims,
-            claim_contract_path: temp.join("claim-contract.json"),
             input_artifact_sha256: BTreeMap::new(),
         },
     );
@@ -202,27 +197,10 @@ fn partial_latency_evidence_is_fully_unavailable() {
     let public = PublicEvidence {
         report: None,
         report_error: None,
-        security: Some(security_report(serde_json::json!({
-                "performance": {
-                    "remem_default": {
-                        "end_to_end_latency_p50_ms": 12.0,
-                        "tasks": 20
-                    }
-                }
-        }))),
+        security_claim_level: None,
         security_source: None,
-        verified_report_sources: BTreeMap::new(),
         security_error: None,
-        security_authority: SecurityAuthority {
-            passed: true,
-            benchmark_commit: None,
-            diagnostics: Vec::new(),
-        },
-        claim_authority: ClaimAuthority {
-            coding_passed: false,
-            level3_passed: false,
-            diagnostics: Vec::new(),
-        },
+        security_authority: None,
     };
     let scorecard = build_scorecard(&public, Path::new(DEFAULT_SECURITY_REPORT));
     let latency = scorecard
@@ -233,94 +211,6 @@ fn partial_latency_evidence_is_fully_unavailable() {
     assert_eq!(latency.measurement_state, MeasurementState::Unavailable);
     assert_eq!(latency.denominator.value, None);
     assert!(latency.values.is_empty());
-}
-
-#[test]
-fn security_task_set_requires_every_suite_task() {
-    let temp = unique_temp_dir("security-task-set");
-    let suite_dir = temp.join("memory/suites/adversarial-policy");
-    std::fs::create_dir_all(&suite_dir).unwrap();
-    std::fs::write(
-        suite_dir.join("suite.json"),
-        br#"{"version":"v2","fixture_revision":"adversarial-policy-v2","tasks":[{"id":"one"},{"id":"two"}]}"#,
-    )
-    .unwrap();
-    let options = ShipMatrixOptions {
-        public_root: temp.clone(),
-        ..Default::default()
-    };
-    let mut diagnostics = Vec::new();
-    verify_security_task_set(
-        &options,
-        &std::collections::BTreeSet::from(["one".to_string()]),
-        &mut diagnostics,
-    );
-    assert!(diagnostics
-        .iter()
-        .any(|item| item.contains("missing=[two]")));
-    std::fs::remove_dir_all(temp).unwrap();
-}
-
-#[test]
-fn executed_suite_identity_rejects_old_runs_after_same_id_runtime_edit() {
-    let original = br#"{"tasks":[{"id":"same","prompt":"old","expected":"allow"}]}"#;
-    let mutated = br#"{"tasks":[{"id":"same","prompt":"changed","expected":"deny"}]}"#;
-    let original_identity = format!("sha256-raw-suite-v1:{:x}", sha2::Sha256::digest(original));
-    let mut diagnostics = Vec::new();
-    verify_executed_suite_identity(
-        mutated,
-        Some(&original_identity),
-        &std::collections::BTreeSet::from([original_identity.clone()]),
-        &mut diagnostics,
-    );
-    assert!(diagnostics
-        .iter()
-        .any(|item| item.contains("report suite content identity mismatch")));
-    assert!(diagnostics
-        .iter()
-        .any(|item| item.contains("runs do not exactly bind")));
-}
-
-#[test]
-fn selected_security_report_must_match_manifest_entry_path() {
-    let temp = unique_temp_dir("security-report-binding");
-    let reports = temp.join("memory/reports");
-    std::fs::create_dir_all(&reports).unwrap();
-    let selected = reports.join("selected.json");
-    let other = reports.join("other.json");
-    std::fs::write(&selected, b"{}").unwrap();
-    std::fs::write(&other, b"{}").unwrap();
-    let options = ShipMatrixOptions {
-        public_root: temp.clone(),
-        security_report_path: selected.clone(),
-        ..Default::default()
-    };
-    let selected = selected.canonicalize().unwrap();
-    assert!(security_report_path_matches(
-        &options,
-        "memory/reports/selected.json",
-        &selected
-    ));
-    assert!(!security_report_path_matches(
-        &options,
-        "memory/reports/other.json",
-        &selected
-    ));
-    std::fs::remove_dir_all(temp).unwrap();
-}
-
-#[test]
-fn security_platform_must_exactly_match_current_os_and_arch() {
-    let macos = std::collections::BTreeSet::from([("macos".to_string(), "aarch64".to_string())]);
-    let mut diagnostics = Vec::new();
-    verify_security_platforms(&macos, "linux", "x86_64", &mut diagnostics);
-    assert!(diagnostics
-        .iter()
-        .any(|item| item.contains("does not exactly cover")));
-
-    diagnostics.clear();
-    verify_security_platforms(&macos, "macos", "aarch64", &mut diagnostics);
-    assert!(diagnostics.is_empty());
 }
 
 #[test]
@@ -346,60 +236,8 @@ fn legacy_gate_failure_blocks_merge_and_release_readiness() {
         test_gate("release", ShipGateStatus::Pass, vec!["release"], true),
     ];
     let legacy_gates_passed = false;
-    let implementation_identified = true;
-    let source_clean = true;
     assert!(!merge_is_ready(&gates, legacy_gates_passed));
-    assert!(!release_is_ready(
-        &gates,
-        legacy_gates_passed,
-        implementation_identified,
-        source_clean
-    ));
-}
-
-#[test]
-fn supporting_claim_report_must_bind_current_sha() {
-    let current = "0123456789abcdef0123456789abcdef01234567";
-    let stale = serde_json::to_vec(&serde_json::json!({
-        "reproducibility": {
-            "remem_commits": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
-        }
-    }))
-    .unwrap();
-    let mut diagnostics = Vec::new();
-    assert!(!supporting_report_binds_implementation(
-        &stale,
-        "claim",
-        Some(current),
-        Some(&"a".repeat(64)),
-        &mut diagnostics,
-    ));
-    assert!(diagnostics
-        .iter()
-        .any(|item| item.contains("production source is not equivalent")));
-}
-
-#[test]
-fn supporting_claim_report_accepts_source_equivalent_producing_revision() {
-    let current = "0123456789abcdef0123456789abcdef01234567";
-    let producing = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    let tree = "b".repeat(64);
-    let report = serde_json::to_vec(&serde_json::json!({
-        "reproducibility": {
-            "remem_commits": [producing],
-            "production_input_tree_sha256": tree,
-        }
-    }))
-    .unwrap();
-    let mut diagnostics = Vec::new();
-    assert!(supporting_report_binds_implementation(
-        &report,
-        "claim",
-        Some(current),
-        Some(&"b".repeat(64)),
-        &mut diagnostics,
-    ));
-    assert!(diagnostics.is_empty());
+    assert!(!release_is_ready(&gates, legacy_gates_passed, true));
 }
 
 #[test]
@@ -427,7 +265,6 @@ fn missing_capacity_evidence_is_incomplete_and_blocks_command() {
             security_report_path: temp.join("security.json"),
             cross_host_charter_path: temp.join("charter.json"),
             claim_registry_path: temp.join("claims.json"),
-            claim_contract_path: temp.join("claim-contract.json"),
             input_artifact_sha256: BTreeMap::new(),
         },
     );
@@ -465,25 +302,10 @@ fn unverified_security_authority_hides_security_scorecard_numbers() {
     let public = PublicEvidence {
         report: None,
         report_error: Some("missing".to_string()),
-        security: Some(security_report(serde_json::json!({
-                "policy": {
-                    "non_retention_cases": 4,
-                    "non_retention_leak_rate": 0.0
-                }
-        }))),
+        security_claim_level: None,
         security_source: None,
-        verified_report_sources: BTreeMap::new(),
         security_error: None,
-        security_authority: SecurityAuthority {
-            passed: false,
-            benchmark_commit: None,
-            diagnostics: vec!["invalid".to_string()],
-        },
-        claim_authority: ClaimAuthority {
-            coding_passed: false,
-            level3_passed: false,
-            diagnostics: Vec::new(),
-        },
+        security_authority: None,
     };
     let scorecard = build_scorecard(&public, Path::new(DEFAULT_SECURITY_REPORT));
     let security = scorecard
@@ -500,28 +322,10 @@ fn synthetic_latency_is_not_reported_as_measured() {
     let public = PublicEvidence {
         report: None,
         report_error: None,
-        security: Some(security_report(serde_json::json!({
-                "performance": {
-                    "remem_default": {
-                        "end_to_end_latency_p50_ms": 10.0,
-                        "end_to_end_latency_p95_ms": 20.0,
-                        "tasks": 20
-                    }
-                }
-        }))),
+        security_claim_level: None,
         security_source: None,
-        verified_report_sources: BTreeMap::new(),
         security_error: None,
-        security_authority: SecurityAuthority {
-            passed: true,
-            benchmark_commit: None,
-            diagnostics: Vec::new(),
-        },
-        claim_authority: ClaimAuthority {
-            coding_passed: false,
-            level3_passed: false,
-            diagnostics: Vec::new(),
-        },
+        security_authority: None,
     };
     let selected = Path::new(LINUX_X86_64_SECURITY_REPORT);
     let scorecard = build_scorecard(&public, selected);
@@ -536,22 +340,6 @@ fn synthetic_latency_is_not_reported_as_measured() {
 }
 
 #[test]
-fn task_completion_excludes_runs_that_never_started_the_target() {
-    let (resolved, started) = task_completion_counts(
-        [
-            (Some(true), true),
-            (Some(true), false),
-            (Some(false), true),
-            (None, true),
-        ]
-        .into_iter(),
-    );
-
-    assert_eq!(resolved, 1.0);
-    assert_eq!(started, 2.0);
-}
-
-#[test]
 fn measured_security_ratio_binds_the_exact_selected_artifact() {
     let temp = unique_temp_dir("scorecard-source");
     std::fs::create_dir_all(&temp).unwrap();
@@ -561,29 +349,34 @@ fn measured_security_ratio_binds_the_exact_selected_artifact() {
     let public = PublicEvidence {
         report: None,
         report_error: None,
-        security: Some(security_report(serde_json::json!({
-            "policy": {
-                "non_retention_cases": 4,
-                "non_retention_leak_rate": 0.0
-            }
-        }))),
+        security_claim_level: Some("directional_memory_suite_no_public_claim".to_string()),
         security_source: Some(format!(
             "{}#sha256={:x}",
             selected.to_string_lossy(),
             Sha256::digest(selected_bytes)
         )),
-        verified_report_sources: BTreeMap::new(),
         security_error: None,
-        security_authority: SecurityAuthority {
-            passed: true,
-            benchmark_commit: None,
-            diagnostics: Vec::new(),
-        },
-        claim_authority: ClaimAuthority {
-            coding_passed: false,
-            level3_passed: false,
-            diagnostics: Vec::new(),
-        },
+        security_authority: Some(
+            crate::eval::bench_artifact::SecurityReportAuthorityVerdict {
+                report_path: selected.to_string_lossy().to_string(),
+                report_sha256: format!("{:x}", Sha256::digest(selected_bytes)),
+                status: crate::eval::bench_artifact::AuthorityStatus::Pass,
+                target: Some("x86_64-unknown-linux-gnu".to_string()),
+                models: vec![serde_json::json!({"provider": "fixture", "model": "security"})],
+                platforms: vec!["linux/x86_64".to_string()],
+                producing_shas: vec!["a".repeat(40)],
+                production_input_trees: vec!["b".repeat(64)],
+                source_dirty_attestations: vec![Some(false)],
+                runs_recomputed: 4,
+                policy_failure_count: 0,
+                policy_summary: Some(crate::eval::memory_bench::types::MemoryBenchPolicySummary {
+                    non_retention_cases: 4,
+                    non_retention_leak_rate: 0.0,
+                    ..Default::default()
+                }),
+                diagnostics: Vec::new(),
+            },
+        ),
     };
     let scorecard = build_scorecard(&public, &selected);
     let security = scorecard
@@ -599,46 +392,6 @@ fn measured_security_ratio_binds_the_exact_selected_artifact() {
     assert_eq!(security.measurement_state, MeasurementState::Measured);
     assert_eq!(security.source.as_deref(), Some(expected.as_str()));
     std::fs::remove_dir_all(temp).unwrap();
-}
-
-#[test]
-fn measured_memory_help_ratio_binds_its_eligible_artifacts() {
-    let report = crate::eval::bench_artifact::generate_public_baseline_report(Path::new(
-        DEFAULT_PUBLIC_ROOT,
-    ))
-    .unwrap();
-    let verified_report_sources = verified_report_sources(&report);
-    let public = PublicEvidence {
-        report: Some(report),
-        report_error: None,
-        security: None,
-        security_source: None,
-        verified_report_sources,
-        security_error: None,
-        security_authority: SecurityAuthority {
-            passed: false,
-            benchmark_commit: None,
-            diagnostics: Vec::new(),
-        },
-        claim_authority: ClaimAuthority {
-            coding_passed: false,
-            level3_passed: false,
-            diagnostics: Vec::new(),
-        },
-    };
-
-    let scorecard = build_scorecard(&public, Path::new(DEFAULT_SECURITY_REPORT));
-    let memory_help = scorecard
-        .fields
-        .iter()
-        .find(|field| field.id == "correct_memory_help_rate")
-        .unwrap();
-
-    assert_eq!(memory_help.measurement_state, MeasurementState::Measured);
-    assert!(memory_help
-        .source
-        .as_deref()
-        .is_some_and(|source| source.contains("coding/reports/coding-report-v1.json#sha256=")));
 }
 
 #[test]
@@ -661,86 +414,22 @@ fn evaluated_evidence_rejects_a_file_changed_after_load() {
 
 #[test]
 fn coding_baseline_evidence_is_unverified_when_artifact_verifier_fails() {
-    let mut report = crate::eval::bench_artifact::generate_public_baseline_report(Path::new(
-        DEFAULT_PUBLIC_ROOT,
-    ))
+    let mut report = crate::eval::bench_artifact::generate_public_baseline_report(
+        Path::new(DEFAULT_PUBLIC_ROOT),
+        Path::new(DEFAULT_CLAIM_REGISTRY),
+    )
     .unwrap();
     report.artifact_verifier.passed = false;
     let public = PublicEvidence {
         report: Some(report),
         report_error: None,
-        security: None,
+        security_claim_level: None,
         security_source: None,
-        verified_report_sources: BTreeMap::new(),
         security_error: None,
-        security_authority: SecurityAuthority {
-            passed: false,
-            benchmark_commit: None,
-            diagnostics: Vec::new(),
-        },
-        claim_authority: ClaimAuthority {
-            coding_passed: true,
-            level3_passed: false,
-            diagnostics: Vec::new(),
-        },
+        security_authority: None,
     };
-    let implementation = ImplementationIdentity {
-        git_sha: Some("0123456789abcdef0123456789abcdef01234567".to_string()),
-        checkout_git_sha: Some("0123456789abcdef0123456789abcdef01234567".to_string()),
-        build_source_dirty: Some(false),
-        source_dirty: Some(false),
-        production_input_tree_sha256: Some("a".repeat(64)),
-        checkout_production_input_tree_sha256: Some("a".repeat(64)),
-        executable_source_equivalent: true,
-        package_version: env!("CARGO_PKG_VERSION"),
-        os: std::env::consts::OS,
-        arch: std::env::consts::ARCH,
-    };
-    let gate = coding_gate(&ShipMatrixOptions::default(), &public, &implementation);
+    let gate = coding_gate(&ShipMatrixOptions::default(), &public);
     assert_eq!(gate.status, ShipGateStatus::Unavailable);
-    assert_eq!(gate.evidence[0].state, ArtifactState::Invalid);
-}
-
-fn security_report(aggregate_metrics: serde_json::Value) -> PublicBenchmarkReport {
-    PublicBenchmarkReport {
-        schema_version: 1,
-        benchmark_id: "adversarial-policy".to_string(),
-        benchmark_version: "v2".to_string(),
-        suite: Some("adversarial-policy".to_string()),
-        run_phase: None,
-        matrix_namespace: None,
-        layer: crate::eval::bench_artifact::BenchmarkLayer::MemorySystemCapability,
-        conditions: vec!["remem_default".to_string()],
-        schema_refs: Vec::new(),
-        run_artifacts: Vec::new(),
-        aggregate_metrics,
-        claim_level: "directional_memory_suite_no_public_claim".to_string(),
-        verifier: crate::eval::bench_artifact::ReportVerifierMetadata {
-            required: true,
-            schema_version: 1,
-        },
-    }
-}
-
-fn verified_report_sources(report: &PublicBaselineReport) -> BTreeMap<String, String> {
-    report
-        .artifact_verifier
-        .verified_artifacts
-        .reports
-        .iter()
-        .map(|artifact| {
-            (
-                artifact.path.clone(),
-                format!(
-                    "{}#sha256={}",
-                    Path::new(DEFAULT_PUBLIC_ROOT)
-                        .join(&artifact.path)
-                        .to_string_lossy(),
-                    artifact.sha256
-                ),
-            )
-        })
-        .collect()
 }
 
 fn metric_set_hash(metrics: &[&str]) -> String {
@@ -783,6 +472,7 @@ fn test_gate(
         condition_completeness: "test".to_string(),
         config_identity: "test".to_string(),
         model_identity: "test".to_string(),
+        platform_identity: "test".to_string(),
         metric_deltas: BTreeMap::new(),
         stop_loss_verdict: "test".to_string(),
         exclusions: Vec::new(),

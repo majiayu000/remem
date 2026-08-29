@@ -11,10 +11,11 @@ use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::eval::bench_artifact::{PublicBaselineReport, PublicBenchmarkReport};
+use crate::eval::bench_artifact::{
+    AuthorityVerdict, PublicBaselineReport, SecurityReportAuthorityVerdict,
+};
 use crate::eval::gates::EvalGateDelta;
 
-mod authority;
 mod rows;
 mod scorecard;
 
@@ -24,7 +25,6 @@ pub const LINUX_X86_64_SECURITY_REPORT: &str =
     "eval/public/memory/reports/adversarial-policy-v2-linux-x86_64.json";
 pub const DEFAULT_CROSS_HOST_CHARTER: &str = "eval/cross-host/benchmark-charter.json";
 pub const DEFAULT_CLAIM_REGISTRY: &str = "eval/claims/registry.json";
-pub const DEFAULT_CLAIM_CONTRACT: &str = "eval/public/claims/coding-claim-contract-v1.json";
 
 #[derive(Debug, Clone)]
 pub struct ShipMatrixOptions {
@@ -35,7 +35,6 @@ pub struct ShipMatrixOptions {
     pub security_report_path: PathBuf,
     pub cross_host_charter_path: PathBuf,
     pub claim_registry_path: PathBuf,
-    pub claim_contract_path: PathBuf,
     pub input_artifact_sha256: BTreeMap<String, String>,
 }
 
@@ -49,7 +48,6 @@ impl Default for ShipMatrixOptions {
             security_report_path: default_security_report_path(),
             cross_host_charter_path: PathBuf::from(DEFAULT_CROSS_HOST_CHARTER),
             claim_registry_path: PathBuf::from(DEFAULT_CLAIM_REGISTRY),
-            claim_contract_path: PathBuf::from(DEFAULT_CLAIM_CONTRACT),
             input_artifact_sha256: BTreeMap::new(),
         }
     }
@@ -91,6 +89,7 @@ pub struct ImplementationIdentity {
     pub source_dirty: Option<bool>,
     pub production_input_tree_sha256: Option<String>,
     pub checkout_production_input_tree_sha256: Option<String>,
+    pub production_pathspec_sha256: Option<String>,
     pub executable_source_equivalent: bool,
     pub package_version: &'static str,
     pub os: &'static str,
@@ -121,6 +120,7 @@ pub struct ShipGateRow {
     pub condition_completeness: String,
     pub config_identity: String,
     pub model_identity: String,
+    pub platform_identity: String,
     pub metric_deltas: BTreeMap<String, f64>,
     pub stop_loss_verdict: String,
     pub exclusions: Vec<String>,
@@ -194,12 +194,18 @@ pub struct ScorecardComponent {
 pub(super) struct PublicEvidence {
     pub(super) report: Option<PublicBaselineReport>,
     pub(super) report_error: Option<String>,
-    pub(super) security: Option<PublicBenchmarkReport>,
+    pub(super) security_claim_level: Option<String>,
     pub(super) security_source: Option<String>,
-    pub(super) verified_report_sources: BTreeMap<String, String>,
     pub(super) security_error: Option<String>,
-    security_authority: authority::SecurityAuthority,
-    claim_authority: authority::ClaimAuthority,
+    pub(super) security_authority: Option<SecurityReportAuthorityVerdict>,
+}
+
+impl PublicEvidence {
+    pub(super) fn authority_verdict(&self) -> Option<&AuthorityVerdict> {
+        self.report
+            .as_ref()
+            .map(|report| &report.artifact_verifier.authority_verdict)
+    }
 }
 
 pub fn build_ship_evidence(
@@ -208,15 +214,9 @@ pub fn build_ship_evidence(
     legacy_gates_passed: bool,
     options: ShipMatrixOptions,
 ) -> ShipEvidence {
-    let implementation = implementation_identity();
-    let public = load_public_evidence(&options, &implementation);
-    let gates = rows::build_gate_rows(
-        deltas,
-        capacity_applicable,
-        &options,
-        &public,
-        &implementation,
-    );
+    let public = load_public_evidence(&options);
+    let implementation = implementation_identity(&public);
+    let gates = rows::build_gate_rows(deltas, capacity_applicable, &options, &public);
     let command_passed = legacy_gates_passed
         && gates
             .iter()
@@ -235,8 +235,9 @@ pub fn build_ship_evidence(
         release_ready: release_is_ready(
             &gates,
             legacy_gates_passed,
-            implementation_identified,
-            source_clean,
+            public
+                .authority_verdict()
+                .is_some_and(|verdict| verdict.release.ready),
         ),
         implementation_identified,
         source_clean,
@@ -257,18 +258,17 @@ pub fn build_ship_evidence(
     }
 }
 
-fn load_public_evidence(
-    options: &ShipMatrixOptions,
-    implementation: &ImplementationIdentity,
-) -> PublicEvidence {
-    let (report, report_error) =
-        match crate::eval::bench_artifact::generate_public_baseline_report(&options.public_root) {
-            Ok(report) => (Some(report), None),
-            Err(error) => (
-                None,
-                Some(format!("public artifact verification failed: {error:#}")),
-            ),
-        };
+fn load_public_evidence(options: &ShipMatrixOptions) -> PublicEvidence {
+    let (report, report_error) = match crate::eval::bench_artifact::generate_public_baseline_report(
+        &options.public_root,
+        &options.claim_registry_path,
+    ) {
+        Ok(report) => (Some(report), None),
+        Err(error) => (
+            None,
+            Some(format!("public artifact verification failed: {error:#}")),
+        ),
+    };
     let selected_relative = options
         .security_report_path
         .strip_prefix(&options.public_root)
@@ -283,70 +283,43 @@ fn load_public_evidence(
             .iter()
             .find(|artifact| artifact.path == relative)
     });
-    let security = selected.map(|artifact| artifact.value.clone());
-    let security_source = selected.map(|artifact| {
-        format!(
-            "{}#sha256={}",
-            options.security_report_path.to_string_lossy(),
-            artifact.sha256
-        )
-    });
-    let verified_memory_runs = verified
-        .map(|artifacts| artifacts.memory_runs.clone())
-        .unwrap_or_default();
-    let verified_security_suite = verified.and_then(|artifacts| {
-        artifacts
-            .memory_suites
+    let security_claim_level = selected.map(|artifact| artifact.value.claim_level.clone());
+    let security_authority = selected.and_then(|artifact| {
+        report
+            .as_ref()?
+            .artifact_verifier
+            .authority_verdict
+            .security
+            .reports
             .iter()
-            .find(|artifact| artifact.path == "memory/suites/adversarial-policy/suite.json")
+            .find(|authority| {
+                authority.report_path == artifact.path && authority.report_sha256 == artifact.sha256
+            })
             .cloned()
     });
-    let verified_report_sources = verified
-        .map(|artifacts| {
-            artifacts
-                .reports
-                .iter()
-                .map(|artifact| {
-                    (
-                        artifact.path.clone(),
-                        format!(
-                            "{}#sha256={}",
-                            options.public_root.join(&artifact.path).to_string_lossy(),
-                            artifact.sha256
-                        ),
-                    )
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let security_error = security.is_none().then(|| {
+    let security_source = security_authority.as_ref().map(|authority| {
         format!(
-            "verified artifact snapshot omitted selected security report {}",
+            "{}#sha256={}",
+            options
+                .public_root
+                .join(&authority.report_path)
+                .to_string_lossy(),
+            authority.report_sha256
+        )
+    });
+    let security_error = security_authority.is_none().then(|| {
+        format!(
+            "runtime authority verdict omitted an exact binding for selected security report {}",
             options.security_report_path.display()
         )
     });
-    let security_authority = authority::verify_security_authority(
-        options,
-        report.as_ref(),
-        security.as_ref(),
-        &verified_memory_runs,
-        verified_security_suite.as_ref(),
-        implementation,
-    );
-    let claim_authority = authority::verify_claim_authority(
-        &options.claim_registry_path,
-        &options.claim_contract_path,
-        implementation,
-    );
     PublicEvidence {
         report,
         report_error,
-        security,
+        security_claim_level,
         security_source,
-        verified_report_sources,
         security_error,
         security_authority,
-        claim_authority,
     }
 }
 
@@ -406,60 +379,26 @@ pub(super) fn evidence_for_evaluated_path(
     }
 }
 
-pub(super) fn public_model_identity(public: &PublicEvidence) -> String {
-    public
-        .report
-        .as_ref()
-        .map(|report| {
-            if report.reproducibility.models.is_empty() {
-                "artifact_declared_no_model_identity".to_string()
-            } else {
-                report.reproducibility.models.join(",")
-            }
-        })
-        .unwrap_or_else(|| "unavailable".to_string())
-}
-
-fn implementation_identity() -> ImplementationIdentity {
-    let checkout_git_sha = crate::git_util::git_output_soft(
-        Path::new("."),
-        &["rev-parse", "--verify", "HEAD^{commit}"],
-    )
-    .filter(|output| output.status.success())
-    .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-    .filter(|value| !value.is_empty());
-    let source_dirty = crate::git_util::git_output_soft(Path::new("."), &["status", "--porcelain"])
-        .filter(|output| output.status.success())
-        .map(|output| !output.stdout.is_empty());
-    let git_sha = option_env!("REMEM_BUILD_GIT_SHA").map(str::to_string);
-    let build_source_dirty = option_env!("REMEM_BUILD_SOURCE_DIRTY").and_then(parse_bool);
-    let production_input_tree_sha256 =
-        option_env!("REMEM_BUILD_PRODUCTION_INPUT_TREE_SHA256").map(str::to_string);
-    let checkout_production_input_tree_sha256 = authority::production_input_tree_sha256();
-    let executable_source_equivalent = git_sha == checkout_git_sha
-        && production_input_tree_sha256 == checkout_production_input_tree_sha256
-        && git_sha.is_some()
-        && production_input_tree_sha256.is_some()
-        && source_is_clean(build_source_dirty, source_dirty);
+fn implementation_identity(public: &PublicEvidence) -> ImplementationIdentity {
+    let binding = public
+        .authority_verdict()
+        .map(|verdict| &verdict.implementation);
     ImplementationIdentity {
-        git_sha,
-        checkout_git_sha,
-        build_source_dirty,
-        source_dirty,
-        production_input_tree_sha256,
-        checkout_production_input_tree_sha256,
-        executable_source_equivalent,
+        git_sha: binding.and_then(|binding| binding.build_git_sha.clone()),
+        checkout_git_sha: binding.and_then(|binding| binding.checkout_git_sha.clone()),
+        build_source_dirty: binding.and_then(|binding| binding.build_source_dirty),
+        source_dirty: binding.and_then(|binding| binding.checkout_source_dirty),
+        production_input_tree_sha256: binding
+            .and_then(|binding| binding.build_production_input_tree_sha256.clone()),
+        checkout_production_input_tree_sha256: binding
+            .and_then(|binding| binding.checkout_production_input_tree_sha256.clone()),
+        production_pathspec_sha256: binding
+            .and_then(|binding| binding.production_pathspec_sha256.clone()),
+        executable_source_equivalent: binding
+            .is_some_and(|binding| binding.executable_source_equivalent),
         package_version: env!("CARGO_PKG_VERSION"),
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
-    }
-}
-
-fn parse_bool(value: &str) -> Option<bool> {
-    match value {
-        "true" => Some(true),
-        "false" => Some(false),
-        _ => None,
     }
 }
 
@@ -481,13 +420,9 @@ fn merge_is_ready(gates: &[ShipGateRow], legacy_gates_passed: bool) -> bool {
 fn release_is_ready(
     gates: &[ShipGateRow],
     legacy_gates_passed: bool,
-    implementation_identified: bool,
-    source_clean: bool,
+    verifier_release_ready: bool,
 ) -> bool {
-    legacy_gates_passed
-        && implementation_identified
-        && source_clean
-        && required_rows_pass(gates, "release")
+    legacy_gates_passed && verifier_release_ready && required_rows_pass(gates, "release")
 }
 
 fn gate_passes(gates: &[ShipGateRow], scope: &str) -> bool {

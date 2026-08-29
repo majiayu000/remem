@@ -1,5 +1,4 @@
 use super::super::source_is_clean;
-use std::process::Command;
 
 #[test]
 fn dirty_build_cannot_become_source_clean_after_checkout_is_reverted() {
@@ -21,29 +20,12 @@ fn build_script_watches_the_benchmark_authority_suite() {
 #[test]
 fn production_identity_implementations_share_machine_contract() {
     let build_script = include_str!("../../../../build.rs");
-    let rust_authority = include_str!("../authority.rs");
-    let python_guard = include_str!("../../../../scripts/ci/check_public_claims.py");
-    for implementation in [build_script, rust_authority, python_guard] {
+    let rust_authority = include_str!("../../bench_artifact/authority.rs");
+    for implementation in [build_script, rust_authority] {
         assert!(implementation.contains("production-input-pathspec-v1.json"));
         assert!(!implementation.contains("\"Cargo.lock\""));
     }
-
-    let output = Command::new("python3")
-        .args([
-            "scripts/ci/check_public_claims.py",
-            "--print-production-input-tree",
-        ])
-        .output()
-        .expect("run Python production identity guard");
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let python_tree = String::from_utf8(output.stdout).expect("Python tree is UTF-8");
-    assert_eq!(
-        python_tree.trim(),
-        super::super::authority::production_input_tree_sha256()
-            .expect("Rust production tree identity")
-    );
+    let ship_matrix = include_str!("../../ship_matrix.rs");
+    assert!(!ship_matrix.contains("option_env!"));
+    assert!(!ship_matrix.contains("production_input_tree_sha256("));
 }

@@ -14,13 +14,16 @@ use super::types::{
 pub(super) mod matrix;
 mod statistics;
 
-pub(in crate::eval::bench_artifact) use statistics::coding_paired_statistics;
 use statistics::coding_variance;
+pub(in crate::eval::bench_artifact) use statistics::{
+    coding_paired_statistics, coding_report_structurally_complete,
+};
 pub use statistics::{CodingConditionVariance, CodingPairedStatistic};
 
 #[derive(Debug, Clone)]
 pub struct BenchReportOptions {
     pub root: PathBuf,
+    pub claim_registry_path: PathBuf,
     pub json_out: PathBuf,
     pub markdown_out: PathBuf,
 }
@@ -33,6 +36,7 @@ pub struct PublicBaselineReport {
     pub root: String,
     pub created_at_epoch: i64,
     pub claim_level: String,
+    #[serde(serialize_with = "super::types::serialize_persisted_bench_verify_report")]
     pub artifact_verifier: BenchVerifyReport,
     pub summary: BaselineSummary,
     pub reports: Vec<BaselineReportEntry>,
@@ -165,7 +169,7 @@ struct BuildState {
 }
 
 pub fn write_public_baseline_report(options: BenchReportOptions) -> Result<PublicBaselineReport> {
-    let report = generate_public_baseline_report(&options.root)?;
+    let report = generate_public_baseline_report(&options.root, &options.claim_registry_path)?;
     write_text_file(&options.json_out, &serde_json::to_string_pretty(&report)?)?;
     write_text_file(
         &options.markdown_out,
@@ -174,10 +178,14 @@ pub fn write_public_baseline_report(options: BenchReportOptions) -> Result<Publi
     Ok(report)
 }
 
-pub fn generate_public_baseline_report(root: &Path) -> Result<PublicBaselineReport> {
-    let artifact_verifier = super::verify::verify_benchmark_artifacts(BenchVerifyOptions {
-        root: root.to_path_buf(),
-    })?;
+pub fn generate_public_baseline_report(
+    root: &Path,
+    claim_registry_path: &Path,
+) -> Result<PublicBaselineReport> {
+    let artifact_verifier = super::verify::verify_benchmark_artifacts(BenchVerifyOptions::new(
+        root.to_path_buf(),
+        claim_registry_path.to_path_buf(),
+    ))?;
     generate_public_baseline_report_from_verified(root, artifact_verifier)
 }
 

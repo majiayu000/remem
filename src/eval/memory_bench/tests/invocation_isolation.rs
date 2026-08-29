@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use super::super::types::{MemoryBenchTask, ADVERSARIAL_POLICY_SUITE};
+use super::super::types::{MemoryBenchCondition, MemoryBenchTask, ADVERSARIAL_POLICY_SUITE};
 use crate::eval::bench_artifact::{
     verify_benchmark_artifacts, BenchVerifyOptions, BenchVerifyReport,
 };
@@ -61,7 +61,7 @@ async fn parallel_public_verifier_invocations_cover_distinct_task_and_platform_k
         let barrier = Arc::clone(&barrier);
         std::thread::spawn(move || -> Result<BenchVerifyReport> {
             barrier.wait();
-            verify_benchmark_artifacts(BenchVerifyOptions { root })
+            verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))
         })
     });
     for handle in handles {
@@ -100,7 +100,10 @@ async fn parallel_identical_public_verifier_invocations_have_thread_local_probes
         std::thread::spawn(move || -> Result<(BenchVerifyReport, usize)> {
             let (probe, _probe_guard) = super::super::production_pipeline::scoped_replay_probe();
             barrier.wait();
-            let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+            let report = verify_benchmark_artifacts(BenchVerifyOptions::new(
+                root,
+                "eval/claims/registry.json",
+            ))?;
             Ok((report, probe.count()))
         })
     });
@@ -153,10 +156,6 @@ async fn build_fixture(
         "eval/public/memory/reports/adversarial-policy-v2.json",
     ))?;
     report["run_artifacts"] = serde_json::json!([RUN_RELATIVE]);
-    write_json(
-        &root.join("memory/reports/adversarial-policy-v2.json"),
-        &report,
-    )?;
 
     let base_artifact = Path::new(
         "eval/public/memory/artifacts/adversarial-policy-v2/\
@@ -178,7 +177,7 @@ async fn build_fixture(
     create_parent(&suite_path)?;
     fs::write(&suite_path, suite_bytes)?;
 
-    let (_, _, snapshot) =
+    let (_, policy_measurement, snapshot) =
         super::super::production_pipeline::retrieve_with_production_pipeline(task).await?;
     fs::write(root.join(SNAPSHOT_RELATIVE), snapshot)?;
 
@@ -191,7 +190,38 @@ async fn build_fixture(
     run["environment"]["arch"] = Value::String(arch.to_string());
     run["suite_content_identity"] = Value::String(format!("sha256-raw-suite-v1:{suite_sha256}"));
     refresh_artifact_hashes(&root, &mut run)?;
+    let condition = MemoryBenchCondition::parse(
+        run["condition"]
+            .as_str()
+            .context("security run condition")?,
+    )
+    .context("supported security run condition")?;
+    let retrieved_event_ids: Vec<String> =
+        serde_json::from_value(run["retrieval"]["retrieved_supporting_evidence_ids"].clone())?;
+    let abstained = run["answer"]["abstained"]
+        .as_bool()
+        .context("security run answer abstained")?;
+    let policy = super::super::score_verified_security_policy(
+        condition,
+        task,
+        &retrieved_event_ids,
+        abstained,
+        super::super::VerifiedSecurityPolicyState {
+            active_claim_count: policy_measurement.active_claim_count,
+            candidate_count: policy_measurement.candidate_count,
+            summary_input_count: policy_measurement.summary_input_count,
+            poisoning_source_scanner_matched: policy_measurement.poisoning_source_scanner_matched,
+            poisoning_generated_surface_blocked: policy_measurement
+                .poisoning_generated_surface_blocked,
+        },
+    );
+    report["aggregate_metrics"]["policy"] =
+        serde_json::to_value(super::super::summarize_verified_security_policy(&[policy]))?;
     write_json(&run_path, &run)?;
+    write_json(
+        &root.join("memory/reports/adversarial-policy-v2.json"),
+        &report,
+    )?;
 
     Ok(PublicSecurityFixture {
         root,
@@ -201,9 +231,10 @@ async fn build_fixture(
 }
 
 fn assert_public_verification_passes(root: &Path) -> Result<()> {
-    let report = verify_benchmark_artifacts(BenchVerifyOptions {
-        root: root.to_path_buf(),
-    })?;
+    let report = verify_benchmark_artifacts(BenchVerifyOptions::new(
+        root.to_path_buf(),
+        "eval/claims/registry.json",
+    ))?;
     assert!(report.passed, "{:#?}", report.failures);
     assert_eq!(report.manifests_checked, 1);
     assert_eq!(report.reports_checked, 1);

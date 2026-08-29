@@ -1,8 +1,8 @@
+#[cfg(test)]
+use std::cell::RefCell;
 use std::collections::BTreeSet;
-use std::fs;
 use std::path::Path;
 
-use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -11,7 +11,8 @@ use super::{
     validate_artifact_map, validate_environment, VerifyState,
 };
 use crate::eval::bench_artifact::types::{
-    BenchmarkLayer, CodingMemoryContract, CodingRunArtifact, PublicBenchmarkReport,
+    BenchmarkLayer, CodingMemoryContract, CodingRunArtifact, CuratorLogArtifact,
+    PublicBenchmarkReport,
 };
 use crate::eval::coding_bench::{
     verify_context_audit_snapshot, verify_snapshot_against_persisted_injection,
@@ -20,6 +21,37 @@ use crate::eval::coding_bench::{
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+thread_local! {
+    static AFTER_CODING_SNAPSHOT_CONSUMED: RefCell<Option<Box<dyn FnOnce(&Path)>>> =
+        RefCell::new(None);
+}
+
+#[cfg(test)]
+pub(in crate::eval::bench_artifact) fn set_after_coding_snapshot_consumed_hook(
+    hook: impl FnOnce(&Path) + 'static,
+) {
+    AFTER_CODING_SNAPSHOT_CONSUMED.with(|slot| {
+        assert!(
+            slot.borrow().is_none(),
+            "coding snapshot consumption hook already set"
+        );
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
+#[cfg(test)]
+fn run_after_coding_snapshot_consumed_hook(path: &Path) {
+    AFTER_CODING_SNAPSHOT_CONSUMED.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook(path);
+        }
+    });
+}
+
+#[cfg(not(test))]
+fn run_after_coding_snapshot_consumed_hook(_path: &Path) {}
 
 const CODING_ARTIFACT_KEYS: [&str; 3] = ["patch", "tool_log", "test_log"];
 
@@ -70,6 +102,7 @@ pub(super) fn validate_coding_run_artifact(
             return None;
         }
     };
+    let run_logical_path = raw_artifact.path.clone();
     state.verified_artifacts.coding_runs.push(
         crate::eval::bench_artifact::types::VerifiedArtifact {
             path: raw_artifact.path,
@@ -131,6 +164,9 @@ pub(super) fn validate_coding_run_artifact(
     validate_outcome(&run, &label, state);
     validate_coding_metrics(&run, &label, state);
     validate_artifact_map(&run.artifacts, CODING_ARTIFACT_KEYS, &label, state);
+    if is_gh931_official_curated_run(&run) {
+        validate_curator_evidence(&run, &run_logical_path, &label, state);
+    }
     if requires_remem_evidence(&run.condition) {
         require_artifact_key(&run.artifacts, "injected_context", &label, state);
         require_artifact_key(&run.artifacts, "remem_db_snapshot", &label, state);
@@ -156,6 +192,128 @@ pub(super) fn validate_coding_run_artifact(
         state,
     );
     Some(run.condition)
+}
+
+fn is_gh931_official_curated_run(run: &CodingRunArtifact) -> bool {
+    run.benchmark_id == "issue385-v1"
+        && run.benchmark_version == "official-v1"
+        && run.run_phase == "official"
+        && run.matrix_namespace == "issue385-v1/official-v1"
+        && run.condition == "curated_file_budgeted"
+}
+
+fn validate_curator_evidence(
+    run: &CodingRunArtifact,
+    run_logical_path: &str,
+    label: &str,
+    state: &mut VerifyState,
+) {
+    let Some(log_path) = curator_artifact_path(run, "curator_log", label, state) else {
+        return;
+    };
+    let Some(memory_path) = curator_artifact_path(run, "curated_memory", label, state) else {
+        return;
+    };
+    let Some(log) = read_json_artifact::<CuratorLogArtifact>(
+        &log_path,
+        state,
+        "curated_file_budgeted curator log",
+    ) else {
+        return;
+    };
+    let memory_bytes = match state.consume_file(&memory_path, "read curated MEMORY.md") {
+        Ok(bytes) => bytes,
+        Err(()) => return,
+    };
+    let Ok(memory_text) = std::str::from_utf8(&memory_bytes) else {
+        state.fail(label.to_string(), "curated MEMORY.md must be UTF-8");
+        return;
+    };
+    let value = &log.value;
+    let mut valid = true;
+    if value.schema_version != 1
+        || value.condition != "curated_file_budgeted"
+        || value.task_id != run.task_id
+        || !value.target_blind
+        || (value.budget.minutes_per_session - 3.0).abs() > f64::EPSILON
+        || value.budget.max_chars != 4_000
+        || value.sessions.is_empty()
+    {
+        state.fail(
+            label.to_string(),
+            "curator log identity or registered budget mismatch",
+        );
+        valid = false;
+    }
+    let mut episode_ids = BTreeSet::new();
+    let mut minutes = 0.0;
+    let mut updates = 0_u64;
+    let mut deletions = 0_u64;
+    let mut conflicts = 0_u64;
+    for session in &value.sessions {
+        if session.episode_id.trim().is_empty()
+            || !episode_ids.insert(&session.episode_id)
+            || !session.minutes_spent.is_finite()
+            || session.minutes_spent < 0.0
+            || session.minutes_spent > value.budget.minutes_per_session
+            || session.chars_after > value.budget.max_chars
+        {
+            state.fail(
+                label.to_string(),
+                "curator log session identity or budget mismatch",
+            );
+            valid = false;
+        }
+        minutes += session.minutes_spent;
+        updates = updates.saturating_add(session.edit_count);
+        deletions = deletions.saturating_add(session.deletion_count);
+        conflicts = conflicts.saturating_add(session.conflict_resolution_count);
+    }
+    if !value.totals.maintenance_minutes.is_finite()
+        || (minutes - value.totals.maintenance_minutes).abs() > 1e-9
+        || updates != value.totals.update_count
+        || deletions != value.totals.deletion_count
+        || conflicts != value.totals.conflict_resolution_count
+    {
+        state.fail(
+            label.to_string(),
+            "curator log totals do not match raw sessions",
+        );
+        valid = false;
+    }
+    let memory_sha256 = format!("{:x}", Sha256::digest(&memory_bytes));
+    if memory_text.chars().count() != value.final_char_count
+        || value.final_char_count > value.budget.max_chars
+        || memory_sha256 != value.final_file_sha256
+    {
+        state.fail(
+            label.to_string(),
+            "curator log does not bind exact frozen MEMORY.md bytes",
+        );
+        valid = false;
+    }
+    if valid {
+        state
+            .verified_artifacts
+            .curator_logs
+            .insert(run_logical_path.to_string(), log);
+    }
+}
+
+fn curator_artifact_path(
+    run: &CodingRunArtifact,
+    key: &str,
+    label: &str,
+    state: &mut VerifyState,
+) -> Option<std::path::PathBuf> {
+    let Some(raw_path) = run.artifacts.get(key) else {
+        state.fail(
+            label.to_string(),
+            format!("curated_file_budgeted run requires {key} artifact"),
+        );
+        return None;
+    };
+    super::resolve_public_path(state, raw_path, raw_path)
 }
 
 fn validate_outcome(run: &CodingRunArtifact, label: &str, state: &mut VerifyState) {
@@ -348,13 +506,13 @@ fn validate_persisted_context_audit_provenance(
     let Some(database_path) = artifact_file_path(run, "remem_db_snapshot", label, state) else {
         return;
     };
-    let injected_context = match fs::read_to_string(&context_path) {
+    let injected_context = match state
+        .consume_file(&context_path, "read injected_context artifact")
+        .and_then(|bytes| String::from_utf8(bytes).map_err(|_| ()))
+    {
         Ok(context) => context,
-        Err(error) => {
-            state.fail(
-                label.to_string(),
-                format!("read injected_context artifact: {error}"),
-            );
+        Err(()) => {
+            state.fail(label.to_string(), "injected_context artifact must be UTF-8");
             return;
         }
     };
@@ -366,15 +524,18 @@ fn validate_persisted_context_audit_provenance(
         );
         return;
     }
-    let connection = match Connection::open_with_flags(
-        &database_path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    ) {
+    let database_bytes = match state.consume_file(&database_path, "read remem_db_snapshot") {
+        Ok(bytes) => bytes,
+        Err(()) => return,
+    };
+    run_after_coding_snapshot_consumed_hook(&database_path);
+    let connection = match super::security_snapshot::open_consumed_read_only_sqlite(&database_bytes)
+    {
         Ok(connection) => connection,
         Err(error) => {
             state.fail(
                 label.to_string(),
-                format!("open read-only remem_db_snapshot: {error}"),
+                format!("open consumed read-only remem_db_snapshot: {error:#}"),
             );
             return;
         }
@@ -476,12 +637,20 @@ fn validate_coding_memory_contract(
             "memory_contract cannot mark both memory_helped and memory_hurt",
         );
     }
-    if failure_reason.is_some_and(is_memory_specific_failure_reason) && !contract.memory_hurt {
+    let recomputed_memory_hurt = recompute_memory_hurt(failure_reason, contract.stale_used_count);
+    if contract.memory_hurt != recomputed_memory_hurt {
         state.fail(
             label.to_string(),
-            "memory-specific failure_reason requires memory_contract.memory_hurt=true",
+            "memory_contract.memory_hurt must match recomputed memory harm from failure_reason and stale_used_count",
         );
     }
+}
+
+pub(in crate::eval::bench_artifact) fn recompute_memory_hurt(
+    failure_reason: Option<&str>,
+    stale_used_count: u64,
+) -> bool {
+    failure_reason.is_some_and(is_memory_specific_failure_reason) || stale_used_count > 0
 }
 
 fn validate_rate(value: f64, field: &str, label: &str, state: &mut VerifyState) {

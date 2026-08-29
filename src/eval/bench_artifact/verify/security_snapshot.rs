@@ -1,17 +1,54 @@
 use std::collections::BTreeMap;
+#[cfg(test)]
+use std::{cell::RefCell, path::Path};
+use std::{ptr, ptr::NonNull};
 
 use anyhow::{ensure, Context, Result};
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::serialize::OwnedData;
+use rusqlite::{ffi, Connection, DatabaseName};
 use serde::Serialize;
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::{resolve_public_path, VerifyState};
 use crate::eval::bench_artifact::{MemoryRunArtifact, VerifiedArtifact};
-use crate::eval::memory_bench::types::{MemoryBenchSuiteFixture, MemoryBenchTask};
+use crate::eval::memory_bench::types::{
+    MemoryBenchCondition, MemoryBenchPolicyOutcome, MemoryBenchSuiteFixture, MemoryBenchTask,
+};
 
 mod inventory;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+thread_local! {
+    static AFTER_SNAPSHOT_CONSUMED: RefCell<Option<Box<dyn FnOnce(&Path)>>> = RefCell::new(None);
+}
+
+#[cfg(test)]
+pub(in crate::eval::bench_artifact) fn set_after_security_snapshot_consumed_hook(
+    hook: impl FnOnce(&Path) + 'static,
+) {
+    AFTER_SNAPSHOT_CONSUMED.with(|slot| {
+        assert!(
+            slot.borrow().is_none(),
+            "snapshot consumption hook already set"
+        );
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
+#[cfg(test)]
+fn run_after_security_snapshot_consumed_hook(path: &Path) {
+    AFTER_SNAPSHOT_CONSUMED.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook(path);
+        }
+    });
+}
+
+#[cfg(not(test))]
+fn run_after_security_snapshot_consumed_hook(_path: &std::path::Path) {}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct TrustedSnapshotCacheKey {
@@ -104,15 +141,17 @@ pub(super) fn validate_security_snapshot(
         );
         return;
     }
-    let connection = match Connection::open_with_flags(
-        &path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    ) {
+    let snapshot_bytes = match state.consume_file(&path, "read security SQLite snapshot") {
+        Ok(bytes) => bytes,
+        Err(()) => return,
+    };
+    run_after_security_snapshot_consumed_hook(&path);
+    let connection = match open_consumed_read_only_sqlite(&snapshot_bytes) {
         Ok(connection) => connection,
         Err(error) => {
             state.fail(
                 raw_path.clone(),
-                format!("open security SQLite snapshot: {error}"),
+                format!("open consumed security SQLite snapshot: {error:#}"),
             );
             return;
         }
@@ -128,11 +167,19 @@ pub(super) fn validate_security_snapshot(
         );
         return;
     }
-    if let Err(error) = validate_semantics(&connection, run, state, context) {
-        state.fail(
-            raw_path.clone(),
-            format!("snapshot semantic contract mismatch: {error:#}"),
-        );
+    match validate_semantics(&connection, run, state, context) {
+        Ok(outcome) => {
+            state
+                .verified_artifacts
+                .security_policy_outcomes
+                .insert(label.to_string(), outcome);
+        }
+        Err(error) => {
+            state.fail(
+                raw_path.clone(),
+                format!("snapshot semantic contract mismatch: {error:#}"),
+            );
+        }
     }
     if run
         .suite_content_identity
@@ -146,12 +193,32 @@ pub(super) fn validate_security_snapshot(
     }
 }
 
+pub(super) fn open_consumed_read_only_sqlite(bytes: &[u8]) -> Result<Connection> {
+    ensure!(!bytes.is_empty(), "SQLite snapshot is empty");
+    let allocation_size = u64::try_from(bytes.len()).context("SQLite snapshot is too large")?;
+    // SAFETY: sqlite3_malloc64 returns either null or an allocation owned by SQLite. We copy
+    // exactly `bytes.len()` initialized bytes into that allocation, create no aliases to it, and
+    // immediately transfer exclusive ownership to OwnedData, whose Drop uses sqlite3_free.
+    let owned = unsafe {
+        let allocation = ffi::sqlite3_malloc64(allocation_size);
+        let allocation =
+            NonNull::new(allocation.cast::<u8>()).context("allocate consumed SQLite snapshot")?;
+        ptr::copy_nonoverlapping(bytes.as_ptr(), allocation.as_ptr(), bytes.len());
+        OwnedData::from_raw_nonnull(allocation, bytes.len())
+    };
+    let mut connection = Connection::open_in_memory().context("open in-memory SQLite handle")?;
+    connection
+        .deserialize(DatabaseName::Main, owned, true)
+        .context("deserialize consumed SQLite snapshot as read-only")?;
+    Ok(connection)
+}
+
 fn validate_semantics(
     connection: &Connection,
     run: &MemoryRunArtifact,
     state: &mut VerifyState,
     context: &mut VerificationContext,
-) -> Result<()> {
+) -> Result<MemoryBenchPolicyOutcome> {
     let suite_artifact = verified_security_suite(state)?;
     let suite = &suite_artifact.value;
     let suite_identity = format!("sha256-raw-suite-v1:{}", suite_artifact.sha256);
@@ -195,7 +262,8 @@ fn validate_semantics(
         &run.environment.arch,
         context,
     )?;
-    validate_policy_state(connection, task)
+    validate_policy_state(connection, task)?;
+    recompute_policy_outcome(connection, run, task, state)
 }
 
 fn validate_full_snapshot_identity(
@@ -250,8 +318,9 @@ fn verified_security_suite(
         return Ok(suite.clone());
     }
     let path = state.root.join(RELATIVE);
-    let bytes = std::fs::read(&path)
-        .with_context(|| format!("read typed security suite {}", path.display()))?;
+    let bytes = state
+        .consume_file(&path, "read typed security suite")
+        .map_err(|()| anyhow::anyhow!("typed security suite bytes are unavailable"))?;
     let artifact = VerifiedArtifact {
         path: RELATIVE.to_string(),
         sha256: format!("{:x}", Sha256::digest(&bytes)),
@@ -459,4 +528,128 @@ fn validate_policy_state(connection: &Connection, task: &MemoryBenchTask) -> Res
         "trust classification differs from suite source contract"
     );
     Ok(())
+}
+
+fn recompute_policy_outcome(
+    connection: &Connection,
+    run: &MemoryRunArtifact,
+    task: &MemoryBenchTask,
+    state: &mut VerifyState,
+) -> Result<MemoryBenchPolicyOutcome> {
+    let answer = referenced_json(run, "answer", state)?;
+    let abstained = answer
+        .get("abstained")
+        .and_then(Value::as_bool)
+        .context("referenced answer lacks boolean abstained")?;
+    ensure!(
+        run.answer.get("abstained").and_then(Value::as_bool) == Some(abstained),
+        "typed run answer differs from referenced answer evidence"
+    );
+    let retrieval = referenced_json(run, "retrieved_evidence", state)?;
+    let retrieved_event_ids = retrieval
+        .get("retrieved")
+        .and_then(Value::as_array)
+        .context("referenced retrieval evidence lacks retrieved array")?
+        .iter()
+        .map(|item| {
+            item.get("event_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .context("referenced retrieval item lacks event_id")
+        })
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(
+        retrieved_event_ids == run.retrieval.retrieved_supporting_evidence_ids,
+        "typed run retrieval differs from referenced retrieval evidence"
+    );
+
+    let active_claim_count: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM memories WHERE status = 'active'",
+        [],
+        |row| row.get(0),
+    )?;
+    let candidate_count: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM memory_candidates
+         WHERE review_status IN ('pending_review', 'quarantined', 'deferred')",
+        [],
+        |row| row.get(0),
+    )?;
+    let mut statement =
+        connection.prepare("SELECT content FROM memories WHERE status = 'active'")?;
+    let active_texts = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    let summary_input_count = active_texts
+        .iter()
+        .filter(|text| crate::memory::poisoning::scan_instruction_pattern(text).is_none())
+        .count();
+    let quarantined_observations: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM observations WHERE status = 'poisoning_quarantined'",
+        [],
+        |row| row.get(0),
+    )?;
+    let quarantined_candidates: i64 = connection.query_row(
+        "SELECT COUNT(*) FROM memory_candidates WHERE review_status = 'quarantined'",
+        [],
+        |row| row.get(0),
+    )?;
+    let condition = MemoryBenchCondition::parse(&run.condition)
+        .with_context(|| format!("unsupported security condition {}", run.condition))?;
+    let policy_state = crate::eval::memory_bench::VerifiedSecurityPolicyState {
+        active_claim_count: u32::try_from(active_claim_count)
+            .context("active claim count does not fit u32")?,
+        candidate_count: u32::try_from(candidate_count)
+            .context("candidate count does not fit u32")?,
+        summary_input_count: u32::try_from(summary_input_count)
+            .context("summary input count does not fit u32")?,
+        poisoning_source_scanner_matched: scan_persisted_source_events(connection)?,
+        poisoning_generated_surface_blocked: quarantined_observations > 0
+            || quarantined_candidates > 0,
+    };
+    Ok(crate::eval::memory_bench::score_verified_security_policy(
+        condition,
+        task,
+        &retrieved_event_ids,
+        abstained,
+        policy_state,
+    ))
+}
+
+fn referenced_json(run: &MemoryRunArtifact, key: &str, state: &mut VerifyState) -> Result<Value> {
+    let raw_path = run
+        .artifacts
+        .get(key)
+        .with_context(|| format!("security run lacks {key} artifact"))?;
+    let path = resolve_public_path(state, raw_path, raw_path)
+        .with_context(|| format!("security {key} artifact path is invalid"))?;
+    let bytes = state
+        .consume_file(&path, &format!("read security {key} artifact"))
+        .map_err(|()| anyhow::anyhow!("security {key} artifact bytes are unavailable"))?;
+    serde_json::from_slice(&bytes).with_context(|| format!("parse security {key} artifact"))
+}
+
+fn scan_persisted_source_events(connection: &Connection) -> Result<bool> {
+    let mut statement = connection.prepare(
+        "SELECT e.id,
+                COALESCE(
+                    CASE WHEN b.content_encoding = 'plain'
+                         THEN CAST(b.content_bytes AS TEXT)
+                         ELSE NULL END,
+                    e.content_text,
+                    '')
+         FROM captured_events e
+         LEFT JOIN event_blobs b ON b.id = e.content_blob_id
+         ORDER BY e.id ASC",
+    )?;
+    let events = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(crate::memory::poisoning::scan_source_events(
+        events
+            .iter()
+            .map(|(event_id, content)| (*event_id, content.as_str())),
+    )
+    .is_some())
 }

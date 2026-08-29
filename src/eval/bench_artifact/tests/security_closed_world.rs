@@ -69,7 +69,8 @@ fn assert_snapshot_attack_rejected(
         json["artifact_sha256"]["remem_db_snapshot"] = Value::String(mutated_sha256);
     })?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed, "reviewer attack {label} was accepted");
     assert!(failure_text(&report).contains("snapshot semantic contract"));

@@ -11,3 +11,50 @@ fn memory_run_schema_has_one_strict_suite_content_identity_definition() -> serde
     assert_eq!(definition["pattern"], "^sha256-raw-suite-v1:[0-9a-f]{64}$");
     Ok(())
 }
+
+#[test]
+fn adversarial_policy_v2_schema_requires_provenance_and_artifact_hashes() -> serde_json::Result<()>
+{
+    let schema: Value = serde_json::from_str(include_str!(
+        "../../../../eval/public/schemas/memory-run.schema.json"
+    ))?;
+    let required = schema["allOf"][0]["then"]["required"]
+        .as_array()
+        .expect("v2 conditional required fields");
+    for field in ["artifact_sha256", "suite_content_identity"] {
+        assert!(required.iter().any(|value| value == field), "{field}");
+    }
+    let artifact_hashes = &schema["allOf"][0]["then"]["properties"]["artifact_sha256"];
+    assert_eq!(artifact_hashes["minProperties"], 1);
+    let environment = &schema["allOf"][0]["then"]["properties"]["environment"];
+    let environment_required = environment["required"]
+        .as_array()
+        .expect("v2 environment required fields");
+    for field in ["os", "arch", "source_dirty", "production_input_tree_sha256"] {
+        assert!(
+            environment_required.iter().any(|value| value == field),
+            "{field}"
+        );
+    }
+    assert_eq!(environment["properties"]["source_dirty"]["const"], false);
+    assert_eq!(
+        environment["properties"]["production_input_tree_sha256"]["type"],
+        "string"
+    );
+    assert_eq!(
+        environment["properties"]["production_input_tree_sha256"]["pattern"],
+        "^[0-9a-f]{64}$"
+    );
+    Ok(())
+}
+
+#[test]
+fn duplicate_coding_claim_contract_is_removed_from_runtime() {
+    let duplicate_name = ["coding-claim", "-contract-v1.json"].concat();
+    assert!(!std::path::Path::new("eval/public/claims")
+        .join(&duplicate_name)
+        .exists());
+    assert!(
+        !include_str!("../../../../scripts/ci/check_public_claims.py").contains(&duplicate_name)
+    );
+}

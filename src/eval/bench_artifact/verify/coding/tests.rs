@@ -1,8 +1,14 @@
+use std::collections::BTreeMap;
+use std::fs;
+use std::sync::{Arc, Mutex};
+
 use anyhow::Result;
+use rusqlite::{params, Connection};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::eval::bench_artifact::tests::{copy_public_fixture, failure_text, mutate_json};
-use crate::eval::bench_artifact::types::BenchVerifyOptions;
+use crate::eval::bench_artifact::types::{BenchVerifyOptions, CodingRunArtifact};
 
 use super::super::verify_benchmark_artifacts;
 
@@ -21,7 +27,8 @@ fn verifier_requires_attempt_state_for_official_coding_runs() -> Result<()> {
         },
     )?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     let text = failure_text(&report);
@@ -47,11 +54,145 @@ fn verifier_rejects_resolved_run_that_never_started_target() -> Result<()> {
         },
     )?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     assert!(
         failure_text(&report).contains("resolved coding run cannot report target_started=false")
     );
     Ok(())
+}
+
+#[test]
+fn coding_context_audit_uses_consumed_sqlite_bytes_after_source_removed() -> Result<()> {
+    let root = copy_public_fixture("coding-snapshot-consumed-bytes")?;
+    let context_path = root.join("coding-context.txt");
+    let database_path = root.join("coding-context.sqlite3");
+    let injected_context = "test";
+    fs::write(&context_path, injected_context)?;
+
+    let connection = Connection::open(&database_path)?;
+    crate::migrate::run_migrations(&connection)?;
+    let injection_run_id = "coding-consumed-snapshot-run";
+    connection.execute(
+        "INSERT INTO context_injection_items
+         (injection_run_id, host, project, injection_key, context_hash, output_mode,
+          decision, item_kind, channel, status, injected_at_epoch)
+         VALUES (?1, 'codex-cli', 'project', 'key', ?2, 'full', 'emitted',
+                 'sessionstart_relevance_policy', 'policy', 'injected', 100)",
+        params![
+            injection_run_id,
+            crate::context::context_output_fingerprint(injected_context)
+        ],
+    )?;
+    let bundle = empty_context_bundle(1);
+    crate::context_bundle::persist_context_bundle_audit(
+        &connection,
+        injection_run_id,
+        &bundle,
+        100,
+    )?;
+    let persisted = crate::context_bundle::persistence::load_verified_context_bundle_audit(
+        &connection,
+        injection_run_id,
+    )?
+    .expect("persisted ContextAudit");
+    let snapshot = context_audit_snapshot(persisted);
+    drop(connection);
+
+    let fixture_run = fs::read(root.join("coding/artifacts/smoke-coding-001/run.json"))?;
+    let mut run: CodingRunArtifact = serde_json::from_slice(&fixture_run)?;
+    run.artifacts = BTreeMap::from([
+        (
+            "injected_context".to_string(),
+            "coding-context.txt".to_string(),
+        ),
+        (
+            "remem_db_snapshot".to_string(),
+            "coding-context.sqlite3".to_string(),
+        ),
+    ]);
+    run.injected_context_sha256 =
+        Some(format!("{:x}", Sha256::digest(injected_context.as_bytes())));
+
+    let removed = Arc::new(Mutex::new(false));
+    let hook_result = Arc::clone(&removed);
+    super::set_after_coding_snapshot_consumed_hook(move |path| {
+        fs::remove_file(path).expect("remove consumed coding snapshot source");
+        *hook_result.lock().expect("lock hook result") = true;
+    });
+    let mut state = super::super::VerifyState::new(root.clone());
+
+    super::validate_persisted_context_audit_provenance(&run, &snapshot, "coding-run", &mut state);
+
+    assert!(*removed.lock().expect("lock removed flag"));
+    assert!(!database_path.exists());
+    assert!(state.failures.is_empty(), "{:#?}", state.failures);
+    assert!(state.consumed_bytes.contains_key("coding-context.sqlite3"));
+    Ok(())
+}
+
+fn empty_context_bundle(token_estimate: u32) -> crate::context_bundle::ContextBundle {
+    let plan_hash = "a".repeat(64);
+    crate::context_bundle::ContextBundle {
+        schema_version: crate::context_bundle::CONTEXT_BUNDLE_SCHEMA_VERSION,
+        plan_hash: plan_hash.clone(),
+        degraded_mode: crate::context_bundle::DegradedMode::Full,
+        preferences: Vec::new(),
+        failure_lessons: Vec::new(),
+        current_truth: Vec::new(),
+        workstreams: Vec::new(),
+        memory_index: Vec::new(),
+        recent_sessions: Vec::new(),
+        audit: crate::context_bundle::ContextAudit {
+            schema_version: crate::context_bundle::CONTEXT_BUNDLE_SCHEMA_VERSION,
+            policy_version: "retrieval_router_v2".to_string(),
+            relevance_policy_version: "sessionstart_significant_token_v1".to_string(),
+            plan_hash,
+            degraded_mode: crate::context_bundle::DegradedMode::Full,
+            candidates_considered: 0,
+            selected_count: 0,
+            dropped_count: 0,
+            token_estimate,
+            token_budget: 100,
+            truncation_reason: None,
+            entries: Vec::new(),
+            shadow_comparison: Vec::new(),
+        },
+    }
+}
+
+fn context_audit_snapshot(
+    persisted: crate::context_bundle::persistence::PersistedContextBundleAudit,
+) -> crate::eval::coding_bench::RememContextAuditSnapshot {
+    let binding = context_audit_binding_hash(&persisted.injection_run_id, &persisted.audit_hash);
+    crate::eval::coding_bench::RememContextAuditSnapshot {
+        injection_run_id: persisted.injection_run_id,
+        bundle_schema_version: persisted.bundle_schema_version,
+        plan_schema_version: persisted.plan_schema_version,
+        policy_version: persisted.audit.policy_version,
+        relevance_policy_version: persisted.audit.relevance_policy_version,
+        plan_hash: persisted.audit.plan_hash,
+        audit_hash: persisted.audit_hash,
+        injection_binding_hash: binding,
+        degraded_mode: persisted.audit.degraded_mode,
+        candidates_considered: persisted.audit.candidates_considered,
+        selected_count: persisted.audit.selected_count,
+        dropped_count: persisted.audit.dropped_count,
+        token_budget: persisted.audit.token_budget,
+        token_estimate: persisted.audit.token_estimate,
+        truncation_reason: persisted.audit.truncation_reason,
+        canonical_audit_json: persisted.canonical_audit_json,
+    }
+}
+
+fn context_audit_binding_hash(injection_run_id: &str, audit_hash: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"remem-coding-bench-context-audit-binding-v1\0");
+    hasher.update((injection_run_id.len() as u64).to_be_bytes());
+    hasher.update(injection_run_id.as_bytes());
+    hasher.update((audit_hash.len() as u64).to_be_bytes());
+    hasher.update(audit_hash.as_bytes());
+    format!("{:x}", hasher.finalize())
 }

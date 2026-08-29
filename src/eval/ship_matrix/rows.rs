@@ -5,10 +5,10 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::{
-    evidence_for_evaluated_path, evidence_for_path, public_model_identity, read_json_value,
-    ArtifactState, ImplementationIdentity, PublicEvidence, ShipGateRow, ShipGateStatus,
-    ShipMatrixOptions,
+    evidence_for_evaluated_path, evidence_for_path, read_json_value, ArtifactEvidence,
+    ArtifactState, PublicEvidence, ShipGateRow, ShipGateStatus, ShipMatrixOptions,
 };
+use crate::eval::bench_artifact::AuthorityStatus;
 use crate::eval::gates::{EvalGateDelta, EvalGateStatus};
 
 const GOLDEN_METRIC_SET_SHA256: &str =
@@ -23,7 +23,6 @@ pub(super) fn build_gate_rows(
     capacity_applicable: bool,
     options: &ShipMatrixOptions,
     public: &PublicEvidence,
-    implementation: &ImplementationIdentity,
 ) -> Vec<ShipGateRow> {
     let deterministic = component_gate(
         "deterministic_retrieval",
@@ -65,8 +64,8 @@ pub(super) fn build_gate_rows(
         ),
         security_gate(options, public),
         cross_host_gate(options),
-        coding_gate(options, public, implementation),
-        public_claim_gate(options, public, implementation),
+        coding_gate(options, public),
+        public_claim_gate(options, public),
         default_decision_gate(
             "retrieval_default_decision",
             "retrieval_default",
@@ -155,6 +154,7 @@ pub(super) fn component_gate(
         },
         config_identity: "eval-gates baseline and thresholds artifact hashes".to_string(),
         model_identity: "none_deterministic".to_string(),
+        platform_identity: "none_deterministic".to_string(),
         metric_deltas: relevant
             .iter()
             .map(|delta| (delta.metric.clone(), delta.delta))
@@ -196,6 +196,7 @@ fn incomplete_capacity(options: &ShipMatrixOptions) -> ShipGateRow {
         condition_completeness: "dataset has no fixture corpus".to_string(),
         config_identity: "eval-gates checked-in thresholds".to_string(),
         model_identity: "none_deterministic".to_string(),
+        platform_identity: "none_deterministic".to_string(),
         metric_deltas: BTreeMap::new(),
         stop_loss_verdict: "incomplete_missing_capacity_evidence".to_string(),
         exclusions: Vec::new(),
@@ -208,17 +209,49 @@ fn incomplete_capacity(options: &ShipMatrixOptions) -> ShipGateRow {
 }
 
 fn security_gate(options: &ShipMatrixOptions, public: &PublicEvidence) -> ShipGateRow {
-    let status = if public.security_authority.passed && public.security.is_some() {
-        ShipGateStatus::Pass
-    } else if public.security.is_none() {
-        ShipGateStatus::Incomplete
-    } else {
-        ShipGateStatus::Fail
+    let verifier_passed = public
+        .report
+        .as_ref()
+        .is_some_and(|report| report.artifact_verifier.passed);
+    let authority = public.security_authority.as_ref();
+    let status = match authority.map(|authority| authority.status) {
+        Some(AuthorityStatus::Pass) if verifier_passed => ShipGateStatus::Pass,
+        Some(AuthorityStatus::Fail) => ShipGateStatus::Fail,
+        Some(AuthorityStatus::Insufficient) | Some(AuthorityStatus::Pass) | None => {
+            ShipGateStatus::Incomplete
+        }
     };
     let mut diagnostics = Vec::new();
     diagnostics.extend(public.report_error.iter().cloned());
     diagnostics.extend(public.security_error.iter().cloned());
-    diagnostics.extend(public.security_authority.diagnostics.iter().cloned());
+    diagnostics.extend(
+        authority
+            .into_iter()
+            .flat_map(|authority| authority.diagnostics.iter().cloned()),
+    );
+    if !verifier_passed {
+        diagnostics.push("public artifact verifier did not pass".to_string());
+    }
+    let metric_deltas = authority
+        .and_then(|authority| authority.policy_summary.as_ref())
+        .map(|summary| {
+            BTreeMap::from([
+                (
+                    "non_retention_leak_rate".to_string(),
+                    summary.non_retention_leak_rate,
+                ),
+                ("false_block_rate".to_string(), summary.false_block_rate),
+                (
+                    "suppression_obeyed_rate".to_string(),
+                    summary.suppression_obeyed_rate,
+                ),
+                (
+                    "policy_failure_rate".to_string(),
+                    summary.policy_failure_rate,
+                ),
+            ])
+        })
+        .unwrap_or_default();
     ShipGateRow {
         id: "production_security_e2e",
         owner: "src/eval/memory_bench + eval/public/memory",
@@ -226,25 +259,30 @@ fn security_gate(options: &ShipMatrixOptions, public: &PublicEvidence) -> ShipGa
         blocks: vec!["merge", "release", "security_claim"],
         required_for_command_success: true,
         claim_level: public
-            .security
-            .as_ref()
-            .map(|value| value.claim_level.clone())
+            .security_claim_level
+            .clone()
             .unwrap_or_else(|| "unavailable_no_public_claim".to_string()),
-        condition_completeness: if public.security_authority.passed {
+        condition_completeness: if status == ShipGateStatus::Pass {
             format!(
-                "production-path adversarial-policy v2 is manifest- and source-bound to {}",
-                public
-                    .security_authority
-                    .benchmark_commit
-                    .as_deref()
-                    .unwrap_or("unavailable")
+                "{} recomputed runs for {}",
+                authority.map_or(0, |authority| authority.runs_recomputed),
+                authority
+                    .and_then(|authority| authority.target.as_deref())
+                    .unwrap_or("unavailable target")
             )
         } else {
             "missing verified production-path adversarial-policy v2".to_string()
         },
-        config_identity: "public benchmark manifest and schema verifier".to_string(),
-        model_identity: public_model_identity(public),
-        metric_deltas: BTreeMap::new(),
+        config_identity: authority
+            .map(|authority| format!("report_sha256={}", authority.report_sha256))
+            .unwrap_or_else(|| "unavailable".to_string()),
+        model_identity: authority
+            .map(|authority| model_identity(&authority.models))
+            .unwrap_or_else(|| "unavailable".to_string()),
+        platform_identity: authority
+            .and_then(|authority| authority.target.clone())
+            .unwrap_or_else(|| "unavailable".to_string()),
+        metric_deltas,
         stop_loss_verdict: if status == ShipGateStatus::Pass {
             "passed_production_security_stop_loss_and_identity"
         } else {
@@ -252,14 +290,26 @@ fn security_gate(options: &ShipMatrixOptions, public: &PublicEvidence) -> ShipGa
         }
         .to_string(),
         exclusions: Vec::new(),
-        evidence: vec![evidence_for_path(
-            &options.security_report_path,
-            if status == ShipGateStatus::Pass {
-                ArtifactState::Verified
-            } else if status == ShipGateStatus::Incomplete {
-                ArtifactState::Missing
-            } else {
-                ArtifactState::Invalid
+        evidence: vec![authority.map_or_else(
+            || ArtifactEvidence {
+                path: options.security_report_path.to_string_lossy().to_string(),
+                state: ArtifactState::Missing,
+                sha256: None,
+                detail: "no exact runtime authority binding".to_string(),
+            },
+            |authority| ArtifactEvidence {
+                path: options
+                    .public_root
+                    .join(&authority.report_path)
+                    .to_string_lossy()
+                    .to_string(),
+                state: if status == ShipGateStatus::Pass {
+                    ArtifactState::Verified
+                } else {
+                    ArtifactState::Invalid
+                },
+                sha256: Some(authority.report_sha256.clone()),
+                detail: "exact report bytes consumed by benchmark verifier".to_string(),
             },
         )],
         diagnostics,
@@ -284,6 +334,7 @@ fn cross_host_gate(options: &ShipMatrixOptions) -> ShipGateRow {
             .to_string(),
         config_identity: "GH935 sealed matrix charter".to_string(),
         model_identity: "unavailable_until_governed_runs".to_string(),
+        platform_identity: "unavailable_until_governed_runs".to_string(),
         metric_deltas: BTreeMap::new(),
         stop_loss_verdict: "unavailable_no_verified_sealed_result".to_string(),
         exclusions: vec!["no_verified_cross_host_execution".to_string()],
@@ -302,16 +353,15 @@ fn cross_host_gate(options: &ShipMatrixOptions) -> ShipGateRow {
     }
 }
 
-pub(super) fn coding_gate(
-    options: &ShipMatrixOptions,
-    public: &PublicEvidence,
-    implementation: &ImplementationIdentity,
-) -> ShipGateRow {
+pub(super) fn coding_gate(options: &ShipMatrixOptions, public: &PublicEvidence) -> ShipGateRow {
     let artifacts_verified = public
         .report
         .as_ref()
         .is_some_and(|report| report.artifact_verifier.passed);
-    let passed = artifacts_verified && public.claim_authority.coding_passed;
+    let authority = public.authority_verdict().map(|verdict| &verdict.gh931);
+    let passed = artifacts_verified
+        && authority.is_some_and(|authority| authority.status == AuthorityStatus::Pass);
+    let report = authority.and_then(|authority| authority.report.as_ref());
     ShipGateRow {
         id: "coding_outcome",
         owner: "docs/specs/GH931 + src/eval/bench_artifact",
@@ -328,92 +378,63 @@ pub(super) fn coding_gate(
             "unavailable_no_authorized_coding_claim"
         }
         .to_string(),
-        condition_completeness: if public.claim_authority.coding_passed {
-            "all registered coding claims are locked, PASS, and hash-bound"
-        } else {
-            "registered coding claim authority is incomplete"
-        }
-        .to_string(),
+        condition_completeness: authority
+            .map(|authority| {
+                format!(
+                    "{}/{} official runs; complete={}; attempts_ready={}",
+                    authority.completeness.observed_runs,
+                    authority.completeness.expected_runs,
+                    authority.completeness.complete,
+                    authority.completeness.attempts_ready
+                )
+            })
+            .unwrap_or_else(|| "runtime GH931 authority unavailable".to_string()),
         config_identity: "GH931 registered 16 x 3 x 3 official matrix".to_string(),
-        model_identity: public_model_identity(public),
-        metric_deltas: BTreeMap::new(),
-        stop_loss_verdict: if passed { "passed" } else { "unavailable" }.to_string(),
+        model_identity: report
+            .map(coding_report_model_identity)
+            .unwrap_or_else(|| "unavailable".to_string()),
+        platform_identity: report
+            .map(|report| report.platforms.join(","))
+            .filter(|identity| !identity.is_empty())
+            .unwrap_or_else(|| "unavailable".to_string()),
+        metric_deltas: authority
+            .map(|authority| paired_metrics(&authority.paired_statistics))
+            .unwrap_or_default(),
+        stop_loss_verdict: authority
+            .map(|authority| authority_status(authority.stop_loss.status))
+            .unwrap_or("unavailable")
+            .to_string(),
         exclusions: vec!["smoke_or_unregistered_coding_runs".to_string()],
-        evidence: vec![
-            evidence_for_path(
-                &options.public_root.join("reports/baseline.json"),
-                if artifacts_verified {
-                    ArtifactState::Verified
-                } else {
-                    ArtifactState::Invalid
-                },
-            ),
-            evidence_for_path(
-                &options.claim_registry_path,
-                if public.claim_authority.coding_passed {
-                    ArtifactState::Verified
-                } else {
-                    ArtifactState::Present
-                },
-            ),
-        ],
-        diagnostics: claim_diagnostics(
-            public,
-            implementation,
-            Some(&public.claim_authority.diagnostics),
-        ),
+        evidence: coding_evidence(options, authority, passed),
+        diagnostics: claim_diagnostics(public),
     }
 }
 
-fn public_claim_gate(
-    options: &ShipMatrixOptions,
-    public: &PublicEvidence,
-    implementation: &ImplementationIdentity,
-) -> ShipGateRow {
-    let passed = public.claim_authority.level3_passed;
+fn public_claim_gate(options: &ShipMatrixOptions, public: &PublicEvidence) -> ShipGateRow {
+    let authority = public.authority_verdict().map(|verdict| &verdict.gh931);
+    let report = authority.and_then(|authority| authority.report.as_ref());
     ShipGateRow {
         id: "public_claim",
         owner: "eval/claims + scripts/ci/check_public_claims.py",
-        status: if passed {
-            ShipGateStatus::Pass
-        } else {
-            ShipGateStatus::Unavailable
-        },
+        status: ShipGateStatus::Unavailable,
         blocks: vec!["public_claim"],
         required_for_command_success: false,
-        claim_level: if passed {
-            "level_3_independently_verified_public_claim"
-        } else {
-            "unavailable_no_level_3_claim_authority"
-        }
-        .to_string(),
-        condition_completeness: if passed {
-            "complete independently verified claim artifact"
-        } else {
-            "no Level 3 public claim artifact"
-        }
-        .to_string(),
+        claim_level: "unavailable_no_level_3_claim_authority".to_string(),
+        condition_completeness: "no independently verified Level 3 authority modeled".to_string(),
         config_identity: "claim registry and public wording guard".to_string(),
-        model_identity: public_model_identity(public),
+        model_identity: report
+            .map(coding_report_model_identity)
+            .unwrap_or_else(|| "unavailable".to_string()),
+        platform_identity: report
+            .map(|report| report.platforms.join(","))
+            .filter(|identity| !identity.is_empty())
+            .unwrap_or_else(|| "unavailable".to_string()),
         metric_deltas: BTreeMap::new(),
-        stop_loss_verdict: if passed { "passed" } else { "unavailable" }.to_string(),
+        stop_loss_verdict: "unavailable".to_string(),
         exclusions: vec!["non_independently_verified_claim_evidence".to_string()],
-        evidence: vec![evidence_for_path(
-            &options.claim_registry_path,
-            if options.claim_registry_path.is_file() {
-                ArtifactState::Present
-            } else {
-                ArtifactState::Missing
-            },
-        )],
-        diagnostics: if passed {
-            Vec::new()
-        } else {
-            let mut diagnostics = claim_diagnostics(
-                public,
-                implementation,
-                Some(&public.claim_authority.diagnostics),
-            );
+        evidence: coding_evidence(options, authority, false),
+        diagnostics: {
+            let mut diagnostics = claim_diagnostics(public);
             diagnostics
                 .push("Comparative, superiority, and SOTA wording remains blocked.".to_string());
             diagnostics
@@ -440,6 +461,7 @@ fn default_decision_gate(
             "same-head baseline/enhanced ablation, thresholds, latency budget, and rollback"
                 .to_string(),
         model_identity: "must be declared by decision artifact".to_string(),
+        platform_identity: "must be declared by decision artifact".to_string(),
         metric_deltas: BTreeMap::new(),
         stop_loss_verdict: "unavailable_no_default_decision".to_string(),
         exclusions: vec!["regression_only_evidence_without_capability_ablation".to_string()],
@@ -448,22 +470,109 @@ fn default_decision_gate(
     }
 }
 
-fn claim_diagnostics(
-    public: &PublicEvidence,
-    implementation: &ImplementationIdentity,
-    notes: Option<&[String]>,
-) -> Vec<String> {
-    let mut diagnostics = notes.map(<[String]>::to_vec).unwrap_or_else(|| {
-        vec![public
+fn claim_diagnostics(public: &PublicEvidence) -> Vec<String> {
+    let Some(authority) = public.authority_verdict().map(|verdict| &verdict.gh931) else {
+        return vec![public
             .report_error
             .clone()
-            .unwrap_or_else(|| "public baseline unavailable".to_string())]
-    });
-    if !public.claim_authority.coding_passed {
-        diagnostics.push(format!(
-            "each required claim supporting report must bind current implementation SHA {}",
-            implementation.git_sha.as_deref().unwrap_or("unavailable")
-        ));
-    }
+            .unwrap_or_else(|| "runtime GH931 authority unavailable".to_string())];
+    };
+    let mut diagnostics = authority.diagnostics.clone();
+    diagnostics.extend(authority.maintenance.diagnostics.iter().cloned());
+    diagnostics.extend(authority.stop_loss.diagnostics.iter().cloned());
+    diagnostics.extend(
+        authority
+            .claims
+            .iter()
+            .flat_map(|claim| claim.diagnostics.iter().cloned()),
+    );
     diagnostics
+}
+
+fn model_identity(models: &[Value]) -> String {
+    let identities = models
+        .iter()
+        .filter_map(|model| serde_json::to_string(model).ok())
+        .collect::<Vec<_>>();
+    if identities.is_empty() {
+        "unavailable".to_string()
+    } else {
+        identities.join(",")
+    }
+}
+
+fn coding_report_model_identity(
+    report: &crate::eval::bench_artifact::Gh931ReportBinding,
+) -> String {
+    report
+        .models_by_condition
+        .iter()
+        .map(|(condition, models)| format!("{condition}={}", model_identity(models)))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+fn paired_metrics(
+    statistics: &[crate::eval::bench_artifact::CodingPairedStatistic],
+) -> BTreeMap<String, f64> {
+    let mut metrics = BTreeMap::new();
+    for statistic in statistics {
+        if let Some(effect) = statistic.effect_pp {
+            metrics.insert(format!("{}.effect_pp", statistic.comparison_id), effect);
+        }
+        if let Some(lower) = statistic.ci_lower_pp {
+            metrics.insert(format!("{}.ci_lower_pp", statistic.comparison_id), lower);
+        }
+    }
+    metrics
+}
+
+fn authority_status(status: AuthorityStatus) -> &'static str {
+    match status {
+        AuthorityStatus::Pass => "passed",
+        AuthorityStatus::Fail => "failed",
+        AuthorityStatus::Insufficient => "unavailable",
+    }
+}
+
+fn coding_evidence(
+    options: &ShipMatrixOptions,
+    authority: Option<&crate::eval::bench_artifact::Gh931AuthorityVerdict>,
+    passed: bool,
+) -> Vec<ArtifactEvidence> {
+    let mut evidence = Vec::new();
+    if let Some(report) = authority.and_then(|authority| authority.report.as_ref()) {
+        evidence.push(ArtifactEvidence {
+            path: options
+                .public_root
+                .join(&report.path)
+                .to_string_lossy()
+                .to_string(),
+            state: if passed {
+                ArtifactState::Verified
+            } else {
+                ArtifactState::Present
+            },
+            sha256: Some(report.sha256.clone()),
+            detail: "exact report bytes consumed by benchmark verifier".to_string(),
+        });
+    }
+    if let Some(registry) = authority.map(|authority| &authority.registry) {
+        evidence.push(ArtifactEvidence {
+            path: registry
+                .path
+                .clone()
+                .unwrap_or_else(|| options.claim_registry_path.to_string_lossy().to_string()),
+            state: if registry.policy_valid && registry.locked {
+                ArtifactState::Verified
+            } else {
+                ArtifactState::Invalid
+            },
+            sha256: registry.sha256.clone(),
+            detail:
+                "policy bytes consumed by benchmark verifier; declarations are non-authoritative"
+                    .to_string(),
+        });
+    }
+    evidence
 }

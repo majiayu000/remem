@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -12,16 +12,8 @@ use super::types::{
 };
 
 pub(super) mod coding;
-mod security_snapshot;
-
-const REQUIRED_SCHEMA_FILES: [&str; 6] = [
-    "schemas/benchmark-manifest.schema.json",
-    "schemas/memory-run.schema.json",
-    "schemas/coding-run.schema.json",
-    "schemas/memory-report.schema.json",
-    "schemas/coding-report.schema.json",
-    "schemas/reproduction-metadata.schema.json",
-];
+mod policy;
+pub(super) mod security_snapshot;
 
 const MEMORY_ARTIFACT_KEYS: [&str; 5] = [
     "reader_input",
@@ -33,6 +25,7 @@ const MEMORY_ARTIFACT_KEYS: [&str; 5] = [
 
 pub fn verify_benchmark_artifacts(options: BenchVerifyOptions) -> Result<BenchVerifyReport> {
     let root = options.root;
+    let claim_registry_path = options.claim_registry_path;
     let mut state = VerifyState::new(root.clone());
     let mut context = security_snapshot::VerificationContext::new();
 
@@ -45,7 +38,8 @@ pub fn verify_benchmark_artifacts(options: BenchVerifyOptions) -> Result<BenchVe
         return Ok(state.finish());
     }
 
-    validate_required_schemas(&mut state);
+    policy::load_claim_registry(&claim_registry_path, &mut state);
+    policy::validate_required_schemas(&mut state);
 
     let manifest_paths = collect_manifest_paths(&root)?;
     if manifest_paths.is_empty() {
@@ -83,34 +77,6 @@ pub fn verify_benchmark_artifacts(options: BenchVerifyOptions) -> Result<BenchVe
     }
 
     Ok(state.finish())
-}
-
-fn validate_required_schemas(state: &mut VerifyState) {
-    for relative in REQUIRED_SCHEMA_FILES {
-        let Some(path) = resolve_public_path(state, relative, relative) else {
-            continue;
-        };
-        if !path.exists() {
-            state.fail(relative.to_string(), "required schema file is missing");
-            continue;
-        }
-        let Some(value) = read_json::<Value>(&path, state, "schema") else {
-            continue;
-        };
-        if value.get("$schema").and_then(Value::as_str).is_none() {
-            state.fail(relative.to_string(), "schema is missing $schema");
-        }
-        if value
-            .pointer("/properties/schema_version/const")
-            .and_then(Value::as_u64)
-            != Some(1)
-        {
-            state.fail(
-                relative.to_string(),
-                "schema must pin schema_version const 1",
-            );
-        }
-    }
 }
 
 fn validate_manifest(path: &Path, manifest: &PublicBenchmarkManifest, state: &mut VerifyState) {
@@ -471,10 +437,10 @@ fn validate_v2_memory_artifact_hashes(
         let Some(path) = resolve_public_path(state, raw_path, raw_path) else {
             continue;
         };
-        match fs::read(&path) {
+        match state.consume_file(&path, &format!("read artifact {key}")) {
             Ok(bytes) if format!("{:x}", Sha256::digest(&bytes)) == *expected => {}
             Ok(_) => state.fail(raw_path.clone(), format!("artifact {key} SHA-256 mismatch")),
-            Err(error) => state.fail(raw_path.clone(), format!("read artifact {key}: {error}")),
+            Err(()) => {}
         }
     }
 }
@@ -533,11 +499,17 @@ fn require_artifact_key(
     let Some(path) = resolve_public_path(state, raw_path, raw_path) else {
         return;
     };
-    if !path.exists() {
+    if !path.is_file() {
         state.fail(
-            raw_path.clone(),
+            label.to_string(),
             format!("artifact file for {key} is missing"),
         );
+        return;
+    }
+    if state
+        .consume_file(&path, &format!("read artifact file for {key}"))
+        .is_err()
+    {
         return;
     }
     state.artifact_files.insert(rel_display(&state.root, &path));
@@ -587,13 +559,7 @@ fn read_json_artifact<T: DeserializeOwned>(
     label: &str,
 ) -> Option<VerifiedArtifact<T>> {
     let display = rel_display(&state.root, path);
-    let bytes = match fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            state.fail(display, format!("read {label}: {err}"));
-            return None;
-        }
-    };
+    let bytes = state.consume_file(path, &format!("read {label}")).ok()?;
     let value = match serde_json::from_slice::<Value>(&bytes) {
         Ok(value) => value,
         Err(err) => {
@@ -729,6 +695,8 @@ struct VerifyState {
     coding_attempt_ids: BTreeSet<String>,
     failures: Vec<BenchVerifyFailure>,
     verified_artifacts: VerifiedBenchmarkArtifacts,
+    consumed_bytes: BTreeMap<String, String>,
+    consumed_file_bytes: BTreeMap<String, Vec<u8>>,
 }
 
 impl VerifyState {
@@ -744,6 +712,8 @@ impl VerifyState {
             coding_attempt_ids: BTreeSet::new(),
             failures: Vec::new(),
             verified_artifacts: VerifiedBenchmarkArtifacts::default(),
+            consumed_bytes: BTreeMap::new(),
+            consumed_file_bytes: BTreeMap::new(),
         }
     }
 
@@ -754,7 +724,32 @@ impl VerifyState {
         });
     }
 
-    fn finish(self) -> BenchVerifyReport {
+    fn consume_file(&mut self, path: &Path, operation: &str) -> std::result::Result<Vec<u8>, ()> {
+        let display = rel_display(&self.root, path);
+        if let Some(bytes) = self.consumed_file_bytes.get(&display) {
+            return Ok(bytes.clone());
+        }
+        match fs::read(path) {
+            Ok(bytes) => {
+                self.consumed_bytes
+                    .insert(display.clone(), format!("{:x}", Sha256::digest(&bytes)));
+                self.consumed_file_bytes.insert(display, bytes.clone());
+                Ok(bytes)
+            }
+            Err(error) => {
+                self.fail(display, format!("{operation}: {error}"));
+                Err(())
+            }
+        }
+    }
+
+    fn finish(mut self) -> BenchVerifyReport {
+        let authority = super::authority::evaluate(
+            &self.verified_artifacts,
+            &self.consumed_bytes,
+            &self.failures,
+        );
+        self.failures.extend(authority.failures);
         let passed = self.failures.is_empty();
         BenchVerifyReport {
             schema_version: 1,
@@ -765,6 +760,7 @@ impl VerifyState {
             run_artifacts_checked: self.run_artifacts_checked,
             artifact_files_checked: self.artifact_files.len(),
             failures: self.failures,
+            authority_verdict: authority.verdict,
             verified_artifacts: self.verified_artifacts,
         }
     }

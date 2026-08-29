@@ -4,20 +4,16 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from pathlib import PurePosixPath
 
 
 ROOT = Path(__file__).resolve().parents[2]
-BASELINE_REPORT = ROOT / "eval/public/reports/baseline.json"
-CLAIM_REGISTRY = ROOT / "eval/claims/registry.json"
-CLAIM_CONTRACT = ROOT / "eval/public/claims/coding-claim-contract-v1.json"
-PRODUCTION_PATHSPEC_CONTRACT = ROOT / "eval/production-input-pathspec-v1.json"
 
 CLAIM_SURFACES = [
     "README.md",
@@ -44,11 +40,6 @@ CODING_CLAIM_RE = re.compile(
 
 SOTA_CLAIM_RE = re.compile(r"\b(SOTA|state[- ]of[- ]the[- ]art|best)\b", re.I)
 
-REPORT_LINK_RE = re.compile(
-    r"(eval/public/reports/baseline\.(?:json|md)|public-baseline-directional-v1)",
-    re.I,
-)
-
 CLAIM_MARKER_RE = re.compile(r"<!--\s*remem-claim:([a-z0-9][a-z0-9-]*)\s*-->")
 
 RELEASE_POLICY_CONTRACT_LINES = {
@@ -68,186 +59,97 @@ def die(message: str) -> None:
     sys.exit(1)
 
 
-def load_claim_gate() -> dict[str, object]:
-    if not BASELINE_REPORT.is_file():
-        die(f"missing baseline report: {BASELINE_REPORT.relative_to(ROOT)}")
-    with BASELINE_REPORT.open("r", encoding="utf-8") as handle:
-        report = json.load(handle)
-    gate = report.get("claim_gate")
-    if not isinstance(gate, dict):
-        die("baseline report is missing claim_gate")
-    registered_claims = load_registered_coding_claims()
-    return {
-        **gate,
-        "registered_coding_claims_passed": registered_claims is not None,
-        "registered_coding_claims": registered_claims or [],
-    }
+def validate_verifier_report(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ValueError("verifier JSON must be an object")
+    if not isinstance(value.get("passed"), bool):
+        raise ValueError("verifier JSON is missing boolean passed")
+    authority = value.get("authority_verdict")
+    if not isinstance(authority, dict):
+        raise ValueError("verifier JSON is missing authority_verdict")
+    gh931 = authority.get("gh931")
+    if not isinstance(gh931, dict):
+        raise ValueError("authority_verdict is missing gh931")
+    for field in ["completeness", "stop_loss"]:
+        if not isinstance(gh931.get(field), dict):
+            raise ValueError(f"authority_verdict.gh931 is missing {field}")
+    claims = gh931.get("claims")
+    if not isinstance(claims, list):
+        raise ValueError("authority_verdict.gh931 is missing claims")
+    for claim in claims:
+        if not isinstance(claim, dict) or not isinstance(claim.get("id"), str):
+            raise ValueError("authority_verdict.gh931 contains a malformed claim")
+        for field in ["allowed_wording", "forbidden_wording"]:
+            wording = claim.get(field)
+            if not isinstance(wording, list) or not all(
+                isinstance(item, str) and item for item in wording
+            ):
+                raise ValueError(f"authority_verdict.gh931 claim has invalid {field}")
+    report = gh931.get("report")
+    if report is not None and not isinstance(report, dict):
+        raise ValueError("authority_verdict.gh931 report binding is malformed")
+    return value
 
 
-def load_registered_coding_claims() -> list[dict[str, object]] | None:
-    if not CLAIM_REGISTRY.is_file() or not CLAIM_CONTRACT.is_file():
-        return None
+def load_verifier_report(path: Path) -> dict[str, object]:
     try:
-        registry = json.loads(CLAIM_REGISTRY.read_text(encoding="utf-8"))
-        contract = json.loads(CLAIM_CONTRACT.read_text(encoding="utf-8"))
-    except (OSError, subprocess.CalledProcessError, json.JSONDecodeError):
-        return None
-    if registry.get("schema_version") != 1 or registry.get("locked") is not True:
-        return None
-    if (
-        contract.get("schema_version") != 1
-        or contract.get("closed") is not True
-        or contract.get("contract_id") != "gh931-coding-claims-v1"
-    ):
-        return None
-    claims = registry.get("claims")
-    contracts = contract.get("claims")
-    if not isinstance(claims, list) or not isinstance(contracts, list):
-        return None
-    claim_ids = [item.get("id") for item in claims if isinstance(item, dict)]
-    contract_ids = [item.get("id") for item in contracts if isinstance(item, dict)]
-    if len(claim_ids) != len(claims) or sorted(claim_ids) != sorted(contract_ids):
-        return None
-    verified_claims: list[dict[str, object]] = []
-    for expected_claim in contracts:
-        if not isinstance(expected_claim, dict):
-            return None
-        claim_id = expected_claim.get("id")
-        if not isinstance(claim_id, str):
-            return None
-        claim = next(
-            (
-                candidate
-                for candidate in claims
-                if isinstance(candidate, dict) and candidate.get("id") == claim_id
-            ),
-            None,
-        )
-        if not isinstance(claim, dict) or claim.get("status") != "PASS":
-            return None
-        if claim.get("comparison") != expected_claim.get("comparison"):
-            return None
-        if claim.get("metric") != expected_claim.get("metric"):
-            return None
-        allowed_wording = claim.get("allowed_wording")
-        forbidden_wording = claim.get("forbidden_wording")
-        if (
-            allowed_wording != expected_claim.get("allowed_wording")
-            or forbidden_wording != expected_claim.get("forbidden_wording")
-        ):
-            return None
-        supporting_report = claim.get("supporting_report")
-        if not isinstance(supporting_report, dict):
-            return None
-        relative = supporting_report.get("path")
-        expected_hash = supporting_report.get("sha256")
-        if not isinstance(relative, str) or not isinstance(expected_hash, str):
-            return None
-        if re.fullmatch(r"[0-9a-f]{64}", expected_hash) is None:
-            return None
-        path = PurePosixPath(relative)
-        if path.is_absolute() or ".." in path.parts or not relative.startswith("eval/public/"):
-            return None
-        report_path = ROOT.joinpath(*path.parts)
-        try:
-            report_bytes = report_path.read_bytes()
-            supporting = json.loads(report_bytes)
-        except (OSError, json.JSONDecodeError):
-            return None
-        if hashlib.sha256(report_bytes).hexdigest() != expected_hash:
-            return None
-        if not supporting_report_matches_current_source(supporting):
-            return None
-        verified_claims.append(
-            {
-                "id": claim_id,
-                "comparison": expected_claim["comparison"],
-                "metric": expected_claim["metric"],
-                "allowed_wording": allowed_wording,
-                "forbidden_wording": forbidden_wording,
-                "supporting_report": {
-                    "path": relative,
-                    "sha256": expected_hash,
-                },
-            }
-        )
-    return verified_claims
-
-
-def production_input_tree_sha256(*, require_clean: bool = True) -> str | None:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise ValueError(f"cannot read verifier verdict {path}: {error}") from error
     try:
-        contract = json.loads(PRODUCTION_PATHSPEC_CONTRACT.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    paths = contract.get("paths")
-    if (
-        contract.get("schema_version") != 1
-        or contract.get("contract_id") != "remem-production-input-pathspec-v1"
-        or not isinstance(paths, list)
-        or not paths
-        or any(not isinstance(path, str) or not path for path in paths)
-        or len(paths) != len(set(paths))
-        or PRODUCTION_PATHSPEC_CONTRACT.relative_to(ROOT).as_posix() not in paths
-        or any(PurePosixPath(path).is_absolute() or ".." in PurePosixPath(path).parts for path in paths)
-    ):
-        return None
-    try:
-        output = subprocess.run(
-            ["git", "ls-files", "-s", "--", *paths], cwd=ROOT, check=True,
-            capture_output=True,
-        ).stdout
-        clean = all(
-            subprocess.run(["git", *args, "--", *paths], cwd=ROOT).returncode == 0
-            for args in (["diff", "--quiet"], ["diff", "--cached", "--quiet"])
+        return validate_verifier_report(json.loads(raw))
+    except json.JSONDecodeError as error:
+        raise ValueError(f"verifier verdict is not valid JSON: {path}: {error}") from error
+
+
+def acquire_verifier_report(verdict_path: Path | None) -> dict[str, object]:
+    if verdict_path is not None:
+        return load_verifier_report(verdict_path)
+    with tempfile.TemporaryDirectory(prefix="remem-public-claims-") as directory:
+        output = Path(directory) / "bench-verify.json"
+        subprocess.run(
+            [
+                "cargo",
+                "run",
+                "--locked",
+                "--",
+                "bench",
+                "verify",
+                "--root",
+                "eval/public",
+                "--json-out",
+                str(output),
+            ],
+            cwd=ROOT,
+            check=True,
+            stdout=subprocess.DEVNULL,
         )
-    except (OSError, subprocess.CalledProcessError):
-        return None
-    return hashlib.sha256(output).hexdigest() if output and (clean or not require_clean) else None
-
-
-def supporting_report_matches_current_source(report: object) -> bool:
-    if not isinstance(report, dict):
-        return False
-    reproducibility = report.get("reproducibility")
-    if not isinstance(reproducibility, dict):
-        return False
-    commits = reproducibility.get("remem_commits")
-    if not isinstance(commits, list) or not commits:
-        return False
-    if not all(isinstance(item, str) and re.fullmatch(r"[0-9a-f]{40}", item) for item in commits):
-        return False
-    expected_tree = reproducibility.get("production_input_tree_sha256")
-    return isinstance(expected_tree, str) and expected_tree == production_input_tree_sha256()
-
-
-def coding_claim_ready(gate: dict[str, object]) -> bool:
-    return (
-        gate.get("artifact_verifier_passed") is True
-        and gate.get("registered_coding_claims_passed") is True
-    )
-
-
-def sota_claim_ready(gate: dict[str, object]) -> bool:
-    return gate.get("public_sota_status") == "passed_level3_public_sota"
+        return load_verifier_report(output)
 
 
 def line_is_closed_policy_contract(text: str) -> bool:
     return text.strip() in RELEASE_POLICY_CONTRACT_LINES
 
 
-def line_has_report_link(text: str) -> bool:
-    return REPORT_LINK_RE.search(text) is not None
-
-
 def registered_coding_claim_violation(
-    text: str, gate: dict[str, object]
+    text: str, verifier_report: dict[str, object]
 ) -> str | None:
     markers = CLAIM_MARKER_RE.findall(text)
     if len(markers) != 1:
-        return "coding claim must carry exactly one registered claim marker"
-    claims = gate.get("registered_coding_claims")
-    if not isinstance(claims, list):
-        return "registered coding claim contract is unavailable"
+        return (
+            "coding-outcome superiority claim must carry exactly one registered "
+            "claim marker"
+        )
+    authority = verifier_report["authority_verdict"]
+    assert isinstance(authority, dict)
+    gh931 = authority["gh931"]
+    assert isinstance(gh931, dict)
+    completeness = gh931["completeness"]
+    stop_loss = gh931["stop_loss"]
+    claims = gh931["claims"]
+    assert isinstance(completeness, dict)
+    assert isinstance(stop_loss, dict)
+    assert isinstance(claims, list)
     claim = next(
         (
             candidate
@@ -257,35 +159,53 @@ def registered_coding_claim_violation(
         None,
     )
     if not isinstance(claim, dict):
-        return "coding claim marker is not backed by a verified registry entry"
+        return "coding claim marker is not backed by a recomputed verdict claim"
+    if not (
+        verifier_report["passed"] is True
+        and gh931.get("status") == "PASS"
+        and completeness.get("complete") is True
+        and completeness.get("attempts_ready") is True
+        and stop_loss.get("status") == "PASS"
+        and claim.get("status") == "PASS"
+    ):
+        return "coding-outcome superiority claim lacks recomputed authority verdict PASS"
     forbidden = claim.get("forbidden_wording")
     if not isinstance(forbidden, list):
-        return "registered coding claim has no forbidden-wording contract"
+        return "recomputed coding claim has no forbidden-wording policy"
     lowered = text.casefold()
     if any(isinstance(phrase, str) and phrase.casefold() in lowered for phrase in forbidden):
-        return "coding claim contains registry-forbidden wording"
-    report = claim.get("supporting_report")
+        return "coding claim contains verdict-forbidden wording"
+    report = gh931.get("report")
     allowed = claim.get("allowed_wording")
     if not isinstance(report, dict) or not isinstance(allowed, list):
-        return "registered coding claim authority is incomplete"
+        return "recomputed coding claim authority is incomplete"
     report_path = report.get("path")
-    if not isinstance(report_path, str):
-        return "registered coding claim has no exact supporting-report path"
+    report_hash = report.get("sha256")
+    if (
+        not isinstance(report_path, str)
+        or not isinstance(report_hash, str)
+        or re.fullmatch(r"[0-9a-f]{64}", report_hash) is None
+    ):
+        return "recomputed coding claim has no exact report path/hash binding"
+    relative = PurePosixPath(report_path)
+    if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+        return "recomputed coding claim report path is invalid"
+    public_report_path = PurePosixPath("eval/public", *relative.parts).as_posix()
     expected_lines = {
-        f"<!-- remem-claim:{markers[0]} --> {wording} [evidence]({report_path})"
+        f"<!-- remem-claim:{markers[0]} --> {wording} [evidence]({public_report_path})"
         for wording in allowed
         if isinstance(wording, str)
     }
     if text.strip() not in expected_lines:
         return (
-            "coding claim must exactly match registry allowed_wording and its "
-            "hash-bound supporting-report path"
+            "coding claim must exactly match verdict allowed_wording and its "
+            "verifier-bound report path"
         )
     return None
 
 
 def classify_violation(
-    text: str, gate: dict[str, object], _context: str | None = None
+    text: str, verifier_report: dict[str, object], _context: str | None = None
 ) -> str | None:
     if not STRONG_CLAIM_RE.search(text):
         return None
@@ -295,22 +215,15 @@ def classify_violation(
         return None
 
     if SOTA_CLAIM_RE.search(text):
-        if sota_claim_ready(gate) and line_has_report_link(text):
-            return None
-        return "SOTA/best claim lacks a passed Level 3 public claim gate and report link"
+        return "SOTA/best claim lacks independent Level 3 authority"
 
     if CODING_CLAIM_RE.search(text):
-        if not coding_claim_ready(gate):
-            return (
-                "coding-outcome superiority claim lacks verified registry authority "
-                "and a hash-bound supporting report"
-            )
-        return registered_coding_claim_violation(text, gate)
+        return registered_coding_claim_violation(text, verifier_report)
 
     return "strong public claim is not grounded in an approved report"
 
 
-def check_surfaces(gate: dict[str, object]) -> list[str]:
+def check_surfaces(verifier_report: dict[str, object]) -> list[str]:
     failures: list[str] = []
     for rel_path in CLAIM_SURFACES:
         path = ROOT / rel_path
@@ -319,151 +232,152 @@ def check_surfaces(gate: dict[str, object]) -> list[str]:
         lines = path.read_text(encoding="utf-8").splitlines()
         for index, line in enumerate(lines):
             context = "\n".join(lines[max(0, index - 2) : index + 2])
-            reason = classify_violation(line, gate, context)
+            reason = classify_violation(line, verifier_report, context)
             if reason:
                 failures.append(f"{rel_path}:{index + 1}: {reason}: {line.strip()}")
     return failures
 
 
 def run_self_test() -> int:
-    registered_claim = {
-        "id": "remem-e2e-vs-no-memory-v1",
-        "comparison": {"treatment": "remem_e2e", "control": "no_memory"},
-        "metric": "resolved_rate",
-        "allowed_wording": [
-            "On the registered fixture, remem_e2e outperforms no_memory on resolved_rate."
-        ],
-        "forbidden_wording": ["universally", "every coding workload"],
-        "supporting_report": {
-            "path": "eval/public/reports/coding-claim.json",
-            "sha256": "1" * 64,
-        },
-    }
-    blocked_gate = {
-        "artifact_verifier_passed": True,
-        "coding_claim_level": "directional_only_no_public_claim",
-        "coding_outcome_stop_loss_status": "not_evaluated_insufficient_coding_matrix",
-        "public_sota_status": "not_evaluated_no_public_sota_claim",
-    }
-    evaluation_ready_gate = {
-        "artifact_verifier_passed": True,
-        "coding_claim_level": "directional_only_no_public_claim",
-        "coding_outcome_stop_loss_status": "ready_for_stop_loss_evaluation",
-        "public_sota_status": "not_evaluated_no_public_sota_claim",
-    }
-    sota_evaluation_ready_gate = {
-        **evaluation_ready_gate,
-        "public_sota_status": "ready_for_level3_evaluation",
-    }
-    sota_unknown_gate = {
-        **evaluation_ready_gate,
-        "public_sota_status": "unknown",
-    }
-    passed_gate = {
-        "artifact_verifier_passed": True,
-        "coding_claim_level": "directional_only_no_public_claim",
-        "coding_outcome_stop_loss_status": "ready_for_stop_loss_evaluation",
-        "public_sota_status": "passed_level3_public_sota",
-        "registered_coding_claims_passed": True,
-        "registered_coding_claims": [registered_claim],
-    }
+    claim_id = "remem-e2e-vs-no-memory-v1"
+    allowed_wording = (
+        "On the registered fixture, remem_e2e outperforms no_memory on resolved_rate."
+    )
+
+    def verifier_report(
+        *,
+        verifier_passed: bool = True,
+        gh931_status: str = "PASS",
+        claim_status: str = "PASS",
+        stop_loss_status: str = "PASS",
+    ) -> dict[str, object]:
+        return {
+            "passed": verifier_passed,
+            "authority_verdict": {
+                "gh931": {
+                    "status": gh931_status,
+                    "registry": {
+                        "declared_statuses": ["PASS", "PASS", "PASS"],
+                    },
+                    "report": {
+                        "path": "coding/reports/coding-claim.json",
+                        "sha256": "1" * 64,
+                    },
+                    "completeness": {
+                        "complete": True,
+                        "attempts_ready": True,
+                    },
+                    "stop_loss": {"status": stop_loss_status},
+                    "claims": [
+                        {
+                            "id": claim_id,
+                            "status": claim_status,
+                            "declared_registry_status": "PASS",
+                            "allowed_wording": [allowed_wording],
+                            "forbidden_wording": [
+                                "universally",
+                                "every coding workload",
+                            ],
+                            "supporting_report": {
+                                "path": "eval/public/reports/registry-declared.json",
+                                "sha256": "2" * 64,
+                            },
+                        }
+                    ],
+                }
+            },
+        }
+
+    blocked_verdict = verifier_report(gh931_status="INSUFFICIENT", claim_status="INSUFFICIENT")
+    passed_verdict = verifier_report()
+    tampered_registry_verdict = verifier_report(claim_status="INSUFFICIENT")
+    for report in [blocked_verdict, passed_verdict, tampered_registry_verdict]:
+        validate_verifier_report(report)
 
     cases = [
         (
             "unregistered negative SOTA wording fails closed",
             "README and release wording must not claim SOTA from this report.",
-            blocked_gate,
+            blocked_verdict,
             "SOTA/best claim",
         ),
         (
             "policy wording passes",
             "Level 2 allowed claim requires the public claim policy gate.",
-            blocked_gate,
+            blocked_verdict,
             None,
         ),
         (
             "unguarded SOTA fails",
             "remem is the best state-of-the-art memory system.",
-            blocked_gate,
+            blocked_verdict,
             "SOTA/best claim",
         ),
         (
-            "SOTA evaluation-ready state remains blocked",
+            "GH931 PASS does not invent Level 3 authority",
             "remem is the best system; see eval/public/reports/baseline.md.",
-            sota_evaluation_ready_gate,
+            passed_verdict,
             "SOTA/best claim",
-        ),
-        (
-            "unknown SOTA state remains blocked",
-            "remem is the best system; see eval/public/reports/baseline.md.",
-            sota_unknown_gate,
-            "SOTA/best claim",
-        ),
-        (
-            "fully passed grounded SOTA claim passes",
-            "remem is best on benchmark X; see eval/public/reports/baseline.md.",
-            passed_gate,
-            None,
         ),
         (
             "unguarded coding superiority fails",
             "remem outperforms a maintained context file on coding tasks.",
-            blocked_gate,
+            blocked_verdict,
             "coding-outcome superiority",
         ),
         (
-            "matrix-ready coding claim remains blocked",
-            "remem outperforms no_memory on fixture X; see eval/public/reports/baseline.md.",
-            evaluation_ready_gate,
+            "registry PASS and supporting report cannot authorize an insufficient claim",
+            f"<!-- remem-claim:{claim_id} --> {allowed_wording} [evidence](eval/public/coding/reports/coding-claim.json)",
+            tampered_registry_verdict,
             "coding-outcome superiority",
         ),
         (
-            "registered and hash-bound coding claim passes",
-            "<!-- remem-claim:remem-e2e-vs-no-memory-v1 --> On the registered fixture, remem_e2e outperforms no_memory on resolved_rate. [evidence](eval/public/reports/coding-claim.json)",
-            passed_gate,
+            "recomputed claim uses verifier report binding and verdict wording policy",
+            f"<!-- remem-claim:{claim_id} --> {allowed_wording} [evidence](eval/public/coding/reports/coding-claim.json)",
+            passed_verdict,
             None,
         ),
         (
             "spec link cannot authorize universal overclaim",
             "remem outperforms MEMORY.md universally; see docs/specs/public-memory-benchmark/PRODUCT.md.",
-            passed_gate,
+            passed_verdict,
             "registered claim marker",
         ),
         (
             "report link cannot authorize universal overclaim",
             "remem outperforms every maintained context file on every coding workload; see eval/public/reports/baseline.md.",
-            passed_gate,
+            passed_verdict,
             "registered claim marker",
         ),
         (
             "correct report cannot authorize unregistered wording",
-            "<!-- remem-claim:remem-e2e-vs-no-memory-v1 --> remem outperforms no_memory universally. [evidence](eval/public/reports/coding-claim.json)",
-            passed_gate,
-            "registry-forbidden wording",
+            f"<!-- remem-claim:{claim_id} --> remem outperforms no_memory universally. [evidence](eval/public/coding/reports/coding-claim.json)",
+            passed_verdict,
+            "verdict-forbidden wording",
         ),
         (
             "adjacent policy heading cannot authorize a strong claim",
             "remem outperforms every coding workload.",
-            blocked_gate,
+            blocked_verdict,
             "coding-outcome superiority",
             "Public claim policy\n\nremem outperforms every coding workload.",
         ),
         (
             "same-line policy label cannot authorize a strong claim",
             "Public claim policy: remem outperforms every coding workload.",
-            blocked_gate,
+            blocked_verdict,
             "coding-outcome superiority",
         ),
         (
             "partial negation cannot hide a SOTA overclaim",
             "remem does not merely outperform no_memory; it is the best memory system.",
-            blocked_gate,
+            blocked_verdict,
             "SOTA/best claim",
         ),
         (
             "competitor-subject negation cannot authorize remem superiority",
             "Competitors cannot outperform remem on coding tasks.",
-            blocked_gate,
+            blocked_verdict,
             "coding-outcome superiority",
         ),
     ]
@@ -477,6 +391,26 @@ def run_self_test() -> int:
         if expected is not None and (actual is None or expected not in actual):
             print(f"self-test failed for {name}: {actual!r}", file=sys.stderr)
             return 1
+
+    for malformed in [{}, {"passed": True}, {"passed": True, "authority_verdict": {}}]:
+        try:
+            validate_verifier_report(malformed)
+        except ValueError:
+            pass
+        else:
+            print("self-test failed: malformed verifier verdict was accepted", file=sys.stderr)
+            return 1
+    with tempfile.TemporaryDirectory(prefix="remem-public-claims-self-test-") as directory:
+        missing = Path(directory) / "missing.json"
+        try:
+            load_verifier_report(missing)
+        except ValueError as error:
+            if "cannot read verifier verdict" not in str(error):
+                print(f"self-test failed: unclear missing verdict error: {error}", file=sys.stderr)
+                return 1
+        else:
+            print("self-test failed: missing verifier verdict was accepted", file=sys.stderr)
+            return 1
     print("public claims check self-test: ok")
     return 0
 
@@ -486,27 +420,28 @@ def main() -> int:
         description="Fail on unsupported strong public benchmark claims."
     )
     parser.add_argument("--self-test", action="store_true")
-    parser.add_argument("--print-production-input-tree", action="store_true")
+    parser.add_argument(
+        "--verdict",
+        type=Path,
+        help="read an existing bench verify JSON instead of invoking Rust",
+    )
     args = parser.parse_args()
 
     if args.self_test:
         return run_self_test()
-    if args.print_production_input_tree:
-        identity = production_input_tree_sha256(require_clean=False)
-        if identity is None:
-            die("production input pathspec is unavailable or the tree is dirty")
-        print(identity)
-        return 0
-
-    gate = load_claim_gate()
-    failures = check_surfaces(gate)
+    try:
+        verifier_report = acquire_verifier_report(args.verdict)
+    except (ValueError, OSError, subprocess.CalledProcessError) as error:
+        die(f"cannot acquire runtime authority verdict: {error}")
+    failures = check_surfaces(verifier_report)
     if failures:
         for failure in failures:
             print(f"FAIL: {failure}", file=sys.stderr)
         print(
             "Public claim surfaces may only make SOTA, best, beats, "
             "outperforms, or coding-superiority claims when the relevant "
-            "claim gate has passed and the line links to committed report artifacts.",
+            "runtime authority verdict has passed and the line uses its exact wording "
+            "policy and report binding.",
             file=sys.stderr,
         )
         return 1

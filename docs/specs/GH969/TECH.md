@@ -1,6 +1,6 @@
 # GH969 Technical Contract — Stabilization And Surface Governance
 
-Status: Current contract; activation, surface lifecycle, dependency-direction, and executable ship-matrix slices implemented; final reconciliation pending; Issue: #969
+Status: Current contract; activation, surface lifecycle, dependency-direction, and executable ship-matrix slices implemented; PR #1052 authority-verdict convergence in progress; final reconciliation pending; Issue: #969
 
 Last reconciled against `origin/main`: 2026-08-26 (`36f3d38c`)
 
@@ -512,11 +512,12 @@ ordinary regressions are not default-on authority, and directional baseline
 strings are not coding/public claim authority. Merge and release readiness
 inherit the legacy eval-gate verdict; the running binary SHA/tree must match the
 clean checkout before security, merge, release, or claim authority can pass.
-Coding claim readiness and the Python public wording guard consume the same
-closed machine-readable contract and validate exact IDs, comparison, metric,
-allowed/forbidden wording, repository-relative supporting-report path/hash,
-and producing-source equivalence. Policy prose on adjacent lines never
-authorizes claim wording. Level 3 claims still require independent authority.
+The Rust verifier consumes the coding policy and evidence once, recomputes claim
+readiness, and emits the runtime authority verdict. The Python public wording
+guard consumes only that verdict: it checks the emitted allowed/forbidden wording
+and verifier-bound report path/hash without re-deriving PASS or source
+equivalence. Policy prose on adjacent lines never authorizes claim wording.
+Level 3 claims still require independent authority.
 
 ## Outcome Scorecard
 
@@ -571,6 +572,32 @@ untested reverse migration over user data.
   evidence and release notes.
 
 ## Implementation Slices
+
+### PR #1052 authority boundary (convergence in progress)
+
+This slice is not complete yet. Its target is for
+`bench_artifact::verify_benchmark_artifacts` to be the only runtime authority
+entry point: it must read each typed source and referenced byte stream once,
+retain its SHA-256 in the verified snapshot, and emit a runtime-only
+`AuthorityVerdict`. The verdict is never checked in. Baseline generation and
+ship-matrix construction must receive that verified snapshot rather than call
+a second verifier or reopen evidence.
+
+The verdict must own typed `PASS`/`FAIL`/`INSUFFICIENT` decisions for security,
+GH931, claim comparisons, and release readiness. Security decisions must use the
+canonical memory-bench policy scorer with recomputed measurements from exact
+answer/retrieval evidence and SQLite snapshots. GH931 decisions use the exact
+official matrix and existing task-cluster paired-bootstrap implementation,
+then apply registry thresholds and both frozen stop-losses. Registry
+`status`/`supporting_report` cannot become authority. The duplicate coding
+claim-contract file is removed; the verifier carries the consumed registry's
+wording policy in each recomputed claim verdict for Python to project.
+
+All populations must be keyed by condition and run phase; pre-target coding
+failures must be excluded, while missing official attempts leave the matrix
+`INSUFFICIENT`. Ship rows must use only their covered runs for model identity.
+Synthetic latency is not a measured metric. The four-target release set must be
+closed and fail-closed, and legacy eval gates must remain an input to readiness.
 
 After this spec is accepted, create focused implementation issues rather than
 one cross-repository PR:

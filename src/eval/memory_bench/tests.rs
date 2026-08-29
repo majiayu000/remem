@@ -215,7 +215,7 @@ async fn remem_default_memory_bench_writes_verifiable_public_artifacts() -> Resu
     assert!(metrics["by_category"]["prior_bug_root_cause"].is_object());
 
     let verify = crate::eval::bench_artifact::verify_benchmark_artifacts(
-        crate::eval::bench_artifact::BenchVerifyOptions { root },
+        crate::eval::bench_artifact::BenchVerifyOptions::new(root, "eval/claims/registry.json"),
     )?;
     assert!(verify.passed, "{:#?}", verify.failures);
     assert!(verify.run_artifacts_checked >= 10);
@@ -310,7 +310,7 @@ async fn adversarial_policy_bench_reports_zero_policy_leaks() -> Result<()> {
     assert_eq!(opaque["metrics"]["policy"]["policy_failure_count"], 0);
 
     let verify = crate::eval::bench_artifact::verify_benchmark_artifacts(
-        crate::eval::bench_artifact::BenchVerifyOptions { root },
+        crate::eval::bench_artifact::BenchVerifyOptions::new(root, "eval/claims/registry.json"),
     )?;
     assert!(verify.passed, "{:#?}", verify.failures);
     assert!(verify.run_artifacts_checked >= 25);

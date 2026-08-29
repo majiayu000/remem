@@ -27,6 +27,7 @@ pub(in crate::cli) async fn run_bench(action: BenchAction) -> Result<()> {
             let report = crate::eval::bench_artifact::write_public_baseline_report(
                 crate::eval::bench_artifact::BenchReportOptions {
                     root: Path::new(&args.root).to_path_buf(),
+                    claim_registry_path: Path::new("eval/claims/registry.json").to_path_buf(),
                     json_out: Path::new(&args.json_out).to_path_buf(),
                     markdown_out: Path::new(&args.markdown_out).to_path_buf(),
                 },
@@ -39,9 +40,10 @@ pub(in crate::cli) async fn run_bench(action: BenchAction) -> Result<()> {
 
 fn run_bench_verify(root: &str, json_out: &str) -> Result<()> {
     let report = crate::eval::bench_artifact::verify_benchmark_artifacts(
-        crate::eval::bench_artifact::BenchVerifyOptions {
-            root: Path::new(root).to_path_buf(),
-        },
+        crate::eval::bench_artifact::BenchVerifyOptions::new(
+            Path::new(root).to_path_buf(),
+            Path::new("eval/claims/registry.json").to_path_buf(),
+        ),
     )?;
     let report_json = serde_json::to_string_pretty(&report)?;
     if let Some(parent) = Path::new(json_out).parent() {

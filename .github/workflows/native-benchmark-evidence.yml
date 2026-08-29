@@ -1,0 +1,328 @@
+name: Native benchmark evidence
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - .github/workflows/native-benchmark-evidence.yml
+      - .github/workflows/ci.yml
+      - Cargo.lock
+      - Cargo.toml
+      - build.rs
+      - rust-toolchain.toml
+      - src/**
+      - eval/claims/**
+      - eval/production-input-pathspec-v1.json
+      - eval/public/**
+      - scripts/ci/check_public_claims.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native_evidence:
+    name: Native evidence (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+          - target: aarch64-apple-darwin
+            runner: macos-15
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: native-evidence-${{ matrix.target }}
+      - name: Assert native host and clean PR head
+        shell: bash
+        run: |
+          set -euo pipefail
+          host="$(rustc -vV | sed -n 's/^host: //p')"
+          expected="${{ matrix.target }}"
+          if [ "$host" != "$expected" ]; then
+            echo "::error::Expected native Rust host $expected, got $host"
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain --untracked-files=normal)" ]; then
+            echo "::error::Native evidence must build from a clean checked-out PR head"
+            git status --short
+            exit 1
+          fi
+      - name: Prepare target-specific temporary public root
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="${{ matrix.target }}"
+          ROW_ROOT="${RUNNER_TEMP}/remem-native-evidence/${TARGET}"
+          PUBLIC_ROOT="${ROW_ROOT}/public"
+          REPORT_REL="memory/reports/adversarial-policy-v2-${TARGET}.json"
+          MANIFEST_REL="memory/manifests/adversarial-policy-v2-${TARGET}.json"
+          ARTIFACT_REL="memory/artifacts/adversarial-policy-v2-${TARGET}"
+          VERDICT="${ROW_ROOT}/row-verifier-${TARGET}.json"
+          BUNDLE="${ROW_ROOT}/native-adversarial-policy-v2-${TARGET}.tar.gz"
+          mkdir -p "$ROW_ROOT"
+          cp -R eval/public "$PUBLIC_ROOT"
+          {
+            echo "TARGET=$TARGET"
+            echo "ROW_ROOT=$ROW_ROOT"
+            echo "PUBLIC_ROOT=$PUBLIC_ROOT"
+            echo "REPORT_REL=$REPORT_REL"
+            echo "MANIFEST_REL=$MANIFEST_REL"
+            echo "ARTIFACT_REL=$ARTIFACT_REL"
+            echo "VERDICT=$VERDICT"
+            echo "BUNDLE=$BUNDLE"
+          } >> "$GITHUB_ENV"
+      - name: Run adversarial-policy v2 benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --locked -- bench memory --suite adversarial-policy --condition remem_default \
+            --root "$PUBLIC_ROOT" \
+            --artifact-prefix "$ARTIFACT_REL" \
+            --json-out "$PUBLIC_ROOT/$REPORT_REL"
+      - name: Generate target-specific manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          source = Path("eval/public/memory/manifests/adversarial-policy-v2.json")
+          manifest = json.loads(source.read_text(encoding="utf-8"))
+          manifest["reports"] = [os.environ["REPORT_REL"]]
+          destination = Path(os.environ["PUBLIC_ROOT"]) / os.environ["MANIFEST_REL"]
+          destination.parent.mkdir(parents=True, exist_ok=True)
+          destination.write_text(
+              json.dumps(manifest, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+      - name: Verify target evidence in complete temporary public root
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --locked -- bench verify --root "$PUBLIC_ROOT" --json-out "$VERDICT"
+      - name: Assert row authority and exact artifact bindings
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          target = os.environ["TARGET"]
+          report_path = os.environ["REPORT_REL"]
+          manifest_path = os.environ["MANIFEST_REL"]
+          artifact_prefix = f'{os.environ["ARTIFACT_REL"]}/'
+          verdict = json.loads(Path(os.environ["VERDICT"]).read_text(encoding="utf-8"))
+          authority = verdict["authority_verdict"]
+          consumed = authority["consumed_bytes"]
+          required = [
+              "x86_64-apple-darwin",
+              "aarch64-apple-darwin",
+              "x86_64-unknown-linux-gnu",
+              "aarch64-unknown-linux-gnu",
+          ]
+          expected_platform = {
+              "x86_64-apple-darwin": "macos/x86_64",
+              "aarch64-apple-darwin": "macos/aarch64",
+              "x86_64-unknown-linux-gnu": "linux/x86_64",
+              "aarch64-unknown-linux-gnu": "linux/aarch64",
+          }[target]
+
+          assert verdict["passed"] is True
+          matches = [
+              report
+              for report in authority["security"]["reports"]
+              if report["report_path"] == report_path
+          ]
+          assert len(matches) == 1
+          generated = matches[0]
+          assert generated["status"] == "PASS"
+          assert generated["target"] == target
+          assert isinstance(generated["models"], list) and generated["models"]
+          assert generated["platforms"] == [expected_platform]
+          assert generated["source_dirty_attestations"] == [False]
+          head = subprocess.check_output(
+              ["git", "rev-parse", "HEAD"], text=True
+          ).strip()
+          assert generated["producing_shas"] == [head]
+          assert len(generated["production_input_trees"]) == 1
+          assert generated["report_sha256"] == consumed[report_path]
+          assert generated["runs_recomputed"] == 20
+          assert isinstance(generated["policy_summary"], dict)
+          assert generated["policy_failure_count"] == 0
+
+          implementation = authority["implementation"]
+          assert implementation["build_git_sha"] == head
+          assert implementation["checkout_git_sha"] == head
+          assert implementation["build_source_dirty"] is False
+          assert implementation["checkout_source_dirty"] is False
+          assert implementation["executable_source_equivalent"] is True
+          assert (
+              implementation["build_production_input_tree_sha256"]
+              == implementation["checkout_production_input_tree_sha256"]
+              == generated["production_input_trees"][0]
+          )
+
+          assert manifest_path in consumed
+          assert report_path in consumed
+          generated_paths = {
+              path for path in consumed if path.startswith(artifact_prefix)
+          }
+          run_paths = {
+              path for path in generated_paths if path.endswith("/run.json")
+          }
+          artifact_paths = generated_paths - run_paths
+          assert len(run_paths) == generated["runs_recomputed"]
+          assert artifact_paths
+          for run_path in run_paths:
+              run_directory = run_path.rsplit("/", 1)[0] + "/"
+              assert any(path.startswith(run_directory) for path in artifact_paths)
+
+          release = authority["release"]
+          assert release["required_targets"] == required
+          assert release["current_targets"] == [target]
+          assert set(release["missing_targets"]) == set(required) - {target}
+          assert release["ready"] is False
+          PY
+      - name: Package generated target evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          BUNDLE_ROOT="${ROW_ROOT}/bundle"
+          mkdir -p \
+            "$(dirname "$BUNDLE_ROOT/public/$MANIFEST_REL")" \
+            "$(dirname "$BUNDLE_ROOT/public/$REPORT_REL")" \
+            "$(dirname "$BUNDLE_ROOT/public/$ARTIFACT_REL")"
+          cp "$PUBLIC_ROOT/$MANIFEST_REL" "$BUNDLE_ROOT/public/$MANIFEST_REL"
+          cp "$PUBLIC_ROOT/$REPORT_REL" "$BUNDLE_ROOT/public/$REPORT_REL"
+          cp -R "$PUBLIC_ROOT/$ARTIFACT_REL" "$BUNDLE_ROOT/public/$ARTIFACT_REL"
+          cp "$VERDICT" "$BUNDLE_ROOT/row-verifier-${TARGET}.json"
+          tar -czf "$BUNDLE" -C "$BUNDLE_ROOT" .
+      - name: Upload generated target evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-adversarial-policy-v2-${{ matrix.target }}
+          path: ${{ env.BUNDLE }}
+          if-no-files-found: error
+          retention-days: 7
+
+  aggregate:
+    name: Aggregate native evidence verdict
+    needs: native_evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: native-evidence-aggregate
+      - name: Download all native evidence bundles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: native-adversarial-policy-v2-*
+          path: ${{ runner.temp }}/remem-native-bundles
+          merge-multiple: true
+      - name: Assemble temporary four-target public root
+        shell: bash
+        run: |
+          set -euo pipefail
+          AGG_ROOT="${RUNNER_TEMP}/remem-native-aggregate"
+          PUBLIC_ROOT="${AGG_ROOT}/public"
+          VERDICT="${AGG_ROOT}/authority-verdict.json"
+          mkdir -p "$AGG_ROOT"
+          cp -R eval/public "$PUBLIC_ROOT"
+          mapfile -t bundles < <(find "$RUNNER_TEMP/remem-native-bundles" -type f -name '*.tar.gz' | sort)
+          if [ "${#bundles[@]}" -ne 4 ]; then
+            echo "::error::Expected four native evidence bundles, found ${#bundles[@]}"
+            exit 1
+          fi
+          for bundle in "${bundles[@]}"; do
+            stage="$(mktemp -d "${RUNNER_TEMP}/remem-native-stage.XXXXXX")"
+            tar -xzf "$bundle" -C "$stage"
+            cp -R "$stage/public/." "$PUBLIC_ROOT/"
+          done
+          {
+            echo "AGG_ROOT=$AGG_ROOT"
+            echo "PUBLIC_ROOT=$PUBLIC_ROOT"
+            echo "VERDICT=$VERDICT"
+          } >> "$GITHUB_ENV"
+      - name: Verify aggregate four-target evidence once
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --locked -- bench verify --root "$PUBLIC_ROOT" --json-out "$VERDICT"
+      - name: Assert closed release verdict
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          verdict = json.loads(Path(os.environ["VERDICT"]).read_text(encoding="utf-8"))
+          authority = verdict["authority_verdict"]
+          release = authority["release"]
+          implementation = authority["implementation"]
+          required = [
+              "x86_64-apple-darwin",
+              "aarch64-apple-darwin",
+              "x86_64-unknown-linux-gnu",
+              "aarch64-unknown-linux-gnu",
+          ]
+          assert verdict["passed"] is True
+          assert authority["status"] == "PASS"
+          assert implementation["build_source_dirty"] is False
+          assert implementation["checkout_source_dirty"] is False
+          assert implementation["executable_source_equivalent"] is True
+          assert implementation["build_git_sha"] == implementation["checkout_git_sha"]
+          assert (
+              implementation["build_production_input_tree_sha256"]
+              == implementation["checkout_production_input_tree_sha256"]
+          )
+          assert release["required_targets"] == required
+          assert len(release["current_targets"]) == len(required)
+          assert set(release["current_targets"]) == set(required)
+          assert release["missing_targets"] == []
+          assert release["ready"] is True
+          expected_reports = {
+              target: f"memory/reports/adversarial-policy-v2-{target}.json"
+              for target in required
+          }
+          generated = {
+              report["target"]: report
+              for report in authority["security"]["reports"]
+              if report["target"] in expected_reports
+              and report["report_path"] == expected_reports[report["target"]]
+          }
+          assert set(generated) == set(required)
+          assert all(report["status"] == "PASS" for report in generated.values())
+          PY
+      - name: Upload aggregate authority verdict
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-adversarial-policy-v2-authority-verdict
+          path: ${{ env.VERDICT }}
+          if-no-files-found: error
+          retention-days: 7

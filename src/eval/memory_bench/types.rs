@@ -167,7 +167,7 @@ pub struct MemoryBenchPolicySummary {
     pub policy_failure_rate: f64,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct MemoryBenchPolicyOutcome {
     pub verification_path: String,
     pub measurement_source: String,
@@ -349,29 +349,39 @@ pub fn summarize_by_category(
 }
 
 pub fn summarize_policy(outcomes: &[MemoryBenchRunOutcome]) -> MemoryBenchPolicySummary {
+    summarize_policy_refs(outcomes.iter().map(|outcome| &outcome.policy).collect())
+}
+
+pub(crate) fn summarize_policy_outcomes(
+    outcomes: &[MemoryBenchPolicyOutcome],
+) -> MemoryBenchPolicySummary {
+    summarize_policy_refs(outcomes.iter().collect())
+}
+
+fn summarize_policy_refs(outcomes: Vec<&MemoryBenchPolicyOutcome>) -> MemoryBenchPolicySummary {
     let non_retention = outcomes
         .iter()
-        .filter(|outcome| outcome.policy.non_retention_applicable)
+        .filter(|outcome| outcome.non_retention_applicable)
         .collect::<Vec<_>>();
     let false_block = outcomes
         .iter()
-        .filter(|outcome| outcome.policy.false_block_applicable)
+        .filter(|outcome| outcome.false_block_applicable)
         .collect::<Vec<_>>();
     let suppression = outcomes
         .iter()
-        .filter(|outcome| outcome.policy.suppression_applicable)
+        .filter(|outcome| outcome.suppression_applicable)
         .collect::<Vec<_>>();
     let sensitive = outcomes
         .iter()
-        .filter(|outcome| outcome.policy.sensitive_restricted_applicable)
+        .filter(|outcome| outcome.sensitive_restricted_applicable)
         .collect::<Vec<_>>();
     let abstention = outcomes
         .iter()
-        .filter(|outcome| outcome.policy.policy_abstention_applicable)
+        .filter(|outcome| outcome.policy_abstention_applicable)
         .collect::<Vec<_>>();
     let policy_failure_count = outcomes
         .iter()
-        .filter(|outcome| outcome.policy.policy_failure_count > 0)
+        .filter(|outcome| outcome.policy_failure_count > 0)
         .count();
 
     MemoryBenchPolicySummary {
@@ -379,7 +389,7 @@ pub fn summarize_policy(outcomes: &[MemoryBenchRunOutcome]) -> MemoryBenchPolicy
         non_retention_leak_rate: ratio_count(
             non_retention
                 .iter()
-                .filter(|outcome| outcome.policy.non_retention_leaked)
+                .filter(|outcome| outcome.non_retention_leaked)
                 .count(),
             non_retention.len(),
         ),
@@ -387,7 +397,7 @@ pub fn summarize_policy(outcomes: &[MemoryBenchRunOutcome]) -> MemoryBenchPolicy
         false_block_rate: ratio_count(
             false_block
                 .iter()
-                .filter(|outcome| outcome.policy.false_blocked)
+                .filter(|outcome| outcome.false_blocked)
                 .count(),
             false_block.len(),
         ),
@@ -395,7 +405,7 @@ pub fn summarize_policy(outcomes: &[MemoryBenchRunOutcome]) -> MemoryBenchPolicy
         suppression_obeyed_rate: ratio_count(
             suppression
                 .iter()
-                .filter(|outcome| outcome.policy.suppression_obeyed)
+                .filter(|outcome| outcome.suppression_obeyed)
                 .count(),
             suppression.len(),
         ),
@@ -403,7 +413,7 @@ pub fn summarize_policy(outcomes: &[MemoryBenchRunOutcome]) -> MemoryBenchPolicy
         sensitive_restricted_default_exclusion_rate: ratio_count(
             sensitive
                 .iter()
-                .filter(|outcome| outcome.policy.sensitive_restricted_default_excluded)
+                .filter(|outcome| outcome.sensitive_restricted_default_excluded)
                 .count(),
             sensitive.len(),
         ),
@@ -411,7 +421,7 @@ pub fn summarize_policy(outcomes: &[MemoryBenchRunOutcome]) -> MemoryBenchPolicy
         policy_abstention_accuracy: ratio_count(
             abstention
                 .iter()
-                .filter(|outcome| outcome.policy.policy_abstention_correct)
+                .filter(|outcome| outcome.policy_abstention_correct)
                 .count(),
             abstention.len(),
         ),

@@ -15,7 +15,8 @@ fn verifier_rejects_placeholder_security_snapshot() -> Result<()> {
     );
     fs::write(&snapshot, b"fixture placeholder\n")?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     assert!(report.failures.iter().any(|failure| {
@@ -52,10 +53,62 @@ fn verifier_rejects_hash_valid_snapshot_with_mutated_security_semantics() -> Res
         json["artifact_sha256"]["remem_db_snapshot"] = Value::String(mutated_sha256);
     })?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     assert!(failure_text(&report).contains("snapshot semantic contract"));
+    Ok(())
+}
+
+#[test]
+fn tampered_security_report_aggregate_fails_closed_against_recomputed_policy() -> Result<()> {
+    let root = copy_public_fixture("security-report-aggregate-mismatch")?;
+    let report_path = root.join("memory/reports/adversarial-policy-v2.json");
+    mutate_json(&report_path, |json| {
+        json["aggregate_metrics"]["policy"] = serde_json::json!({
+            "non_retention_cases": 999,
+            "non_retention_leak_rate": 1.0,
+            "false_block_rate": 1.0,
+            "suppression_obeyed_rate": 0.0,
+            "sensitive_restricted_default_exclusion_rate": 0.0,
+            "policy_abstention_accuracy": 0.0,
+            "policy_failure_rate": 1.0
+        });
+    })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+
+    assert!(!report.passed);
+    assert!(failure_text(&report).contains("recomputed security aggregate mismatch"));
+    let verdict = serde_json::to_value(&report)?;
+    assert_eq!(verdict["authority_verdict"]["security"]["status"], "FAIL");
+    Ok(())
+}
+
+#[test]
+fn tampered_run_policy_declarations_cannot_authorize_security_pass() -> Result<()> {
+    let root = copy_public_fixture("security-run-policy-mismatch")?;
+    let run_path = root.join(
+        "memory/artifacts/adversarial-policy-v2/\
+         remem_default-secrets-api-key-001/run.json",
+    );
+    mutate_json(&run_path, |json| {
+        json["metrics"]["policy"] = serde_json::json!({
+            "active_claim_count": 999,
+            "candidate_count": 999,
+            "summary_input_count": 999,
+            "policy_failure_count": 0
+        });
+    })?;
+
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+
+    assert!(!report.passed);
+    assert!(failure_text(&report).contains("run metric /policy/active_claim_count differs"));
+    let verdict = serde_json::to_value(&report)?;
+    assert_eq!(verdict["authority_verdict"]["security"]["status"], "FAIL");
     Ok(())
 }
 
@@ -95,7 +148,8 @@ fn verifier_rejects_snapshot_with_unrelated_captured_event() -> Result<()> {
         json["artifact_sha256"]["remem_db_snapshot"] = Value::String(mutated_sha256);
     })?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     assert!(failure_text(&report).contains("closed-world snapshot inventory"));
@@ -105,7 +159,10 @@ fn verifier_rejects_snapshot_with_unrelated_captured_event() -> Result<()> {
 #[test]
 fn baseline_consumes_the_exact_typed_bytes_verified_before_replacement() -> Result<()> {
     let root = copy_public_fixture("verified-bytes-snapshot")?;
-    let verified = verify_benchmark_artifacts(BenchVerifyOptions { root: root.clone() })?;
+    let verified = verify_benchmark_artifacts(BenchVerifyOptions::new(
+        root.clone(),
+        "eval/claims/registry.json",
+    ))?;
     let expected = verified
         .verified_artifacts
         .reports

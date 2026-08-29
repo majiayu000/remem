@@ -40,7 +40,22 @@
         },
         "required": ["benchmark_id", "benchmark_version"]
       },
-      "then": { "required": ["suite_content_identity"] }
+      "then": {
+        "required": ["artifact_sha256", "suite_content_identity"],
+        "properties": {
+          "artifact_sha256": { "minProperties": 1 },
+          "environment": {
+            "required": ["os", "arch", "source_dirty", "production_input_tree_sha256"],
+            "properties": {
+              "source_dirty": { "const": false },
+              "production_input_tree_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        }
+      }
     }
   ],
   "$defs": {
