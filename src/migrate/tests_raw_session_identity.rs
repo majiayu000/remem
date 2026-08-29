@@ -4,6 +4,7 @@ use rusqlite::{params, Connection};
 use super::MIGRATIONS;
 
 const V071: i64 = 71;
+const V091: i64 = 91;
 
 fn migration_v071() -> Result<&'static super::types::Migration> {
     MIGRATIONS
@@ -18,6 +19,18 @@ fn pre_v071() -> Result<Connection> {
     for migration in MIGRATIONS
         .iter()
         .filter(|migration| migration.version < V071)
+    {
+        conn.execute_batch(migration.sql)?;
+    }
+    Ok(conn)
+}
+
+fn pre_v091() -> Result<Connection> {
+    let conn = Connection::open_in_memory()?;
+    conn.execute_batch("PRAGMA foreign_keys=ON")?;
+    for migration in MIGRATIONS
+        .iter()
+        .filter(|migration| migration.version < V091)
     {
         conn.execute_batch(migration.sql)?;
     }
@@ -176,5 +189,71 @@ fn v071_enforces_identity_foreign_keys_and_closed_values() -> Result<()> {
     assert!(occurrence_index_sql.contains("transcript_identity_id, transcript_record_ordinal"));
     assert!(!occurrence_index_sql.contains("project"));
     assert!(!occurrence_index_sql.contains("session_id"));
+    Ok(())
+}
+
+#[test]
+fn v091_backfills_known_hosts_and_leaves_unknown_paths_explicit() -> Result<()> {
+    let conn = pre_v091()?;
+    for (index, path) in [
+        "/tmp/.claude/projects/repo/a.jsonl",
+        "/tmp/.codex/sessions/2026/08/b.jsonl",
+        "/tmp/.cursor/projects/repo/c.jsonl",
+        "/tmp/unclassified/d.jsonl",
+        "/tmp/.codex/sessions/.claude/projects/ambiguous.jsonl",
+        "/tmp/.CLAUDE/projects/case-near-miss.jsonl",
+        "/tmp/.CoDeX/sessions/case-near-miss.jsonl",
+        "/tmp/.CURSOR/case-near-miss.jsonl",
+        "/tmp/.claude/projectss/component-near-miss.jsonl",
+        ".claude/projects/relative-valid.jsonl",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        conn.execute(
+            "INSERT INTO raw_session_identities
+             (source_root, transcript_path, fallback_session_id,
+              canonical_session_id, project, legacy_project, status,
+              contract_version, observed_mtime_ns, observed_size_bytes,
+              first_seen_at_epoch, last_seen_at_epoch)
+             VALUES ('local', ?1, ?2, ?2, '/repo', '/repo', 'active', 1, 1, 1, 1, 1)",
+            params![path, format!("s{index}")],
+        )?;
+    }
+
+    let migration = MIGRATIONS
+        .iter()
+        .find(|migration| migration.version == V091)
+        .context("v091 migration is missing")?;
+    assert_eq!(migration.name, "raw_session_host");
+    conn.execute_batch(migration.sql)?;
+    let hosts = {
+        let mut statement = conn.prepare("SELECT host FROM raw_session_identities ORDER BY id")?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, Option<String>>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+    assert_eq!(
+        hosts,
+        vec![
+            Some("claude-code".to_string()),
+            Some("codex-cli".to_string()),
+            Some("cursor".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("claude-code".to_string()),
+        ]
+    );
+    assert!(conn
+        .execute(
+            "UPDATE raw_session_identities SET host = 'guessed' WHERE id = 1",
+            [],
+        )
+        .is_err());
     Ok(())
 }

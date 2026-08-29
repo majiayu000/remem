@@ -88,6 +88,7 @@ The CI lifecycle guard enforces the highest-risk parts of this flow. See
 | `raw-session-ingestion/` | Current contract | Path-stable transcript identity, lossless occurrence ingestion, validated read-only raw queries, role counts, and privacy-safe fixed-window archive reconciliation. Refs #871, #720. |
 | `retrieval-enrichment-budget/` | Current contract | P0 contract for deferring upgrade-time historical enrichment, bounding once/daemon AI batches, exhausting repeated failures, and avoiding false USD prices for GPT-5.6 Codex credit models. Extends GH-850. |
 | `review-queue-throughput/` | Current contract | Product and technical contract for review-queue health metrics, block-reason aggregates and deadlock surfacing, batch review operations with previews, and a fast sequential review flow. Refs #683. |
+| `refine-session-consumer/` | Current contract | Stable host, session reference, content fingerprint, and bounded raw-session listing for Refine without a second transcript store. |
 | `session-observatory/` | Current contract | Rebuildable turn-level session activity derived from raw messages and captured events, with evidence-aware statistics and Remem app views. |
 | `spec-lifecycle-governance/` | Current contract | Product and technical contract for separating epic, spec, and implementation issue lifecycles. Refs #592. |
 | `status-health-performance/` | Current contract | Product and technical contract for splitting fast API liveness from cached aggregate status diagnostics. Refs #588. |

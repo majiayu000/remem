@@ -520,6 +520,7 @@ struct RawSessionsOutput {
     until_epoch: Option<i64>,
     project: Option<String>,
     sample: i64,
+    latest: Option<i64>,
     count: usize,
     sessions: Vec<RawSessionOutput>,
 }
@@ -527,6 +528,8 @@ struct RawSessionsOutput {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RawSessionOutput {
+    session_ref: String,
+    host: String,
     source_root: String,
     project: String,
     session_id: String,
@@ -535,5 +538,6 @@ struct RawSessionOutput {
     message_count: i64,
     user_message_count: i64,
     assistant_message_count: i64,
+    content_hash: String,
     user_message_samples: Vec<String>,
 }

@@ -22,6 +22,7 @@ impl TempRoot {
 
     fn scan_root(&self) -> ScanRoot {
         ScanRoot {
+            host: crate::identity::InstallHost::ClaudeCode,
             label: "fixture".to_string(),
             path: self.path.clone(),
             required: true,
@@ -49,6 +50,15 @@ fn setup() -> Connection {
     let conn = Connection::open_in_memory().expect("open reconcile database");
     crate::migrate::run_migrations(&conn).expect("migrate reconcile database");
     conn
+}
+
+fn cursor_state(conn: &Connection) -> (String, i64, i64, i64) {
+    conn.query_row(
+        "SELECT file_path, mtime_epoch, size_bytes, last_ingested_at FROM ingest_cursors",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )
+    .expect("load fixture cursor")
 }
 
 fn ingest(conn: &Connection, root: &TempRoot) {
@@ -193,8 +203,9 @@ fn malformed_record_is_counted_from_a_current_snapshot() {
     let conn = setup();
     let root = TempRoot::new("malformed");
     let path = root.write("malformed.jsonl", &["{not-json}"]);
-    let plan = crate::ingest::session_identity::probe("fixture", &root.path, &path, None)
+    let mut plan = crate::ingest::session_identity::probe("fixture", &root.path, &path, None)
         .expect("probe malformed fixture path");
+    plan.host = Some(crate::identity::InstallHost::ClaudeCode);
     let identity_id = crate::ingest::session_identity::upsert_claim(&conn, &plan, 1)
         .expect("persist malformed fixture ledger");
     crate::ingest::session_identity::mark_complete(
@@ -273,6 +284,42 @@ fn stale_pre_capture_tuple_fails_before_reconciliation() {
 }
 
 #[test]
+fn identity_host_mismatch_fails_before_capture_without_advancing_cursor() {
+    let conn = setup();
+    let root = TempRoot::new("host-mismatch");
+    let user = line("host-mismatch", "user", 100, "host bound");
+    root.write("host-mismatch.jsonl", &[&user]);
+    ingest(&conn, &root);
+    let before = cursor_state(&conn);
+    conn.execute("UPDATE raw_session_identities SET host = 'codex-cli'", [])
+        .expect("change fixture ledger host");
+
+    let error = reconcile_raw_archive(&conn, &[root.scan_root()], 100, 100)
+        .expect_err("root/ledger host mismatch must fail before capture");
+
+    assert!(error.to_string().contains("host provenance mismatch"));
+    assert_eq!(cursor_state(&conn), before);
+}
+
+#[test]
+fn missing_identity_host_fails_before_capture_without_advancing_cursor() {
+    let conn = setup();
+    let root = TempRoot::new("host-missing");
+    let user = line("host-missing", "user", 100, "host required");
+    root.write("host-missing.jsonl", &[&user]);
+    ingest(&conn, &root);
+    let before = cursor_state(&conn);
+    conn.execute("UPDATE raw_session_identities SET host = NULL", [])
+        .expect("clear fixture ledger host");
+
+    let error = reconcile_raw_archive(&conn, &[root.scan_root()], 100, 100)
+        .expect_err("hostless ledger identity must fail before capture");
+
+    assert!(error.to_string().contains("host provenance is missing"));
+    assert_eq!(cursor_state(&conn), before);
+}
+
+#[test]
 fn stale_out_of_window_file_blocks_bounded_reconciliation() {
     let conn = setup();
     let root = TempRoot::new("stale-outside");
@@ -311,6 +358,7 @@ fn deleted_file_from_optional_root_blocks_reconciliation() {
 fn missing_required_root_fails_loudly() {
     let conn = setup();
     let root = ScanRoot {
+        host: crate::identity::InstallHost::ClaudeCode,
         label: "required".to_string(),
         path: std::env::temp_dir().join(format!(
             "remem-missing-required-{}",

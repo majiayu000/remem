@@ -93,8 +93,9 @@ impl MemoryServer {
 
     #[tool(
         description = "List sessions with raw archive messages inside a time window, grouped by \
-        (source_root, project, session_id) with first/last message epoch, message count, and optional \
-        role=user message samples. Use for recap-style summaries of what happened in a period. \
+        (source_root, host, project, session_id) with a stable session_ref, content_hash, first/last \
+        message epoch, message count, and optional role=user message samples. `latest` bounds the \
+        result to the newest sessions. Use for recap-style summaries of what happened in a period. \
         Output fields match `remem raw sessions --json`."
     )]
     pub(super) fn list_raw_sessions(
@@ -106,11 +107,12 @@ impl MemoryServer {
         crate::log::info(
             "mcp",
             &format!(
-                "list_raw_sessions called since={:?} until={:?} project={:?} sample={}",
+                "list_raw_sessions called since={:?} until={:?} project={:?} sample={} latest={:?}",
                 params.since,
                 params.until,
                 params.project,
                 params.sample.unwrap_or(0),
+                params.latest,
             ),
         );
         let since_epoch = parse_optional_bound(
@@ -131,6 +133,7 @@ impl MemoryServer {
                 until_epoch,
                 project: params.project.clone(),
                 sample_user_messages: params.sample.unwrap_or(0).max(0),
+                latest: params.latest,
             };
             let sessions = raw_archive::list_sessions(conn, &query).map_err(|e| {
                 crate::log::warn("mcp", &format!("list_raw_sessions failed: {}", e));

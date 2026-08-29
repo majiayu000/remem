@@ -26,8 +26,13 @@ fn fallback_promotion_keeps_path_stable_identity() {
     let root = path.parent().expect("fixture parent");
     let fallback = probe("local", root, &path, None).expect("probe fallback");
     let identity_id = upsert_claim(&conn, &fallback, 1).expect("persist fallback");
-    resolve_fallback_group(&conn, "local", &fallback.fallback_session_id)
-        .expect("resolve fallback");
+    resolve_fallback_group(
+        &conn,
+        fallback.host.map(InstallHost::as_db_value),
+        "local",
+        &fallback.fallback_session_id,
+    )
+    .expect("resolve fallback");
 
     std::fs::write(
         &path,
@@ -36,8 +41,13 @@ fn fallback_promotion_keeps_path_stable_identity() {
     .expect("promote fixture");
     let metadata = probe("local", root, &path, None).expect("probe metadata");
     let promoted_id = upsert_claim(&conn, &metadata, 2).expect("persist metadata");
-    resolve_fallback_group(&conn, "local", &fallback.fallback_session_id)
-        .expect("resolve metadata");
+    resolve_fallback_group(
+        &conn,
+        metadata.host.map(InstallHost::as_db_value),
+        "local",
+        &fallback.fallback_session_id,
+    )
+    .expect("resolve metadata");
     let identity = load(&conn, identity_id).expect("load identity");
 
     assert_eq!(promoted_id, identity_id);
@@ -73,7 +83,13 @@ fn conflicting_metadata_claims_are_sticky() {
     .expect("rewrite fixture");
     let second = probe("local", root, &path, None).expect("second probe");
     upsert_claim(&conn, &second, 2).expect("second claim");
-    resolve_fallback_group(&conn, "local", &first.fallback_session_id).expect("resolve conflict");
+    resolve_fallback_group(
+        &conn,
+        first.host.map(InstallHost::as_db_value),
+        "local",
+        &first.fallback_session_id,
+    )
+    .expect("resolve conflict");
     assert_eq!(
         load(&conn, identity_id).expect("load conflict").status,
         "conflict"
@@ -86,12 +102,113 @@ fn conflicting_metadata_claims_are_sticky() {
     .expect("restore fixture");
     let retry = probe("local", root, &path, None).expect("retry probe");
     upsert_claim(&conn, &retry, 3).expect("retry claim");
-    resolve_fallback_group(&conn, "local", &first.fallback_session_id).expect("retry resolution");
+    resolve_fallback_group(
+        &conn,
+        retry.host.map(InstallHost::as_db_value),
+        "local",
+        &first.fallback_session_id,
+    )
+    .expect("retry resolution");
     assert_eq!(
         load(&conn, identity_id).expect("load sticky").status,
         "conflict"
     );
     std::fs::remove_file(path).expect("remove fixture");
+}
+
+#[test]
+fn established_host_survives_unknown_reprobe_and_rejects_conflict_before_mutation() {
+    let conn = setup_identity_db();
+    let path = temp_transcript(
+        "host-monotonic",
+        r#"{"type":"user","sessionId":"stable","message":{"content":"first"}}"#,
+    );
+    let root = path.parent().expect("fixture parent");
+    let mut stop_plan = probe("local", root, &path, None).expect("probe Stop transcript");
+    stop_plan.host = Some(InstallHost::CodexCli);
+    let identity_id = upsert_claim(&conn, &stop_plan, 1).expect("persist Stop host");
+
+    let batch_plan = probe("local", root, &path, None).expect("probe unclassified batch path");
+    assert_eq!(batch_plan.host, None);
+    upsert_claim(&conn, &batch_plan, 2).expect("unknown reprobe preserves established host");
+    assert_eq!(
+        load(&conn, identity_id).expect("load preserved host").host,
+        Some("codex-cli".to_string())
+    );
+
+    let mut conflicting_plan = batch_plan;
+    conflicting_plan.host = Some(InstallHost::ClaudeCode);
+    let error = upsert_claim(&conn, &conflicting_plan, 3)
+        .expect_err("a different non-empty host must fail before mutation");
+    assert!(error.to_string().contains("host provenance conflict"));
+    let stored: (Option<String>, i64) = conn
+        .query_row(
+            "SELECT host, last_seen_at_epoch FROM raw_session_identities WHERE id = ?1",
+            [identity_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("load host after rejected conflict");
+    assert_eq!(stored, (Some("codex-cli".to_string()), 2));
+    std::fs::remove_file(path).expect("remove fixture");
+}
+
+#[test]
+fn same_fallback_id_resolves_independently_per_host() -> anyhow::Result<()> {
+    let conn = setup_identity_db();
+    conn.execute_batch(
+        "INSERT INTO raw_session_identities (
+            id, source_root, transcript_path, host, fallback_session_id,
+            canonical_session_id, project, legacy_project, status,
+            observed_mtime_ns, observed_size_bytes,
+            first_seen_at_epoch, last_seen_at_epoch
+         ) VALUES
+            (71, 'local', '/tmp/.codex/sessions/shared.jsonl', 'codex-cli', 'shared',
+             'shared', 'project', 'legacy', 'active', 1, 1, 1, 1),
+            (72, 'local', '/tmp/.claude/projects/repo/shared.jsonl', 'claude-code', 'shared',
+             'shared', 'project', 'legacy', 'active', 1, 1, 1, 1);
+         INSERT INTO raw_session_identity_claims (
+            transcript_identity_id, claimed_session_id, identity_source,
+            first_seen_at_epoch, last_seen_at_epoch
+         ) VALUES
+            (71, 'codex-canonical', 'transcript_metadata', 1, 1),
+            (72, 'claude-canonical', 'transcript_metadata', 1, 1);",
+    )?;
+
+    resolve_fallback_group(&conn, Some("codex-cli"), "local", "shared")?;
+    resolve_fallback_group(&conn, Some("claude-code"), "local", "shared")?;
+
+    let rows = {
+        let mut statement = conn.prepare(
+            "SELECT host, status, canonical_session_id
+             FROM raw_session_identities ORDER BY host",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+    assert_eq!(
+        rows,
+        vec![
+            (
+                "claude-code".to_string(),
+                "active".to_string(),
+                "claude-canonical".to_string(),
+            ),
+            (
+                "codex-cli".to_string(),
+                "active".to_string(),
+                "codex-canonical".to_string(),
+            ),
+        ]
+    );
+    Ok(())
 }
 
 #[test]
@@ -118,7 +235,7 @@ fn existing_group_conflict_is_inherited_by_later_identity() -> anyhow::Result<()
             (32, 'canonical-871', 'transcript_metadata', 1, 1);",
     )?;
 
-    resolve_fallback_group(&conn, "local", "shared")?;
+    resolve_fallback_group(&conn, None, "local", "shared")?;
 
     assert_eq!(
         conn.query_row(
@@ -138,7 +255,7 @@ fn existing_group_conflict_is_inherited_by_later_identity() -> anyhow::Result<()
 }
 
 #[test]
-fn exact_collision_rewrites_every_persisted_evidence_reference() -> anyhow::Result<()> {
+fn unresolved_legacy_rows_preserve_every_persisted_reference() -> anyhow::Result<()> {
     let conn = setup_identity_db();
     let path = temp_transcript(
         "evidence-rewrite",
@@ -147,7 +264,12 @@ fn exact_collision_rewrites_every_persisted_evidence_reference() -> anyhow::Resu
     let root = path.parent().context("fixture parent")?;
     let plan = probe("local", root, &path, None)?;
     let identity_id = upsert_claim(&conn, &plan, 1)?;
-    resolve_fallback_group(&conn, "local", &plan.fallback_session_id)?;
+    resolve_fallback_group(
+        &conn,
+        plan.host.map(InstallHost::as_db_value),
+        "local",
+        &plan.fallback_session_id,
+    )?;
     let identity = load(&conn, identity_id)?;
     let hash = crate::db::content_identity_hash(b"same");
     let insert_legacy = |id: i64, session_id: &str, project: &str| -> anyhow::Result<()> {
@@ -243,16 +365,19 @@ fn exact_collision_rewrites_every_persisted_evidence_reference() -> anyhow::Resu
         )?;
     }
 
-    let report = rekey_legacy_rows(&conn, &identity)?;
+    let error = rekey_legacy_rows(&conn, &identity)
+        .expect_err("hostless legacy rows must fail before evidence mutation");
 
-    assert_eq!(report.merged, 3);
+    assert!(error
+        .downcast_ref::<crate::memory::raw_occurrence::RawIdentityConflict>()
+        .is_some());
     assert_eq!(
         conn.query_row(
             "SELECT COUNT(*) FROM raw_messages WHERE id IN (41, 43, 44)",
             [],
             |row| { row.get::<_, i64>(0) }
         )?,
-        0
+        3
     );
     assert_eq!(
         conn.query_row(
@@ -261,7 +386,7 @@ fn exact_collision_rewrites_every_persisted_evidence_reference() -> anyhow::Resu
             [],
             |row| row.get::<_, String>(0)
         )?,
-        "[42]"
+        "[41,42,43,44]"
     );
     assert_eq!(
         conn.query_row(
@@ -269,21 +394,21 @@ fn exact_collision_rewrites_every_persisted_evidence_reference() -> anyhow::Resu
             [],
             |row| row.get::<_, String>(0)
         )?,
-        "raw_message:42:sha256 sha256 sha256"
+        "raw_message:41:sha256 raw_message:43:sha256 raw_message:44:sha256"
     );
     assert_eq!(
         conn.query_row("SELECT COUNT(*) FROM session_turns", [], |row| {
             row.get::<_, i64>(0)
         })?,
-        0,
-        "rekeyed identity tuples must invalidate stale projections"
+        4,
+        "fail-closed rekey must preserve existing projections"
     );
     assert_eq!(
         conn.query_row("SELECT COUNT(*) FROM session_turn_actions", [], |row| {
             row.get::<_, i64>(0)
         })?,
-        0,
-        "projection invalidation must cascade to action rows"
+        4,
+        "fail-closed rekey must preserve existing projection actions"
     );
     std::fs::remove_file(path)?;
     Ok(())
@@ -299,7 +424,12 @@ fn ambiguous_or_inexact_collision_fails_before_any_mutation() -> anyhow::Result<
     let root = path.parent().context("fixture parent")?;
     let plan = probe("local", root, &path, None)?;
     let identity_id = upsert_claim(&conn, &plan, 1)?;
-    resolve_fallback_group(&conn, "local", &plan.fallback_session_id)?;
+    resolve_fallback_group(
+        &conn,
+        plan.host.map(InstallHost::as_db_value),
+        "local",
+        &plan.fallback_session_id,
+    )?;
     let identity = load(&conn, identity_id)?;
     let hash = crate::db::content_identity_hash(b"forced collision");
     conn.execute(
@@ -340,7 +470,7 @@ fn ambiguous_or_inexact_collision_fails_before_any_mutation() -> anyhow::Result<
 }
 
 #[test]
-fn unmatched_exact_legacy_aliases_merge_before_canonical_rekey() -> anyhow::Result<()> {
+fn unmatched_legacy_aliases_fail_before_canonical_rekey() -> anyhow::Result<()> {
     let conn = setup_identity_db();
     let path = temp_transcript(
         "unmatched-aliases",
@@ -349,7 +479,12 @@ fn unmatched_exact_legacy_aliases_merge_before_canonical_rekey() -> anyhow::Resu
     let root = path.parent().context("fixture parent")?;
     let plan = probe("local", root, &path, None)?;
     let identity_id = upsert_claim(&conn, &plan, 1)?;
-    resolve_fallback_group(&conn, "local", &plan.fallback_session_id)?;
+    resolve_fallback_group(
+        &conn,
+        plan.host.map(InstallHost::as_db_value),
+        "local",
+        &plan.fallback_session_id,
+    )?;
     let identity = load(&conn, identity_id)?;
     let hash = crate::db::content_identity_hash(b"removed legacy turn");
     for (id, session_id, project) in [
@@ -366,56 +501,33 @@ fn unmatched_exact_legacy_aliases_merge_before_canonical_rekey() -> anyhow::Resu
         )?;
     }
 
-    let report = rekey_legacy_rows(&conn, &identity)?;
+    let error = rekey_legacy_rows(&conn, &identity)
+        .expect_err("hostless legacy aliases must remain unresolved");
 
-    assert_eq!(report.merged, 1);
-    assert_eq!(report.rekeyed, 1);
+    assert!(error
+        .downcast_ref::<crate::memory::raw_occurrence::RawIdentityConflict>()
+        .is_some());
     assert_eq!(
         conn.query_row(
             "SELECT COUNT(*) FROM raw_messages
-             WHERE project = ?1 AND session_id = ?2 AND content_hash = ?3",
-            params![plan.project, plan.canonical_session_id, hash],
+             WHERE transcript_identity_id IS NULL AND content_hash = ?1",
+            params![hash],
             |row| row.get::<_, i64>(0)
         )?,
-        1
+        2
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT GROUP_CONCAT(id || ':' || project || ':' || session_id, ',')
+             FROM (SELECT id, project, session_id FROM raw_messages ORDER BY id)",
+            [],
+            |row| row.get::<_, String>(0)
+        )?,
+        format!(
+            "61:{}:{},62:{}:{}",
+            plan.legacy_project, plan.fallback_session_id, plan.project, plan.canonical_session_id
+        )
     );
     std::fs::remove_file(path)?;
-    Ok(())
-}
-
-#[test]
-fn schema_aware_evidence_store_inventory_matches_rewrite_coverage() -> anyhow::Result<()> {
-    let conn = setup_identity_db();
-    let mut statement = conn.prepare(
-        "SELECT m.name, p.name
-         FROM sqlite_master m
-         JOIN pragma_table_info(m.name) p
-         WHERE m.type = 'table' AND p.name LIKE '%raw_message%'
-         ORDER BY m.name, p.cid",
-    )?;
-    let named_raw_references = statement
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-
-    assert_eq!(
-        named_raw_references,
-        vec![(
-            "memory_lesson_feed_events".to_string(),
-            "evidence_raw_message_ids".to_string()
-        )],
-        "a new named raw-message reference store needs rewrite coverage"
-    );
-    let lesson_source_evidence: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM pragma_table_info('memory_lessons')
-         WHERE name = 'source_evidence'",
-        [],
-        |row| row.get(0),
-    )?;
-    assert_eq!(
-        lesson_source_evidence, 1,
-        "generic lesson source evidence stores raw_message:<id>: tokens"
-    );
     Ok(())
 }

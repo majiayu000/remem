@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::raw_archive::RawInsertOutcome;
@@ -48,6 +48,13 @@ pub(crate) fn insert_transcript_occurrence(
     } else {
         EVENT_TIME_FALLBACK
     };
+    reject_matching_unresolved_legacy_row(
+        conn,
+        source_root,
+        role,
+        &content_hash,
+        transcript_identity_id,
+    )?;
     if let Some(id) = existing_occurrence(
         conn,
         source_root,
@@ -60,26 +67,6 @@ pub(crate) fn insert_transcript_occurrence(
         &content_hash,
         created_at_epoch,
         event_time_source,
-    )? {
-        return Ok(Some(RawInsertOutcome {
-            id,
-            inserted: false,
-        }));
-    }
-    if let Some(id) = claim_matching_legacy_row(
-        conn,
-        session_id,
-        project,
-        role,
-        trimmed,
-        &content_hash,
-        branch,
-        cwd,
-        source_root,
-        created_at_epoch,
-        event_time_source,
-        transcript_identity_id,
-        transcript_record_ordinal,
     )? {
         return Ok(Some(RawInsertOutcome {
             id,
@@ -201,25 +188,16 @@ fn existing_occurrence(
     Ok(Some(id))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn claim_matching_legacy_row(
+fn reject_matching_unresolved_legacy_row(
     conn: &Connection,
-    session_id: &str,
-    project: &str,
-    role: &str,
-    content: &str,
-    content_hash: &str,
-    branch: Option<&str>,
-    cwd: Option<&str>,
     source_root: &str,
-    created_at_epoch: Option<i64>,
-    event_time_source: &str,
+    role: &str,
+    content_hash: &str,
     identity_id: i64,
-    ordinal: i64,
-) -> Result<Option<i64>> {
-    let row: Option<(i64, String, i64, String)> = conn
+) -> Result<()> {
+    let row_id: Option<i64> = conn
         .query_row(
-            "SELECT r.id, r.content, r.created_at_epoch, r.event_time_source
+            "SELECT r.id
              FROM raw_messages r
              JOIN raw_session_identities i ON i.id = ?1
              WHERE r.transcript_identity_id IS NULL
@@ -228,46 +206,20 @@ fn claim_matching_legacy_row(
                AND r.session_id IN (i.fallback_session_id, i.canonical_session_id)
                AND r.role = ?3 AND r.content_hash = ?4
                AND r.source = 'transcript'
-             ORDER BY r.id LIMIT 1",
+            ORDER BY r.id LIMIT 1",
             params![identity_id, source_root, role, content_hash],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| row.get(0),
         )
         .optional()?;
-    let Some((id, old_content, old_epoch, old_time_source)) = row else {
-        return Ok(None);
-    };
-    if old_content.trim() != content {
-        bail!("legacy raw row content disagrees with its content hash");
-    }
-    if old_time_source == EVENT_TIME_TRANSCRIPT && created_at_epoch != Some(old_epoch) {
+    if let Some(row_id) = row_id {
         return Err(RawIdentityConflict {
             reason: format!(
-                "ordinal {ordinal} transcript event time cannot be downgraded or changed"
+                "legacy raw row {row_id} has no trusted host provenance and cannot be claimed"
             ),
         }
         .into());
     }
-    let stored_epoch = created_at_epoch.unwrap_or(old_epoch);
-    conn.execute(
-        "UPDATE raw_messages
-         SET session_id = ?2, project = ?3, branch = COALESCE(branch, ?4),
-             cwd = COALESCE(cwd, ?5), created_at_epoch = ?6,
-             event_time_source = ?7, transcript_identity_id = ?8,
-             transcript_record_ordinal = ?9
-         WHERE id = ?1",
-        params![
-            id,
-            session_id,
-            project,
-            branch,
-            cwd,
-            stored_epoch,
-            event_time_source,
-            identity_id,
-            ordinal
-        ],
-    )?;
-    Ok(Some(id))
+    Ok(())
 }
 
 #[cfg(test)]
@@ -275,7 +227,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn legacy_row_is_claimed_in_place_and_repeated_turn_is_preserved() {
+    fn unresolved_legacy_row_fails_before_claim_mutation() {
         let conn = Connection::open_in_memory().expect("open occurrence fixture");
         crate::migrate::run_migrations(&conn).expect("migrate occurrence fixture");
         conn.execute(
@@ -297,11 +249,21 @@ mod tests {
                 created_at_epoch, source_root, event_time_source
              ) VALUES (41, 'fallback', 'legacy-project', 'user', 'repeat',
                        ?1, 'transcript', 7, 'local', 'legacy_unknown')",
-            [hash],
+            [&hash],
         )
         .expect("insert legacy row");
+        conn.execute(
+            "INSERT INTO raw_messages (
+                id, session_id, project, role, content, content_hash, source,
+                created_at_epoch, source_root, event_time_source,
+                transcript_identity_id, transcript_record_ordinal
+             ) VALUES (42, 'old-canonical', 'old-project', 'user', 'repeat',
+                       ?1, 'transcript', 100, 'local', 'transcript_event', 1, 0)",
+            [&hash],
+        )
+        .expect("insert identified replay row");
 
-        let first = insert_transcript_occurrence(
+        let error = insert_transcript_occurrence(
             &conn,
             "canonical",
             "current-project",
@@ -314,50 +276,32 @@ mod tests {
             1,
             0,
         )
-        .expect("claim first occurrence")
-        .expect("non-empty first occurrence");
-        let second = insert_transcript_occurrence(
-            &conn,
-            "canonical",
-            "current-project",
-            "user",
-            "repeat",
-            None,
-            None,
-            "local",
-            Some(101),
-            1,
-            1,
-        )
-        .expect("insert repeated occurrence")
-        .expect("non-empty second occurrence");
+        .expect_err("hostless legacy occurrence must remain unresolved");
 
-        assert_eq!(first.id, 41);
-        assert!(!first.inserted);
-        assert!(second.inserted);
-        let rows: Vec<(i64, i64, i64, String)> = {
-            let mut statement = conn
-                .prepare(
-                    "SELECT id, transcript_identity_id, transcript_record_ordinal,
-                            event_time_source
-                     FROM raw_messages ORDER BY transcript_record_ordinal",
-                )
-                .expect("prepare occurrence rows");
-            statement
-                .query_map([], |row| {
-                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-                })
-                .expect("query occurrence rows")
-                .collect::<rusqlite::Result<Vec<_>>>()
-                .expect("collect occurrence rows")
-        };
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0], (41, 1, 0, EVENT_TIME_TRANSCRIPT.to_string()));
-        assert_eq!(rows[1].2, 1);
+        assert!(error.downcast_ref::<RawIdentityConflict>().is_some());
+        assert_eq!(
+            conn.query_row(
+                "SELECT session_id || ':' || project || ':' || event_time_source
+                 FROM raw_messages WHERE id = 41 AND transcript_identity_id IS NULL",
+                [],
+                |row| row.get::<_, String>(0)
+            )
+            .expect("load unchanged legacy row"),
+            "fallback:legacy-project:legacy_unknown"
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT session_id || ':' || project FROM raw_messages WHERE id = 42",
+                [],
+                |row| row.get::<_, String>(0)
+            )
+            .expect("load unchanged identified row"),
+            "old-canonical:old-project"
+        );
     }
 
     #[test]
-    fn split_fallback_and_canonical_legacy_aliases_converge_to_one_occurrence() -> Result<()> {
+    fn unresolved_legacy_aliases_fail_closed_without_mutation() -> Result<()> {
         let conn = Connection::open_in_memory()?;
         crate::migrate::run_migrations(&conn)?;
         conn.execute(
@@ -386,7 +330,7 @@ mod tests {
             [hash],
         )?;
 
-        let claimed = insert_transcript_occurrence(
+        let error = insert_transcript_occurrence(
             &conn,
             "canonical",
             "current-project",
@@ -398,41 +342,27 @@ mod tests {
             Some(100),
             1,
             0,
-        )?
-        .expect("claim one legacy alias");
-        assert_eq!(claimed.id, 41);
+        )
+        .expect_err("hostless aliases cannot be assigned to the current host");
 
-        let identity = crate::ingest::session_identity::load(&conn, 1)?;
-        let report = crate::ingest::session_identity::rekey_legacy_rows(&conn, &identity)?;
-
-        assert_eq!(report.merged, 1);
+        assert!(error.downcast_ref::<RawIdentityConflict>().is_some());
         assert_eq!(
             conn.query_row(
                 "SELECT COUNT(*) FROM raw_messages
-                 WHERE transcript_identity_id = 1
-                   AND transcript_record_ordinal = 0",
+                 WHERE transcript_identity_id IS NULL",
                 [],
                 |row| row.get::<_, i64>(0)
             )?,
-            1
+            3
         );
         assert_eq!(
             conn.query_row(
-                "SELECT id FROM raw_messages
-                 WHERE transcript_identity_id = 1
-                   AND transcript_record_ordinal = 0",
-                [],
-                |row| row.get::<_, i64>(0)
-            )?,
-            41
-        );
-        assert_eq!(
-            conn.query_row(
-                "SELECT session_id || ':' || source FROM raw_messages WHERE id = 43",
+                "SELECT GROUP_CONCAT(id || ':' || session_id || ':' || project, ',')
+                 FROM (SELECT id, session_id, project FROM raw_messages ORDER BY id)",
                 [],
                 |row| row.get::<_, String>(0)
             )?,
-            "fallback:hook"
+            "41:fallback:legacy-project,42:canonical:current-project,43:fallback:current-project"
         );
         Ok(())
     }
@@ -496,7 +426,7 @@ mod tests {
     }
 
     #[test]
-    fn transcript_timestamp_cannot_be_downgraded_to_ingest_fallback() -> Result<()> {
+    fn unresolved_legacy_timestamp_row_fails_before_mutation() -> Result<()> {
         let conn = Connection::open_in_memory()?;
         crate::migrate::run_migrations(&conn)?;
         conn.execute(

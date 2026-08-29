@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use super::raw_archive::RawMessage;
 
+mod session_snapshot;
+
 const RAW_ARCHIVE_NOTE: &str = "raw archive rows are captured chat turns, not curated memories";
 pub(crate) const RAW_SESSION_MESSAGES_DEFAULT_LIMIT: i64 = 500;
 pub(crate) const RAW_SESSION_MESSAGES_MAX_LIMIT: i64 = 2_000;
@@ -135,6 +137,7 @@ impl From<&RawMessage> for RawArchiveRowJson {
 
 #[derive(Debug, Clone)]
 pub(crate) struct RawSessionMessagesRequest {
+    pub host: String,
     pub source_root: String,
     pub project: String,
     pub session_id: String,
@@ -145,6 +148,7 @@ pub(crate) struct RawSessionMessagesRequest {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct RawSessionMessagesJson {
     pub source_type: String,
+    pub host: String,
     pub source_root: String,
     pub project: String,
     pub session_id: String,
@@ -153,6 +157,7 @@ pub(crate) struct RawSessionMessagesJson {
     pub order: String,
     pub has_more: bool,
     pub next_cursor: Option<String>,
+    pub content_hash: String,
     pub messages: Vec<RawSessionMessageJson>,
 }
 
@@ -184,6 +189,7 @@ impl From<&RawMessage> for RawSessionMessageJson {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RawSessionCursor {
     version: u8,
+    host: String,
     source_root: String,
     project: String,
     session_id: String,
@@ -197,6 +203,8 @@ pub(crate) fn query_raw_session_messages(
     request: &RawSessionMessagesRequest,
 ) -> Result<RawSessionMessagesJson> {
     let limit = request.limit.clamp(1, RAW_SESSION_MESSAGES_MAX_LIMIT);
+    crate::identity::InstallHost::parse(&request.host)?;
+    session_snapshot::ensure_provenance_resolved(conn, request)?;
     let cursor = request
         .cursor
         .as_deref()
@@ -211,9 +219,16 @@ pub(crate) fn query_raw_session_messages(
         Some(cursor) => Some(cursor.snapshot_max_id),
         None => conn
             .query_row(
-                "SELECT MAX(id) FROM raw_messages \
-                 WHERE source_root = ?1 AND project = ?2 AND session_id = ?3",
-                params![request.source_root, request.project, request.session_id],
+                "SELECT MAX(r.id) FROM raw_messages r \
+                 LEFT JOIN raw_session_identities i ON i.id = r.transcript_identity_id \
+                 WHERE r.source_root = ?1 AND r.project = ?2 AND r.session_id = ?3 \
+                   AND i.status = 'active' AND i.host = ?4",
+                params![
+                    request.source_root,
+                    request.project,
+                    request.session_id,
+                    request.host
+                ],
                 |row| row.get::<_, Option<i64>>(0),
             )
             .optional()?
@@ -232,12 +247,14 @@ pub(crate) fn query_raw_session_messages(
     };
     let has_more = rows.len() as i64 > limit;
     rows.truncate(limit as usize);
+    let content_hash = session_snapshot::content_hash(conn, request, snapshot_max_id)?;
     let next_cursor = if has_more {
         let last = rows
             .last()
             .context("raw messages pagination returned no continuation row")?;
         Some(encode_raw_session_cursor(&RawSessionCursor {
             version: 1,
+            host: request.host.clone(),
             source_root: request.source_root.clone(),
             project: request.project.clone(),
             session_id: request.session_id.clone(),
@@ -252,6 +269,7 @@ pub(crate) fn query_raw_session_messages(
 
     Ok(RawSessionMessagesJson {
         source_type: "raw_archive".to_string(),
+        host: request.host.clone(),
         source_root: request.source_root.clone(),
         project: request.project.clone(),
         session_id: request.session_id.clone(),
@@ -260,6 +278,7 @@ pub(crate) fn query_raw_session_messages(
         order: RAW_SESSION_MESSAGES_ORDER.to_string(),
         has_more,
         next_cursor,
+        content_hash,
         messages: rows.iter().map(RawSessionMessageJson::from).collect(),
     })
 }
@@ -274,20 +293,23 @@ fn query_snapshot_page(
     let mut rows = Vec::new();
     if let Some(cursor) = cursor {
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, project, role, content, source, branch, cwd, \
-                    created_at_epoch \
-             FROM raw_messages \
-             WHERE source_root = ?1 AND project = ?2 AND session_id = ?3 \
-               AND id <= ?4 \
-               AND (created_at_epoch > ?5 \
-                    OR (created_at_epoch = ?5 AND id > ?6)) \
-             ORDER BY created_at_epoch ASC, id ASC LIMIT ?7",
+            "SELECT r.id, r.session_id, r.project, r.role, r.content, r.source, r.branch, r.cwd, \
+                    r.created_at_epoch \
+             FROM raw_messages r \
+             LEFT JOIN raw_session_identities i ON i.id = r.transcript_identity_id \
+             WHERE r.source_root = ?1 AND r.project = ?2 AND r.session_id = ?3 \
+               AND i.status = 'active' AND i.host = ?4 \
+               AND r.id <= ?5 \
+               AND (r.created_at_epoch > ?6 \
+                    OR (r.created_at_epoch = ?6 AND r.id > ?7)) \
+             ORDER BY r.created_at_epoch ASC, r.id ASC LIMIT ?8",
         )?;
         let mapped = stmt.query_map(
             params![
                 request.source_root,
                 request.project,
                 request.session_id,
+                request.host,
                 snapshot_max_id,
                 cursor.last_created_at_epoch,
                 cursor.last_id,
@@ -300,18 +322,21 @@ fn query_snapshot_page(
         }
     } else {
         let mut stmt = conn.prepare(
-            "SELECT id, session_id, project, role, content, source, branch, cwd, \
-                    created_at_epoch \
-             FROM raw_messages \
-             WHERE source_root = ?1 AND project = ?2 AND session_id = ?3 \
-               AND id <= ?4 \
-             ORDER BY created_at_epoch ASC, id ASC LIMIT ?5",
+            "SELECT r.id, r.session_id, r.project, r.role, r.content, r.source, r.branch, r.cwd, \
+                    r.created_at_epoch \
+             FROM raw_messages r \
+             LEFT JOIN raw_session_identities i ON i.id = r.transcript_identity_id \
+             WHERE r.source_root = ?1 AND r.project = ?2 AND r.session_id = ?3 \
+               AND i.status = 'active' AND i.host = ?4 \
+               AND r.id <= ?5 \
+             ORDER BY r.created_at_epoch ASC, r.id ASC LIMIT ?6",
         )?;
         let mapped = stmt.query_map(
             params![
                 request.source_root,
                 request.project,
                 request.session_id,
+                request.host,
                 snapshot_max_id,
                 fetch_limit
             ],
@@ -347,6 +372,7 @@ fn validate_cursor(
         anyhow::bail!("invalid raw messages cursor version");
     }
     if cursor.source_root != request.source_root
+        || cursor.host != request.host
         || cursor.project != request.project
         || cursor.session_id != request.session_id
     {
@@ -360,12 +386,15 @@ fn validate_cursor(
     }
     let snapshot_exists = conn
         .query_row(
-            "SELECT 1 FROM raw_messages \
-             WHERE source_root = ?1 AND project = ?2 AND session_id = ?3 AND id = ?4",
+            "SELECT 1 FROM raw_messages r \
+             LEFT JOIN raw_session_identities i ON i.id = r.transcript_identity_id \
+             WHERE r.source_root = ?1 AND r.project = ?2 AND r.session_id = ?3 \
+               AND i.status = 'active' AND i.host = ?4 AND r.id = ?5",
             params![
                 request.source_root,
                 request.project,
                 request.session_id,
+                request.host,
                 cursor.snapshot_max_id
             ],
             |_| Ok(()),
@@ -377,12 +406,15 @@ fn validate_cursor(
     }
     let anchor_epoch = conn
         .query_row(
-            "SELECT created_at_epoch FROM raw_messages \
-             WHERE source_root = ?1 AND project = ?2 AND session_id = ?3 AND id = ?4",
+            "SELECT r.created_at_epoch FROM raw_messages r \
+             LEFT JOIN raw_session_identities i ON i.id = r.transcript_identity_id \
+             WHERE r.source_root = ?1 AND r.project = ?2 AND r.session_id = ?3 \
+               AND i.status = 'active' AND i.host = ?4 AND r.id = ?5",
             params![
                 request.source_root,
                 request.project,
                 request.session_id,
+                request.host,
                 cursor.last_id
             ],
             |row| row.get::<_, i64>(0),
@@ -434,13 +466,15 @@ fn decode_hex_nibble(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod session_message_tests {
     use anyhow::{Context, Result};
+    use rusqlite::params;
 
     use super::{
         encode_raw_session_cursor, query_raw_session_messages, RawSessionCursor,
         RawSessionMessagesRequest, RAW_SESSION_MESSAGES_MAX_LIMIT, RAW_SESSION_MESSAGES_ORDER,
     };
     use crate::memory::raw_archive::{
-        insert_raw_message_from_root_at, ROLE_ASSISTANT, ROLE_USER, SOURCE_TRANSCRIPT,
+        insert_raw_message_from_root_at, list_sessions, RawSessionQuery, ROLE_ASSISTANT, ROLE_USER,
+        SOURCE_TRANSCRIPT,
     };
 
     fn request(
@@ -451,6 +485,7 @@ mod session_message_tests {
         cursor: Option<String>,
     ) -> RawSessionMessagesRequest {
         RawSessionMessagesRequest {
+            host: "codex-cli".to_string(),
             source_root: source_root.to_string(),
             project: project.to_string(),
             session_id: session_id.to_string(),
@@ -467,7 +502,7 @@ mod session_message_tests {
         content: &str,
         epoch: i64,
     ) -> Result<i64> {
-        Ok(insert_raw_message_from_root_at(
+        let id = insert_raw_message_from_root_at(
             conn,
             session_id,
             project,
@@ -480,7 +515,41 @@ mod session_message_tests {
             Some(epoch),
         )?
         .context("test raw row must be inserted")?
-        .id)
+        .id;
+        if source_root == "root-a" && project == "/repo" && session_id == "s1" {
+            identify(
+                conn,
+                id,
+                "codex-cli",
+                &format!("/tmp/.codex/sessions/s1-{id}.jsonl"),
+            )?;
+        }
+        Ok(id)
+    }
+
+    fn identify(
+        conn: &rusqlite::Connection,
+        row_id: i64,
+        host: &str,
+        transcript_path: &str,
+    ) -> Result<()> {
+        conn.execute(
+            "INSERT INTO raw_session_identities
+             (source_root, transcript_path, host, fallback_session_id,
+              canonical_session_id, project, legacy_project, status,
+              contract_version, observed_mtime_ns, observed_size_bytes,
+              first_seen_at_epoch, last_seen_at_epoch)
+             VALUES ('root-a', ?1, ?2, 's1', 's1', '/repo', '/repo',
+                     'active', 1, 1, 1, 1, 1)",
+            params![transcript_path, host],
+        )?;
+        conn.execute(
+            "UPDATE raw_messages
+             SET transcript_identity_id = ?1, transcript_record_ordinal = 1
+             WHERE id = ?2",
+            params![conn.last_insert_rowid(), row_id],
+        )?;
+        Ok(())
     }
 
     #[test]
@@ -489,7 +558,16 @@ mod session_message_tests {
         crate::migrate::run_migrations(&conn)?;
         let long = "x".repeat(260);
         let first_id = insert(&conn, "root-a", "/repo", "s1", &long, 10)?;
-        let second_id = insert(&conn, "root-a", "/repo", "s1", "second", 10)?;
+        let second_id = insert(&conn, "root-a", "/repo", "s1", "second", 20)?;
+        let summaries = list_sessions(&conn, &RawSessionQuery::default())?;
+        let windowed = list_sessions(
+            &conn,
+            &RawSessionQuery {
+                since_epoch: Some(15),
+                sample_user_messages: 1,
+                ..RawSessionQuery::default()
+            },
+        )?;
         insert(&conn, "root-b", "/repo", "s1", "other root", 5)?;
         insert(&conn, "root-a", "/other", "s1", "other project", 5)?;
         insert(&conn, "root-a", "/repo", "s2", "other session", 5)?;
@@ -500,8 +578,51 @@ mod session_message_tests {
         assert_eq!(page.messages[1].id, second_id);
         assert_eq!(page.messages[0].content, long);
         assert_eq!(page.order, RAW_SESSION_MESSAGES_ORDER);
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(page.content_hash, summaries[0].content_hash);
+        assert_eq!(windowed[0].message_count, 2);
+        assert_eq!((windowed[0].first_epoch, windowed[0].last_epoch), (10, 20));
+        assert_eq!(windowed[0].user_message_samples[0].chars().count(), 200);
+        assert_eq!(page.content_hash, windowed[0].content_hash);
         assert!(!page.has_more);
         assert!(page.next_cursor.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn conflict_is_host_scoped_but_hostless_rows_fail_globally() -> Result<()> {
+        let conn = rusqlite::Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        let codex = insert(&conn, "root-a", "/repo", "s1", "codex body", 10)?;
+        let claude = insert(&conn, "root-a", "/repo", "s1", "claude body", 11)?;
+        identify(&conn, codex, "codex-cli", "/tmp/.codex/sessions/s1.jsonl")?;
+        identify(
+            &conn,
+            claude,
+            "claude-code",
+            "/tmp/.claude/projects/repo/s1.jsonl",
+        )?;
+        conn.execute(
+            "UPDATE raw_session_identities SET status = 'conflict' WHERE host = 'claude-code'",
+            [],
+        )?;
+
+        let codex_request = request("root-a", "/repo", "s1", 500, None);
+        let codex_page = query_raw_session_messages(&conn, &codex_request)?;
+        assert_eq!(codex_page.messages.len(), 1);
+        assert_eq!(codex_page.messages[0].content, "codex body");
+        assert_eq!(codex_page.host, "codex-cli");
+
+        let mut claude_request = request("root-a", "/repo", "s1", 500, None);
+        claude_request.host = "claude-code".to_string();
+        let error = query_raw_session_messages(&conn, &claude_request).expect_err("host conflict");
+        assert!(error.to_string().contains("provenance"));
+        conn.execute(
+            "UPDATE raw_messages SET transcript_identity_id = NULL, transcript_record_ordinal = NULL WHERE id = ?1",
+            [claude],
+        )?;
+        let error = query_raw_session_messages(&conn, &codex_request).expect_err("hostless row");
+        assert!(error.to_string().contains("provenance"));
         Ok(())
     }
 
@@ -522,6 +643,7 @@ mod session_message_tests {
 
         let first = query_raw_session_messages(&conn, &request("root-a", "/repo", "s1", 2, None))?;
         assert!(first.has_more);
+        let snapshot_hash = first.content_hash.clone();
         let cursor = first.next_cursor.context("first page must continue")?;
         insert(&conn, "root-a", "/repo", "s1", "backdated late insert", 0)?;
 
@@ -549,6 +671,8 @@ mod session_message_tests {
             ]
         );
         assert!(!contents.contains(&"backdated late insert"));
+        assert_eq!(second.content_hash, snapshot_hash);
+        assert_eq!(third.content_hash, snapshot_hash);
         assert!(!third.has_more);
         Ok(())
     }
@@ -561,6 +685,21 @@ mod session_message_tests {
             query_raw_session_messages(&conn, &request("root-a", "/repo", "missing", 9_999, None))?;
         assert_eq!(empty.limit, RAW_SESSION_MESSAGES_MAX_LIMIT);
         assert!(empty.messages.is_empty());
+
+        insert(
+            &conn,
+            "root-a",
+            "/repo",
+            "unresolved",
+            "not actually empty",
+            1,
+        )?;
+        let unresolved =
+            query_raw_session_messages(&conn, &request("root-a", "/repo", "unresolved", 500, None))
+                .expect_err("unresolved provenance must not masquerade as an empty tuple");
+        assert!(unresolved
+            .to_string()
+            .contains("provenance is missing or conflicted"));
 
         let invalid = query_raw_session_messages(
             &conn,
@@ -579,6 +718,7 @@ mod session_message_tests {
 
         let impossible_boundary = encode_raw_session_cursor(&RawSessionCursor {
             version: 1,
+            host: "codex-cli".to_string(),
             source_root: "root-a".to_string(),
             project: "/repo".to_string(),
             session_id: "s1".to_string(),
@@ -594,6 +734,7 @@ mod session_message_tests {
 
         let wrong_anchor = encode_raw_session_cursor(&RawSessionCursor {
             version: 1,
+            host: "codex-cli".to_string(),
             source_root: "root-a".to_string(),
             project: "/repo".to_string(),
             session_id: "s1".to_string(),
@@ -613,7 +754,7 @@ mod session_message_tests {
     fn json_rows_keep_nullable_metadata_and_machine_fields() -> Result<()> {
         let conn = rusqlite::Connection::open_in_memory()?;
         crate::migrate::run_migrations(&conn)?;
-        insert_raw_message_from_root_at(
+        let row_id = insert_raw_message_from_root_at(
             &conn,
             "s1",
             "/repo",
@@ -624,6 +765,14 @@ mod session_message_tests {
             None,
             "root-a",
             Some(7),
+        )?
+        .context("assistant fixture must be inserted")?
+        .id;
+        identify(
+            &conn,
+            row_id,
+            "codex-cli",
+            "/tmp/.codex/sessions/s1-assistant.jsonl",
         )?;
         let page = query_raw_session_messages(&conn, &request("root-a", "/repo", "s1", 500, None))?;
         let json = serde_json::to_value(page)?;
@@ -631,6 +780,9 @@ mod session_message_tests {
         assert_eq!(json["source_root"], "root-a");
         assert_eq!(json["project"], "/repo");
         assert_eq!(json["session_id"], "s1");
+        assert!(json["content_hash"]
+            .as_str()
+            .is_some_and(|hash| hash.starts_with("sha256:")));
         assert_eq!(json["count"], 1);
         assert_eq!(json["order"], RAW_SESSION_MESSAGES_ORDER);
         assert_eq!(json["messages"][0]["role"], ROLE_ASSISTANT);

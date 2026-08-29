@@ -17,6 +17,7 @@ impl std::fmt::Display for StopTranscriptProbeFailed {
 impl std::error::Error for StopTranscriptProbeFailed {}
 
 pub(super) struct StopTranscript<'a> {
+    pub host: crate::identity::InstallHost,
     pub path: &'a str,
     pub byte_limit: Option<u64>,
     pub project: &'a str,
@@ -30,33 +31,30 @@ pub(super) fn drain_with_identity(
 ) -> Result<RawIngestReport> {
     let transcript = Path::new(input.path);
     let scan_root = transcript.parent().unwrap_or_else(|| Path::new("."));
-    let plan = match input.byte_limit {
-        Some(byte_limit) => crate::ingest::session_identity::probe_bounded(
-            SOURCE_ROOT_LOCAL,
-            scan_root,
-            transcript,
-            Some(input.project),
-            byte_limit,
-        ),
-        None => crate::ingest::session_identity::probe(
-            SOURCE_ROOT_LOCAL,
-            scan_root,
-            transcript,
-            Some(input.project),
-        ),
-    }
+    let plan = crate::ingest::session_identity::probe_with_host(
+        input.host,
+        SOURCE_ROOT_LOCAL,
+        scan_root,
+        transcript,
+        Some(input.project),
+        input.byte_limit,
+    )
     .map_err(|error| error.context(StopTranscriptProbeFailed))?;
     let now = chrono::Utc::now().timestamp();
     let identity_id = crate::ingest::session_identity::upsert_claim(conn, &plan, now)
         .context("Stop transcript identity claim")?;
     crate::ingest::session_identity::resolve_fallback_group(
         conn,
+        Some(input.host.as_db_value()),
         &plan.source_root,
         &plan.fallback_session_id,
     )
     .context("Stop transcript identity resolution")?;
     let identity = crate::ingest::session_identity::load(conn, identity_id)
         .context("load Stop transcript identity")?;
+    if identity.host.as_deref() != Some(input.host.as_db_value()) {
+        bail!("Stop transcript host provenance drift; raw rows remain unchanged");
+    }
     if identity.status != "active" {
         bail!("Stop transcript identity conflict; raw rows remain unchanged");
     }
@@ -125,6 +123,7 @@ mod tests {
         let report = drain_with_identity(
             &conn,
             StopTranscript {
+                host: crate::identity::InstallHost::CodexCli,
                 path: &path_text,
                 byte_limit: None,
                 project: "hook-project",
@@ -177,6 +176,7 @@ mod tests {
         let report = drain_with_identity(
             &conn,
             StopTranscript {
+                host: crate::identity::InstallHost::CodexCli,
                 path: &path_text,
                 byte_limit: Some(byte_limit),
                 project: "/tmp/fallback",
@@ -194,6 +194,63 @@ mod tests {
             fallback_id
         );
         std::fs::remove_file(path.as_path()).expect("remove transcript");
+    }
+
+    #[test]
+    fn stop_host_survives_batch_reingestion() -> anyhow::Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        let cleanup_root = std::env::temp_dir().join(format!(
+            "remem-stop-batch-host-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let sessions_root = cleanup_root.join(".codex").join("sessions");
+        std::fs::create_dir_all(&sessions_root)?;
+        let path = sessions_root.join("shared.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"type\":\"user\",\"sessionId\":\"metadata-session\",",
+                "\"cwd\":\"/tmp/project\",\"timestamp\":100,",
+                "\"message\":{\"content\":\"hello\"}}\n"
+            ),
+        )?;
+        let path_text = path.to_string_lossy();
+
+        drain_with_identity(
+            &conn,
+            StopTranscript {
+                host: crate::identity::InstallHost::CodexCli,
+                path: &path_text,
+                byte_limit: None,
+                project: "/tmp/project",
+                branch: None,
+                cwd: "/tmp/project",
+            },
+        )?;
+        let summary = crate::ingest::sessions::run_ingest_sessions(
+            &conn,
+            &[crate::ingest::sessions::ScanRoot {
+                host: crate::identity::InstallHost::CodexCli,
+                label: SOURCE_ROOT_LOCAL.to_string(),
+                path: sessions_root,
+                required: true,
+            }],
+            &crate::ingest::sessions::IngestOptions::default(),
+        )?;
+
+        assert_eq!(summary.failed_files, 0);
+        assert_eq!(
+            conn.query_row(
+                "SELECT host FROM raw_session_identities WHERE transcript_path = ?1",
+                [path_text.as_ref()],
+                |row| row.get::<_, String>(0),
+            )?,
+            "codex-cli"
+        );
+        std::fs::remove_dir_all(cleanup_root)?;
+        Ok(())
     }
 
     #[test]
@@ -227,6 +284,7 @@ mod tests {
                 .expect("persist transcript claim");
             crate::ingest::session_identity::resolve_fallback_group(
                 &conn,
+                plan.host.map(crate::identity::InstallHost::as_db_value),
                 &plan.source_root,
                 &plan.fallback_session_id,
             )
@@ -239,6 +297,7 @@ mod tests {
         let error = drain_with_identity(
             &conn,
             StopTranscript {
+                host: crate::identity::InstallHost::CodexCli,
                 path: &path_text,
                 byte_limit: None,
                 project: "/tmp/remem",

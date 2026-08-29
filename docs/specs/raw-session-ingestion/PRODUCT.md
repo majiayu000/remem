@@ -17,6 +17,12 @@ transcript data.
   promoted to metadata.
 - Batch discovery persists the complete identity claim set before raw mutation.
   Ambiguous claims remain sticky conflicts and fail visibly.
+- Every additional batch/reconcile root uses `HOST:LABEL=PATH`, where `HOST` is
+  exactly `claude-code`, `codex-cli`, or `cursor`. Default roots carry the same
+  explicit host provenance; batch ingestion never guesses host from a path.
+- Historical transcript rows without a transcript identity have no trusted
+  host provenance. A matching row remains unresolved and causes an explicit
+  identity conflict before claim, rekey, or evidence-reference mutation.
 - Repeated identical turns at different JSONL ordinals remain distinct.
   Transcript timestamps, ingest fallbacks, and legacy-unknown event time remain
   distinguishable.
@@ -32,6 +38,10 @@ transcript data.
 - `raw search`, `raw sessions`, and `raw reconcile` validate the current schema
   on a read-only connection. They never migrate or repair the store.
 - Session JSON preserves existing fields and adds user/assistant role counts.
+- Migration v091 records the exact coding-agent host on transcript identity.
+  Raw-session JSON exposes `host`, a versioned `session_ref`, and an ordered
+  occurrence `content_hash`; `--latest N` bounds the serialized session list.
+  Missing or ambiguous host provenance is an explicit read error.
 - Session JSON also preserves every existing field and adds one nullable
   `capture_health` field at the session level. `raw sessions --json` builds its
   candidate set as the union of raw-message-backed sessions and authoritative
@@ -42,7 +52,7 @@ transcript data.
   not a persisted raw source root and must not collide with or fabricate raw
   messages. In `raw messages --json`, selecting that exact locator returns an
   empty message page plus the same non-null `capture_health` envelope.
-  `cursor-outcome` is reserved: user `--root cursor-outcome=...` input and a
+  `cursor-outcome` is reserved: user `--root HOST:cursor-outcome=...` input and a
   required ingest root constructed around the parser are rejected before
   persistence, while default internal roots remain unchanged. A persisted raw
   or identity row using that label is an explicit read collision, not a row to

@@ -1284,12 +1284,13 @@ into the raw archive without promoting them to curated memories:
 
 ```bash
 remem ingest-sessions --json
-remem ingest-sessions --since 2026-06-01 --root starlight=~/remote-sessions/starlight --json
+remem ingest-sessions --since 2026-06-01 --root codex-cli:starlight=~/remote-sessions/starlight --json
 ```
 
 Default scan roots are `~/.claude/projects` and `~/.codex/sessions`.
-Additional `--root label=path` entries are required roots: a missing explicit
-root is reported as a failed file so backfills do not silently do nothing. Each
+Additional `--root HOST:LABEL=PATH` entries are required roots; `HOST` is
+exactly `claude-code`, `codex-cli`, or `cursor`. A missing explicit root is
+reported as a failed file so backfills do not silently do nothing. Each
 transcript has a path-stable local identity ledger. Metadata IDs take
 precedence over filename fallbacks, Stop and batch ingest use the same
 identity, repeated identical turns retain separate occurrence ordinals, and
@@ -1304,20 +1305,26 @@ chat turns rather than curated memories:
 
 ```bash
 remem raw search "deployment decision" --since 2026-06-01 --until 2026-06-30 --json
-remem raw sessions --since 2026-06-01 --until 2026-06-30 --sample 3 --json
-remem raw messages --source-root local --project "/path/to/project" --session-id "<session-id>" --limit 500 --json
+remem raw sessions --since 2026-06-01 --until 2026-06-30 --sample 3 --latest 200 --json
+remem raw messages --source-root local --host codex-cli --project "/path/to/project" --session-id "<session-id>" --limit 500 --json
 remem raw reconcile --since 2026-06-01 --until 2026-06-30 --json
 ```
 
-`remem raw sessions` groups rows by source root, project, and session ID, and
-reports total, user, and assistant message counts; it can include the first N
-user-message samples per session. `remem raw messages` reads one exact
-`(source_root, project, session_id)` tuple without truncating stored content.
+`remem raw sessions` groups rows by source root, coding-agent host, project, and
+session ID. It reports a stable `session_ref`, an ordered-occurrence
+`content_hash`, and total, user, and assistant message counts; it can include
+the first N user-message samples per session. `--latest N` returns the newest N
+sessions. `remem raw messages` reads one exact
+`(source_root, host, project, session_id)` tuple without truncating stored
+content. The host selector is required so every export is bound to one runtime
+and cannot mix cross-runtime session-ID collisions.
 It orders rows by `(created_at_epoch ASC, id ASC)`, defaults to 500 rows per
 page, and returns an opaque `next_cursor` when `has_more` is true. The first
 page freezes a maximum row ID; subsequent pages bind the cursor to the same
 selectors and snapshot, so concurrent appends do not create duplicates,
-omissions, or cross-session mixing. Invalid, stale, or selector-mismatched
+omissions, or cross-session mixing. Every page reports the `content_hash` of
+that frozen snapshot so consumers can compare it with the summary they selected.
+Invalid, stale, or selector-mismatched
 cursors fail explicitly; a missing tuple returns a successful empty envelope.
 `raw search`, `raw sessions`, `raw messages`, and `raw reconcile` open the
 current schema read-only, so a writer lock does not trigger migration
@@ -1351,8 +1358,8 @@ is set:
 | `remem search ... --json` | `query`, `project`, `memory_type`, `limit`, `offset`, `branch`, `include_stale`, `include_suppressed`, `multi_hop_requested`, `explain_requested`, `count`, `has_more`, `next_offset`, `results`, `raw_hits`, `multi_hop`, `explain_details` |
 | `remem ingest-sessions --json` | `scanned`, `skipped`, `ingested_messages`, `failed_files`, `partial_files` |
 | `remem raw search ... --json` | `query`, `project`, `branch`, `role`, `limit`, `offset`, `since_epoch`, `until_epoch`, `count`, `has_more`, `next_offset`, `source_type`, `note`, `results` |
-| `remem raw sessions ... --json` | `since_epoch`, `until_epoch`, `project`, `sample`, `count`, `sessions`; each session includes `message_count`, `user_message_count`, and `assistant_message_count` |
-| `remem raw messages ... --json` | `source_type`, `source_root`, `project`, `session_id`, `order`, `limit`, `count`, `has_more`, `next_cursor`, `messages`; each message includes full `content` plus `id`, `role`, `source`, `branch`, `cwd`, and `created_at_epoch` |
+| `remem raw sessions ... --json` | `since_epoch`, `until_epoch`, `project`, `sample`, `latest`, `count`, `sessions`; each session includes `session_ref`, `host`, `source_root`, `project`, `session_id`, `content_hash`, timestamps, role counts, and samples |
+| `remem raw messages ... --json` | `source_type`, required `host`, `source_root`, `project`, `session_id`, snapshot `content_hash`, `order`, `limit`, `count`, `has_more`, `next_cursor`, `messages`; each message includes full `content` plus `id`, `role`, `source`, `branch`, `cwd`, and `created_at_epoch` |
 | `remem raw reconcile ... --json` | `policy_version`, `since_epoch`, `until_epoch`, `transcript`, `archive`, `comparison`, `intentional_exclusions`, `parity` |
 | `remem show <id> --json` | `found`, `id`, `memory` |
 | `remem procedures list --json` | `project`, `limit`, `offset`, `count`, `procedures` |

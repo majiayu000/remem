@@ -14,9 +14,20 @@ status, and contract version.
 
 `raw_messages` stores `event_time_source`, `transcript_identity_id`, and the
 complete JSONL record ordinal. A partial unique index makes occurrence replay
-idempotent while allowing identical content at different ordinals. Legacy
-matching rows are claimed in place; later repeated occurrences insert
-separately. File drains roll back on read, parse, or insert failure.
+idempotent while allowing identical content at different ordinals. Historical
+rows whose `transcript_identity_id` is null have no trusted host provenance;
+matching one raises `RawIdentityConflict` before claim, rekey, evidence rewrite,
+or projection invalidation. File drains roll back on read, parse, or insert
+failure.
+
+Migration v091 adds a checked nullable `host` column to transcript identities.
+Current ingestion writes `claude-code`, `codex-cli`, or `cursor` at the trusted
+probe boundary. Additional roots require the breaking `HOST:LABEL=PATH` syntax,
+default roots carry their host explicitly, and batch probing never infers the
+host from path components. The migration backfills only unambiguous legacy path shapes;
+unknown and multi-runtime shapes remain null and make host-bound session reads
+fail closed. Raw-session grouping uses `(source_root, host, project,
+session_id)`, while raw-message pagination binds the cursor to the same host.
 
 GH-825 extends this existing schema for approved Cursor full snapshots without
 a migration. Its versioned IR assigns zero-based ordinals to every physical
@@ -91,16 +102,18 @@ Stop.
 
 ## Identity Flow
 
-1. Discover JSONL files with the shared scan-root/subagents rules.
-2. Probe metadata ID, filename fallback, project aliases, and captured tuple.
+1. Parse an exact host for every root, then discover JSONL files with the shared
+   scan-root/subagents rules.
+2. Probe metadata ID, filename fallback, project aliases, and captured tuple
+   using that trusted root host.
 3. Persist all path/claim rows and resolve complete fallback groups; any prior
    group conflict is inherited by later path identities.
 4. For active identities, use one fallback-group savepoint to stream immutable
-   boundaries, merge exact unmatched legacy aliases before canonical rekey,
-   upgrade legacy provenance/occurrence rows, rewrite and deduplicate evidence
-   references, and advance ledgers/cursors only after the entire group
-   succeeds. A `--since`-excluded active identity may receive a bounded event
-   index, but a Phase-A conflict is a failed file rather than a skipped file.
+   boundaries and advance ledgers/cursors only after the entire group succeeds.
+   An identity-null historical transcript row is unresolved provenance and
+   fails before any legacy claim/rekey or dependent evidence mutation. A
+   `--since`-excluded active identity may receive a bounded event index, but a
+   Phase-A conflict is a failed file rather than a skipped file.
 5. Stop performs the shared identity/project probe inside its captured byte
    boundary and persists the claim, but leaves complete-set legacy convergence
    to the next batch pass.
