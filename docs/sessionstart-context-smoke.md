@@ -2,23 +2,23 @@
 
 Status: Current verification guide
 
-Build the current checkout, then pass its existing executable to the fixture.
-The fixture initializes an encrypted store under an isolated temporary `HOME`
-and `REMEM_DATA_DIR`, and invokes the same Codex SessionStart request twice.
-Run it from the repository root (use the corresponding absolute path when
-`CARGO_TARGET_DIR` is set):
+Run the wrapper from the repository root. It builds the current checkout, reads
+the exact executable path from Cargo's `compiler-artifact` output, and passes
+that artifact to the fixture. This also works with a configured build target or
+`CARGO_TARGET_DIR`.
 
 <!-- remem-doc-contract:isolated-sessionstart-smoke:start -->
 ```bash
-cargo build --locked --bin remem
-scripts/ci/smoke_sessionstart_context_gate.sh "$(pwd -P)/target/debug/remem"
+python3 scripts/ci/run_sessionstart_context_gate_smoke.py
 ```
 <!-- remem-doc-contract:isolated-sessionstart-smoke:end -->
 
-The fixture requires exactly one existing, executable, absolute binary path.
-It owns setup, assertions, and cleanup. Its implementation is the single
-source of truth; CI and local preflight build first and then execute the same
-entry point.
+The wrapper is the CI and local-preflight entry point. The underlying
+[`scripts/ci/smoke_sessionstart_context_gate.sh`](../scripts/ci/smoke_sessionstart_context_gate.sh)
+fixture requires exactly one existing, executable, absolute binary path. It
+initializes an encrypted store under an isolated temporary `HOME` and
+`REMEM_DATA_DIR`, invokes the same Codex SessionStart request twice, and owns
+the assertions and cleanup.
 
 Expected checks:
 

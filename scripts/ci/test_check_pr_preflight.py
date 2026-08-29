@@ -1,58 +1,24 @@
 import contextlib
 import io
-import os
 import sys
-import tempfile
 import unittest
-from pathlib import Path
 from unittest import mock
 
 import check_pr_preflight
 
 
-EXPECTED_SESSIONSTART_BUILD_COMMAND = ["cargo", "build", "--locked", "--bin", "remem"]
-
-
-def expected_sessionstart_smoke_command() -> list[str]:
-    root = Path(__file__).resolve().parents[2]
-    configured_target = Path(os.environ.get("CARGO_TARGET_DIR", "target"))
-    target = configured_target if configured_target.is_absolute() else root / configured_target
-    binary = str((target / "debug/remem").resolve())
-    return [
-        "env",
-        "HOME=/nonexistent/remem-smoke-parent-home",
-        "XDG_CONFIG_HOME=/nonexistent/remem-smoke-parent-xdg-config",
-        "XDG_DATA_HOME=/nonexistent/remem-smoke-parent-xdg-data",
-        "REMEM_CONTEXT_HOST=claude-code",
-        "REMEM_CONTEXT_GATE=off",
-        "REMEM_CONTEXT_GATE_HOSTS=claude-code",
-        "REMEM_CONTEXT_DEBUG=1",
-        "REMEM_CONTEXT_GATE_RETENTION_DAYS=0",
-        "REMEM_CONTEXT_BUNDLE_RENDER_MODE=invalid",
-        "REMEM_CONTEXT_TOTAL_CHAR_LIMIT=invalid",
-        "REMEM_UNDECLARED_PARENT_SENTINEL=hostile",
-        "scripts/ci/smoke_sessionstart_context_gate.sh",
-        binary,
-    ]
+EXPECTED_SESSIONSTART_SMOKE_COMMAND = [
+    "python3",
+    "scripts/ci/run_sessionstart_context_gate_smoke.py",
+]
 
 
 def assert_sessionstart_smoke_registration(commands: list[list[str]]) -> None:
-    build_indexes = [
-        index
-        for index, command in enumerate(commands)
-        if command == EXPECTED_SESSIONSTART_BUILD_COMMAND
+    matches = [
+        command for command in commands if command == EXPECTED_SESSIONSTART_SMOKE_COMMAND
     ]
-    smoke_indexes = [
-        index
-        for index, command in enumerate(commands)
-        if command == expected_sessionstart_smoke_command()
-    ]
-    if len(build_indexes) != 1 or len(smoke_indexes) != 1:
-        raise AssertionError(
-            "preflight must execute independent build and hostile-environment smoke argv once"
-        )
-    if build_indexes[0] >= smoke_indexes[0]:
-        raise AssertionError("preflight must build remem before SessionStart smoke")
+    if len(matches) != 1:
+        raise AssertionError("preflight must execute the artifact-resolving smoke once")
 
 
 class PreflightCargoTestThreadsTests(unittest.TestCase):
@@ -151,37 +117,22 @@ class PreflightCargoTestThreadsTests(unittest.TestCase):
     def test_noop_sessionstart_command_fails_independent_registration(self) -> None:
         with mock.patch.object(
             check_pr_preflight,
-            "sessionstart_smoke_command",
-            return_value=["true"],
-            create=True,
-        ):
-            commands = self.run_main("--fast")
-
-        with self.assertRaisesRegex(AssertionError, "independent build"):
-            assert_sessionstart_smoke_registration(commands)
-
-    def test_noop_sessionstart_build_fails_independent_registration(self) -> None:
-        with mock.patch.object(
-            check_pr_preflight,
-            "SESSIONSTART_SMOKE_BUILD_COMMAND",
+            "SESSIONSTART_SMOKE_COMMAND",
             ["true"],
             create=True,
         ):
             commands = self.run_main("--fast")
 
-        with self.assertRaisesRegex(AssertionError, "independent build"):
+        with self.assertRaisesRegex(AssertionError, "artifact-resolving smoke"):
             assert_sessionstart_smoke_registration(commands)
 
-    def test_relative_cargo_target_dir_resolves_from_repository_root(self) -> None:
-        with mock.patch.dict(os.environ, {"CARGO_TARGET_DIR": "build/smoke-target"}):
-            commands = self.run_main("--fast")
-            assert_sessionstart_smoke_registration(commands)
+    def test_preflight_does_not_construct_a_fixed_cargo_artifact_path(self) -> None:
+        commands = self.run_main("--fast")
 
-    def test_absolute_cargo_target_dir_is_preserved(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="remem-target-") as target:
-            with mock.patch.dict(os.environ, {"CARGO_TARGET_DIR": target}):
-                commands = self.run_main("--fast")
-                assert_sessionstart_smoke_registration(commands)
+        assert_sessionstart_smoke_registration(commands)
+        self.assertFalse(
+            any("target/debug/remem" in argument for command in commands for argument in command)
+        )
 
 
 if __name__ == "__main__":

@@ -234,14 +234,13 @@ def check_sessionstart_smoke(root: Path, violations: list[str]) -> None:
     region = contract_region(guide, "isolated-sessionstart-smoke")
     expected_region = (
         "\n```bash\n"
-        "cargo build --locked --bin remem\n"
-        f'{SESSIONSTART_SMOKE_SCRIPT.as_posix()} "$(pwd -P)/target/debug/remem"\n'
+        "python3 scripts/ci/run_sessionstart_context_gate_smoke.py\n"
         "```\n"
     )
     if region != expected_region:
         violations.append(
-            f"{SESSIONSTART_SMOKE_GUIDE}: SessionStart smoke contract must only invoke "
-            f"{SESSIONSTART_SMOKE_SCRIPT}"
+            f"{SESSIONSTART_SMOKE_GUIDE}: SessionStart smoke contract must invoke the "
+            "artifact-resolving runner"
         )
 
     direct_context = re.compile(

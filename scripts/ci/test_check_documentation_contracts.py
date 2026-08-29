@@ -9,10 +9,8 @@ from pathlib import Path
 import check_documentation_contracts
 
 
-EXPECTED_WORKFLOW_BUILD_COMMAND = "cargo build --locked --bin remem"
 EXPECTED_WORKFLOW_SMOKE_COMMAND = (
-    'scripts/ci/smoke_sessionstart_context_gate.sh '
-    '"${{ github.workspace }}/target/debug/remem"'
+    "python3 scripts/ci/run_sessionstart_context_gate_smoke.py"
 )
 SAFE_SHELLS = {"", "bash"}
 SAFE_WORKING_DIRECTORIES = {"", ".", "${{ github.workspace }}"}
@@ -60,13 +58,14 @@ def workflow_jobs(text: str) -> list[WorkflowJob]:
                 key, value = field_text.split(":", maxsplit=1)
                 current_step[key.strip()] = yaml_scalar(value)
             continue
+        job_field = re.match(r"^    ([A-Za-z0-9_-]+):\s*(.*)$", line)
+        if job_field:
+            current_step = None
+            current_job.fields[job_field.group(1)] = yaml_scalar(job_field.group(2))
+            continue
         step_field = re.match(r"^        ([A-Za-z0-9_-]+):\s*(.*)$", line)
         if current_step is not None and step_field:
             current_step[step_field.group(1)] = yaml_scalar(step_field.group(2))
-            continue
-        job_field = re.match(r"^    ([A-Za-z0-9_-]+):\s*(.*)$", line)
-        if current_step is None and job_field:
-            current_job.fields[job_field.group(1)] = yaml_scalar(job_field.group(2))
             continue
         inherited = re.match(
             r"^\s{6,}((?:shell|working-directory)):\s*(.*)$", line
@@ -104,20 +103,15 @@ def execution_violations(
 def workflow_smoke_registration_violations(text: str) -> list[str]:
     """Independently enforce an executable build followed by an isolated smoke."""
     matches: list[tuple[WorkflowJob, int, dict[str, str]]] = []
-    build_matches: list[tuple[WorkflowJob, int, dict[str, str]]] = []
     for job in workflow_jobs(text):
         for index, step in enumerate(job.steps):
             if step.get("run") == EXPECTED_WORKFLOW_SMOKE_COMMAND:
                 matches.append((job, index, step))
-            if step.get("run") == EXPECTED_WORKFLOW_BUILD_COMMAND:
-                build_matches.append((job, index, step))
     violations: list[str] = []
     if len(matches) != 1:
         violations.append("CI must execute the exact SessionStart smoke command once")
-    if len(build_matches) != 1:
-        violations.append("CI must build the exact SessionStart smoke binary once")
     if len(matches) == 1:
-        smoke_job, smoke_index, smoke_step = matches[0]
+        smoke_job, _, smoke_step = matches[0]
         violations.extend(execution_violations("SessionStart smoke job", smoke_job.fields, {}))
         violations.extend(
             execution_violations(
@@ -126,21 +120,8 @@ def workflow_smoke_registration_violations(text: str) -> list[str]:
                 smoke_job.inherited_execution_fields,
             )
         )
-        if len(build_matches) == 1:
-            build_job, build_index, build_step = build_matches[0]
-            if build_job is not smoke_job or build_index >= smoke_index:
-                violations.append("SessionStart binary build must precede smoke in the same job")
-            violations.extend(
-                execution_violations(
-                    "SessionStart binary build step",
-                    build_step,
-                    build_job.inherited_execution_fields,
-                )
-            )
     if text.count(EXPECTED_WORKFLOW_SMOKE_COMMAND) != 1:
         violations.append("SessionStart smoke command must appear exactly once")
-    if text.count(EXPECTED_WORKFLOW_BUILD_COMMAND) != 1:
-        violations.append("SessionStart binary build command must appear exactly once")
     return violations
 
 
@@ -222,8 +203,7 @@ rm /exact/path/to/old/remem
 
 <!-- remem-doc-contract:isolated-sessionstart-smoke:start -->
 ```bash
-cargo build --locked --bin remem
-scripts/ci/smoke_sessionstart_context_gate.sh "$(pwd -P)/target/debug/remem"
+python3 scripts/ci/run_sessionstart_context_gate_smoke.py
 ```
 <!-- remem-doc-contract:isolated-sessionstart-smoke:end -->
 
@@ -431,6 +411,19 @@ class RepositoryDocumentationContractTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         mutated = workflow.replace("  check:\n", "  check:\n    if: ${{ false }}\n")
+
+        self.assertIn(
+            "SessionStart smoke job must be unconditional",
+            workflow_smoke_registration_violations(mutated),
+        )
+
+    def test_ci_registration_rejects_trailing_job_level_disable(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        mutated = workflow.replace(
+            "\n  windows_local_embedding_security:",
+            "\n    if: ${{ false }}\n  windows_local_embedding_security:",
+        )
 
         self.assertIn(
             "SessionStart smoke job must be unconditional",

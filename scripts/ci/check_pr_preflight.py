@@ -14,34 +14,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CARGO_TEST_THREADS = 4
-SESSIONSTART_SMOKE_BUILD_COMMAND = ["cargo", "build", "--locked", "--bin", "remem"]
-SESSIONSTART_SMOKE_PARENT_ENV = [
-    "env",
-    "HOME=/nonexistent/remem-smoke-parent-home",
-    "XDG_CONFIG_HOME=/nonexistent/remem-smoke-parent-xdg-config",
-    "XDG_DATA_HOME=/nonexistent/remem-smoke-parent-xdg-data",
-    "REMEM_CONTEXT_HOST=claude-code",
-    "REMEM_CONTEXT_GATE=off",
-    "REMEM_CONTEXT_GATE_HOSTS=claude-code",
-    "REMEM_CONTEXT_DEBUG=1",
-    "REMEM_CONTEXT_GATE_RETENTION_DAYS=0",
-    "REMEM_CONTEXT_BUNDLE_RENDER_MODE=invalid",
-    "REMEM_CONTEXT_TOTAL_CHAR_LIMIT=invalid",
-    "REMEM_UNDECLARED_PARENT_SENTINEL=hostile",
+SESSIONSTART_SMOKE_COMMAND = [
+    "python3",
+    "scripts/ci/run_sessionstart_context_gate_smoke.py",
 ]
-
-
-def sessionstart_smoke_command() -> list[str]:
-    configured_target = Path(os.environ.get("CARGO_TARGET_DIR", "target"))
-    target_dir = (
-        configured_target if configured_target.is_absolute() else ROOT / configured_target
-    )
-    binary = (target_dir / "debug/remem").resolve()
-    return [
-        *SESSIONSTART_SMOKE_PARENT_ENV,
-        "scripts/ci/smoke_sessionstart_context_gate.sh",
-        str(binary),
-    ]
 
 
 @dataclass
@@ -146,12 +122,8 @@ def fast_steps(base: str, head: str) -> list[tuple[str, list[str]]]:
             ["python3", "scripts/ci/check_documentation_contracts.py"],
         ),
         (
-            "Build current remem for SessionStart smoke",
-            SESSIONSTART_SMOKE_BUILD_COMMAND,
-        ),
-        (
-            "Prove SessionStart smoke isolates parent HOME/XDG/REMEM environment",
-            sessionstart_smoke_command(),
+            "Build current remem and prove isolated SessionStart smoke",
+            SESSIONSTART_SMOKE_COMMAND,
         ),
         ("Check public surface", ["python3", "scripts/ci/check_public_surface.py"]),
         ("Check published surface baseline", ["python3", "scripts/ci/check_surface_baseline.py", base]),
