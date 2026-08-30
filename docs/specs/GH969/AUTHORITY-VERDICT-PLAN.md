@@ -209,6 +209,23 @@ verifier `passed=true`, security `PASS`, 20 recomputed runs, and zero policy
 failures/leaks; hosted four-target evidence, aggregate verification, and fresh
 full preflight remain pending.
 
+Hosted Linux x64 evidence import from run `33321429842` at head
+`30ff7344874ebb7f62863b69c3ad3900b0a9c036`: the trusted bundle was mechanically
+relocated from `memory/.../adversarial-policy-v2-x86_64-unknown-linux-gnu` to the
+canonical `memory/.../adversarial-policy-v2-linux-x86_64` prefix. The source and
+destination inventories matched one-for-one at 142 files (one manifest, one
+report, and 140 artifacts); parsed inverse relocation passed for the 141 path
+prefix replacements, all other evidence bytes remained exact, and all 120
+referenced artifact hashes matched their run declarations. The 20 runs are
+`remem_default`, Linux/x86_64, source-clean, bound to hosted SHA
+`30ff7344874ebb7f62863b69c3ad3900b0a9c036` and production tree
+`75e453b59848fa6ba82d458c0bae20bdbfef5b06474dbc2566791ef6f295b870`. The exact
+repository verifier exited 0 with `passed=true`; both checked-in macOS arm64
+and Linux x64 security authorities are `PASS` with 20 recomputed runs, zero
+policy failures, and leak rate `0.0`. Release readiness remains false with only
+two current targets; final four-target evidence, clean full preflight, CI,
+independent review, and thread cleanup remain pending.
+
 ## Honest constraints and risks
 
 - Commit/push, full hosted four-platform evidence, the aggregate hosted
