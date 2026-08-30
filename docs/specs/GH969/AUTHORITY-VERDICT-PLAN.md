@@ -1,9 +1,8 @@
 # GH969 / PR #1052 Authority-Verdict Convergence Plan
 
-Status: local implementation and post-merge focused verification are complete
-on `work/pr1052-authority-verdict`; the lifecycle manifest has now been
-regenerated from current source. A fresh full preflight after regeneration,
-hosted evidence, and review cleanup remain pending.
+Status: local implementation, current macOS arm64 evidence, and full
+preflight are complete on `work/pr1052-authority-verdict`; hosted four-target
+evidence and review work remain pending.
 
 ## Objective
 
@@ -121,9 +120,8 @@ was dirty and not executable-source-equivalent; the JSON reported
 `source_clean=false`, `build_source_dirty=true`,
 `executable_source_equivalent=false`, and
 `security report is not bound to the current verifier implementation tree`.
-This is intended fail-closed authority behavior on an uncommitted production
-tree, not a metric regression. A fresh full preflight is required after the
-commit makes the source tree clean.
+This was intended fail-closed authority behavior on an uncommitted production
+tree, not a metric regression; the clean-commit verification is recorded below.
 
 macOS arm64 authority-evidence refresh: the documented producer
 `cargo run -- bench memory --suite adversarial-policy --condition remem_default
@@ -150,16 +148,25 @@ was merged. README is byte-for-byte equal to `origin/main`, without restoring
 superseded benchmark material. Post-merge focused documentation, preflight,
 and public-claims tests passed, as did `--fast` preflight.
 
-Current post-regeneration state: the first full preflight attempt had no
-terminal result after session exit; one actionable lifecycle-manifest drift was
-observed. A fresh full preflight remains required.
+Current clean verification on commit `019bb0427ee9fd1b9bd2be8db3c4862c1619f4a5`:
+`cargo run -- eval-gates --json-out
+/private/tmp/remem-pr1052-eval-gates-evidence-clean.json` exited 0 with
+`command_passed=true` and `merge_ready=true`. Local `release_ready` and
+coding/public-claim readiness remain false because hosted four-target release
+evidence and official GH931 evidence are separate and pending. Fresh full
+`python3 scripts/ci/check_pr_preflight.py --base origin/main --pr-body-file
+/private/tmp/remem-pr1052-body-intended.md` exited 0. Every listed gate passed:
+plugin/documentation contracts, isolated SessionStart smoke,
+surface/baseline/self-tests, public claims, size/write/dependency/migration/
+release checks, Node runtime tests, version bump, fmt, no-default hook, clippy,
+spec lifecycle, native web smoke, extraction/eval/capacity gates, and full
+`cargo test`.
 
 ## Honest constraints and risks
 
-- Fresh full preflight, commit/push, full hosted four-platform evidence, the
-  aggregate hosted verdict, latest pushed CI, independent review, and
-  review-thread cleanup remain pending. No missing platform evidence will be
-  fabricated.
+- Commit/push, full hosted four-platform evidence, the aggregate hosted
+  verdict, latest pushed CI, independent review, thread cleanup, merge, and
+  issue closure remain pending. No missing platform evidence will be fabricated.
 - PR #1051 is merged through main SHA `0bf31e98`; README now follows main's
   current navigation content without restoring superseded benchmark material.
 - Existing historical report/spec material may describe earlier authority
