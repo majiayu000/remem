@@ -2,8 +2,9 @@
 
 Status: local implementation and prior commit-specific verification are
 complete on `work/pr1052-authority-verdict`; latest-main content integration is
-resolved in the current merge. Current merged-tree macOS arm64 evidence and a
-fresh full preflight remain pending, as do hosted four-target evidence and
+resolved in the current merge and merged-tree macOS arm64 evidence has been
+regenerated. The overall verifier remains blocked by existing Linux evidence;
+a fresh full preflight remains pending, as do hosted four-target evidence and
 review work.
 
 ## Objective
@@ -174,6 +175,25 @@ before regenerating merged-source records. The prior macOS arm64 evidence and
 full preflight remain historical for their named commits; the merged
 production tree needs new macOS arm64 evidence and a fresh full preflight
 before push.
+
+Merged-tree macOS arm64 evidence refresh on `2749d5615ebd7893692615bab46a628a370f8ccb`:
+the exact documented producer command completed after directing `REMEM_DATA_DIR`
+to a fresh writable temporary directory (the default host data/log directory
+is not writable here). It executed all 20 typed `remem_default` tasks and
+regenerated the 20 raw SQLite snapshots and run artifacts. The exact verifier
+command, with the same temporary data-directory preparation, selected
+`memory/reports/adversarial-policy-v2.json` as `PASS`: target
+`aarch64-apple-darwin`, platform `macos/aarch64`, report hash
+`f828e46a38c3bbb7d2efe0232879bcfbc685eac4a3d4955813bb7fe195770319`, producing
+SHA `2749d5615ebd7893692615bab46a628a370f8ccb`, one production-input tree,
+`source_dirty_attestations=[false]`, 20 report-local models,
+`runs_recomputed=20`, `policy_failure_count=0`, and
+`non_retention_leak_rate=0.0`. The overall verifier exited 1 with
+`passed=false` because 20 pre-existing Linux x86_64 snapshots failed exact
+identity validation (`_schema_migrations,raw_session_identities,sqlite_schema`);
+Linux evidence was outside this refresh scope, so overall `verifier_passed=true`
+is not claimed. Fresh full preflight and any required Linux evidence refresh
+remain pending.
 
 ## Honest constraints and risks
 
