@@ -63,6 +63,10 @@ impl ScanRoot {
             required: true,
         })
     }
+
+    pub(crate) fn validate_for_batch(&self) -> Result<()> {
+        validate_batch_host(self.host)
+    }
 }
 
 fn validate_batch_host(host: InstallHost) -> Result<()> {
@@ -70,13 +74,6 @@ fn validate_batch_host(host: InstallHost) -> Result<()> {
         bail!(
             "Cursor filesystem roots are unsupported; Cursor transcripts must enter through the Stop snapshot contract"
         );
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_scan_roots(roots: &[ScanRoot]) -> Result<()> {
-    for root in roots {
-        validate_batch_host(root.host)?;
     }
     Ok(())
 }
@@ -147,7 +144,9 @@ pub fn run_ingest_sessions(
     roots: &[ScanRoot],
     options: &IngestOptions,
 ) -> Result<IngestSummary> {
-    validate_scan_roots(roots)?;
+    for root in roots {
+        root.validate_for_batch()?;
+    }
     if roots
         .iter()
         .any(|root| root.label == RESERVED_CURSOR_OUTCOME_SOURCE_ROOT)

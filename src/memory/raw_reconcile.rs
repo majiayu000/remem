@@ -93,7 +93,9 @@ pub(crate) fn reconcile_raw_archive(
     since_epoch: i64,
     until_epoch: i64,
 ) -> Result<RawReconcileReport> {
-    crate::ingest::sessions::validate_scan_roots(roots)?;
+    for root in roots {
+        root.validate_for_batch()?;
+    }
     if since_epoch > until_epoch {
         bail!("invalid reconciliation window: --since must be <= --until");
     }
