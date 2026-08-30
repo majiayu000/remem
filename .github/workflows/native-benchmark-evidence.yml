@@ -88,7 +88,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo run --locked -- bench memory --suite adversarial-policy --condition remem_default \
+          cargo run --locked --no-default-features --features eval -- bench memory --suite adversarial-policy --condition remem_default \
             --root "$PUBLIC_ROOT" \
             --artifact-prefix "$ARTIFACT_REL" \
             --json-out "$PUBLIC_ROOT/$REPORT_REL"
@@ -115,7 +115,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo run --locked -- bench verify --root "$PUBLIC_ROOT" --json-out "$VERDICT"
+          cargo run --locked --no-default-features --features eval -- bench verify --root "$PUBLIC_ROOT" --json-out "$VERDICT"
       - name: Assert row authority and exact artifact bindings
         shell: bash
         run: |
@@ -271,7 +271,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo run --locked -- bench verify --root "$PUBLIC_ROOT" --json-out "$VERDICT"
+          cargo run --locked --no-default-features --features eval -- bench verify --root "$PUBLIC_ROOT" --json-out "$VERDICT"
       - name: Assert closed release verdict
         shell: bash
         run: |
