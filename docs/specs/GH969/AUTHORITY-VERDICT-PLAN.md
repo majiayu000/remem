@@ -1,7 +1,8 @@
 # GH969 / PR #1052 Authority-Verdict Convergence Plan
 
-Status: implementation in progress on `work/pr1052-authority-verdict` at
-`403042dd227bcad6f28bcf08dae6d8639533ccaf`.
+Status: local implementation and verification complete on
+`work/pr1052-authority-verdict`; hosted evidence and review cleanup remain
+pending.
 
 ## Objective
 
@@ -13,8 +14,9 @@ Python public-claims checks will project that verdict and inspect wording; they
 will not independently promote registry/report declarations to PASS.
 
 This change is limited to the files authorized by the task. It does not create
-unsupported macOS/Linux evidence, change README files pending #1051, change
-package/release versions, or commit/push.
+unsupported macOS/Linux evidence, change package/release versions, or push.
+README retains main's current #1051 navigation without superseded benchmark
+material.
 
 ## Minimal architecture
 
@@ -91,13 +93,25 @@ session.
 | Full-suite correction #1 | Commander-provided fresh Sol evidence: `cargo test` completed in 3295.47s with 4083 passed, 5 failed, 1 ignored; four invocation-isolation fixtures declared the stale checked-in 20-run policy aggregate after selecting one run, and the missing coding test-log diagnostic regressed. Focused worker RED: `cargo test public_verifier_replays_identical_input_on_every_invocation -- --nocapture` — FAIL, 0 passed, 1 failed, with declared 20-run policy counts differing from the recomputed one-run summary; `cargo test verifier_rejects_missing_coding_test_log -- --nocapture` — FAIL, 0 passed, 1 failed, because the established `artifact file for test_log is missing` substring was absent. The first post-edit invocation test attempt had a compile-only RED because the new JSON conversion needed an explicit `Vec<String>` type. | The four exact invocation tests each PASS, 1 passed, 0 failed: `cargo test public_verifier_replays_identical_input_on_every_invocation -- --nocapture`; `cargo test parallel_identical_public_verifier_invocations_have_thread_local_probes -- --nocapture`; `cargo test parallel_public_verifier_invocations_cover_distinct_task_and_platform_keys -- --nocapture`; `cargo test public_verifier_replays_same_task_id_after_suite_semantics_change -- --nocapture`. `cargo test verifier_rejects_missing_coding_test_log -- --nocapture` — PASS, 1 passed, 0 failed; `cargo test eval::memory_bench::tests::invocation_isolation -- --nocapture` — PASS, 4 passed, 0 failed; `cargo test eval::bench_artifact::tests::security_verification::tampered_ -- --nocapture` — PASS, 2 passed, 0 failed. The fixture now declares the canonical one-run policy summary from its task, replay measurement, and referenced run answer/retrieval; existing artifact files still use exact-byte consumption after the narrow missing-path diagnostic check. |
 | Static gates | `cargo fmt --check` — failed only on formatting of the new duplicate-contract schema assertion; `cargo fmt` completed successfully. Full-suite correction #1: the first `cargo fmt --check` reported only rustfmt changes in the corrected invocation-isolation fixture; `cargo fmt` completed successfully. | Commander-provided fresh Sol evidence after Rust consumer convergence: `cargo fmt --check` — PASS; `cargo check` — PASS; `python3 scripts/ci/check_file_size.py` — PASS (`file size check: ok`). Current worker evidence after Python/schema convergence: `cargo fmt --check` — PASS; `cargo check` — PASS; `python3 scripts/ci/check_file_size.py` — PASS (`file size check: ok`); `git diff --check` — PASS. Current worker evidence after native CI wiring: `cargo fmt --check` — PASS; `cargo check` — PASS; `python3 scripts/ci/check_file_size.py` — PASS (`file size check: ok`); `git diff --check` — PASS. Native correction #1 evidence: `cargo fmt --check` — PASS; `cargo check` — PASS; `python3 scripts/ci/check_file_size.py` — PASS (`file size check: ok`); `git diff --check` — PASS. Full-suite correction #1 worker evidence: `cargo fmt --check` — PASS; `cargo check` — PASS; `python3 scripts/ci/check_file_size.py` — PASS (`file size check: ok`). |
 
+Final local verification: implementation commit `ac6676e7` passed complete
+preflight before current `origin/main` at `0bf31e98` (including merged PR #1051)
+was merged. README is byte-for-byte equal to `origin/main`, without restoring
+superseded benchmark material. Post-merge focused documentation, preflight,
+and public-claims tests passed, as did `--fast` preflight. The full command
+`python3 scripts/ci/check_pr_preflight.py --base origin/main --pr-body-file /private/tmp/remem-pr1052-body-intended.md` exited 0 with every listed gate
+passing, including documentation contracts, SessionStart smoke, public claims,
+surface/baseline checks, formatting, no-default check, clippy, spec lifecycle,
+native web smoke, eval gates, and `cargo test`. The library result remained
+4088 passed, 0 failed, 1 ignored; all integration and documentation tests
+passed.
+
 ## Honest constraints and risks
 
-- The current checkout does not contain genuine evidence for all four release
-  targets. No missing platform artifact or official GH931 run will be
-  fabricated; readiness should therefore remain unavailable until the native
-  matrix produces it.
-- README changes are intentionally deferred until PR #1051 merges.
+- Full hosted four-platform evidence, the aggregate hosted verdict, latest
+  pushed CI, and review-thread cleanup remain pending. No missing platform
+  evidence will be fabricated.
+- PR #1051 is merged through main SHA `0bf31e98`; README now follows main's
+  current navigation content without restoring superseded benchmark material.
 - Existing historical report/spec material may describe earlier authority
-  behavior. Current typed verifier code and focused tests are the source of
-  truth while this convergence is implemented.
+  behavior. Current typed verifier code and tests are the source of truth for
+  the completed local implementation.

@@ -1,8 +1,12 @@
 # Spec: Codex Context Injection Gating
 
-**Status**: Draft
+**Status**: Implemented historical reference
 **Date**: 2026-05-25
-**Related**: `docs/spec-context-compiler.md`, `docs/sessionstart-context-smoke.md`
+**Current verification**: [`docs/sessionstart-context-smoke.md`](sessionstart-context-smoke.md)
+
+This document records the original gating design. Current behavior and smoke
+commands are maintained by the architecture and verification guide rather than
+this historical implementation plan.
 
 ## 1. Background
 
@@ -446,15 +450,8 @@ Do not add shell redirection in the installed hook. Suppression belongs in remem
 
 ### Step 6: Smoke docs
 
-Update `docs/sessionstart-context-smoke.md` with:
-
-```bash
-printf '{"session_id":"sess-1","cwd":"%s","transcript_path":"/tmp/codex.jsonl"}' "$PWD" \
-  | REMEM_CONTEXT_HOST=codex-cli cargo run --quiet -- context
-
-printf '{"session_id":"sess-1","cwd":"%s","transcript_path":"/tmp/codex.jsonl"}' "$PWD" \
-  | REMEM_CONTEXT_HOST=codex-cli cargo run --quiet -- context | wc -c
-```
+The implementation added the smoke matrix now maintained in the
+[current SessionStart verification guide](sessionstart-context-smoke.md).
 
 Expected:
 
@@ -503,12 +500,11 @@ cargo fmt --check
 cargo check
 cargo test context:: --lib
 cargo test migrate:: --lib
-cargo run --quiet -- context --cwd /Users/lifcc/Desktop/code/AI/tool/remem --host codex-cli --force
-printf '{"session_id":"gate-smoke","cwd":"/Users/lifcc/Desktop/code/AI/tool/remem","transcript_path":"/tmp/remem-gate-smoke.jsonl"}' \
-  | REMEM_CONTEXT_HOST=codex-cli cargo run --quiet -- context | wc -c
-printf '{"session_id":"gate-smoke","cwd":"/Users/lifcc/Desktop/code/AI/tool/remem","transcript_path":"/tmp/remem-gate-smoke.jsonl"}' \
-  | REMEM_CONTEXT_HOST=codex-cli cargo run --quiet -- context | wc -c
 ```
+
+Run the isolated duplicate-injection check from the
+[current SessionStart verification guide](sessionstart-context-smoke.md); it
+initializes a disposable encrypted store before either context invocation.
 
 Expected:
 
