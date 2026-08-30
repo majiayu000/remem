@@ -333,8 +333,13 @@ identity. Stop capture persists its explicit host; batch ingestion infers only
 component-safe Claude Code, Codex CLI, and Cursor roots. Raw-session summaries
 group by `(source_root, host, project, session_id)` and expose a versioned
 session reference plus an ordered-occurrence content fingerprint. Missing or
-conflicting host provenance fails closed instead of merging sessions across
-runtimes.
+conflicting provenance on identified or current transcript rows fails closed
+instead of merging sessions across runtimes. Pre-v071 transcript rows with no
+identity and `legacy_unknown` event time stay in the encrypted raw archive but
+are excluded from complete-session summaries; CLI/MCP envelopes report their
+row and session counts. When a surviving transcript maps those legacy rows to
+exactly one trusted identity and stable fields match, batch ingestion merges
+the duplicate rows and preserves evidence references.
 
 The raw query path is read-only and schema-validated:
 

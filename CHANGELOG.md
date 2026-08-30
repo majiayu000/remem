@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.84` keeps unresolvable pre-identity transcript
+  rows in the encrypted raw archive while reporting their exclusion counts on
+  host-bound session listings. Exact single-host re-ingestion can converge
+  matching legacy duplicates; ambiguous, current, and conflicting provenance
+  remains fail-closed.
 - Staged source version `0.6.83` gives raw-session consumers an authoritative
   Claude Code, Codex CLI, or Cursor host, a versioned session reference, an
   ordered-occurrence content fingerprint, and bounded newest-session listing.
