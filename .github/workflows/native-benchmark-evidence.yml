@@ -74,6 +74,7 @@ jobs:
           BUNDLE="${ROW_ROOT}/native-adversarial-policy-v2-${TARGET}.tar.gz"
           mkdir -p "$ROW_ROOT"
           cp -R eval/public "$PUBLIC_ROOT"
+          find "$PUBLIC_ROOT/memory/manifests" -maxdepth 1 -type f -name 'adversarial-policy-v2*.json' -delete
           {
             echo "TARGET=$TARGET"
             echo "ROW_ROOT=$ROW_ROOT"
@@ -252,6 +253,7 @@ jobs:
           VERDICT="${AGG_ROOT}/authority-verdict.json"
           mkdir -p "$AGG_ROOT"
           cp -R eval/public "$PUBLIC_ROOT"
+          find "$PUBLIC_ROOT/memory/manifests" -maxdepth 1 -type f -name 'adversarial-policy-v2*.json' -delete
           mapfile -t bundles < <(find "$RUNNER_TEMP/remem-native-bundles" -type f -name '*.tar.gz' | sort)
           if [ "${#bundles[@]}" -ne 4 ]; then
             echo "::error::Expected four native evidence bundles, found ${#bundles[@]}"

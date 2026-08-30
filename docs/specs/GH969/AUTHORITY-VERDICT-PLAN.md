@@ -195,6 +195,20 @@ Linux evidence was outside this refresh scope, so overall `verifier_passed=true`
 is not claimed. Fresh full preflight and any required Linux evidence refresh
 remain pending.
 
+Native workflow temporary-root isolation correction: copying all of `eval/public`
+left the stale checked-in `memory/manifests/adversarial-policy-v2-linux-x86_64.json`
+in row and aggregate roots, poisoning otherwise passing macOS authority. Both jobs
+now delete only top-level temporary files matching
+`memory/manifests/adversarial-policy-v2*.json` before target-manifest creation or
+bundle overlay; repository files and other-suite manifests are untouched. Local
+PyYAML parsing, `bash -n` for all 10 blocks,
+`python3 scripts/ci/check_release_workflows.py` (with an isolated Git config),
+`cargo fmt --check`, `cargo check`, `python3 scripts/ci/check_file_size.py`, and
+`git diff --check` passed. The same-cleanup macOS arm64 simulation passed with
+verifier `passed=true`, security `PASS`, 20 recomputed runs, and zero policy
+failures/leaks; hosted four-target evidence, aggregate verification, and fresh
+full preflight remain pending.
+
 ## Honest constraints and risks
 
 - Commit/push, full hosted four-platform evidence, the aggregate hosted
