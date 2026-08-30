@@ -10,7 +10,8 @@ use super::super::types::{
     AuthorityStatus, BenchVerifyFailure, ClaimRegistryClaimPolicy, ClaimRegistryGate,
     ClaimRegistryPolicy, ClaimStopLossGate, Gh931AuthorityVerdict, Gh931ClaimVerdict,
     Gh931Completeness, Gh931ConditionCompletion, Gh931MaintenanceVerdict, Gh931RegistryBinding,
-    Gh931ReportBinding, Gh931StopLossVerdict, VerifiedArtifact, VerifiedBenchmarkArtifacts,
+    Gh931ReportBinding, Gh931StopLossVerdict, ImplementationAuthorityBinding, VerifiedArtifact,
+    VerifiedBenchmarkArtifacts,
 };
 
 const EXPECTED_RUNS: usize = 16 * 3 * 3;
@@ -21,6 +22,7 @@ const STOP_LOSS_CLAIM: &str = "remem-e2e-stop-loss-v1";
 pub(in crate::eval::bench_artifact) fn evaluate(
     verified: &VerifiedBenchmarkArtifacts,
     verifier_failures: &[BenchVerifyFailure],
+    implementation: &ImplementationAuthorityBinding,
 ) -> Gh931AuthorityVerdict {
     let registry = verified.claim_registry.as_ref();
     let policy = registry.map(|artifact| &artifact.value);
@@ -31,7 +33,7 @@ pub(in crate::eval::bench_artifact) fn evaluate(
         .map(|report| report_runs(report, verified, &mut diagnostics))
         .unwrap_or_default();
     let outcomes = report
-        .map(|report| coding_outcomes(report, &runs))
+        .map(|report| coding_outcomes(report, &runs, verified))
         .unwrap_or_default();
     let complete = report.is_some()
         && runs.len() == EXPECTED_RUNS
@@ -43,8 +45,16 @@ pub(in crate::eval::bench_artifact) fn evaluate(
         && paired_statistics
             .iter()
             .all(|statistic| statistic.status == "computed");
-    let evidence_ready =
-        complete && attempts_ready && verifier_failures.is_empty() && runs_are_genuine(&runs);
+    let machine_outcomes_ready = runs.len() == EXPECTED_RUNS
+        && runs
+            .iter()
+            .all(|run| verified.official_coding_tests.contains_key(&run.path));
+    let provenance_ready = runs_are_genuine(&runs, implementation);
+    let evidence_ready = complete
+        && attempts_ready
+        && machine_outcomes_ready
+        && verifier_failures.is_empty()
+        && provenance_ready;
 
     if !complete {
         diagnostics.push("requires one exact complete issue385-v1/official-v1 matrix".to_string());
@@ -53,11 +63,16 @@ pub(in crate::eval::bench_artifact) fn evaluate(
             "official tuples require globally unique nonblank attempt_id and target_started=true"
                 .to_string(),
         );
+    } else if !machine_outcomes_ready {
+        diagnostics.push("official runs lack complete machine-readable test evidence".to_string());
     } else if !verifier_failures.is_empty() {
         diagnostics
             .push("benchmark verifier failures make GH931 evidence insufficient".to_string());
-    } else if !runs_are_genuine(&runs) {
-        diagnostics.push("official runs lack clean complete production bindings".to_string());
+    } else if !provenance_ready {
+        diagnostics.push(
+            "official runs require one exact model identity and the clean current runtime implementation tree"
+                .to_string(),
+        );
     }
     if policy.is_some_and(|policy| !policy.locked) {
         diagnostics.push("claim registry policy is not locked".to_string());
@@ -104,7 +119,7 @@ pub(in crate::eval::bench_artifact) fn evaluate(
             complete,
             attempts_ready,
         },
-        condition_completion: condition_completion(&runs),
+        condition_completion: condition_completion(&runs, verified),
         paired_statistics,
         maintenance,
         stop_loss,
@@ -115,6 +130,7 @@ pub(in crate::eval::bench_artifact) fn evaluate(
 
 fn condition_completion(
     runs: &[&VerifiedArtifact<super::super::types::CodingRunArtifact>],
+    verified: &VerifiedBenchmarkArtifacts,
 ) -> Vec<Gh931ConditionCompletion> {
     ["no_memory", "remem_e2e", "curated_file_budgeted"]
         .into_iter()
@@ -123,7 +139,14 @@ fn condition_completion(
                 run.value.condition == condition && run.value.target_started == Some(true)
             });
             let eligible_started = eligible.clone().count();
-            let resolved = eligible.filter(|run| run.value.resolved).count();
+            let resolved = eligible
+                .filter(|run| {
+                    verified
+                        .official_coding_tests
+                        .get(&run.path)
+                        .is_some_and(|evidence| evidence.value.resolved())
+                })
+                .count();
             Gh931ConditionCompletion {
                 condition: condition.to_string(),
                 eligible_started,
@@ -176,9 +199,32 @@ fn evaluate_maintenance(
     let curated_minutes_per_100_sessions = curator_minutes.and_then(|minutes| {
         (curator_sessions > 0).then(|| minutes * 100.0 / curator_sessions as f64)
     });
-    let remem_minutes_per_100_sessions = complete.then_some(0.0);
+    let treatment_runs = runs
+        .iter()
+        .filter(|run| run.value.condition == "remem_e2e")
+        .collect::<Vec<_>>();
+    let treatment_complete = treatment_runs.len() == 48
+        && treatment_runs
+            .iter()
+            .all(|run| verified.treatment_maintenance.contains_key(&run.path));
+    let treatment_totals = treatment_complete
+        .then(|| {
+            treatment_runs
+                .iter()
+                .filter_map(|run| verified.treatment_maintenance.get(&run.path))
+                .try_fold((0.0, 0_usize), |(minutes, sessions), evidence| {
+                    let minutes = minutes + evidence.value.minutes();
+                    let sessions = sessions.checked_add(evidence.value.session_count())?;
+                    (minutes.is_finite() && sessions > 0).then_some((minutes, sessions))
+                })
+        })
+        .flatten();
+    let remem_sessions = treatment_totals.map(|(_, sessions)| sessions);
+    let remem_minutes_per_100_sessions =
+        treatment_totals.map(|(minutes, sessions)| minutes * 100.0 / sessions as f64);
     let reduction_pct = curated_minutes_per_100_sessions
-        .and_then(|curated| (curated > 0.0).then(|| (curated - 0.0) * 100.0 / curated));
+        .zip(remem_minutes_per_100_sessions)
+        .and_then(|(curated, remem)| (curated > 0.0).then(|| (curated - remem) * 100.0 / curated));
     let gate = non_inferiority_gate(policy);
     let threshold_failed = gate.is_some_and(|gate| {
         reduction_pct.is_some_and(|reduction| reduction < gate.human_maintenance_reduction_min_pct)
@@ -188,6 +234,7 @@ fn evaluate_maintenance(
     } else if evidence_ready
         && policy_ready
         && complete
+        && treatment_totals.is_some()
         && reduction_pct.is_some()
         && gate.is_some()
     {
@@ -198,7 +245,7 @@ fn evaluate_maintenance(
     let diagnostics = if threshold_failed {
         vec!["human-maintenance reduction threshold not satisfied".to_string()]
     } else if status == AuthorityStatus::Insufficient {
-        vec!["raw curator maintenance evidence is incomplete".to_string()]
+        vec!["raw curator or treatment maintenance evidence is incomplete".to_string()]
     } else {
         Vec::new()
     };
@@ -208,6 +255,7 @@ fn evaluate_maintenance(
         curator_sessions,
         curator_minutes,
         curated_minutes_per_100_sessions,
+        remem_sessions,
         remem_minutes_per_100_sessions,
         reduction_pct,
         diagnostics,
@@ -276,10 +324,14 @@ fn report_runs<'a>(
 fn coding_outcomes(
     report: &VerifiedArtifact<super::super::types::PublicBenchmarkReport>,
     runs: &[&VerifiedArtifact<super::super::types::CodingRunArtifact>],
+    verified: &VerifiedBenchmarkArtifacts,
 ) -> Vec<CodingTaskOutcome> {
     runs.iter()
         .map(|artifact| {
             let run = &artifact.value;
+            let test_evidence = verified.official_coding_tests.get(&artifact.path);
+            let recomputed_resolved =
+                test_evidence.is_some_and(|evidence| evidence.value.resolved());
             CodingTaskOutcome {
                 report_path: report.path.clone(),
                 benchmark_id: run.benchmark_id.clone(),
@@ -291,8 +343,11 @@ fn coding_outcomes(
                 run_index: run.run_index,
                 attempt_id: run.attempt_id.clone(),
                 target_started: run.target_started,
-                resolved: run.resolved,
-                failure_reason: run.failure_reason.clone(),
+                resolved: recomputed_resolved,
+                failure_reason: test_evidence
+                    .and_then(|evidence| evidence.value.failure_reason())
+                    .map(str::to_string)
+                    .or_else(|| test_evidence.is_none().then(|| "test_failure".to_string())),
                 tokens_total: run.metrics.tokens_total,
                 turns: run.metrics.turns,
                 wall_time_ms: run.metrics.wall_time_ms,
@@ -309,10 +364,13 @@ fn coding_outcomes(
         .collect()
 }
 
-fn runs_are_genuine(runs: &[&VerifiedArtifact<super::super::types::CodingRunArtifact>]) -> bool {
+fn runs_are_genuine(
+    runs: &[&VerifiedArtifact<super::super::types::CodingRunArtifact>],
+    implementation: &ImplementationAuthorityBinding,
+) -> bool {
     let mut platforms = BTreeSet::new();
-    let mut producing_shas = BTreeSet::new();
     let mut production_input_trees = BTreeSet::new();
+    let model = runs.first().map(|run| &run.value.model);
     let all_runs_bound = !runs.is_empty()
         && runs.iter().all(|run| {
             let environment = &run.value.environment;
@@ -320,7 +378,6 @@ fn runs_are_genuine(runs: &[&VerifiedArtifact<super::super::types::CodingRunArti
                 return false;
             };
             platforms.insert((environment.os.as_str(), environment.arch.as_str()));
-            producing_shas.insert(environment.remem_commit.as_str());
             production_input_trees.insert(tree);
             environment.source_dirty == Some(false)
                 && super::is_lower_hex(&environment.remem_commit, 40)
@@ -328,11 +385,16 @@ fn runs_are_genuine(runs: &[&VerifiedArtifact<super::super::types::CodingRunArti
                 && !environment.os.trim().is_empty()
                 && !environment.arch.trim().is_empty()
                 && super::model_identity_is_complete(&run.value.model)
+                && model == Some(&run.value.model)
         });
     all_runs_bound
         && platforms.len() == 1
-        && producing_shas.len() == 1
         && production_input_trees.len() == 1
+        && super::implementation_allows_release(implementation)
+        && implementation
+            .checkout_production_input_tree_sha256
+            .as_deref()
+            .is_some_and(|current| production_input_trees.contains(current))
 }
 
 fn evaluate_stop_loss(
@@ -511,7 +573,7 @@ fn non_inferiority_status(
     }
     let margin = -gate.non_inferiority_margin_pp;
     let non_inferior = statistic.effect_pp.is_some_and(|effect| effect >= margin)
-        && statistic.ci_lower_pp.is_some_and(|lower| lower > margin);
+        && statistic.ci_lower_pp.is_some_and(|lower| lower >= margin);
     if !non_inferior {
         diagnostics.push("resolved-rate non-inferiority threshold not satisfied".to_string());
         AuthorityStatus::Fail

@@ -65,11 +65,13 @@ fn table_identity(connection: &Connection, table: &str) -> Result<String> {
     while let Some(row) = rows.next()? {
         let mut encoded = Vec::new();
         for (index, column) in columns.iter().enumerate() {
+            let value = row.get_ref(index)?;
             if volatile_generation_field(table, column) {
+                validate_volatile_timestamp(value, table, column)?;
                 encoded.push(0xff);
                 continue;
             }
-            encode_value(row.get_ref(index)?, &mut encoded);
+            encode_value(value, &mut encoded);
         }
         encoded_rows.push(encoded);
     }
@@ -83,6 +85,26 @@ fn table_identity(connection: &Connection, table: &str) -> Result<String> {
         hash_bytes(&mut hasher, row);
     }
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn validate_volatile_timestamp(value: ValueRef<'_>, table: &str, column: &str) -> Result<()> {
+    const MAX_EPOCH_SECONDS_EXCLUSIVE: i64 = 10_000_000_000;
+    let valid = match value {
+        ValueRef::Null => true,
+        ValueRef::Integer(epoch) => (0..MAX_EPOCH_SECONDS_EXCLUSIVE).contains(&epoch),
+        ValueRef::Text(bytes) if column == "created_at" => std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
+            .is_some_and(|timestamp| {
+                (0..MAX_EPOCH_SECONDS_EXCLUSIVE).contains(&timestamp.timestamp())
+            }),
+        ValueRef::Real(_) | ValueRef::Text(_) | ValueRef::Blob(_) => false,
+    };
+    ensure!(
+        valid,
+        "invalid volatile timestamp {table}.{column}: expected null, epoch seconds in [0, {MAX_EPOCH_SECONDS_EXCLUSIVE}), or RFC3339 created_at text"
+    );
+    Ok(())
 }
 
 fn encode_value(value: ValueRef<'_>, output: &mut Vec<u8>) {
@@ -157,4 +179,53 @@ fn volatile_generation_field(table: &str, column: &str) -> bool {
             | ("sessions", "last_seen_at_epoch" | "started_at_epoch")
             | ("workspaces", "created_at_epoch" | "updated_at_epoch")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::Result;
+    use rusqlite::{params, Connection};
+
+    use super::snapshot_identity;
+
+    fn volatile_timestamp_connection(value: rusqlite::types::Value) -> Result<Connection> {
+        let connection = Connection::open_in_memory()?;
+        connection.execute("CREATE TABLE hosts (created_at_epoch)", [])?;
+        connection.execute(
+            "INSERT INTO hosts (created_at_epoch) VALUES (?1)",
+            params![value],
+        )?;
+        Ok(connection)
+    }
+
+    #[test]
+    fn snapshot_identity_rejects_malformed_volatile_timestamp_values() -> Result<()> {
+        for invalid in [
+            rusqlite::types::Value::Blob(b"private hidden bytes".to_vec()),
+            rusqlite::types::Value::Text("private hidden text".to_string()),
+            rusqlite::types::Value::Integer(-1),
+            rusqlite::types::Value::Integer(10_000_000_000),
+        ] {
+            let error = snapshot_identity(&volatile_timestamp_connection(invalid)?)
+                .expect_err("malformed volatile timestamp must fail closed");
+            assert!(
+                format!("{error:#}").contains("invalid volatile timestamp hosts.created_at_epoch"),
+                "unexpected diagnostic: {error:#}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn snapshot_identity_normalizes_valid_volatile_timestamps() -> Result<()> {
+        let first = snapshot_identity(&volatile_timestamp_connection(
+            rusqlite::types::Value::Integer(1_700_000_000),
+        )?)?;
+        let second = snapshot_identity(&volatile_timestamp_connection(
+            rusqlite::types::Value::Integer(1_800_000_000),
+        )?)?;
+
+        assert_eq!(first, second);
+        Ok(())
+    }
 }

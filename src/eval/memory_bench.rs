@@ -10,6 +10,8 @@ pub mod types;
 pub use runner::{run_memory_bench, MemoryBenchOptions};
 pub use types::{MemoryBenchCondition, MemoryBenchSuiteFixture};
 
+pub(crate) const SAFE_ABSTENTION_ANSWER: &str = "Insufficient benchmark evidence to answer.";
+
 pub(crate) struct VerifiedSecurityPolicyState {
     pub active_claim_count: u32,
     pub candidate_count: u32,

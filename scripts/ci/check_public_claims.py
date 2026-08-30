@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import subprocess
 import sys
@@ -70,6 +71,30 @@ def validate_verifier_report(value: object) -> dict[str, object]:
     gh931 = authority.get("gh931")
     if not isinstance(gh931, dict):
         raise ValueError("authority_verdict is missing gh931")
+    security = authority.get("security")
+    if not isinstance(security, dict):
+        raise ValueError("authority_verdict is missing security")
+    policy_failure_count = security.get("policy_failure_count")
+    if not isinstance(security.get("status"), str) or type(policy_failure_count) is not int:
+        raise ValueError("authority_verdict.security is malformed")
+    security_reports = security.get("reports")
+    if not isinstance(security_reports, list):
+        raise ValueError("authority_verdict.security is missing report summaries")
+    for report in security_reports:
+        if not isinstance(report, dict) or not isinstance(report.get("status"), str):
+            raise ValueError("authority_verdict.security contains a malformed report summary")
+        summary = report.get("policy_summary")
+        leak_rate = (
+            summary.get("non_retention_leak_rate")
+            if isinstance(summary, dict)
+            else None
+        )
+        if (
+            isinstance(leak_rate, bool)
+            or not isinstance(leak_rate, (int, float))
+            or not math.isfinite(leak_rate)
+        ):
+            raise ValueError("authority_verdict.security report leak summary is malformed")
     for field in ["completeness", "stop_loss"]:
         if not isinstance(gh931.get(field), dict):
             raise ValueError(f"authority_verdict.gh931 is missing {field}")
@@ -143,13 +168,17 @@ def registered_coding_claim_violation(
     authority = verifier_report["authority_verdict"]
     assert isinstance(authority, dict)
     gh931 = authority["gh931"]
+    security = authority["security"]
     assert isinstance(gh931, dict)
+    assert isinstance(security, dict)
     completeness = gh931["completeness"]
     stop_loss = gh931["stop_loss"]
     claims = gh931["claims"]
+    security_reports = security["reports"]
     assert isinstance(completeness, dict)
     assert isinstance(stop_loss, dict)
     assert isinstance(claims, list)
+    assert isinstance(security_reports, list)
     claim = next(
         (
             candidate
@@ -162,6 +191,16 @@ def registered_coding_claim_violation(
         return "coding claim marker is not backed by a recomputed verdict claim"
     if not (
         verifier_report["passed"] is True
+        and security.get("status") == "PASS"
+        and security.get("policy_failure_count") == 0
+        and bool(security_reports)
+        and all(
+            isinstance(report, dict)
+            and report.get("status") == "PASS"
+            and isinstance(report.get("policy_summary"), dict)
+            and report["policy_summary"].get("non_retention_leak_rate") == 0.0
+            for report in security_reports
+        )
         and gh931.get("status") == "PASS"
         and completeness.get("complete") is True
         and completeness.get("attempts_ready") is True
@@ -250,10 +289,22 @@ def run_self_test() -> int:
         gh931_status: str = "PASS",
         claim_status: str = "PASS",
         stop_loss_status: str = "PASS",
+        security_status: str = "PASS",
+        security_policy_failure_count: int = 0,
     ) -> dict[str, object]:
         return {
             "passed": verifier_passed,
             "authority_verdict": {
+                "security": {
+                    "status": security_status,
+                    "policy_failure_count": security_policy_failure_count,
+                    "reports": [
+                        {
+                            "status": "PASS",
+                            "policy_summary": {"non_retention_leak_rate": 0.0},
+                        }
+                    ],
+                },
                 "gh931": {
                     "status": gh931_status,
                     "registry": {
@@ -291,8 +342,35 @@ def run_self_test() -> int:
     blocked_verdict = verifier_report(gh931_status="INSUFFICIENT", claim_status="INSUFFICIENT")
     passed_verdict = verifier_report()
     tampered_registry_verdict = verifier_report(claim_status="INSUFFICIENT")
-    for report in [blocked_verdict, passed_verdict, tampered_registry_verdict]:
+    security_failed_verdict = verifier_report(security_status="FAIL")
+    security_policy_failed_verdict = verifier_report(security_policy_failure_count=1)
+    security_missing_summaries_verdict = verifier_report()
+    security_missing_summaries_verdict["authority_verdict"]["security"]["reports"] = []
+    security_nonzero_leak_verdict = verifier_report()
+    security_nonzero_leak_verdict["authority_verdict"]["security"]["reports"][0][
+        "policy_summary"
+    ]["non_retention_leak_rate"] = 0.25
+    security_malformed_leak_verdict = verifier_report()
+    security_malformed_leak_verdict["authority_verdict"]["security"]["reports"][0][
+        "policy_summary"
+    ]["non_retention_leak_rate"] = "zero"
+    for report in [
+        blocked_verdict,
+        passed_verdict,
+        tampered_registry_verdict,
+        security_failed_verdict,
+        security_policy_failed_verdict,
+        security_missing_summaries_verdict,
+        security_nonzero_leak_verdict,
+    ]:
         validate_verifier_report(report)
+    try:
+        validate_verifier_report(security_malformed_leak_verdict)
+    except ValueError:
+        pass
+    else:
+        print("self-test failed: malformed security leak summary was accepted", file=sys.stderr)
+        return 1
 
     cases = [
         (
@@ -336,6 +414,30 @@ def run_self_test() -> int:
             f"<!-- remem-claim:{claim_id} --> {allowed_wording} [evidence](eval/public/coding/reports/coding-claim.json)",
             passed_verdict,
             None,
+        ),
+        (
+            "security authority failure blocks an otherwise passing coding claim",
+            f"<!-- remem-claim:{claim_id} --> {allowed_wording} [evidence](eval/public/coding/reports/coding-claim.json)",
+            security_failed_verdict,
+            "coding-outcome superiority",
+        ),
+        (
+            "security policy failure count blocks an otherwise passing coding claim",
+            f"<!-- remem-claim:{claim_id} --> {allowed_wording} [evidence](eval/public/coding/reports/coding-claim.json)",
+            security_policy_failed_verdict,
+            "coding-outcome superiority",
+        ),
+        (
+            "missing security report summaries block an otherwise passing coding claim",
+            f"<!-- remem-claim:{claim_id} --> {allowed_wording} [evidence](eval/public/coding/reports/coding-claim.json)",
+            security_missing_summaries_verdict,
+            "coding-outcome superiority",
+        ),
+        (
+            "nonzero non-retention leak rate blocks an otherwise passing coding claim",
+            f"<!-- remem-claim:{claim_id} --> {allowed_wording} [evidence](eval/public/coding/reports/coding-claim.json)",
+            security_nonzero_leak_verdict,
+            "coding-outcome superiority",
         ),
         (
             "spec link cannot authorize universal overclaim",

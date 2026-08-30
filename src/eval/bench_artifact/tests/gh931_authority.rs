@@ -6,13 +6,14 @@ use serde_json::Value;
 
 use super::{copy_public_fixture, mutate_json};
 use crate::eval::bench_artifact::types::{
-    BenchmarkLayer, ClaimRegistryPolicy, CodingMemoryContract, CodingRunArtifact, CodingRunMetrics,
-    CuratorBudget, CuratorLogArtifact, CuratorSession, CuratorTotals, PublicBenchmarkReport,
+    AuthorityStatus, BenchmarkLayer, ClaimRegistryGate, ClaimRegistryPolicy, CodingMemoryContract,
+    CodingRunArtifact, CodingRunMetrics, CuratorBudget, CuratorLogArtifact, CuratorSession,
+    CuratorTotals, Gh931AuthorityVerdict, ImplementationAuthorityBinding,
+    OfficialCodingCommandResult, OfficialCodingMaintenanceEvidence,
+    OfficialCodingMaintenanceMeasurement, OfficialCodingTestEvidence, PublicBenchmarkReport,
     ReportVerifierMetadata, RunEnvironment, VerifiedArtifact, VerifiedBenchmarkArtifacts,
 };
-use crate::eval::bench_artifact::{
-    verify_benchmark_artifacts, AuthorityStatus, BenchVerifyOptions,
-};
+use crate::eval::bench_artifact::{verify_benchmark_artifacts, BenchVerifyOptions};
 
 #[test]
 fn tampered_registry_pass_cannot_authorize_smoke_evidence() -> Result<()> {
@@ -57,7 +58,7 @@ fn tampered_registry_pass_cannot_authorize_smoke_evidence() -> Result<()> {
 fn complete_exact_matrix_reuses_registered_paired_statistics() -> Result<()> {
     let verified = complete_verified_matrix(AuthorityStatus::Insufficient)?;
 
-    let verdict = crate::eval::bench_artifact::authority::gh931::evaluate(&verified, &[]);
+    let verdict = evaluate_gh931(&verified, &[]);
 
     assert!(verdict.completeness.complete);
     assert!(verdict.completeness.attempts_ready);
@@ -109,7 +110,7 @@ fn condition_completion_keeps_remem_e2e_separate_and_excludes_pre_target_runs() 
     excluded.value.target_started = Some(false);
     excluded.value.resolved = true;
 
-    let verdict = crate::eval::bench_artifact::authority::gh931::evaluate(&verified, &[]);
+    let verdict = evaluate_gh931(&verified, &[]);
     let remem = verdict
         .condition_completion
         .iter()
@@ -134,7 +135,7 @@ fn condition_completion_keeps_remem_e2e_separate_and_excludes_pre_target_runs() 
 fn pre_target_or_duplicate_attempt_makes_matrix_insufficient() -> Result<()> {
     let mut pre_target = complete_verified_matrix(AuthorityStatus::Pass)?;
     pre_target.coding_runs[0].value.target_started = Some(false);
-    let verdict = crate::eval::bench_artifact::authority::gh931::evaluate(&pre_target, &[]);
+    let verdict = evaluate_gh931(&pre_target, &[]);
     assert_eq!(verdict.status, AuthorityStatus::Insufficient);
     assert!(verdict.completeness.complete);
     assert!(!verdict.completeness.attempts_ready);
@@ -145,7 +146,7 @@ fn pre_target_or_duplicate_attempt_makes_matrix_insufficient() -> Result<()> {
 
     let mut duplicate = complete_verified_matrix(AuthorityStatus::Pass)?;
     duplicate.coding_runs[1].value.attempt_id = duplicate.coding_runs[0].value.attempt_id.clone();
-    let verdict = crate::eval::bench_artifact::authority::gh931::evaluate(&duplicate, &[]);
+    let verdict = evaluate_gh931(&duplicate, &[]);
     assert_eq!(verdict.status, AuthorityStatus::Insufficient);
     assert!(verdict.completeness.complete);
     assert!(!verdict.completeness.attempts_ready);
@@ -169,7 +170,7 @@ fn memory_harm_or_stale_followed_breach_fails_stop_loss() -> Result<()> {
         .unwrap()
         .memory_hurt = true;
 
-    let declaration_only = crate::eval::bench_artifact::authority::gh931::evaluate(&verified, &[]);
+    let declaration_only = evaluate_gh931(&verified, &[]);
     assert_eq!(declaration_only.stop_loss.memory_hurt_rate_pct, Some(0.0));
     assert_eq!(declaration_only.stop_loss.status, AuthorityStatus::Pass);
 
@@ -189,7 +190,7 @@ fn memory_harm_or_stale_followed_breach_fails_stop_loss() -> Result<()> {
     verified.coding_runs[remem_indices[1]].value.failure_reason =
         Some("stale_memory_followed".to_string());
 
-    let verdict = crate::eval::bench_artifact::authority::gh931::evaluate(&verified, &[]);
+    let verdict = evaluate_gh931(&verified, &[]);
 
     assert_eq!(verdict.status, AuthorityStatus::Fail);
     assert_eq!(verdict.stop_loss.status, AuthorityStatus::Fail);
@@ -246,23 +247,21 @@ fn coding_bench_attribution_verifier_rejects_invalid_memory_contract() -> Result
 fn mixed_or_malformed_official_provenance_is_insufficient() -> Result<()> {
     let mut genuine = complete_verified_matrix(AuthorityStatus::Pass)?;
     attach_curator_evidence(&mut genuine);
-    assert_eq!(
-        crate::eval::bench_artifact::authority::gh931::evaluate(&genuine, &[]).status,
-        AuthorityStatus::Pass
-    );
+    attach_treatment_evidence(&mut genuine, 0.0, 1);
+    assert_eq!(evaluate_gh931(&genuine, &[]).status, AuthorityStatus::Pass);
 
     let mut malformed_sha = genuine.clone();
     malformed_sha.coding_runs[0].value.environment.remem_commit = "not-a-sha".to_string();
     assert_eq!(
-        crate::eval::bench_artifact::authority::gh931::evaluate(&malformed_sha, &[]).status,
+        evaluate_gh931(&malformed_sha, &[]).status,
         AuthorityStatus::Insufficient
     );
 
     let mut mixed_sha = genuine.clone();
     mixed_sha.coding_runs[0].value.environment.remem_commit = "f".repeat(40);
     assert_eq!(
-        crate::eval::bench_artifact::authority::gh931::evaluate(&mixed_sha, &[]).status,
-        AuthorityStatus::Insufficient
+        evaluate_gh931(&mixed_sha, &[]).status,
+        AuthorityStatus::Pass
     );
 
     let mut malformed_tree = genuine.clone();
@@ -271,7 +270,7 @@ fn mixed_or_malformed_official_provenance_is_insufficient() -> Result<()> {
         .environment
         .production_input_tree_sha256 = Some("not-a-tree".to_string());
     assert_eq!(
-        crate::eval::bench_artifact::authority::gh931::evaluate(&malformed_tree, &[]).status,
+        evaluate_gh931(&malformed_tree, &[]).status,
         AuthorityStatus::Insufficient
     );
 
@@ -281,30 +280,105 @@ fn mixed_or_malformed_official_provenance_is_insufficient() -> Result<()> {
         .environment
         .production_input_tree_sha256 = Some("f".repeat(64));
     assert_eq!(
-        crate::eval::bench_artifact::authority::gh931::evaluate(&mixed_tree, &[]).status,
+        evaluate_gh931(&mixed_tree, &[]).status,
         AuthorityStatus::Insufficient
     );
 
     let mut mixed_platform = genuine.clone();
     mixed_platform.coding_runs[0].value.environment.arch = "aarch64".to_string();
     assert_eq!(
-        crate::eval::bench_artifact::authority::gh931::evaluate(&mixed_platform, &[]).status,
+        evaluate_gh931(&mixed_platform, &[]).status,
         AuthorityStatus::Insufficient
     );
 
     let mut dirty = genuine.clone();
     dirty.coding_runs[0].value.environment.source_dirty = Some(true);
     assert_eq!(
-        crate::eval::bench_artifact::authority::gh931::evaluate(&dirty, &[]).status,
+        evaluate_gh931(&dirty, &[]).status,
         AuthorityStatus::Insufficient
     );
 
     let mut incomplete_model = genuine;
     incomplete_model.coding_runs[0].value.model = serde_json::json!({"model": ""});
     assert_eq!(
-        crate::eval::bench_artifact::authority::gh931::evaluate(&incomplete_model, &[]).status,
+        evaluate_gh931(&incomplete_model, &[]).status,
         AuthorityStatus::Insufficient
     );
+    Ok(())
+}
+
+#[test]
+fn exact_non_inferiority_ci_margin_is_inclusive() -> Result<()> {
+    let mut verified = complete_verified_matrix(AuthorityStatus::Insufficient)?;
+    attach_curator_evidence(&mut verified);
+    attach_treatment_evidence(&mut verified, 0.0, 1);
+    let initial = evaluate_gh931(&verified, &[]);
+    let ci_lower = initial
+        .paired_statistics
+        .iter()
+        .find(|statistic| statistic.comparison_id == "remem-e2e-vs-curated-file-budgeted-v1")
+        .and_then(|statistic| statistic.ci_lower_pp)
+        .expect("computed curated CI lower bound");
+    let policy = &mut verified.claim_registry.as_mut().unwrap().value;
+    let claim = policy
+        .claims
+        .iter_mut()
+        .find(|claim| claim.id == "remem-e2e-vs-curated-file-budgeted-v1")
+        .unwrap();
+    let ClaimRegistryGate::NonInferiority(gate) = &mut claim.gate else {
+        panic!("registered non-inferiority gate");
+    };
+    gate.non_inferiority_margin_pp = -ci_lower;
+
+    let verdict = evaluate_gh931(&verified, &[]);
+    let claim = verdict
+        .claims
+        .iter()
+        .find(|claim| claim.id == "remem-e2e-vs-curated-file-budgeted-v1")
+        .unwrap();
+
+    assert_eq!(claim.status, AuthorityStatus::Pass);
+    Ok(())
+}
+
+#[test]
+fn cross_condition_model_mismatch_is_insufficient() -> Result<()> {
+    let mut verified = complete_verified_matrix(AuthorityStatus::Pass)?;
+    attach_curator_evidence(&mut verified);
+    attach_treatment_evidence(&mut verified, 0.0, 1);
+    verified
+        .coding_runs
+        .iter_mut()
+        .find(|run| run.value.condition == "curated_file_budgeted")
+        .unwrap()
+        .value
+        .model = serde_json::json!({"provider": "fixture", "model": "different"});
+
+    let verdict = evaluate_gh931(&verified, &[]);
+
+    assert_eq!(verdict.status, AuthorityStatus::Insufficient);
+    assert!(verdict
+        .diagnostics
+        .iter()
+        .any(|message| message.contains("model identity")));
+    Ok(())
+}
+
+#[test]
+fn official_tree_must_match_current_runtime_implementation() -> Result<()> {
+    let mut verified = complete_verified_matrix(AuthorityStatus::Pass)?;
+    attach_curator_evidence(&mut verified);
+    attach_treatment_evidence(&mut verified, 0.0, 1);
+
+    let implementation = implementation_binding("f".repeat(64));
+    let verdict =
+        crate::eval::bench_artifact::authority::gh931::evaluate(&verified, &[], &implementation);
+
+    assert_eq!(verdict.status, AuthorityStatus::Insufficient);
+    assert!(verdict
+        .diagnostics
+        .iter()
+        .any(|message| message.contains("current runtime implementation tree")));
     Ok(())
 }
 
@@ -346,7 +420,7 @@ fn smoke_curated_run_without_maintenance_artifacts_remains_directional() -> Resu
 fn insufficient_registry_declaration_cannot_veto_computed_pass() -> Result<()> {
     let verified = complete_verified_matrix(AuthorityStatus::Insufficient)?;
 
-    let verdict = crate::eval::bench_artifact::authority::gh931::evaluate(&verified, &[]);
+    let verdict = evaluate_gh931(&verified, &[]);
     let claim = verdict
         .claims
         .iter()
@@ -362,23 +436,48 @@ fn insufficient_registry_declaration_cannot_veto_computed_pass() -> Result<()> {
 }
 
 #[test]
-fn raw_curator_evidence_allows_computed_pass_despite_insufficient_declarations() -> Result<()> {
+fn missing_treatment_maintenance_evidence_is_insufficient() -> Result<()> {
     let mut verified = complete_verified_matrix(AuthorityStatus::Insufficient)?;
     attach_curator_evidence(&mut verified);
 
-    let verdict = crate::eval::bench_artifact::authority::gh931::evaluate(&verified, &[]);
+    let verdict = evaluate_gh931(&verified, &[]);
 
-    assert_eq!(verdict.status, AuthorityStatus::Pass);
-    assert_eq!(verdict.maintenance.status, AuthorityStatus::Pass);
-    assert_eq!(verdict.maintenance.reduction_pct, Some(100.0));
+    assert_eq!(verdict.status, AuthorityStatus::Insufficient);
+    assert_eq!(verdict.maintenance.status, AuthorityStatus::Insufficient);
+    assert_eq!(verdict.maintenance.remem_minutes_per_100_sessions, None);
+    assert_eq!(verdict.maintenance.reduction_pct, None);
     assert!(verdict
-        .claims
+        .maintenance
+        .diagnostics
         .iter()
-        .all(|claim| claim.status == AuthorityStatus::Pass));
-    assert!(verdict
-        .claims
-        .iter()
-        .all(|claim| claim.declared_registry_status == AuthorityStatus::Insufficient));
+        .any(|message| message.contains("treatment")));
+    Ok(())
+}
+
+#[test]
+fn zero_and_measured_treatment_work_recompute_maintenance_reduction() -> Result<()> {
+    let mut zero_work = complete_verified_matrix(AuthorityStatus::Insufficient)?;
+    attach_curator_evidence(&mut zero_work);
+    attach_treatment_evidence(&mut zero_work, 0.0, 3);
+    let zero_verdict = evaluate_gh931(&zero_work, &[]);
+    assert_eq!(zero_verdict.maintenance.status, AuthorityStatus::Pass);
+    assert_eq!(zero_verdict.maintenance.remem_sessions, Some(144));
+    assert_eq!(
+        zero_verdict.maintenance.remem_minutes_per_100_sessions,
+        Some(0.0)
+    );
+    assert_eq!(zero_verdict.maintenance.reduction_pct, Some(100.0));
+
+    let mut measured = complete_verified_matrix(AuthorityStatus::Insufficient)?;
+    attach_curator_evidence(&mut measured);
+    attach_treatment_evidence(&mut measured, 0.5, 2);
+    let measured_verdict = evaluate_gh931(&measured, &[]);
+    assert_eq!(measured_verdict.maintenance.status, AuthorityStatus::Pass);
+    assert_eq!(
+        measured_verdict.maintenance.remem_minutes_per_100_sessions,
+        Some(25.0)
+    );
+    assert_eq!(measured_verdict.maintenance.reduction_pct, Some(87.5));
     Ok(())
 }
 
@@ -407,6 +506,31 @@ fn complete_verified_matrix(
             }
         }
     }
+    let official_coding_tests = coding_runs
+        .iter()
+        .map(|run| {
+            let value = &run.value;
+            (
+                run.path.clone(),
+                VerifiedArtifact {
+                    path: format!("{}/test.json", run.path.trim_end_matches("/run.json")),
+                    sha256: "9".repeat(64),
+                    value: OfficialCodingTestEvidence {
+                        schema_version: 1,
+                        task_id: value.task_id.clone(),
+                        condition: value.condition.clone(),
+                        run_index: value.run_index,
+                        attempt_id: value.attempt_id.clone().unwrap(),
+                        commands: vec![OfficialCodingCommandResult {
+                            command: "cargo test --test target".to_string(),
+                            exit_code: Some(if value.resolved { 0 } else { 1 }),
+                            timed_out: false,
+                        }],
+                    },
+                },
+            )
+        })
+        .collect();
     Ok(VerifiedBenchmarkArtifacts {
         reports: vec![VerifiedArtifact {
             path: report_path,
@@ -435,6 +559,7 @@ fn complete_verified_matrix(
             },
         }],
         coding_runs,
+        official_coding_tests,
         claim_registry: Some(VerifiedArtifact {
             path: "eval/claims/registry.json".to_string(),
             sha256: "b".repeat(64),
@@ -457,7 +582,7 @@ fn coding_run(condition: &str, task_id: &str, run_index: u32) -> CodingRunArtifa
         run_index,
         attempt_id: Some(format!("attempt-{condition}-{task_id}-{run_index}")),
         target_started: Some(true),
-        model: serde_json::json!({"provider": "fixture", "model": condition}),
+        model: serde_json::json!({"provider": "fixture", "model": "same-model"}),
         environment: RunEnvironment {
             os: "linux".to_string(),
             arch: "x86_64".to_string(),
@@ -539,4 +664,70 @@ fn attach_curator_evidence(verified: &mut VerifiedBenchmarkArtifacts) {
             },
         );
     }
+}
+
+fn attach_treatment_evidence(
+    verified: &mut VerifiedBenchmarkArtifacts,
+    minutes: f64,
+    session_count: usize,
+) {
+    for run in verified
+        .coding_runs
+        .iter()
+        .filter(|run| run.value.condition == "remem_e2e")
+    {
+        let measurement = if minutes == 0.0 {
+            OfficialCodingMaintenanceMeasurement::ZeroWork {
+                minutes,
+                work_events: 0,
+                session_count,
+            }
+        } else {
+            OfficialCodingMaintenanceMeasurement::SupervisorTimed {
+                minutes,
+                session_count,
+            }
+        };
+        verified.treatment_maintenance.insert(
+            run.path.clone(),
+            VerifiedArtifact {
+                path: format!(
+                    "{}/maintenance.json",
+                    run.path.trim_end_matches("/run.json")
+                ),
+                sha256: "8".repeat(64),
+                value: OfficialCodingMaintenanceEvidence {
+                    schema_version: 1,
+                    task_id: run.value.task_id.clone(),
+                    condition: run.value.condition.clone(),
+                    run_index: run.value.run_index,
+                    attempt_id: run.value.attempt_id.clone().unwrap(),
+                    measurement,
+                },
+            },
+        );
+    }
+}
+
+fn implementation_binding(tree: String) -> ImplementationAuthorityBinding {
+    crate::eval::bench_artifact::authority::implementation::binding_from_parts(
+        Some(&"1".repeat(40)),
+        Some(&"1".repeat(40)),
+        Some(false),
+        Some(false),
+        Some(&tree),
+        Some(&tree),
+        Some(&"2".repeat(64)),
+    )
+}
+
+fn evaluate_gh931(
+    verified: &VerifiedBenchmarkArtifacts,
+    failures: &[crate::eval::bench_artifact::types::BenchVerifyFailure],
+) -> Gh931AuthorityVerdict {
+    crate::eval::bench_artifact::authority::gh931::evaluate(
+        verified,
+        failures,
+        &implementation_binding("e".repeat(64)),
+    )
 }

@@ -299,7 +299,7 @@ fn score_task(
         0.0
     };
     let answer_text = if abstained {
-        "Insufficient benchmark evidence to answer.".to_string()
+        super::SAFE_ABSTENTION_ANSWER.to_string()
     } else {
         task.expected_answer.clone()
     };

@@ -12,7 +12,7 @@ use super::{
 };
 use crate::eval::bench_artifact::types::{
     BenchmarkLayer, CodingMemoryContract, CodingRunArtifact, CuratorLogArtifact,
-    PublicBenchmarkReport,
+    OfficialCodingMaintenanceEvidence, OfficialCodingTestEvidence, PublicBenchmarkReport,
 };
 use crate::eval::coding_bench::{
     verify_context_audit_snapshot, verify_snapshot_against_persisted_injection,
@@ -164,6 +164,13 @@ pub(super) fn validate_coding_run_artifact(
     validate_outcome(&run, &label, state);
     validate_coding_metrics(&run, &label, state);
     validate_artifact_map(&run.artifacts, CODING_ARTIFACT_KEYS, &label, state);
+    if is_gh931_official_run(&run) {
+        validate_official_test_evidence(&run, &run_logical_path, &label, state);
+        if run.condition == "remem_e2e" {
+            require_artifact_key(&run.artifacts, "maintenance_evidence", &label, state);
+            validate_treatment_maintenance(&run, &run_logical_path, &label, state);
+        }
+    }
     if is_gh931_official_curated_run(&run) {
         validate_curator_evidence(&run, &run_logical_path, &label, state);
     }
@@ -194,12 +201,99 @@ pub(super) fn validate_coding_run_artifact(
     Some(run.condition)
 }
 
-fn is_gh931_official_curated_run(run: &CodingRunArtifact) -> bool {
+fn is_gh931_official_run(run: &CodingRunArtifact) -> bool {
     run.benchmark_id == "issue385-v1"
         && run.benchmark_version == "official-v1"
         && run.run_phase == "official"
         && run.matrix_namespace == "issue385-v1/official-v1"
-        && run.condition == "curated_file_budgeted"
+}
+
+fn is_gh931_official_curated_run(run: &CodingRunArtifact) -> bool {
+    is_gh931_official_run(run) && run.condition == "curated_file_budgeted"
+}
+
+fn validate_official_test_evidence(
+    run: &CodingRunArtifact,
+    run_path: &str,
+    label: &str,
+    state: &mut VerifyState,
+) {
+    let Some(path) = artifact_file_path(run, "test_log", label, state) else {
+        return;
+    };
+    let Some(evidence) = read_json_artifact::<OfficialCodingTestEvidence>(
+        &path,
+        state,
+        "official coding test evidence",
+    ) else {
+        return;
+    };
+    let value = &evidence.value;
+    if value.schema_version != 1
+        || value.task_id != run.task_id
+        || value.condition != run.condition
+        || value.run_index != run.run_index
+        || Some(value.attempt_id.as_str()) != run.attempt_id.as_deref()
+        || value.attempt_id.trim().is_empty()
+    {
+        state.fail(
+            label.to_string(),
+            "official coding test evidence identity is invalid",
+        );
+        return;
+    }
+    if let Some(message) = value.command_validation_error() {
+        state.fail(label.to_string(), message);
+        return;
+    }
+    let failure_reason = value.failure_reason();
+    if run.resolved != value.resolved() || run.failure_reason.as_deref() != failure_reason {
+        state.fail(
+            label.to_string(),
+            "declared coding resolution/failure_reason disagrees with recomputed test evidence",
+        );
+    }
+    state
+        .verified_artifacts
+        .official_coding_tests
+        .insert(run_path.to_string(), evidence);
+}
+
+fn validate_treatment_maintenance(
+    run: &CodingRunArtifact,
+    run_path: &str,
+    label: &str,
+    state: &mut VerifyState,
+) {
+    let Some(path) = artifact_file_path(run, "maintenance_evidence", label, state) else {
+        return;
+    };
+    let Some(evidence) = read_json_artifact::<OfficialCodingMaintenanceEvidence>(
+        &path,
+        state,
+        "official remem_e2e maintenance evidence",
+    ) else {
+        return;
+    };
+    let value = &evidence.value;
+    let identity_valid = value.schema_version == 1
+        && value.task_id == run.task_id
+        && value.condition == "remem_e2e"
+        && value.run_index == run.run_index
+        && Some(value.attempt_id.as_str()) == run.attempt_id.as_deref()
+        && !value.attempt_id.trim().is_empty();
+    let measurement_valid = value.measurement.is_valid();
+    if !identity_valid || !measurement_valid {
+        state.fail(
+            label.to_string(),
+            "official remem_e2e maintenance evidence is unbound or internally inconsistent",
+        );
+        return;
+    }
+    state
+        .verified_artifacts
+        .treatment_maintenance
+        .insert(run_path.to_string(), evidence);
 }
 
 fn validate_curator_evidence(

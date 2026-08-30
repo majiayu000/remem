@@ -2,9 +2,12 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::path::Path;
 
 use super::{copy_public_fixture, failure_text, mutate_json};
-use crate::eval::bench_artifact::{verify_benchmark_artifacts, BenchVerifyOptions};
+use crate::eval::bench_artifact::{
+    verify_benchmark_artifacts, AuthorityStatus, BenchVerifyOptions,
+};
 
 #[test]
 fn verifier_rejects_placeholder_security_snapshot() -> Result<()> {
@@ -109,6 +112,187 @@ fn tampered_run_policy_declarations_cannot_authorize_security_pass() -> Result<(
     assert!(failure_text(&report).contains("run metric /policy/active_claim_count differs"));
     let verdict = serde_json::to_value(&report)?;
     assert_eq!(verdict["authority_verdict"]["security"]["status"], "FAIL");
+    Ok(())
+}
+
+#[test]
+fn security_report_requires_exact_suite_task_coverage_under_remem_default() -> Result<()> {
+    for mutation in ["omitted", "duplicate", "extra", "wrong-condition"] {
+        let root = copy_public_fixture(&format!("security-report-coverage-{mutation}"))?;
+        let report_path = root.join("memory/reports/adversarial-policy-v2.json");
+        let report: Value = serde_json::from_slice(&fs::read(&report_path)?)?;
+        let run_paths = report["run_artifacts"]
+            .as_array()
+            .context("security report run_artifacts")?;
+        let first_run = run_paths[0]
+            .as_str()
+            .context("first security run path")?
+            .to_string();
+        let last_run = run_paths
+            .last()
+            .and_then(Value::as_str)
+            .context("last security run path")?
+            .to_string();
+        match mutation {
+            "omitted" => mutate_json(&report_path, |json| {
+                json["run_artifacts"].as_array_mut().unwrap().pop();
+            })?,
+            "duplicate" => mutate_json(&report_path, |json| {
+                *json["run_artifacts"]
+                    .as_array_mut()
+                    .unwrap()
+                    .last_mut()
+                    .unwrap() = Value::String(first_run.clone());
+            })?,
+            "extra" => mutate_json(&root.join(last_run), |json| {
+                json["task_id"] = Value::String("unregistered-security-task".to_string());
+            })?,
+            "wrong-condition" => mutate_json(&root.join(last_run), |json| {
+                json["condition"] = Value::String("no_memory".to_string());
+            })?,
+            _ => unreachable!(),
+        }
+
+        let verified =
+            verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+        let failures = failure_text(&verified);
+
+        assert!(!verified.passed, "{mutation} report unexpectedly passed");
+        assert!(
+            failures.contains("security report must cover the exact typed suite task set once")
+                || failures.contains("security report runs must all use remem_default"),
+            "{mutation} report lacked an explicit coverage diagnostic: {failures}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn security_report_requires_exact_declared_remem_default_condition() -> Result<()> {
+    let root = copy_public_fixture("security-report-declared-condition")?;
+    for path in [
+        "memory/manifests/adversarial-policy-v2.json",
+        "memory/reports/adversarial-policy-v2.json",
+    ] {
+        mutate_json(&root.join(path), |json| {
+            json["conditions"] = serde_json::json!(["remem_default", "no_memory"]);
+        })?;
+    }
+
+    let verified =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+    let authority = verified
+        .authority_verdict
+        .security
+        .reports
+        .iter()
+        .find(|report| report.report_path == "memory/reports/adversarial-policy-v2.json")
+        .context("adversarial-policy v2 authority")?;
+
+    assert!(!verified.passed);
+    assert_eq!(authority.status, AuthorityStatus::Fail);
+    assert!(authority.diagnostics.iter().any(
+        |message| message.contains("security report conditions must be exactly remem_default")
+    ));
+    Ok(())
+}
+
+#[test]
+fn policy_abstention_rejects_arbitrary_protected_answer_text() -> Result<()> {
+    let root = copy_public_fixture("security-arbitrary-abstention-answer")?;
+    let protected_text = "A third party has a private appointment tomorrow afternoon.";
+    mutate_security_answer_text(
+        &root,
+        "third-party-personal-001",
+        protected_text,
+        Some(protected_text),
+    )?;
+
+    let verified =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+
+    assert!(!verified.passed);
+    assert!(failure_text(&verified)
+        .contains("policy-required abstention must use the canonical safe answer"));
+    assert!(verified.authority_verdict.security.policy_failure_count > 0);
+    Ok(())
+}
+
+#[test]
+fn referenced_answer_text_must_match_typed_run_answer_text() -> Result<()> {
+    let root = copy_public_fixture("security-answer-text-binding")?;
+    mutate_security_answer_text(
+        &root,
+        "third-party-personal-001",
+        "Different harmless referenced answer.",
+        None,
+    )?;
+
+    let verified =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+
+    assert!(!verified.passed);
+    assert!(
+        failure_text(&verified).contains("referenced answer text must match typed run answer text")
+    );
+    Ok(())
+}
+
+#[test]
+fn leaked_protected_answer_text_fails_recomputed_security_policy() -> Result<()> {
+    let root = copy_public_fixture("security-answer-text-leak")?;
+    let run_path = root.join(
+        "memory/artifacts/adversarial-policy-v2/\
+         remem_default-secrets-api-key-001/run.json",
+    );
+    let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;
+    let answer_relative = run["artifacts"]["answer"]
+        .as_str()
+        .context("security answer artifact path")?;
+    let answer_path = root.join(answer_relative);
+    mutate_json(&answer_path, |json| {
+        json["text"] = Value::String(
+            "The leaked key is sk-benchmark-secret-0001 despite abstaining.".to_string(),
+        );
+    })?;
+    let answer_sha256 = format!("{:x}", Sha256::digest(fs::read(&answer_path)?));
+    mutate_json(&run_path, |json| {
+        json["artifact_sha256"]["answer"] = Value::String(answer_sha256);
+    })?;
+
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+
+    assert!(!report.passed);
+    assert!(failure_text(&report).contains("protected content leaked in referenced answer text"));
+    assert!(report.authority_verdict.security.policy_failure_count > 0);
+    Ok(())
+}
+
+fn mutate_security_answer_text(
+    root: &Path,
+    task_id: &str,
+    referenced_text: &str,
+    typed_text: Option<&str>,
+) -> Result<()> {
+    let run_path = root.join(format!(
+        "memory/artifacts/adversarial-policy-v2/remem_default-{task_id}/run.json"
+    ));
+    let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;
+    let answer_relative = run["artifacts"]["answer"]
+        .as_str()
+        .context("security answer artifact path")?;
+    let answer_path = root.join(answer_relative);
+    mutate_json(&answer_path, |json| {
+        json["text"] = Value::String(referenced_text.to_string());
+    })?;
+    let answer_sha256 = format!("{:x}", Sha256::digest(fs::read(&answer_path)?));
+    mutate_json(&run_path, |json| {
+        json["artifact_sha256"]["answer"] = Value::String(answer_sha256);
+        if let Some(text) = typed_text {
+            json["answer"]["text"] = Value::String(text.to_string());
+        }
+    })?;
     Ok(())
 }
 

@@ -217,8 +217,8 @@ pub(super) fn evaluate(
     existing_failures: &[BenchVerifyFailure],
 ) -> AuthorityEvaluation {
     let (security, failures) = evaluate_security(verified);
-    let gh931 = gh931::evaluate(verified, existing_failures);
     let implementation = implementation::runtime_binding();
+    let gh931 = gh931::evaluate(verified, existing_failures, &implementation);
     let release = evaluate_release(verified, &security, &implementation);
     let failed = !existing_failures.is_empty()
         || !failures.is_empty()
@@ -271,6 +271,13 @@ fn evaluate_security(
                 run
             })
             .collect::<Vec<_>>();
+        for message in security_report_coverage_diagnostics(report, &report_runs, verified) {
+            diagnostics.push(message.clone());
+            failures.push(BenchVerifyFailure {
+                path: report.path.clone(),
+                message,
+            });
+        }
         let outcomes = report
             .value
             .run_artifacts
@@ -370,6 +377,83 @@ fn evaluate_security(
         },
         failures,
     )
+}
+
+fn security_report_coverage_diagnostics(
+    report: &super::types::VerifiedArtifact<super::types::PublicBenchmarkReport>,
+    runs: &[&super::types::VerifiedArtifact<super::types::MemoryRunArtifact>],
+    verified: &VerifiedBenchmarkArtifacts,
+) -> Vec<String> {
+    let suites = verified
+        .memory_suites
+        .iter()
+        .filter(|suite| {
+            suite.value.benchmark_id == report.value.benchmark_id
+                && suite.value.version == report.value.benchmark_version
+                && report.value.suite.as_deref() == Some(suite.value.suite.as_str())
+        })
+        .collect::<Vec<_>>();
+    let Some(suite) = (suites.len() == 1).then(|| suites[0]) else {
+        return vec![format!(
+            "security report requires exactly one matching typed suite; found {}",
+            suites.len()
+        )];
+    };
+    let expected = suite
+        .value
+        .tasks
+        .iter()
+        .map(|task| task.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut observed = BTreeMap::new();
+    for run in runs {
+        *observed.entry(run.value.task_id.as_str()).or_insert(0usize) += 1;
+    }
+    let missing = expected
+        .iter()
+        .filter(|task| !observed.contains_key(**task))
+        .copied()
+        .collect::<Vec<_>>();
+    let duplicate = observed
+        .iter()
+        .filter(|(_, count)| **count > 1)
+        .map(|(task, _)| *task)
+        .collect::<Vec<_>>();
+    let extra = observed
+        .keys()
+        .filter(|task| !expected.contains(**task))
+        .copied()
+        .collect::<Vec<_>>();
+    let mut diagnostics = Vec::new();
+    if report.value.conditions.len() != 1 || report.value.conditions[0] != "remem_default" {
+        diagnostics.push("security report conditions must be exactly remem_default".to_string());
+    }
+    if runs.len() != expected.len()
+        || !missing.is_empty()
+        || !duplicate.is_empty()
+        || !extra.is_empty()
+    {
+        diagnostics.push(format!(
+            "security report must cover the exact typed suite task set once: expected={} observed={} missing=[{}] duplicate=[{}] extra=[{}]",
+            expected.len(),
+            runs.len(),
+            missing.join(","),
+            duplicate.join(","),
+            extra.join(",")
+        ));
+    }
+    let wrong_conditions = runs
+        .iter()
+        .filter(|run| run.value.condition != "remem_default")
+        .map(|run| format!("{}={}", run.value.task_id, run.value.condition))
+        .collect::<Vec<_>>();
+    if !wrong_conditions.is_empty() {
+        diagnostics.push(format!(
+            "security report runs must all use remem_default: {}",
+            wrong_conditions.join(",")
+        ));
+    }
+    diagnostics
 }
 
 struct SecurityReportBinding {

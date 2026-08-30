@@ -27,8 +27,10 @@ fn verifier_requires_attempt_state_for_official_coding_runs() -> Result<()> {
         },
     )?;
 
-    let report =
-        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+    let report = verify_benchmark_artifacts(BenchVerifyOptions::new(
+        root.clone(),
+        "eval/claims/registry.json",
+    ))?;
 
     assert!(!report.passed);
     let text = failure_text(&report);
@@ -54,13 +56,221 @@ fn verifier_rejects_resolved_run_that_never_started_target() -> Result<()> {
         },
     )?;
 
-    let report =
-        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+    let report = verify_benchmark_artifacts(BenchVerifyOptions::new(
+        root.clone(),
+        "eval/claims/registry.json",
+    ))?;
 
     assert!(!report.passed);
     assert!(
         failure_text(&report).contains("resolved coding run cannot report target_started=false")
     );
+    Ok(())
+}
+
+#[test]
+fn official_failing_or_timed_out_commands_cannot_authorize_declared_resolution() -> Result<()> {
+    let root = copy_public_fixture("official-failing-test-evidence")?;
+    for path in [
+        "coding/manifests/issue385-smoke-v1.json",
+        "coding/reports/coding-report-v1.json",
+    ] {
+        mutate_json(&root.join(path), |json| {
+            json["benchmark_id"] = Value::String("issue385-v1".to_string());
+            if json.get("version").is_some() {
+                json["version"] = Value::String("official-v1".to_string());
+            } else {
+                json["benchmark_version"] = Value::String("official-v1".to_string());
+                json["run_phase"] = Value::String("official".to_string());
+                json["matrix_namespace"] = Value::String("issue385-v1/official-v1".to_string());
+            }
+            json["conditions"] = serde_json::json!(["no_memory"]);
+        })?;
+    }
+    mutate_json(
+        &root.join("coding/artifacts/smoke-coding-001/run.json"),
+        |json| {
+            json["benchmark_id"] = Value::String("issue385-v1".to_string());
+            json["benchmark_version"] = Value::String("official-v1".to_string());
+            json["run_phase"] = Value::String("official".to_string());
+            json["matrix_namespace"] = Value::String("issue385-v1/official-v1".to_string());
+            json["condition"] = Value::String("no_memory".to_string());
+            json["attempt_id"] = Value::String("official-attempt-001".to_string());
+            json["target_started"] = Value::Bool(true);
+            json["context_audit_status"] = Value::String("not_applicable".to_string());
+            json["context_audit_failure_reason"] = Value::Null;
+            json["remem_context_audit"] = Value::Null;
+            json["injected_context_sha256"] = Value::Null;
+            json["memory_contract"] = Value::Null;
+        },
+    )?;
+    fs::write(
+        root.join("coding/artifacts/smoke-coding-001/test.log"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": 1,
+            "task_id": "smoke-fix-startup-race-001",
+            "condition": "no_memory",
+            "run_index": 0,
+            "attempt_id": "official-attempt-001",
+            "commands": [
+                {
+                    "command": "cargo test --test score-a",
+                    "exit_code": 0,
+                    "timed_out": false
+                },
+                {
+                    "command": "cargo test --test score-b",
+                    "exit_code": 1,
+                    "timed_out": false
+                }
+            ]
+        }))?,
+    )?;
+
+    let report = verify_benchmark_artifacts(BenchVerifyOptions::new(
+        root.clone(),
+        "eval/claims/registry.json",
+    ))?;
+
+    assert!(!report.passed);
+    assert!(failure_text(&report).contains(
+        "declared coding resolution/failure_reason disagrees with recomputed test evidence"
+    ));
+    let recomputed = report
+        .verified_artifacts
+        .official_coding_tests
+        .values()
+        .next()
+        .expect("verified official test evidence");
+    assert!(!recomputed.value.resolved());
+    assert_ne!(
+        report.authority_verdict.gh931.status,
+        crate::eval::bench_artifact::AuthorityStatus::Pass
+    );
+
+    fs::write(
+        root.join("coding/artifacts/smoke-coding-001/test.log"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": 1,
+            "task_id": "smoke-fix-startup-race-001",
+            "condition": "no_memory",
+            "run_index": 0,
+            "attempt_id": "official-attempt-001",
+            "commands": [
+                {
+                    "command": "cargo test --test score-timeout",
+                    "exit_code": null,
+                    "timed_out": true
+                }
+            ]
+        }))?,
+    )?;
+    let timed_out = verify_benchmark_artifacts(BenchVerifyOptions::new(
+        root.clone(),
+        "eval/claims/registry.json",
+    ))?;
+    assert!(!timed_out.passed);
+    assert!(failure_text(&timed_out).contains(
+        "declared coding resolution/failure_reason disagrees with recomputed test evidence"
+    ));
+    assert!(!timed_out
+        .verified_artifacts
+        .official_coding_tests
+        .values()
+        .next()
+        .expect("timed-out official test evidence")
+        .value
+        .resolved());
+
+    fs::write(
+        root.join("coding/artifacts/smoke-coding-001/test.log"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": 1,
+            "task_id": "smoke-fix-startup-race-001",
+            "condition": "no_memory",
+            "run_index": 0,
+            "attempt_id": "official-attempt-001",
+            "commands": []
+        }))?,
+    )?;
+    let empty =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+    assert!(!empty.passed);
+    assert!(failure_text(&empty).contains("official coding test evidence requires commands"));
+    Ok(())
+}
+
+#[test]
+fn official_treatment_maintenance_rejects_inconsistent_zero_work() -> Result<()> {
+    let root = copy_public_fixture("official-inconsistent-zero-maintenance")?;
+    for path in [
+        "coding/manifests/issue385-smoke-v1.json",
+        "coding/reports/coding-report-v1.json",
+    ] {
+        mutate_json(&root.join(path), |json| {
+            json["benchmark_id"] = Value::String("issue385-v1".to_string());
+            if json.get("version").is_some() {
+                json["version"] = Value::String("official-v1".to_string());
+            } else {
+                json["benchmark_version"] = Value::String("official-v1".to_string());
+                json["run_phase"] = Value::String("official".to_string());
+                json["matrix_namespace"] = Value::String("issue385-v1/official-v1".to_string());
+            }
+            json["conditions"] = serde_json::json!(["remem_e2e"]);
+        })?;
+    }
+    mutate_json(
+        &root.join("coding/artifacts/smoke-coding-001/run.json"),
+        |json| {
+            json["benchmark_id"] = Value::String("issue385-v1".to_string());
+            json["benchmark_version"] = Value::String("official-v1".to_string());
+            json["run_phase"] = Value::String("official".to_string());
+            json["matrix_namespace"] = Value::String("issue385-v1/official-v1".to_string());
+            json["condition"] = Value::String("remem_e2e".to_string());
+            json["attempt_id"] = Value::String("official-attempt-001".to_string());
+            json["target_started"] = Value::Bool(true);
+            json["artifacts"]["maintenance_evidence"] =
+                Value::String("coding/artifacts/smoke-coding-001/maintenance.json".to_string());
+        },
+    )?;
+    fs::write(
+        root.join("coding/artifacts/smoke-coding-001/test.log"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": 1,
+            "task_id": "smoke-fix-startup-race-001",
+            "condition": "remem_e2e",
+            "run_index": 0,
+            "attempt_id": "official-attempt-001",
+            "commands": [{
+                "command": "cargo test --test target",
+                "exit_code": 0,
+                "timed_out": false
+            }]
+        }))?,
+    )?;
+    fs::write(
+        root.join("coding/artifacts/smoke-coding-001/maintenance.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": 1,
+            "task_id": "smoke-fix-startup-race-001",
+            "condition": "remem_e2e",
+            "run_index": 0,
+            "attempt_id": "official-attempt-001",
+            "measurement": {
+                "kind": "zero_work",
+                "minutes": 1.0,
+                "work_events": 0,
+                "session_count": 0
+            }
+        }))?,
+    )?;
+
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+
+    assert!(!report.passed);
+    assert!(failure_text(&report)
+        .contains("official remem_e2e maintenance evidence is unbound or internally inconsistent"));
     Ok(())
 }
 

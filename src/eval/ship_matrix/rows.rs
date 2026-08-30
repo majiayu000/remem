@@ -214,8 +214,25 @@ fn security_gate(options: &ShipMatrixOptions, public: &PublicEvidence) -> ShipGa
         .as_ref()
         .is_some_and(|report| report.artifact_verifier.passed);
     let authority = public.security_authority.as_ref();
+    let current_implementation = public.authority_verdict().is_some_and(|verdict| {
+        let implementation = &verdict.implementation;
+        implementation.executable_source_equivalent
+            && implementation.checkout_source_dirty == Some(false)
+            && implementation
+                .checkout_production_input_tree_sha256
+                .is_some()
+            && authority.is_some_and(|authority| {
+                authority.production_input_trees.len() == 1
+                    && authority.production_input_trees.first()
+                        == implementation
+                            .checkout_production_input_tree_sha256
+                            .as_ref()
+            })
+    });
     let status = match authority.map(|authority| authority.status) {
-        Some(AuthorityStatus::Pass) if verifier_passed => ShipGateStatus::Pass,
+        Some(AuthorityStatus::Pass) if verifier_passed && current_implementation => {
+            ShipGateStatus::Pass
+        }
         Some(AuthorityStatus::Fail) => ShipGateStatus::Fail,
         Some(AuthorityStatus::Insufficient) | Some(AuthorityStatus::Pass) | None => {
             ShipGateStatus::Incomplete
@@ -231,6 +248,11 @@ fn security_gate(options: &ShipMatrixOptions, public: &PublicEvidence) -> ShipGa
     );
     if !verifier_passed {
         diagnostics.push("public artifact verifier did not pass".to_string());
+    }
+    if !current_implementation {
+        diagnostics.push(
+            "security report is not bound to the current verifier implementation tree".to_string(),
+        );
     }
     let metric_deltas = authority
         .and_then(|authority| authority.policy_summary.as_ref())

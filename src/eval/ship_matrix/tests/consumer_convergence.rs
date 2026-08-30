@@ -149,6 +149,28 @@ fn selected_security_row_uses_report_local_model_and_platform() {
 }
 
 #[test]
+fn stale_security_report_tree_cannot_pass_current_implementation_gate() {
+    let mut public = public_fixture(baseline_fixture());
+    public
+        .security_authority
+        .as_mut()
+        .expect("selected security authority")
+        .production_input_trees = vec!["f".repeat(64)];
+
+    let row =
+        super::super::rows::build_gate_rows(&[], false, &ShipMatrixOptions::default(), &public)
+            .into_iter()
+            .find(|row| row.id == "production_security_e2e")
+            .expect("security row");
+
+    assert_eq!(row.status, ShipGateStatus::Incomplete);
+    assert!(row
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.contains("current verifier implementation tree")));
+}
+
+#[test]
 fn release_readiness_requires_verifier_release_and_legacy_gates() {
     let gates = vec![test_gate(
         "release",

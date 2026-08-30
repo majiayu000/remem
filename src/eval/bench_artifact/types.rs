@@ -93,6 +93,9 @@ pub(crate) struct VerifiedBenchmarkArtifacts {
     pub security_policy_outcomes: BTreeMap<String, MemoryBenchPolicyOutcome>,
     pub claim_registry: Option<VerifiedArtifact<ClaimRegistryPolicy>>,
     pub curator_logs: BTreeMap<String, VerifiedArtifact<CuratorLogArtifact>>,
+    pub official_coding_tests: BTreeMap<String, VerifiedArtifact<OfficialCodingTestEvidence>>,
+    pub treatment_maintenance:
+        BTreeMap<String, VerifiedArtifact<OfficialCodingMaintenanceEvidence>>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
@@ -158,6 +161,7 @@ pub struct Gh931MaintenanceVerdict {
     pub curator_sessions: usize,
     pub curator_minutes: Option<f64>,
     pub curated_minutes_per_100_sessions: Option<f64>,
+    pub remem_sessions: Option<usize>,
     pub remem_minutes_per_100_sessions: Option<f64>,
     pub reduction_pct: Option<f64>,
     pub diagnostics: Vec<String>,
@@ -322,6 +326,120 @@ pub(crate) struct CuratorTotals {
     pub update_count: u64,
     pub deletion_count: u64,
     pub conflict_resolution_count: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OfficialCodingTestEvidence {
+    pub schema_version: u32,
+    pub task_id: String,
+    pub condition: String,
+    pub run_index: u32,
+    pub attempt_id: String,
+    pub commands: Vec<OfficialCodingCommandResult>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OfficialCodingCommandResult {
+    pub command: String,
+    pub exit_code: Option<i32>,
+    pub timed_out: bool,
+}
+
+impl OfficialCodingTestEvidence {
+    pub(crate) fn command_validation_error(&self) -> Option<&'static str> {
+        if self.commands.is_empty() {
+            return Some("official coding test evidence requires commands");
+        }
+        self.commands
+            .iter()
+            .any(|result| {
+                result.command.trim().is_empty() || result.timed_out != result.exit_code.is_none()
+            })
+            .then_some("official coding command result is internally inconsistent")
+    }
+
+    pub(crate) fn resolved(&self) -> bool {
+        !self.commands.is_empty()
+            && self
+                .commands
+                .iter()
+                .all(|result| !result.timed_out && result.exit_code == Some(0))
+    }
+
+    pub(crate) fn failure_reason(&self) -> Option<&'static str> {
+        if self.commands.iter().any(|result| result.timed_out) {
+            Some("timeout")
+        } else if self
+            .commands
+            .iter()
+            .any(|result| result.exit_code != Some(0))
+        {
+            Some("test_failure")
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct OfficialCodingMaintenanceEvidence {
+    pub schema_version: u32,
+    pub task_id: String,
+    pub condition: String,
+    pub run_index: u32,
+    pub attempt_id: String,
+    pub measurement: OfficialCodingMaintenanceMeasurement,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum OfficialCodingMaintenanceMeasurement {
+    SupervisorTimed {
+        minutes: f64,
+        session_count: usize,
+    },
+    ZeroWork {
+        minutes: f64,
+        work_events: u64,
+        session_count: usize,
+    },
+}
+
+impl OfficialCodingMaintenanceMeasurement {
+    pub(crate) fn is_valid(&self) -> bool {
+        match self {
+            Self::SupervisorTimed {
+                minutes,
+                session_count,
+            } => minutes.is_finite() && *minutes > 0.0 && *session_count > 0,
+            Self::ZeroWork {
+                minutes,
+                work_events,
+                session_count,
+            } => minutes.is_finite() && *minutes == 0.0 && *work_events == 0 && *session_count > 0,
+        }
+    }
+}
+
+impl OfficialCodingMaintenanceEvidence {
+    pub(crate) fn minutes(&self) -> f64 {
+        match &self.measurement {
+            OfficialCodingMaintenanceMeasurement::SupervisorTimed { minutes, .. }
+            | OfficialCodingMaintenanceMeasurement::ZeroWork { minutes, .. } => *minutes,
+        }
+    }
+
+    pub(crate) fn session_count(&self) -> usize {
+        match &self.measurement {
+            OfficialCodingMaintenanceMeasurement::SupervisorTimed { session_count, .. }
+            | OfficialCodingMaintenanceMeasurement::ZeroWork { session_count, .. } => {
+                *session_count
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
