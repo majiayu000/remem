@@ -7,22 +7,38 @@ pub(super) fn ensure_provenance_resolved(
     conn: &Connection,
     request: &RawSessionMessagesRequest,
 ) -> Result<()> {
-    let unresolved = conn.query_row(
-        "SELECT EXISTS( \
-             SELECT 1 FROM raw_messages r \
-             LEFT JOIN raw_session_identities i ON i.id = r.transcript_identity_id \
+    let (tuple_exists, requested_host_exists, unresolved) = conn.query_row(
+        "WITH eligible AS ( \
+             SELECT r.transcript_identity_id \
+             FROM raw_messages r \
              WHERE r.source_root = ?1 AND r.project = ?2 AND r.session_id = ?3 \
                AND NOT (r.source = 'hook' AND r.transcript_identity_id IS NULL) \
-               AND (i.id IS NULL OR i.host IS NULL \
-                    OR (i.host = ?4 AND i.status != 'active')) \
-         )",
+         ) \
+         SELECT EXISTS(SELECT 1 FROM eligible), \
+                EXISTS( \
+                    SELECT 1 FROM eligible e \
+                    JOIN raw_session_identities i ON i.id = e.transcript_identity_id \
+                    WHERE i.host = ?4 AND i.status = 'active' \
+                ), \
+                EXISTS( \
+                    SELECT 1 FROM eligible e \
+                    LEFT JOIN raw_session_identities i ON i.id = e.transcript_identity_id \
+                    WHERE i.id IS NULL OR i.host IS NULL \
+                       OR (i.host = ?4 AND i.status != 'active') \
+                )",
         params![
             request.source_root,
             request.project,
             request.session_id,
             request.host
         ],
-        |row| row.get::<_, bool>(0),
+        |row| {
+            Ok((
+                row.get::<_, bool>(0)?,
+                row.get::<_, bool>(1)?,
+                row.get::<_, bool>(2)?,
+            ))
+        },
     )?;
     if unresolved {
         anyhow::bail!(
@@ -30,6 +46,15 @@ pub(super) fn ensure_provenance_resolved(
             request.source_root,
             request.project,
             request.session_id,
+        );
+    }
+    if tuple_exists && !requested_host_exists {
+        anyhow::bail!(
+            "raw session host mismatch for ({:?}, {:?}, {:?}): no active transcript identity for {:?}",
+            request.source_root,
+            request.project,
+            request.session_id,
+            request.host,
         );
     }
     Ok(())
@@ -142,6 +167,19 @@ mod tests {
             Some(20),
         )?
         .context("hook fallback row")?;
+        insert_raw_message_from_root_at(
+            &conn,
+            "hook-only",
+            "/repo",
+            ROLE_ASSISTANT,
+            "standalone hook fallback",
+            SOURCE_HOOK,
+            None,
+            Some("/repo"),
+            "root-a",
+            Some(30),
+        )?
+        .context("hook-only fallback row")?;
 
         let summaries = list_sessions(&conn, &RawSessionQuery::default())?;
         let page = query_raw_session_messages(
@@ -163,6 +201,33 @@ mod tests {
         assert_eq!(page.content_hash, summaries[0].content_hash);
         assert!(!page.has_more);
         assert!(page.next_cursor.is_none());
+        let wrong_host = query_raw_session_messages(
+            &conn,
+            &RawSessionMessagesRequest {
+                host: "claude-code".to_string(),
+                source_root: "root-a".to_string(),
+                project: "/repo".to_string(),
+                session_id: "s1".to_string(),
+                limit: 2,
+                cursor: None,
+            },
+        )
+        .expect_err("a selector naming only another active host must fail");
+        assert!(wrong_host.to_string().contains("host mismatch"));
+        let hook_only = query_raw_session_messages(
+            &conn,
+            &RawSessionMessagesRequest {
+                host: "codex-cli".to_string(),
+                source_root: "root-a".to_string(),
+                project: "/repo".to_string(),
+                session_id: "hook-only".to_string(),
+                limit: 2,
+                cursor: None,
+            },
+        )?;
+        assert!(hook_only.messages.is_empty());
+        assert!(!hook_only.has_more);
+        assert!(hook_only.next_cursor.is_none());
         Ok(())
     }
 }

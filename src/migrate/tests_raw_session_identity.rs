@@ -37,6 +37,40 @@ fn pre_v091() -> Result<Connection> {
     Ok(conn)
 }
 
+fn insert_pre_v091_conflict(
+    conn: &Connection,
+    transcript_path: &str,
+    fallback_session_id: &str,
+    reason: &str,
+) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO raw_session_identities
+         (source_root, transcript_path, fallback_session_id,
+          canonical_session_id, project, legacy_project, status, conflict_reason,
+          contract_version, observed_mtime_ns, observed_size_bytes,
+          first_seen_at_epoch, last_seen_at_epoch)
+         VALUES ('local', ?1, ?2, ?2, '/repo', '/repo', 'conflict', ?3,
+                 1, 1, 1, 1, 1)",
+        params![transcript_path, fallback_session_id, reason],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+fn insert_pre_v091_metadata_claim(
+    conn: &Connection,
+    identity_id: i64,
+    claimed_session_id: &str,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO raw_session_identity_claims
+         (transcript_identity_id, claimed_session_id, identity_source,
+          first_seen_at_epoch, last_seen_at_epoch)
+         VALUES (?1, ?2, 'transcript_metadata', 1, 1)",
+        params![identity_id, claimed_session_id],
+    )?;
+    Ok(())
+}
+
 #[test]
 fn v071_is_registered_and_named_stably() -> Result<()> {
     let migration = migration_v071()?;
@@ -275,5 +309,115 @@ fn v091_backfills_known_hosts_and_leaves_unknown_paths_explicit() -> Result<()> 
             [],
         )
         .is_err());
+    Ok(())
+}
+
+#[test]
+fn v091_re_resolves_only_host_scoped_metadata_conflicts() -> Result<()> {
+    let conn = pre_v091()?;
+    let cross_claude = insert_pre_v091_conflict(
+        &conn,
+        "/tmp/.claude/projects/repo/cross.jsonl",
+        "shared",
+        "conflicting_metadata_claims",
+    )?;
+    let cross_codex = insert_pre_v091_conflict(
+        &conn,
+        "/tmp/.codex/sessions/cross.jsonl",
+        "shared",
+        "conflicting_metadata_claims",
+    )?;
+    insert_pre_v091_metadata_claim(&conn, cross_claude, "claude-id")?;
+    insert_pre_v091_metadata_claim(&conn, cross_codex, "codex-id")?;
+    insert_pre_v091_conflict(
+        &conn,
+        "/tmp/.cursor/projects/repo/cross.jsonl",
+        "shared",
+        "conflicting_metadata_claims",
+    )?;
+
+    let same_a = insert_pre_v091_conflict(
+        &conn,
+        "/tmp/.claude/projects/repo/same-a.jsonl",
+        "same-host",
+        "conflicting_metadata_claims",
+    )?;
+    let same_b = insert_pre_v091_conflict(
+        &conn,
+        "/tmp/.claude/projects/repo/same-b.jsonl",
+        "same-host",
+        "conflicting_metadata_claims",
+    )?;
+    insert_pre_v091_metadata_claim(&conn, same_a, "claude-a")?;
+    insert_pre_v091_metadata_claim(&conn, same_b, "claude-b")?;
+    insert_pre_v091_conflict(
+        &conn,
+        "/tmp/.codex/sessions/sticky.jsonl",
+        "sticky",
+        "stable_occurrence_mismatch",
+    )?;
+    insert_pre_v091_conflict(
+        &conn,
+        "/tmp/.codex/sessions/.claude/projects/ambiguous.jsonl",
+        "ambiguous",
+        "conflicting_metadata_claims",
+    )?;
+
+    let migration = MIGRATIONS
+        .iter()
+        .find(|migration| migration.version == V091)
+        .context("v091 migration is missing")?;
+    conn.execute_batch(migration.sql)?;
+    let load = |path: &str| -> Result<(Option<String>, String, String, Option<String>)> {
+        Ok(conn.query_row(
+            "SELECT host, canonical_session_id, status, conflict_reason
+             FROM raw_session_identities WHERE transcript_path = ?1",
+            [path],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?)
+    };
+
+    assert_eq!(
+        load("/tmp/.claude/projects/repo/cross.jsonl")?,
+        (
+            Some("claude-code".into()),
+            "claude-id".into(),
+            "active".into(),
+            None
+        )
+    );
+    assert_eq!(
+        load("/tmp/.codex/sessions/cross.jsonl")?,
+        (
+            Some("codex-cli".into()),
+            "codex-id".into(),
+            "active".into(),
+            None
+        )
+    );
+    assert_eq!(
+        load("/tmp/.cursor/projects/repo/cross.jsonl")?,
+        (
+            Some("cursor".into()),
+            "shared".into(),
+            "active".into(),
+            None
+        )
+    );
+    for path in [
+        "/tmp/.claude/projects/repo/same-a.jsonl",
+        "/tmp/.claude/projects/repo/same-b.jsonl",
+    ] {
+        let row = load(path)?;
+        assert_eq!(row.0, Some("claude-code".into()));
+        assert_eq!(row.2, "conflict");
+        assert_eq!(row.3.as_deref(), Some("conflicting_metadata_claims"));
+    }
+    let sticky = load("/tmp/.codex/sessions/sticky.jsonl")?;
+    assert_eq!(sticky.2, "conflict");
+    assert_eq!(sticky.3.as_deref(), Some("stable_occurrence_mismatch"));
+    let ambiguous = load("/tmp/.codex/sessions/.claude/projects/ambiguous.jsonl")?;
+    assert_eq!(ambiguous.0, None);
+    assert_eq!(ambiguous.2, "conflict");
     Ok(())
 }
