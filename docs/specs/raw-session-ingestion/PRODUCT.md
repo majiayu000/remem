@@ -5,36 +5,31 @@ Refs: GH-871, GH-720, GH-825
 
 ## Goal
 
-Preserve every supported Claude Code, Codex, and approved Cursor transcript
-occurrence in the local raw archive under one durable transcript identity,
-then make bounded archive completeness measurable without exposing private
-transcript data.
+Preserve every supported Claude Code and Codex transcript occurrence in the
+local raw archive under one durable transcript identity, then make bounded
+archive completeness measurable without exposing private transcript data.
+Cursor Stop evidence and terminal capture health remain separate from this
+complete-transcript archive contract.
 
 ## User Contract
 
-- Stop and `ingest-sessions` derive the same metadata-first identity. A
+- Claude/Codex Stop and `ingest-sessions` derive the same metadata-first identity. A
   transcript keeps one path-stable ledger ID when a filename fallback is later
   promoted to metadata.
 - Batch discovery persists the complete identity claim set before raw mutation.
   Ambiguous claims remain sticky conflicts and fail visibly.
 - Every additional batch/reconcile root uses `HOST:LABEL=PATH`, where `HOST` is
-  exactly `claude-code`, `codex-cli`, or `cursor`. Default roots carry the same
-  explicit host provenance; batch ingestion never guesses host from a path.
+  exactly `claude-code` or `codex-cli`. Default roots carry the same explicit
+  host provenance; batch ingestion never guesses host from a path. Cursor
+  filesystem roots fail explicitly before discovery or mutation. Manually
+  configured Cursor Stop snapshots may feed rollup evidence and capture-health
+  reporting, but do not create complete identified raw sessions.
 - Historical transcript rows without a transcript identity have no trusted
   host provenance. A matching row remains unresolved and causes an explicit
   identity conflict before claim, rekey, or evidence-reference mutation.
 - Repeated identical turns at different JSONL ordinals remain distinct.
   Transcript timestamps, ingest fallbacks, and legacy-unknown event time remain
   distinguishable.
-- GH-825 Cursor full snapshots preserve every approved message occurrence by
-  transcript identity plus zero-based physical JSONL record ordinal. Internal
-  non-message records may leave ordinal gaps. Leading/trailing whitespace and
-  complete UTF-8 text bytes are stable evidence: the Cursor path never calls a
-  legacy occurrence helper that trims content before hashing or storage.
-- An unchanged Cursor identity+ordinal+stable-field replay is a no-op; changed
-  whitespace, role, text, or other stable evidence is a visible identity
-  conflict that rolls back the whole snapshot bundle. Identified Cursor rows
-  never fall back to content-only deduplication.
 - `raw search`, `raw sessions`, and `raw reconcile` validate the current schema
   on a read-only connection. They never migrate or repair the store.
 - Session JSON preserves existing fields and adds user/assistant role counts.
@@ -76,14 +71,10 @@ transcript data.
 - `raw reconcile` requires an inclusive lower and upper bound, validates every
   captured file tuple against the current ledger, and compares stable
   per-occurrence identities.
-- For a Cursor identity, `raw reconcile` orders all authoritative full
-  companions by approved snapshot length, verifies one monotonic prefix chain,
-  and selects the longest approved boundary before reusing the same versioned
-  record/physical-ordinal projection as Stop capture. It never sends Cursor
-  `{role,message}` records through the Claude/Codex classifier. A fork,
-  truncation, mutated prefix, or missing/malformed/conflicting parser metadata
-  is a visible reconciliation error, not an unsupported-record exclusion or
-  guessed fallback.
+- `raw reconcile` rejects Cursor filesystem roots before capture, so Cursor
+  `{role,message}` records can never reach the Claude/Codex classifier or
+  produce an empty successful parity report. Approved Cursor full snapshots
+  remain governed by the Stop snapshot contract.
 - Reconciliation JSON is aggregate-only. It contains no path, project, session
   ID, hash, message text, or example.
 
@@ -100,6 +91,6 @@ conversational exclusions without weakening raw completeness.
 - Reconciliation does not delete, repair, promote, or summarize messages.
 - It does not make unbounded scans or network/LLM calls.
 - This contract does not implement GH720's later refine/facet phases.
-- GH-825 does not add raw archive tables, columns, indexes, or a schema version;
-  it adds a versioned Cursor parser/projection and an exact-content insertion
-  path over the existing identified-occurrence schema.
+- GH-825 does not add raw archive tables, columns, indexes, or a complete
+  Cursor raw-occurrence projection; its Cursor parser feeds Stop rollup and
+  capture-health evidence only.

@@ -44,6 +44,7 @@ impl ScanRoot {
         };
         let host = InstallHost::parse(host)
             .map_err(|error| anyhow::anyhow!("invalid --root {spec:?}: {error}"))?;
+        validate_batch_host(host)?;
         let Some((label, path)) = root.split_once('=') else {
             bail!("invalid --root {spec:?}: expected HOST:LABEL=PATH");
         };
@@ -62,6 +63,22 @@ impl ScanRoot {
             required: true,
         })
     }
+}
+
+fn validate_batch_host(host: InstallHost) -> Result<()> {
+    if host == InstallHost::Cursor {
+        bail!(
+            "Cursor filesystem roots are unsupported; Cursor transcripts must enter through the Stop snapshot contract"
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_scan_roots(roots: &[ScanRoot]) -> Result<()> {
+    for root in roots {
+        validate_batch_host(root.host)?;
+    }
+    Ok(())
 }
 
 fn shellexpand_home(path: &str) -> String {
@@ -130,6 +147,7 @@ pub fn run_ingest_sessions(
     roots: &[ScanRoot],
     options: &IngestOptions,
 ) -> Result<IngestSummary> {
+    validate_scan_roots(roots)?;
     if roots
         .iter()
         .any(|root| root.label == RESERVED_CURSOR_OUTCOME_SOURCE_ROOT)

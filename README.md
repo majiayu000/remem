@@ -215,8 +215,10 @@ Copy `host`, `source_root`, `project`, and `session_id` unchanged from one
 `raw sessions` summary into `raw messages`. Existing scripts must add the
 required `--host` selector and replace `--root LABEL=PATH` with
 `--root HOST:LABEL=PATH`; the same root format applies to `raw reconcile`.
-`HOST` is one of `claude-code`, `codex-cli`, or `cursor`, and `LABEL` becomes
-the persisted `source_root`.
+`HOST` is `claude-code` or `codex-cli`, and `LABEL` becomes the persisted
+`source_root`. Cursor snapshot evidence requires a manually configured and
+verified `remem summarize --host cursor` Stop integration; filesystem `--root`
+ingestion and reconciliation reject `cursor` explicitly.
 
 ### Review and govern
 

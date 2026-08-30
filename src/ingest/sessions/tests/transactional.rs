@@ -275,6 +275,8 @@ fn scan_root_parse_requires_exact_host_label_path() {
     assert!(ScanRoot::parse("no-separator").is_err());
     assert!(ScanRoot::parse("unknown:starlight=/tmp").is_err());
     assert!(ScanRoot::parse("codex:starlight=/tmp").is_err());
+    let cursor_error = ScanRoot::parse("cursor:archive=/tmp").unwrap_err();
+    assert!(cursor_error.to_string().contains("Stop snapshot contract"));
     assert!(ScanRoot::parse("codex-cli:=path-only").is_err());
     assert!(ScanRoot::parse("codex-cli:label=").is_err());
     assert!(ScanRoot::parse("codex-cli:cursor-outcome=/tmp").is_err());

@@ -22,7 +22,6 @@ Resolve host inside Remem from every contributing active transcript identity:
 | --- | --- |
 | under `.claude/projects` | `claude-code` |
 | under `.codex/sessions` | `codex-cli` |
-| under `.cursor` | `cursor` |
 
 New ingestion resolves with path components, not substring matching. Migration
 v091 backfills only unambiguous legacy path shapes. Every raw
@@ -32,6 +31,10 @@ hosts fail closed. Unbound `source=hook` fallbacks are explicitly outside this
 complete-transcript surface and remain queryable through the existing raw
 occurrence/search paths. The host rules remain in Remem; consumers receive only
 the resolved value.
+
+Cursor does not enter this transcript-identity path. A virtual Cursor
+outcome-only session can expose `host: cursor` plus `capture_health`, but it has
+no complete raw-message selector and Refine must not ingest it as a transcript.
 
 ## Session Identity
 
@@ -54,7 +57,7 @@ For Codex transcripts, Remem reads `session_meta.payload.thread_source` and
 precedence, followed by unattended originators (`codex_exec` and
 `symphony-orchestrator`) or the explicit `automation` thread source, then
 interactive TUI/Desktop originators. Unknown values remain `unknown`; Claude
-Code and Cursor currently report `unknown`.
+Code currently reports `unknown`.
 An identity may promote from unknown to a known mode, but conflicting known
 modes fail before mutation. A grouped raw session also fails if contributing
 identities disagree.
@@ -97,7 +100,8 @@ host, timestamps, and derived observations.
 ## Tests
 
 - component-safe host classification and near-miss paths;
-- three supported host fixtures;
+- Claude Code and Codex CLI transcript host fixtures;
+- Cursor outcome-only metadata is not accepted as a complete transcript;
 - mixed/unidentified identity rejection;
 - same session ID collision isolation across hosts;
 - deterministic fingerprint and mutation sensitivity;

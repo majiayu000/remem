@@ -223,7 +223,7 @@ pub(in crate::cli) enum RawAction {
         /// Inclusive upper bound; YYYY-MM-DD includes that full UTC day.
         #[arg(long)]
         until: String,
-        /// Additional required transcript root in HOST:LABEL=PATH form.
+        /// Additional required Claude/Codex transcript root in HOST:LABEL=PATH form.
         #[arg(long = "root")]
         roots: Vec<String>,
         /// Emit the privacy-safe aggregate report as JSON.

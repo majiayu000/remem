@@ -208,3 +208,33 @@ fn list_sessions_latest_is_bounded_and_missing_host_fails_closed() {
         .to_string()
         .contains("provenance is missing or conflicted"));
 }
+
+#[test]
+fn list_sessions_reads_only_selected_bounded_samples() {
+    let conn = setup_conn();
+    let old = insert_at_epoch(&conn, "old", "/repo", ROLE_USER, "old", 100);
+    let first = insert_at_epoch(&conn, "new", "/repo", ROLE_USER, "first", 200);
+    let second = insert_at_epoch(&conn, "new", "/repo", ROLE_USER, "second", 210);
+    identify_raw_sessions(&conn, "codex-cli");
+    conn.execute(
+        "UPDATE raw_messages SET content = CAST(X'80' AS BLOB) WHERE id IN (?1, ?2)",
+        params![old, second],
+    )
+    .unwrap();
+
+    let sessions = list_sessions(
+        &conn,
+        &RawSessionQuery {
+            sample_user_messages: 1,
+            latest: Some(1),
+            ..RawSessionQuery::default()
+        },
+    )
+    .expect("discarded and over-limit sample content must not be read");
+
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].session_id, "new");
+    assert_eq!(sessions[0].message_count, 2);
+    assert_eq!(sessions[0].user_message_samples, vec!["first"]);
+    assert!(first > 0);
+}

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 
 use super::{ROLE_ASSISTANT, ROLE_USER};
@@ -67,16 +67,14 @@ pub fn list_sessions(conn: &Connection, query: &RawSessionQuery) -> Result<Vec<R
     let mut sql = String::from(
         "SELECT r.transcript_identity_id, r.transcript_record_ordinal, \
                 r.source_root, r.project, r.session_id, r.role, \
-                r.content_hash, r.created_at_epoch, \
+                r.content_hash, r.created_at_epoch, r.id, \
                 CASE WHEN i.status = 'active' THEN i.host END, \
-                CASE WHEN i.status = 'active' THEN i.session_mode END, \
-                CASE WHEN ?1 > 0 AND r.role = 'user' THEN r.content END \
+                CASE WHEN i.status = 'active' THEN i.session_mode END \
          FROM raw_messages r \
          LEFT JOIN raw_session_identities i ON i.id = r.transcript_identity_id \
          WHERE NOT (r.source = 'hook' AND r.transcript_identity_id IS NULL)",
     );
-    let mut binds: Vec<Box<dyn rusqlite::types::ToSql>> =
-        vec![Box::new(query.sample_user_messages.max(0))];
+    let mut binds: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     if let Some(project) = query.project.as_deref() {
         sql.push_str(&format!(" AND r.project = ?{}", binds.len() + 1));
         binds.push(Box::new(project.to_string()));
@@ -97,7 +95,7 @@ pub fn list_sessions(conn: &Connection, query: &RawSessionQuery) -> Result<Vec<R
                 row.get::<_, String>(5)?,
                 row.get::<_, String>(6)?,
                 row.get::<_, i64>(7)?,
-                row.get::<_, Option<String>>(8)?,
+                row.get::<_, i64>(8)?,
                 row.get::<_, Option<String>>(9)?,
                 row.get::<_, Option<String>>(10)?,
             ))
@@ -115,9 +113,9 @@ pub fn list_sessions(conn: &Connection, query: &RawSessionQuery) -> Result<Vec<R
             role,
             hash,
             epoch,
+            row_id,
             host,
             session_mode,
-            sample,
         ) = row?;
         let host = host.with_context(|| {
             format!(
@@ -162,34 +160,54 @@ pub fn list_sessions(conn: &Connection, query: &RawSessionQuery) -> Result<Vec<R
             &role,
             &hash,
             epoch,
-            sample.as_deref(),
+            row_id,
             query.sample_user_messages.max(0),
         );
     }
 
-    let mut sessions = grouped
-        .into_values()
-        .map(Accumulator::finish)
-        .collect::<Vec<_>>();
+    let mut accumulators = grouped.into_values().collect::<Vec<_>>();
     if let Some(latest) = query.latest {
-        sessions.sort_by(|left, right| {
+        accumulators.sort_by(|left, right| {
             right
                 .last_epoch
                 .cmp(&left.last_epoch)
-                .then_with(|| selector_cmp(left, right))
+                .then_with(|| accumulator_selector_cmp(left, right))
         });
-        sessions.truncate(latest as usize);
+        accumulators.truncate(latest as usize);
     } else {
-        sessions.sort_by(|left, right| {
+        accumulators.sort_by(|left, right| {
             left.first_epoch
                 .cmp(&right.first_epoch)
-                .then_with(|| selector_cmp(left, right))
+                .then_with(|| accumulator_selector_cmp(left, right))
         });
     }
-    Ok(sessions)
+    let mut sample_statement = conn.prepare(
+        "SELECT substr(content, 1, ?2)
+         FROM raw_messages
+         WHERE id = ?1 AND role = 'user'",
+    )?;
+    accumulators
+        .into_iter()
+        .map(|accumulator| {
+            let samples = accumulator
+                .sample_ids
+                .iter()
+                .map(|row_id| {
+                    sample_statement
+                        .query_row(
+                            rusqlite::params![row_id, SAMPLE_PREVIEW_CHARS as i64],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .optional()?
+                        .with_context(|| format!("raw session sample row {row_id} is missing"))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(accumulator.finish(samples))
+        })
+        .collect()
 }
 
-fn selector_cmp(left: &RawSessionSummary, right: &RawSessionSummary) -> std::cmp::Ordering {
+fn accumulator_selector_cmp(left: &Accumulator, right: &Accumulator) -> std::cmp::Ordering {
     (
         &left.source_root,
         &left.host,
@@ -240,7 +258,7 @@ struct Accumulator {
     message_count: i64,
     user_message_count: i64,
     assistant_message_count: i64,
-    samples: Vec<String>,
+    sample_ids: Vec<i64>,
     fingerprint: SessionFingerprint,
 }
 
@@ -265,7 +283,7 @@ impl Accumulator {
             message_count: 0,
             user_message_count: 0,
             assistant_message_count: 0,
-            samples: Vec::new(),
+            sample_ids: Vec::new(),
             fingerprint,
         }
     }
@@ -277,18 +295,15 @@ impl Accumulator {
         role: &str,
         hash: &str,
         epoch: i64,
-        sample: Option<&str>,
+        row_id: i64,
         limit: i64,
     ) {
         self.last_epoch = epoch;
         self.message_count += 1;
         if role == ROLE_USER {
             self.user_message_count += 1;
-            if self.samples.len() < limit as usize {
-                if let Some(sample) = sample {
-                    self.samples
-                        .push(sample.chars().take(SAMPLE_PREVIEW_CHARS).collect());
-                }
+            if self.sample_ids.len() < limit as usize {
+                self.sample_ids.push(row_id);
             }
         } else if role == ROLE_ASSISTANT {
             self.assistant_message_count += 1;
@@ -297,7 +312,7 @@ impl Accumulator {
             .push(identity_id, ordinal, role, hash, epoch);
     }
 
-    fn finish(self) -> RawSessionSummary {
+    fn finish(self, samples: Vec<String>) -> RawSessionSummary {
         RawSessionSummary {
             session_ref: session_ref(
                 &self.host,
@@ -316,7 +331,7 @@ impl Accumulator {
             user_message_count: self.user_message_count,
             assistant_message_count: self.assistant_message_count,
             content_hash: self.fingerprint.finish(),
-            user_message_samples: self.samples,
+            user_message_samples: samples,
         }
     }
 }

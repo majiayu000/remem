@@ -93,6 +93,7 @@ pub(crate) fn reconcile_raw_archive(
     since_epoch: i64,
     until_epoch: i64,
 ) -> Result<RawReconcileReport> {
+    crate::ingest::sessions::validate_scan_roots(roots)?;
     if since_epoch > until_epoch {
         bail!("invalid reconciliation window: --since must be <= --until");
     }
@@ -166,6 +167,7 @@ fn reconcile_captured(
         }
         if identity.status == "conflict" && participates_in_window {
             conflict_groups.insert((
+                identity.host.clone(),
                 identity.source_root.clone(),
                 identity.fallback_session_id.clone(),
             ));

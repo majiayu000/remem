@@ -195,8 +195,10 @@ remem ingest-sessions --root codex-cli:archive=/path/to/sessions --json
 把同一条 `raw sessions` 摘要中的 `host`、`source_root`、`project` 和
 `session_id` 原样传给 `raw messages`。旧脚本必须补上必填的 `--host`，并把
 `--root LABEL=PATH` 改成 `--root HOST:LABEL=PATH`；`raw reconcile` 使用相同
-格式。`HOST` 只能是 `claude-code`、`codex-cli` 或 `cursor`，`LABEL` 会持久化
-为 `source_root`。
+格式。`HOST` 只能是 `claude-code` 或 `codex-cli`，`LABEL` 会持久化为
+`source_root`。Cursor snapshot 证据需要手动配置并验证
+`remem summarize --host cursor` Stop 集成；文件系统 `--root` 摄取和对账会
+明确拒绝 `cursor`。
 
 ### 审核与治理
 

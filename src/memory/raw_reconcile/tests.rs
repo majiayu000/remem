@@ -21,8 +21,12 @@ impl TempRoot {
     }
 
     fn scan_root(&self) -> ScanRoot {
+        self.scan_root_with_host(crate::identity::InstallHost::ClaudeCode)
+    }
+
+    fn scan_root_with_host(&self, host: crate::identity::InstallHost) -> ScanRoot {
         ScanRoot {
-            host: crate::identity::InstallHost::ClaudeCode,
+            host,
             label: "fixture".to_string(),
             path: self.path.clone(),
             required: true,
@@ -374,6 +378,26 @@ fn missing_required_root_fails_loudly() {
 }
 
 #[test]
+fn cursor_root_fails_before_reconciliation() {
+    let conn = setup();
+    let root = TempRoot::new("cursor-root");
+    let mut scan_root = root.scan_root();
+    scan_root.host = crate::identity::InstallHost::Cursor;
+
+    let error = reconcile_raw_archive(&conn, &[scan_root], 100, 100)
+        .expect_err("Cursor filesystem roots must not reach transcript classification");
+
+    assert!(error.to_string().contains("Stop snapshot contract"));
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM raw_session_identities", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        0
+    );
+}
+
+#[test]
 fn missing_cursor_blocks_reconciliation() {
     let conn = setup();
     let root = TempRoot::new("missing-cursor");
@@ -475,6 +499,43 @@ fn production_contract_zero_conflict_is_counted_instead_of_rejected_as_stale() {
         .expect("current conflict snapshot should produce an aggregate report");
 
     assert_eq!(report.comparison.identity_conflicts, 1);
+    assert!(!report.parity);
+}
+
+#[test]
+fn conflict_groups_are_separate_across_hosts() {
+    let conn = setup();
+    let claude = TempRoot::new("claude-host-conflict");
+    let codex = TempRoot::new("codex-host-conflict");
+    for root in [&claude, &codex] {
+        std::fs::create_dir_all(root.path.join("first")).expect("create first alias directory");
+        std::fs::create_dir_all(root.path.join("second")).expect("create second alias directory");
+        let first = line("canonical-one", "user", 100, "first claim");
+        let second = line("canonical-two", "user", 100, "second claim");
+        root.write("first/shared.jsonl", &[&first]);
+        root.write("second/shared.jsonl", &[&second]);
+    }
+    let roots = [
+        claude.scan_root_with_host(crate::identity::InstallHost::ClaudeCode),
+        codex.scan_root_with_host(crate::identity::InstallHost::CodexCli),
+    ];
+
+    let summary = run_ingest_sessions(&conn, &roots, &IngestOptions::default())
+        .expect("ingest conflicts from two hosts");
+    assert_eq!(summary.failed_files, 4);
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM raw_session_identities WHERE status = 'conflict'",
+            [],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        4
+    );
+
+    let report =
+        reconcile_raw_archive(&conn, &roots, 100, 100).expect("reconcile conflicts from two hosts");
+    assert_eq!(report.comparison.identity_conflicts, 2);
     assert!(!report.parity);
 }
 

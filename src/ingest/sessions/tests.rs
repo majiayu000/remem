@@ -583,6 +583,37 @@ fn constructed_reserved_source_root_fails_before_ingest_mutation() -> anyhow::Re
 }
 
 #[test]
+fn constructed_cursor_root_fails_before_ingest_mutation() -> anyhow::Result<()> {
+    let conn = setup_conn();
+    let root = TempRoot::new_with_components("cursor-root", &[], InstallHost::Cursor);
+    root.write(
+        "session.jsonl",
+        concat!(
+            "{\"role\":\"user\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"must not disappear\"}]}}\n",
+            "{\"type\":\"turn_ended\",\"status\":\"success\"}\n"
+        ),
+    );
+
+    let error = run_ingest_sessions(
+        &conn,
+        &[root.scan_root("cursor-archive")],
+        &IngestOptions::default(),
+    )
+    .expect_err("Cursor filesystem roots must fail before discovery or mutation");
+
+    assert!(error.to_string().contains("Stop snapshot contract"));
+    assert_eq!(raw_message_count(&conn), 0);
+    assert_eq!(cursor_count(&conn), 0);
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM raw_session_identities", [], |row| {
+            row.get::<_, i64>(0)
+        })?,
+        0
+    );
+    Ok(())
+}
+
+#[test]
 fn incomplete_discovery_blocks_all_identity_and_raw_mutation() -> anyhow::Result<()> {
     let conn = setup_conn();
     let root = TempRoot::new("phase-a-fail-closed");

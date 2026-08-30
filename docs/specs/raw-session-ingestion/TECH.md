@@ -21,37 +21,25 @@ or projection invalidation. File drains roll back on read, parse, or insert
 failure.
 
 Migration v091 adds a checked nullable `host` column to transcript identities.
-Current ingestion writes `claude-code`, `codex-cli`, or `cursor` at the trusted
-probe boundary. Additional roots require the breaking `HOST:LABEL=PATH` syntax,
-default roots carry their host explicitly, and batch probing never infers the
-host from path components. The migration backfills only unambiguous legacy path shapes;
+Current ingestion writes an explicit host at the trusted probe boundary.
+Additional batch/reconcile roots require the breaking `HOST:LABEL=PATH` syntax
+and accept only `claude-code` or `codex-cli`; Cursor uses the approved Stop
+snapshot path. Default roots carry their host explicitly, and batch probing
+never infers the host from path components. The migration backfills only unambiguous legacy path shapes;
 unknown and multi-runtime shapes remain null and make host-bound session reads
 fail closed. Raw-session grouping uses `(source_root, host, project,
 session_id)`, while raw-message pagination binds the cursor to the same host.
 
-GH-825 extends this existing schema for approved Cursor full snapshots without
-a migration. Its versioned IR assigns zero-based ordinals to every physical
-JSONL record before projecting messages; internal `turn_ended` records therefore
-create intentional raw ordinal gaps. Cursor messages use an exact-content
-primitive in `raw_occurrence.rs` that shares the identified-occurrence SQL but
-does not pass through the legacy `trim()` entrypoint. Hashing, stable-field
-comparison, and storage preserve leading/trailing whitespace and complete
-UTF-8 text bytes. Identity+ordinal replay with changed whitespace or other
-stable evidence raises `RawIdentityConflict` and rolls back the entire
-immediate snapshot bundle; identity-NULL content dedup is forbidden.
+GH-825 adds a versioned Cursor parser for Stop rollup and capture-health
+evidence without extending the raw archive schema. It does not project Cursor
+snapshot messages into identified `raw_messages`; complete Cursor transcripts
+therefore are not part of the Refine raw-session source-of-truth contract.
 
-`raw reconcile` resolves a Cursor identity from all authoritative full
-companions bound to `transcript_identity_id`, including their approved format
-version, trusted locator, snapshot hash/length, source Stop, and event time.
-After sorting by byte length, it requires one monotonic chain whose current
-captured bytes match every approved prefix boundary, selects the longest
-approved boundary, and routes only those bytes through the shared GH-825 Cursor
-parser/projection; a later unapproved suffix is not consumed. It does not call
-`raw_transcript::classify_transcript_line` for that identity. Missing/malformed
-metadata, same-length different hashes, truncation, mutated prefixes, or
-path/source-root forks fail reconciliation visibly. Non-Cursor identities
-retain the current classifier. Reconciliation remains read-only and
-aggregate-only.
+`raw reconcile` rejects Cursor filesystem roots at its entry boundary. This
+prevents Cursor records from reaching `raw_transcript::classify_transcript_line`
+and prevents unsupported-only Cursor input from producing empty successful
+parity. Approved Cursor snapshots remain on the shared GH-825 Stop parser and
+projection path. Reconciliation remains read-only and aggregate-only.
 
 The additive session-level `capture_health` selector first chooses the current
 source Stop by the immutable source event
@@ -114,9 +102,10 @@ Stop.
    fails before any legacy claim/rekey or dependent evidence mutation. A
    `--since`-excluded active identity may receive a bounded event index, but a
    Phase-A conflict is a failed file rather than a skipped file.
-5. Stop performs the shared identity/project probe inside its captured byte
-   boundary and persists the claim, but leaves complete-set legacy convergence
-   to the next batch pass.
+5. Claude/Codex Stop ingestion performs the shared identity/project probe
+   inside its captured byte boundary and persists the claim, but leaves
+   complete-set legacy convergence to the next batch pass. Cursor Stop
+   snapshots remain rollup/capture-health evidence rather than raw sessions.
 
 ## Read and Reconcile Flow
 
@@ -156,11 +145,10 @@ also requires those focused regressions, `cargo fmt --check`, `cargo check`,
 `python3 scripts/ci/check_plugin_version_sync.py`,
 `python3 scripts/ci/check_pr_preflight.py --fast`, ordinary PR CI, and
 independent review.
-GH-825 additionally requires exact whitespace round-trip/conflict fixtures,
-physical-ordinal gap/replay fixtures, full snapshot bundle rollback, and proof
-that neither the trimming entrypoint nor identity-NULL dedup is invoked.
-`memory::raw_reconcile` coverage includes host-aware Cursor parser selection,
-snapshot-boundary parity, and missing/conflicting companion rejection.
+GH-825 additionally requires parser and rollup fixtures for approved Cursor
+snapshot evidence; it does not claim raw-occurrence insertion coverage.
+`memory::raw_reconcile` coverage includes fail-closed Cursor filesystem-root
+rejection before capture or parity calculation.
 CLI coverage also freezes `capture_health` for `raw sessions --json` and
 `raw messages --json`: raw-backed plus outcome-only union/dedup, reserved
 locator parser/ingest rejection, persisted-collision failure and virtual

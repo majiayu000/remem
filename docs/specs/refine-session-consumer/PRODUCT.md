@@ -8,15 +8,15 @@ Date: 2026-08-30
 Remem owns the raw transcript archive, but its existing `raw sessions` JSON
 contract does not expose the originating coding-agent host or a session
 fingerprint. A downstream cognitive-analysis consumer therefore has to fetch
-every message before it can detect change, and cannot distinguish Codex CLI,
-Claude Code, and Cursor without re-reading host-owned files.
+every message before it can detect change, and cannot distinguish Codex CLI
+from Claude Code without re-reading host-owned files.
 
 That gap caused Refine to persist a second full transcript copy and to report
 valid Codex observations as `platform_unknown`.
 
 ## Goals
 
-1. Make Remem the only owner of complete coding-agent transcripts.
+1. Make Remem the only owner of complete Claude Code and Codex CLI transcripts.
 2. Expose trustworthy host provenance at the existing read-only raw-session
    boundary.
 3. Let a bounded consumer skip unchanged sessions without fetching messages.
@@ -29,7 +29,7 @@ valid Codex observations as `platform_unknown`.
 `remem raw sessions --json` adds these fields to every session:
 
 - `session_ref`: stable `remem://raw-session/v2/...` reference;
-- `host`: `claude-code`, `codex-cli`, or `cursor`;
+- `host`: `claude-code` or `codex-cli` for complete raw-backed sessions;
 - `session_mode`: `interactive`, `unattended`, `subagent`, or `unknown`;
 - `content_hash`: SHA-256 fingerprint of the ordered immutable raw
   occurrences selected for the session.
@@ -37,6 +37,10 @@ valid Codex observations as `platform_unknown`.
 The existing `source_root`, `project`, and `session_id` fields remain the exact
 raw-message selector. `source_root` identifies storage location; it is not a
 host name.
+
+Cursor may also appear on a virtual outcome-only row carrying
+`capture_health`. That row has no complete transcript and is not a Refine
+ingestion source.
 
 `--latest N` returns at most `N` sessions ordered by newest message time. The
 bound is applied by Remem before JSON is emitted so a scheduled consumer does
@@ -66,7 +70,9 @@ not enumerate an unbounded archive and truncate it afterward.
 
 ## Acceptance Criteria
 
-- Claude Code, Codex CLI, and Cursor fixtures emit the exact host.
+- Claude Code and Codex CLI transcript fixtures emit the exact host.
+- Cursor outcome-only fixtures remain distinguishable as capture-health
+  metadata and are not fetchable as complete transcripts.
 - Codex TUI/Desktop, automation, `codex_exec`/Symphony, and subagent fixtures
   emit their exact trusted session mode; other inputs emit `unknown`.
 - Same project/session ID across two hosts yields two independently selectable
