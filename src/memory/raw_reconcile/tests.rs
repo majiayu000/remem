@@ -21,7 +21,12 @@ impl TempRoot {
     }
 
     fn scan_root(&self) -> ScanRoot {
+        self.scan_root_with_host(crate::identity::InstallHost::ClaudeCode)
+    }
+
+    fn scan_root_with_host(&self, host: crate::identity::InstallHost) -> ScanRoot {
         ScanRoot {
+            host,
             label: "fixture".to_string(),
             path: self.path.clone(),
             required: true,
@@ -49,6 +54,15 @@ fn setup() -> Connection {
     let conn = Connection::open_in_memory().expect("open reconcile database");
     crate::migrate::run_migrations(&conn).expect("migrate reconcile database");
     conn
+}
+
+fn cursor_state(conn: &Connection) -> (String, i64, i64, i64) {
+    conn.query_row(
+        "SELECT file_path, mtime_epoch, size_bytes, last_ingested_at FROM ingest_cursors",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )
+    .expect("load fixture cursor")
 }
 
 fn ingest(conn: &Connection, root: &TempRoot) {
@@ -193,8 +207,9 @@ fn malformed_record_is_counted_from_a_current_snapshot() {
     let conn = setup();
     let root = TempRoot::new("malformed");
     let path = root.write("malformed.jsonl", &["{not-json}"]);
-    let plan = crate::ingest::session_identity::probe("fixture", &root.path, &path, None)
+    let mut plan = crate::ingest::session_identity::probe("fixture", &root.path, &path, None)
         .expect("probe malformed fixture path");
+    plan.host = Some(crate::identity::InstallHost::ClaudeCode);
     let identity_id = crate::ingest::session_identity::upsert_claim(&conn, &plan, 1)
         .expect("persist malformed fixture ledger");
     crate::ingest::session_identity::mark_complete(
@@ -273,6 +288,42 @@ fn stale_pre_capture_tuple_fails_before_reconciliation() {
 }
 
 #[test]
+fn identity_host_mismatch_fails_before_capture_without_advancing_cursor() {
+    let conn = setup();
+    let root = TempRoot::new("host-mismatch");
+    let user = line("host-mismatch", "user", 100, "host bound");
+    root.write("host-mismatch.jsonl", &[&user]);
+    ingest(&conn, &root);
+    let before = cursor_state(&conn);
+    conn.execute("UPDATE raw_session_identities SET host = 'codex-cli'", [])
+        .expect("change fixture ledger host");
+
+    let error = reconcile_raw_archive(&conn, &[root.scan_root()], 100, 100)
+        .expect_err("root/ledger host mismatch must fail before capture");
+
+    assert!(error.to_string().contains("host provenance mismatch"));
+    assert_eq!(cursor_state(&conn), before);
+}
+
+#[test]
+fn missing_identity_host_fails_before_capture_without_advancing_cursor() {
+    let conn = setup();
+    let root = TempRoot::new("host-missing");
+    let user = line("host-missing", "user", 100, "host required");
+    root.write("host-missing.jsonl", &[&user]);
+    ingest(&conn, &root);
+    let before = cursor_state(&conn);
+    conn.execute("UPDATE raw_session_identities SET host = NULL", [])
+        .expect("clear fixture ledger host");
+
+    let error = reconcile_raw_archive(&conn, &[root.scan_root()], 100, 100)
+        .expect_err("hostless ledger identity must fail before capture");
+
+    assert!(error.to_string().contains("host provenance is missing"));
+    assert_eq!(cursor_state(&conn), before);
+}
+
+#[test]
 fn stale_out_of_window_file_blocks_bounded_reconciliation() {
     let conn = setup();
     let root = TempRoot::new("stale-outside");
@@ -311,6 +362,7 @@ fn deleted_file_from_optional_root_blocks_reconciliation() {
 fn missing_required_root_fails_loudly() {
     let conn = setup();
     let root = ScanRoot {
+        host: crate::identity::InstallHost::ClaudeCode,
         label: "required".to_string(),
         path: std::env::temp_dir().join(format!(
             "remem-missing-required-{}",
@@ -323,6 +375,26 @@ fn missing_required_root_fails_loudly() {
         .expect_err("missing required root must fail");
 
     assert!(error.to_string().contains("transcript discovery failed"));
+}
+
+#[test]
+fn cursor_root_fails_before_reconciliation() {
+    let conn = setup();
+    let root = TempRoot::new("cursor-root");
+    let mut scan_root = root.scan_root();
+    scan_root.host = crate::identity::InstallHost::Cursor;
+
+    let error = reconcile_raw_archive(&conn, &[scan_root], 100, 100)
+        .expect_err("Cursor filesystem roots must not reach transcript classification");
+
+    assert!(error.to_string().contains("Stop snapshot contract"));
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM raw_session_identities", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        0
+    );
 }
 
 #[test]
@@ -427,6 +499,43 @@ fn production_contract_zero_conflict_is_counted_instead_of_rejected_as_stale() {
         .expect("current conflict snapshot should produce an aggregate report");
 
     assert_eq!(report.comparison.identity_conflicts, 1);
+    assert!(!report.parity);
+}
+
+#[test]
+fn conflict_groups_are_separate_across_hosts() {
+    let conn = setup();
+    let claude = TempRoot::new("claude-host-conflict");
+    let codex = TempRoot::new("codex-host-conflict");
+    for root in [&claude, &codex] {
+        std::fs::create_dir_all(root.path.join("first")).expect("create first alias directory");
+        std::fs::create_dir_all(root.path.join("second")).expect("create second alias directory");
+        let first = line("canonical-one", "user", 100, "first claim");
+        let second = line("canonical-two", "user", 100, "second claim");
+        root.write("first/shared.jsonl", &[&first]);
+        root.write("second/shared.jsonl", &[&second]);
+    }
+    let roots = [
+        claude.scan_root_with_host(crate::identity::InstallHost::ClaudeCode),
+        codex.scan_root_with_host(crate::identity::InstallHost::CodexCli),
+    ];
+
+    let summary = run_ingest_sessions(&conn, &roots, &IngestOptions::default())
+        .expect("ingest conflicts from two hosts");
+    assert_eq!(summary.failed_files, 4);
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM raw_session_identities WHERE status = 'conflict'",
+            [],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        4
+    );
+
+    let report =
+        reconcile_raw_archive(&conn, &roots, 100, 100).expect("reconcile conflicts from two hosts");
+    assert_eq!(report.comparison.identity_conflicts, 2);
     assert!(!report.parity);
 }
 

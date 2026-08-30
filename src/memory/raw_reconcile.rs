@@ -93,6 +93,9 @@ pub(crate) fn reconcile_raw_archive(
     since_epoch: i64,
     until_epoch: i64,
 ) -> Result<RawReconcileReport> {
+    for root in roots {
+        root.validate_for_batch()?;
+    }
     if since_epoch > until_epoch {
         bail!("invalid reconciliation window: --since must be <= --until");
     }
@@ -166,6 +169,7 @@ fn reconcile_captured(
         }
         if identity.status == "conflict" && participates_in_window {
             conflict_groups.insert((
+                identity.host.clone(),
                 identity.source_root.clone(),
                 identity.fallback_session_id.clone(),
             ));
@@ -236,6 +240,20 @@ fn capture_candidates(
                 stale_count += 1;
                 continue;
             };
+            let Some(identity_host) = identity.host.as_deref() else {
+                bail!(
+                    "transcript identity host provenance is missing for {:?}; re-ingest its transcript",
+                    transcript_path
+                );
+            };
+            if identity_host != root.host.as_db_value() {
+                bail!(
+                    "transcript identity host provenance mismatch for {:?}: ledger host is {:?}, requested root host is {:?}",
+                    transcript_path,
+                    identity_host,
+                    root.host.as_db_value()
+                );
+            }
             let file = File::open(&path).context("open transcript snapshot")?;
             let metadata = file.metadata().context("stat transcript snapshot")?;
             let byte_limit = metadata.len();

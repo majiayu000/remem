@@ -1,8 +1,10 @@
 # GH969 / PR #1052 Authority-Verdict Convergence Plan
 
-Status: local implementation, current macOS arm64 evidence, and full
-preflight are complete on `work/pr1052-authority-verdict`; hosted four-target
-evidence and review work remain pending.
+Status: local implementation and prior commit-specific verification are
+complete on `work/pr1052-authority-verdict`; latest-main content integration is
+resolved in the current merge. Current merged-tree macOS arm64 evidence and a
+fresh full preflight remain pending, as do hosted four-target evidence and
+review work.
 
 ## Objective
 
@@ -161,6 +163,17 @@ surface/baseline/self-tests, public claims, size/write/dependency/migration/
 release checks, Node runtime tests, version bump, fmt, no-default hook, clippy,
 spec lifecycle, native web smoke, extraction/eval/capacity gates, and full
 `cargo test`.
+
+Latest-main integration resolution: origin/main at
+`1e08dcd8f02f3f4c5304e8d5c32b73d92d0c97a2` is integrated in the current merge.
+The CHANGELOG keeps main's raw-session `0.6.83` addition before the branch's
+GH969 executable ship-matrix `0.6.83` addition. The lifecycle manifest starts
+from main's published baseline and preserves the exact append-only retirement
+union (`rust_export=76`, `cli_command=3`, `mcp_tool=1`, all other kinds `=0`)
+before regenerating merged-source records. The prior macOS arm64 evidence and
+full preflight remain historical for their named commits; the merged
+production tree needs new macOS arm64 evidence and a fresh full preflight
+before push.
 
 ## Honest constraints and risks
 

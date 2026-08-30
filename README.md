@@ -202,6 +202,24 @@ transcript evidence:
 remem raw search "exact phrase" --since 2026-06-01 --json
 ```
 
+List complete host-bound sessions before reading an exact transcript:
+
+```bash
+remem raw sessions --latest 20 --json
+remem raw messages --host codex-cli --source-root local \
+  --project "/path/to/project" --session-id SESSION_ID --json
+remem ingest-sessions --root codex-cli:archive=/path/to/sessions --json
+```
+
+Copy `host`, `source_root`, `project`, and `session_id` unchanged from one
+`raw sessions` summary into `raw messages`. Existing scripts must add the
+required `--host` selector and replace `--root LABEL=PATH` with
+`--root HOST:LABEL=PATH`; the same root format applies to `raw reconcile`.
+`HOST` is `claude-code` or `codex-cli`, and `LABEL` becomes the persisted
+`source_root`. Cursor snapshot evidence requires a manually configured and
+verified `remem summarize --host cursor` Stop integration; filesystem `--root`
+ingestion and reconciliation reject `cursor` explicitly.
+
 ### Review and govern
 
 ```bash

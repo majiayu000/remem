@@ -180,12 +180,18 @@ pub(in crate::cli) enum RawAction {
         /// Sample up to N role=user message texts per session (0 disables).
         #[arg(long, default_value = "0")]
         sample: i64,
+        /// Return only the newest N sessions.
+        #[arg(long)]
+        latest: Option<i64>,
         /// Emit a single JSON object with stable fields for scripts.
         #[arg(long)]
         json: bool,
     },
     /// Export one exact raw session in chronological order.
     Messages {
+        /// Exact coding-agent host from a raw-session summary.
+        #[arg(long)]
+        host: String,
         /// Durable transcript source-root label.
         #[arg(long)]
         source_root: String,
@@ -217,7 +223,7 @@ pub(in crate::cli) enum RawAction {
         /// Inclusive upper bound; YYYY-MM-DD includes that full UTC day.
         #[arg(long)]
         until: String,
-        /// Additional required transcript root in label=path form.
+        /// Additional required Claude/Codex transcript root in HOST:LABEL=PATH form.
         #[arg(long = "root")]
         roots: Vec<String>,
         /// Emit the privacy-safe aggregate report as JSON.

@@ -72,6 +72,8 @@ pub(super) fn drain_raw_archive_from_range(
         let report = match super::raw_identity::drain_with_identity(
             conn,
             super::raw_identity::StopTranscript {
+                host: crate::identity::InstallHost::parse(&task.host)
+                    .context("session rollup host is unsupported for transcript identity")?,
                 path: transcript_path,
                 byte_limit: payload.transcript_byte_len,
                 project: &task.project,

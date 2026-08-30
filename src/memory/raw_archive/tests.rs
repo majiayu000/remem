@@ -25,6 +25,51 @@ fn raw_ingest_failure_count(conn: &Connection) -> Result<i64> {
     )
 }
 
+fn identify_raw_sessions(conn: &Connection, host: &str) {
+    let tuples = {
+        let mut statement = conn
+            .prepare("SELECT DISTINCT source_root, project, session_id FROM raw_messages")
+            .unwrap();
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+    };
+    for (root, project, session) in tuples {
+        conn.execute(
+            "INSERT INTO raw_session_identities
+             (source_root, transcript_path, host, fallback_session_id,
+              canonical_session_id, project, legacy_project, status,
+              contract_version, observed_mtime_ns, observed_size_bytes,
+              first_seen_at_epoch, last_seen_at_epoch)
+             VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?5, 'active', 1, 1, 1, 1, 1)",
+            params![
+                root,
+                format!("/tmp/.codex/sessions/{session}.jsonl"),
+                host,
+                session,
+                project
+            ],
+        )
+        .unwrap();
+        let identity_id = conn.last_insert_rowid();
+        conn.execute(
+            "UPDATE raw_messages
+             SET transcript_identity_id = ?1, transcript_record_ordinal = id
+             WHERE source_root = ?2 AND project = ?3 AND session_id = ?4",
+            params![identity_id, root, project, session],
+        )
+        .unwrap();
+    }
+}
+
 #[test]
 fn insert_is_idempotent_per_session_role_content() -> Result<()> {
     let conn = setup_conn();
@@ -550,7 +595,7 @@ fn insert_at_epoch(
     role: &str,
     content: &str,
     epoch: i64,
-) {
+) -> i64 {
     let outcome = insert_raw_message(
         conn,
         session_id,
@@ -569,6 +614,7 @@ fn insert_at_epoch(
         params![epoch, outcome.id],
     )
     .unwrap();
+    outcome.id
 }
 
 #[test]
@@ -630,6 +676,7 @@ fn list_sessions_groups_by_root_project_session_with_window_bounds() {
     insert_at_epoch(&conn, "s3", "/other", ROLE_USER, "s3 q1", 200);
     // Outside the window: excluded from grouping entirely.
     insert_at_epoch(&conn, "s4", "/proj", ROLE_USER, "too old", 10);
+    identify_raw_sessions(&conn, "codex-cli");
 
     let sessions = list_sessions(
         &conn,
@@ -638,6 +685,7 @@ fn list_sessions_groups_by_root_project_session_with_window_bounds() {
             until_epoch: Some(1000),
             project: None,
             sample_user_messages: 0,
+            latest: None,
         },
     )
     .unwrap();
@@ -659,6 +707,7 @@ fn list_sessions_groups_by_root_project_session_with_window_bounds() {
             until_epoch: Some(1000),
             project: Some("/proj".to_string()),
             sample_user_messages: 0,
+            latest: None,
         },
     )
     .unwrap();
@@ -674,6 +723,7 @@ fn list_sessions_samples_first_user_messages_in_window_order() {
     insert_at_epoch(&conn, "s1", "/proj", ROLE_USER, "third question", 130);
     let long = "x".repeat(400);
     insert_at_epoch(&conn, "s2", "/proj", ROLE_USER, &long, 200);
+    identify_raw_sessions(&conn, "codex-cli");
 
     let sessions = list_sessions(
         &conn,
@@ -682,6 +732,7 @@ fn list_sessions_samples_first_user_messages_in_window_order() {
             until_epoch: None,
             project: Some("/proj".to_string()),
             sample_user_messages: 2,
+            latest: None,
         },
     )
     .unwrap();
@@ -718,3 +769,6 @@ fn date_only_until_bound_includes_the_full_utc_day() {
         "an inclusive date-only upper bound must end at 23:59:59 UTC"
     );
 }
+
+#[path = "tests/session_contract.rs"]
+mod session_contract;

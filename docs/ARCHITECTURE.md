@@ -328,13 +328,21 @@ transcript occurrence ordinals without losing repeated identical turns.
 `raw_messages.event_time_source` distinguishes transcript event time,
 ingest-time fallback, and legacy-unknown provenance.
 
+Migration v091 adds the authoritative coding-agent host to that transcript
+identity. Stop capture persists its explicit host; batch ingestion infers only
+component-safe Claude Code, Codex CLI, and Cursor roots. Raw-session summaries
+group by `(source_root, host, project, session_id)` and expose a versioned
+session reference plus an ordered-occurrence content fingerprint. Missing or
+conflicting host provenance fails closed instead of merging sessions across
+runtimes.
+
 The raw query path is read-only and schema-validated:
 
 ```text
 raw search / raw sessions
   -> open_db_read_only_current
   -> current-schema and drift validation
-  -> bounded SQL query
+  -> host-bound grouping and bounded query/serialization
 
 raw reconcile
   -> discover with ingest-sessions root/subagents rules

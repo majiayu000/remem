@@ -14,42 +14,68 @@ use anyhow::{bail, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
+use crate::identity::InstallHost;
 use crate::memory::raw_archive::{self, TranscriptDrainOptions, SOURCE_ROOT_LOCAL};
 
 /// A file whose mtime is within this many seconds of now is treated as an
 /// actively-appended session: a JSON parse failure on its last line is a
 /// partial tail, not a file failure, and the cursor does not advance.
 const ACTIVE_TAIL_WINDOW_SECS: i64 = 60;
+const RESERVED_CURSOR_OUTCOME_SOURCE_ROOT: &str = "cursor-outcome";
 
 /// One scan root: a label recorded as `raw_messages.source_root` plus the
 /// directory to walk.
 #[derive(Debug, Clone)]
 pub struct ScanRoot {
+    pub host: InstallHost,
     pub label: String,
     pub path: PathBuf,
     /// Default local roots are optional because many users only have one host
-    /// installed. User-supplied `--root label=path` entries are required and
-    /// must not fail silently.
+    /// installed. User-supplied `--root HOST:LABEL=PATH` entries are required
+    /// and must not fail silently.
     pub required: bool,
 }
 
 impl ScanRoot {
-    /// Parse a `--root label=path` argument.
+    /// Parse a `--root HOST:LABEL=PATH` argument.
     pub fn parse(spec: &str) -> Result<Self> {
-        let Some((label, path)) = spec.split_once('=') else {
-            bail!("invalid --root {spec:?}: expected label=path");
+        let Some((host, root)) = spec.split_once(':') else {
+            bail!("invalid --root {spec:?}: expected HOST:LABEL=PATH");
+        };
+        let host = InstallHost::parse(host)
+            .map_err(|error| anyhow::anyhow!("invalid --root {spec:?}: {error}"))?;
+        validate_batch_host(host)?;
+        let Some((label, path)) = root.split_once('=') else {
+            bail!("invalid --root {spec:?}: expected HOST:LABEL=PATH");
         };
         let label = label.trim();
         let path = path.trim();
         if label.is_empty() || path.is_empty() {
             bail!("invalid --root {spec:?}: label and path must be non-empty");
         }
+        if label == RESERVED_CURSOR_OUTCOME_SOURCE_ROOT {
+            bail!("invalid --root {spec:?}: source-root label {label:?} is reserved");
+        }
         Ok(Self {
+            host,
             label: label.to_string(),
             path: PathBuf::from(shellexpand_home(path)),
             required: true,
         })
     }
+
+    pub(crate) fn validate_for_batch(&self) -> Result<()> {
+        validate_batch_host(self.host)
+    }
+}
+
+fn validate_batch_host(host: InstallHost) -> Result<()> {
+    if host == InstallHost::Cursor {
+        bail!(
+            "Cursor filesystem roots are unsupported; Cursor transcripts must enter through the Stop snapshot contract"
+        );
+    }
+    Ok(())
 }
 
 fn shellexpand_home(path: &str) -> String {
@@ -70,11 +96,13 @@ pub fn default_scan_roots() -> Vec<ScanRoot> {
     };
     vec![
         ScanRoot {
+            host: InstallHost::ClaudeCode,
             label: SOURCE_ROOT_LOCAL.to_string(),
             path: home.join(".claude").join("projects"),
             required: false,
         },
         ScanRoot {
+            host: InstallHost::CodexCli,
             label: SOURCE_ROOT_LOCAL.to_string(),
             path: home.join(".codex").join("sessions"),
             required: false,
@@ -110,16 +138,27 @@ pub struct IngestOptions {
 }
 
 /// Run one batch ingestion pass over the given scan roots (callers build the
-/// list from `default_scan_roots()` plus any `--root label=path` extras).
+/// list from `default_scan_roots()` plus any `--root HOST:LABEL=PATH` extras).
 pub fn run_ingest_sessions(
     conn: &Connection,
     roots: &[ScanRoot],
     options: &IngestOptions,
 ) -> Result<IngestSummary> {
+    for root in roots {
+        root.validate_for_batch()?;
+    }
+    if roots
+        .iter()
+        .any(|root| root.label == RESERVED_CURSOR_OUTCOME_SOURCE_ROOT)
+    {
+        bail!(
+            "source-root label {:?} is reserved and cannot be ingested",
+            RESERVED_CURSOR_OUTCOME_SOURCE_ROOT
+        );
+    }
     let mut summary = IngestSummary::default();
     let now = chrono::Utc::now().timestamp();
     let mut project_cache = BTreeMap::new();
-
     let mut discovered = Vec::new();
     for root in roots {
         let (files, discovery_failures) = discover_transcript_files(root);
@@ -130,6 +169,7 @@ pub fn run_ingest_sessions(
         for file in files {
             summary.scanned += 1;
             let plan = match super::session_identity::probe_with_project_cache(
+                root.host,
                 &root.label,
                 &root.path,
                 &file,
@@ -165,12 +205,22 @@ pub fn run_ingest_sessions(
             let mut groups = BTreeSet::new();
             for (root, plan, phase_b_eligible) in discovered {
                 let identity_id = super::session_identity::upsert_claim(conn, &plan, now)?;
-                groups.insert((plan.source_root.clone(), plan.fallback_session_id.clone()));
+                let host = plan
+                    .host
+                    .expect("hostless batch plans are rejected before persistence")
+                    .as_db_value()
+                    .to_string();
+                groups.insert((
+                    host,
+                    plan.source_root.clone(),
+                    plan.fallback_session_id.clone(),
+                ));
                 prepared.push((root, plan, identity_id, phase_b_eligible));
             }
-            for (source_root, fallback_session_id) in groups {
+            for (host, source_root, fallback_session_id) in groups {
                 super::session_identity::resolve_fallback_group(
                     conn,
+                    Some(&host),
                     &source_root,
                     &fallback_session_id,
                 )?;
@@ -192,7 +242,14 @@ pub fn run_ingest_sessions(
 
     let mut prepared_groups = BTreeMap::new();
     for prepared_file in prepared {
+        let host = prepared_file
+            .1
+            .host
+            .expect("hostless batch plans are rejected before persistence")
+            .as_db_value()
+            .to_string();
         let key = (
+            host,
             prepared_file.1.source_root.clone(),
             prepared_file.1.fallback_session_id.clone(),
         );
@@ -201,7 +258,7 @@ pub fn run_ingest_sessions(
             .or_insert_with(Vec::new)
             .push(prepared_file);
     }
-    for ((source_root, fallback_session_id), group) in prepared_groups {
+    for ((host, source_root, fallback_session_id), group) in prepared_groups {
         conn.execute_batch("SAVEPOINT gh871_identity_phase_b_group")?;
         let ingested_before = summary.ingested_messages;
         let partial_before = summary.partial_files;
@@ -263,6 +320,7 @@ pub fn run_ingest_sessions(
             summary.partial_files = partial_before;
             super::session_identity::mark_fallback_group_conflict(
                 conn,
+                &host,
                 &source_root,
                 &fallback_session_id,
                 "stable_occurrence_mismatch",

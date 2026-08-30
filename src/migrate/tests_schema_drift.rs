@@ -348,7 +348,9 @@ fn dry_run_pending_reports_v068_session_rollup_followup_checkpoint_drift() -> Re
 #[test]
 fn dry_run_pending_reports_v071_identity_schema_drift() -> Result<()> {
     let conn = Connection::open_in_memory()?;
-    create_current_schema_missing_versions(&conn, &[71])?;
+    // v091 extends the v071 identity table, so omit both when constructing a
+    // deliberately broken current-schema fixture.
+    create_current_schema_missing_versions(&conn, &[71, 91])?;
 
     let result = dry_run_pending(&conn)?;
 

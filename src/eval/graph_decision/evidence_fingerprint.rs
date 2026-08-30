@@ -103,6 +103,9 @@ const IMPLEMENTATION_INPUTS: &[&str] = &[
     "src/migrate/schema_drift/invariants/v085.rs",
     "src/migrate/schema_drift/invariants/v086.rs",
     "src/migrate/schema_drift/invariants/v087.rs",
+    "src/migrate/schema_drift/invariants/v089.rs",
+    "src/migrate/schema_drift/invariants/v090.rs",
+    "src/migrate/schema_drift/invariants/v091.rs",
     "src/migrate/state.rs",
     "src/migrate/transition.rs",
     "src/migrate/types.rs",
@@ -276,6 +279,7 @@ const MIGRATION_SQL_INPUTS: &[&str] = &[
     "src/migrations/v088_activation_legacy_trust.sql",
     "src/migrations/v089_supplemental_local_copy_receipt.sql",
     "src/migrations/v090_scope_cleanup_receipt.sql",
+    "src/migrations/v091_raw_session_host.sql",
 ];
 
 #[derive(Debug, Clone, Serialize)]
