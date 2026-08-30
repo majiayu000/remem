@@ -125,6 +125,25 @@ This is intended fail-closed authority behavior on an uncommitted production
 tree, not a metric regression. A fresh full preflight is required after the
 commit makes the source tree clean.
 
+macOS arm64 authority-evidence refresh: the documented producer
+`cargo run -- bench memory --suite adversarial-policy --condition remem_default
+--root eval/public --artifact-prefix memory/artifacts/adversarial-policy-v2
+--json-out eval/public/memory/reports/adversarial-policy-v2.json` — PASS; it
+executed the 20 typed `remem_default` tasks and regenerated their raw SQLite
+evidence. `cargo run -- bench verify --root eval/public --json-out
+/private/tmp/remem-pr1052-security-verifier.json` — PASS with top-level
+`verifier_passed=true`. The selected security binding was
+`memory/reports/adversarial-policy-v2.json`, `status=PASS`, target
+`aarch64-apple-darwin`, platform `macos/aarch64`, source-dirty attestations
+`[false]`, producing SHA
+`3ff82236bbe97bd3eb36ca52e2c748da05adff73`, one production-input tree,
+`runs_recomputed=20`, `policy_failure_count=0`, and
+`non_retention_leak_rate=0.0`. The overall runtime verdict remained
+`INSUFFICIENT` because GH931/release evidence is incomplete and the generated
+checkout is dirty, as intended. This regeneration was necessary after adding
+current-tree binding so the committed evidence is produced and hash-bound by
+the current clean commit rather than manually updating provenance.
+
 Earlier accepted verification: implementation commit `ac6676e7` passed complete
 preflight before current `origin/main` at `0bf31e98` (including merged PR #1051)
 was merged. README is byte-for-byte equal to `origin/main`, without restoring
