@@ -623,7 +623,7 @@ capture_adapter = "codex-cli"
 
 [memory_ai.hosts."claude-code"]
 memory_profile = "claude"
-context_gate = "off"
+context_gate = "auto"
 context_color = true
 capture_adapter = "claude-code"
 

@@ -7,6 +7,31 @@ from unittest import mock
 import check_pr_preflight
 
 
+EXPECTED_SESSIONSTART_SMOKE_COMMAND = [
+    "python3",
+    "scripts/ci/run_sessionstart_context_gate_smoke.py",
+]
+EXPECTED_SESSIONSTART_RUNNER_TEST_COMMAND = [
+    "python3",
+    "scripts/ci/test_run_sessionstart_context_gate_smoke.py",
+]
+
+
+def assert_sessionstart_smoke_registration(commands: list[list[str]]) -> None:
+    matches = [
+        command for command in commands if command == EXPECTED_SESSIONSTART_SMOKE_COMMAND
+    ]
+    if len(matches) != 1:
+        raise AssertionError("preflight must execute the artifact-resolving smoke once")
+    test_matches = [
+        command
+        for command in commands
+        if command == EXPECTED_SESSIONSTART_RUNNER_TEST_COMMAND
+    ]
+    if len(test_matches) != 1:
+        raise AssertionError("preflight must execute the SessionStart runner tests once")
+
+
 class PreflightCargoTestThreadsTests(unittest.TestCase):
     def run_main(self, *arguments: str) -> list[list[str]]:
         commands: list[list[str]] = []
@@ -77,6 +102,13 @@ class PreflightCargoTestThreadsTests(unittest.TestCase):
     def test_fast_mode_runs_surface_lifecycle_check_and_self_test(self) -> None:
         commands = self.run_main("--fast")
 
+        self.assertIn(
+            ["python3", "scripts/ci/check_documentation_contracts.py"], commands
+        )
+        self.assertIn(
+            ["python3", "scripts/ci/test_check_documentation_contracts.py"], commands
+        )
+        assert_sessionstart_smoke_registration(commands)
         self.assertIn(["python3", "scripts/ci/check_public_surface.py"], commands)
         self.assertIn(
             ["python3", "scripts/ci/check_surface_baseline.py", "origin/main"],
@@ -87,6 +119,43 @@ class PreflightCargoTestThreadsTests(unittest.TestCase):
             commands,
         )
         self.assertIn(["python3", "scripts/ci/surface_lifecycle_rest.py"], commands)
+
+    def test_full_mode_runs_sessionstart_smoke_once(self) -> None:
+        commands = self.run_main()
+
+        assert_sessionstart_smoke_registration(commands)
+
+    def test_noop_sessionstart_command_fails_independent_registration(self) -> None:
+        with mock.patch.object(
+            check_pr_preflight,
+            "SESSIONSTART_SMOKE_COMMAND",
+            ["true"],
+            create=True,
+        ):
+            commands = self.run_main("--fast")
+
+        with self.assertRaisesRegex(AssertionError, "artifact-resolving smoke"):
+            assert_sessionstart_smoke_registration(commands)
+
+    def test_noop_sessionstart_runner_tests_fail_independent_registration(self) -> None:
+        with mock.patch.object(
+            check_pr_preflight,
+            "SESSIONSTART_RUNNER_TEST_COMMAND",
+            ["true"],
+            create=True,
+        ):
+            commands = self.run_main("--fast")
+
+        with self.assertRaisesRegex(AssertionError, "runner tests"):
+            assert_sessionstart_smoke_registration(commands)
+
+    def test_preflight_does_not_construct_a_fixed_cargo_artifact_path(self) -> None:
+        commands = self.run_main("--fast")
+
+        assert_sessionstart_smoke_registration(commands)
+        self.assertFalse(
+            any("target/debug/remem" in argument for command in commands for argument in command)
+        )
 
 
 if __name__ == "__main__":

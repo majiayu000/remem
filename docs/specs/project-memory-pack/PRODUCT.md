@@ -64,8 +64,14 @@ and doctor/why attribution are implemented.
 
 ## Team Onboarding Walkthrough (target README content)
 
-1. Maintainer runs `remem export --project . --pack .remem-pack/` and commits
-   the pack.
+1. Maintainer exports the current repository and commits the pack:
+
+   <!-- remem-doc-contract:current-project-export:start -->
+   ```bash
+   remem export --pack .remem-pack/
+   ```
+   <!-- remem-doc-contract:current-project-export:end -->
+
 2. New contributor installs remem, runs `remem import --pack .remem-pack/`.
 3. Their first session starts with the project's decisions, bugfix rationale,
    and architecture facts injected — no re-explaining, no hand-maintained
