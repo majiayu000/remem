@@ -11,22 +11,44 @@ fn setup_conn() -> Connection {
 }
 
 struct TempRoot {
+    host: InstallHost,
     path: PathBuf,
+    cleanup_root: PathBuf,
 }
 
 impl TempRoot {
     fn new(name: &str) -> Self {
-        let path = std::env::temp_dir().join(format!(
+        Self::new_with_components(name, &[".claude", "projects"], InstallHost::ClaudeCode)
+    }
+
+    fn new_codex(name: &str) -> Self {
+        Self::new_with_components(name, &[".codex", "sessions"], InstallHost::CodexCli)
+    }
+
+    fn new_unclassified(name: &str) -> Self {
+        Self::new_with_components(name, &[], InstallHost::ClaudeCode)
+    }
+
+    fn new_with_components(name: &str, components: &[&str], host: InstallHost) -> Self {
+        let cleanup_root = std::env::temp_dir().join(format!(
             "remem-ingest-{name}-{}-{}",
             std::process::id(),
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ));
+        let path = components
+            .iter()
+            .fold(cleanup_root.clone(), |path, component| path.join(component));
         std::fs::create_dir_all(&path).unwrap();
-        Self { path }
+        Self {
+            host,
+            path,
+            cleanup_root,
+        }
     }
 
     fn scan_root(&self, label: &str) -> ScanRoot {
         ScanRoot {
+            host: self.host,
             label: label.to_string(),
             path: self.path.clone(),
             required: true,
@@ -43,7 +65,7 @@ impl TempRoot {
 
 impl Drop for TempRoot {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
+        let _ = std::fs::remove_dir_all(&self.cleanup_root);
     }
 }
 
@@ -159,7 +181,7 @@ fn corrupt_file_is_isolated_and_batch_continues() {
 }
 
 #[test]
-fn hook_drained_transcript_then_batch_produces_no_duplicates() {
+fn hostless_legacy_drain_makes_batch_fail_closed_without_duplicates() {
     let conn = setup_conn();
     let root = TempRoot::new("hook-dedup");
     let cwd = root.path.to_string_lossy().to_string();
@@ -187,8 +209,19 @@ fn hook_drained_transcript_then_batch_produces_no_duplicates() {
     assert_eq!(raw_message_count(&conn), 2);
 
     let summary = run(&conn, &[root.scan_root("local")]);
-    assert_eq!(summary.ingested_messages, 0, "batch adds no duplicate rows");
+    assert_eq!(summary.failed_files, 1);
+    assert_eq!(summary.ingested_messages, 0);
     assert_eq!(raw_message_count(&conn), 2);
+    assert_eq!(cursor_count(&conn), 0);
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM raw_messages WHERE transcript_identity_id IS NULL",
+            [],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        2
+    );
 }
 
 #[test]
@@ -285,6 +318,144 @@ fn source_root_label_is_stored_and_distinguishes_roots() {
 }
 
 #[test]
+fn same_fallback_filename_isolated_across_batch_hosts() -> anyhow::Result<()> {
+    let conn = setup_conn();
+    let claude_root = TempRoot::new("cross-host-claude");
+    let codex_root = TempRoot::new_codex("cross-host-codex");
+    let claude_cwd = claude_root.path.to_string_lossy().to_string();
+    let codex_cwd = codex_root.path.to_string_lossy().to_string();
+    claude_root.write(
+        "repo/shared.jsonl",
+        &format!(
+            "{}\n",
+            serde_json::json!({
+                "type": "user",
+                "sessionId": "claude-canonical",
+                "cwd": claude_cwd,
+                "timestamp": 100,
+                "message": {"content": "claude message"}
+            })
+        ),
+    );
+    codex_root.write(
+        "repo/shared.jsonl",
+        &format!(
+            "{}\n",
+            serde_json::json!({
+                "type": "user",
+                "sessionId": "codex-canonical",
+                "cwd": codex_cwd,
+                "timestamp": 101,
+                "message": {"content": "codex message"}
+            })
+        ),
+    );
+
+    let summary = run_ingest_sessions(
+        &conn,
+        &[
+            claude_root.scan_root("local"),
+            codex_root.scan_root("local"),
+        ],
+        &IngestOptions::default(),
+    )?;
+
+    assert_eq!(summary.failed_files, 0);
+    assert_eq!(summary.ingested_messages, 2);
+    let identities = {
+        let mut statement = conn.prepare(
+            "SELECT host, status, canonical_session_id
+             FROM raw_session_identities ORDER BY host",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+    assert_eq!(
+        identities,
+        vec![
+            (
+                "claude-code".to_string(),
+                "active".to_string(),
+                "claude-canonical".to_string(),
+            ),
+            (
+                "codex-cli".to_string(),
+                "active".to_string(),
+                "codex-canonical".to_string(),
+            ),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn cross_host_fallback_cannot_claim_unresolved_legacy_row() -> anyhow::Result<()> {
+    let conn = setup_conn();
+    let claude_root = TempRoot::new("cross-host-legacy-claude");
+    let codex_root = TempRoot::new_codex("cross-host-legacy-codex");
+    let line = |session_id: &str| {
+        format!(
+            "{}\n",
+            serde_json::json!({
+                "type": "user",
+                "sessionId": session_id,
+                "timestamp": 100,
+                "message": {"content": "shared legacy content"}
+            })
+        )
+    };
+    claude_root.write("repo/shared.jsonl", &line("claude-canonical"));
+    codex_root.write("repo/shared.jsonl", &line("codex-canonical"));
+    conn.execute(
+        "INSERT INTO raw_messages (
+            id, session_id, project, role, content, content_hash, source,
+            created_at_epoch, source_root, event_time_source
+         ) VALUES (41, 'shared', 'repo', 'user', 'shared legacy content', ?1,
+                   'transcript', 100, 'local', 'legacy_unknown')",
+        [crate::db::content_identity_hash(b"shared legacy content")],
+    )?;
+
+    let summary = run_ingest_sessions(
+        &conn,
+        &[
+            claude_root.scan_root("local"),
+            codex_root.scan_root("local"),
+        ],
+        &IngestOptions::default(),
+    )?;
+
+    assert_eq!(summary.failed_files, 2);
+    assert_eq!(summary.ingested_messages, 0);
+    assert_eq!(raw_message_count(&conn), 1);
+    assert_eq!(
+        conn.query_row(
+            "SELECT session_id || ':' || project
+             FROM raw_messages WHERE id = 41 AND transcript_identity_id IS NULL",
+            [],
+            |row| row.get::<_, String>(0)
+        )?,
+        "shared:repo"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM raw_session_identities WHERE status = 'conflict'",
+            [],
+            |row| row.get::<_, i64>(0)
+        )?,
+        2
+    );
+    Ok(())
+}
+
+#[test]
 fn cursor_key_includes_source_root_label() {
     let conn = setup_conn();
     let root = TempRoot::new("cursor-source-root");
@@ -318,7 +489,7 @@ fn cursor_key_includes_source_root_label() {
 #[test]
 fn codex_session_meta_id_overrides_rollout_filename() {
     let conn = setup_conn();
-    let root = TempRoot::new("codex-session-id");
+    let root = TempRoot::new_codex("codex-session-id");
     root.write(
         "2026/06/12/rollout-abc.jsonl",
         include_str!("../../../tests/fixtures/codex-rollout-minimal.jsonl"),
@@ -369,6 +540,7 @@ fn missing_explicit_root_is_reported_as_failure() {
     let summary = run_ingest_sessions(
         &conn,
         &[ScanRoot {
+            host: InstallHost::CodexCli,
             label: "remote".to_string(),
             path: missing,
             required: true,
@@ -379,6 +551,66 @@ fn missing_explicit_root_is_reported_as_failure() {
 
     assert_eq!(summary.failed_files, 1);
     assert_eq!(summary.exit_code(), 1);
+}
+
+#[test]
+fn constructed_reserved_source_root_fails_before_ingest_mutation() -> anyhow::Result<()> {
+    let conn = setup_conn();
+    let root = TempRoot::new("reserved-source-root");
+    let cwd = root.path.to_string_lossy().to_string();
+    root.write(
+        "proj-a/session-1.jsonl",
+        &format!("{}\n", claude_line(&cwd, "user", "must not ingest")),
+    );
+
+    let error = run_ingest_sessions(
+        &conn,
+        &[root.scan_root(RESERVED_CURSOR_OUTCOME_SOURCE_ROOT)],
+        &IngestOptions::default(),
+    )
+    .expect_err("reserved source root must fail before discovery or mutation");
+
+    assert!(error.to_string().contains("reserved"));
+    assert_eq!(raw_message_count(&conn), 0);
+    assert_eq!(cursor_count(&conn), 0);
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM raw_session_identities", [], |row| {
+            row.get::<_, i64>(0)
+        })?,
+        0
+    );
+    Ok(())
+}
+
+#[test]
+fn constructed_cursor_root_fails_before_ingest_mutation() -> anyhow::Result<()> {
+    let conn = setup_conn();
+    let root = TempRoot::new_with_components("cursor-root", &[], InstallHost::Cursor);
+    root.write(
+        "session.jsonl",
+        concat!(
+            "{\"role\":\"user\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"must not disappear\"}]}}\n",
+            "{\"type\":\"turn_ended\",\"status\":\"success\"}\n"
+        ),
+    );
+
+    let error = run_ingest_sessions(
+        &conn,
+        &[root.scan_root("cursor-archive")],
+        &IngestOptions::default(),
+    )
+    .expect_err("Cursor filesystem roots must fail before discovery or mutation");
+
+    assert!(error.to_string().contains("Stop snapshot contract"));
+    assert_eq!(raw_message_count(&conn), 0);
+    assert_eq!(cursor_count(&conn), 0);
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM raw_session_identities", [], |row| {
+            row.get::<_, i64>(0)
+        })?,
+        0
+    );
+    Ok(())
 }
 
 #[test]
@@ -394,6 +626,7 @@ fn incomplete_discovery_blocks_all_identity_and_raw_mutation() -> anyhow::Result
     let roots = [
         root.scan_root("local"),
         ScanRoot {
+            host: InstallHost::ClaudeCode,
             label: "missing".to_string(),
             path: missing,
             required: true,
@@ -441,6 +674,31 @@ fn incomplete_probe_blocks_all_phase_a_mutation() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn explicit_host_ingests_unclassified_transcript_path() -> anyhow::Result<()> {
+    let conn = setup_conn();
+    let root = TempRoot::new_unclassified("unknown-host");
+    let cwd = root.path.to_string_lossy().to_string();
+    root.write(
+        "proj-a/session-1.jsonl",
+        &format!("{}\n", claude_line(&cwd, "user", "explicit host")),
+    );
+
+    let summary =
+        run_ingest_sessions(&conn, &[root.scan_root("local")], &IngestOptions::default())?;
+
+    assert_eq!(summary.failed_files, 0);
+    assert_eq!(summary.ingested_messages, 1);
+    assert_eq!(raw_message_count(&conn), 1);
+    assert_eq!(
+        conn.query_row("SELECT host FROM raw_session_identities", [], |row| {
+            row.get::<_, String>(0)
+        })?,
+        "claude-code"
+    );
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn unreadable_discovery_entry_is_isolated_and_batch_continues() {
@@ -467,273 +725,5 @@ fn unreadable_discovery_entry_is_isolated_and_batch_continues() {
     assert_eq!(raw_message_count(&conn), 0);
 }
 
-#[test]
-fn completion_failure_rolls_back_raw_rows_ledger_and_cursor() -> anyhow::Result<()> {
-    let conn = setup_conn();
-    let root = TempRoot::new("completion-rollback");
-    let cwd = root.path.to_string_lossy().to_string();
-    root.write(
-        "proj-a/session-1.jsonl",
-        &format!(
-            "{}\n",
-            claude_line(&cwd, "user", "rollback all file writes")
-        ),
-    );
-    conn.execute_batch(
-        "CREATE TRIGGER fail_gh871_cursor
-         BEFORE INSERT ON ingest_cursors
-         BEGIN
-             SELECT RAISE(FAIL, 'forced cursor failure');
-         END;",
-    )?;
-
-    let summary =
-        run_ingest_sessions(&conn, &[root.scan_root("local")], &IngestOptions::default())?;
-
-    assert_eq!(summary.failed_files, 1);
-    assert_eq!(summary.ingested_messages, 0);
-    assert_eq!(raw_message_count(&conn), 0);
-    assert_eq!(cursor_count(&conn), 0);
-    assert_eq!(
-        conn.query_row(
-            "SELECT contract_version FROM raw_session_identities",
-            [],
-            |row| row.get::<_, i64>(0)
-        )?,
-        0
-    );
-    Ok(())
-}
-
-#[test]
-fn ordinal_replay_conflict_is_sticky_and_preserves_existing_raw_row() -> anyhow::Result<()> {
-    let conn = setup_conn();
-    let root = TempRoot::new("ordinal-conflict");
-    let cwd = root.path.to_string_lossy().to_string();
-    let file = root.write(
-        "proj-a/session-1.jsonl",
-        &format!("{}\n", claude_line(&cwd, "user", "captured value")),
-    );
-    let scan_root = root.scan_root("local");
-    let plan =
-        crate::ingest::session_identity::probe(&scan_root.label, &scan_root.path, &file, None)?;
-    let identity_id = crate::ingest::session_identity::upsert_claim(&conn, &plan, 1)?;
-    crate::ingest::session_identity::resolve_fallback_group(
-        &conn,
-        &plan.source_root,
-        &plan.fallback_session_id,
-    )?;
-    conn.execute(
-        "INSERT INTO raw_messages (
-            session_id, project, role, content, content_hash, source,
-            created_at_epoch, source_root, event_time_source,
-            transcript_identity_id, transcript_record_ordinal
-         ) VALUES (?1, ?2, 'assistant', 'different value', ?3, 'transcript',
-                   1, ?4, 'transcript_event', ?5, 0)",
-        rusqlite::params![
-            plan.canonical_session_id,
-            plan.project,
-            crate::db::content_identity_hash(b"different value"),
-            plan.source_root,
-            identity_id
-        ],
-    )?;
-
-    let summary = run_ingest_sessions(&conn, &[scan_root], &IngestOptions::default())?;
-
-    assert_eq!(summary.failed_files, 1);
-    assert_eq!(summary.ingested_messages, 0);
-    assert_eq!(cursor_count(&conn), 0);
-    assert_eq!(
-        conn.query_row(
-            "SELECT status || ':' || conflict_reason
-             FROM raw_session_identities WHERE id = ?1",
-            [identity_id],
-            |row| row.get::<_, String>(0)
-        )?,
-        "conflict:stable_occurrence_mismatch"
-    );
-    assert_eq!(
-        conn.query_row(
-            "SELECT role || ':' || content FROM raw_messages
-             WHERE transcript_identity_id = ?1",
-            [identity_id],
-            |row| row.get::<_, String>(0)
-        )?,
-        "assistant:different value"
-    );
-    Ok(())
-}
-
-#[test]
-fn fallback_group_conflict_rolls_back_earlier_member_mutations() -> anyhow::Result<()> {
-    let conn = setup_conn();
-    let root = TempRoot::new("group-atomicity");
-    let cwd = root.path.to_string_lossy().to_string();
-    let first = root.write(
-        "a/shared.jsonl",
-        &format!(
-            "{}\n",
-            serde_json::json!({
-                "type": "user",
-                "sessionId": "canonical-871",
-                "cwd": cwd,
-                "timestamp": 100,
-                "message": {"content": "first group member"}
-            })
-        ),
-    );
-    let second = root.write(
-        "b/shared.jsonl",
-        &format!(
-            "{}\n",
-            serde_json::json!({
-                "type": "user",
-                "sessionId": "canonical-871",
-                "cwd": cwd,
-                "timestamp": 101,
-                "message": {"content": "second group member"}
-            })
-        ),
-    );
-    assert!(
-        first < second,
-        "fixture ordering must exercise earlier mutation"
-    );
-    let scan_root = root.scan_root("local");
-    let second_plan =
-        crate::ingest::session_identity::probe(&scan_root.label, &scan_root.path, &second, None)?;
-    let second_identity = crate::ingest::session_identity::upsert_claim(&conn, &second_plan, 1)?;
-    crate::ingest::session_identity::resolve_fallback_group(
-        &conn,
-        &second_plan.source_root,
-        &second_plan.fallback_session_id,
-    )?;
-    conn.execute(
-        "INSERT INTO raw_messages (
-            session_id, project, role, content, content_hash, source,
-            created_at_epoch, source_root, event_time_source,
-            transcript_identity_id, transcript_record_ordinal
-         ) VALUES (?1, ?2, 'assistant', 'preexisting mismatch', ?3, 'transcript',
-                   101, ?4, 'transcript_event', ?5, 0)",
-        rusqlite::params![
-            second_plan.canonical_session_id,
-            second_plan.project,
-            crate::db::content_identity_hash(b"preexisting mismatch"),
-            second_plan.source_root,
-            second_identity
-        ],
-    )?;
-
-    let summary = run_ingest_sessions(&conn, &[scan_root], &IngestOptions::default())?;
-
-    assert_eq!(summary.failed_files, 1);
-    assert_eq!(summary.ingested_messages, 0);
-    assert_eq!(cursor_count(&conn), 0);
-    assert_eq!(raw_message_count(&conn), 1);
-    assert_eq!(
-        conn.query_row("SELECT content FROM raw_messages", [], |row| row
-            .get::<_, String>(0))?,
-        "preexisting mismatch"
-    );
-    assert_eq!(
-        conn.query_row(
-            "SELECT COUNT(*) FROM raw_session_identities
-             WHERE fallback_session_id = 'shared' AND status = 'conflict'",
-            [],
-            |row| row.get::<_, i64>(0)
-        )?,
-        2
-    );
-    Ok(())
-}
-
-#[test]
-fn filename_fallback_promotion_updates_one_existing_occurrence() -> anyhow::Result<()> {
-    let conn = setup_conn();
-    let root = TempRoot::new("occurrence-promotion");
-    let cwd = root.path.to_string_lossy().to_string();
-    let file = root.write(
-        "proj-a/fallback-name.jsonl",
-        &format!(
-            "{}\n",
-            serde_json::json!({
-                "type": "user",
-                "cwd": cwd,
-                "timestamp": 100,
-                "message": {"content": "same occurrence"}
-            })
-        ),
-    );
-    let scan_root = root.scan_root("local");
-    let first = run_ingest_sessions(
-        &conn,
-        std::slice::from_ref(&scan_root),
-        &IngestOptions::default(),
-    )?;
-    assert_eq!(first.ingested_messages, 1);
-    let identity_id: i64 = conn.query_row(
-        "SELECT transcript_identity_id FROM raw_messages",
-        [],
-        |row| row.get(0),
-    )?;
-    std::fs::write(
-        &file,
-        format!(
-            "{}\n",
-            serde_json::json!({
-                "type": "user",
-                "sessionId": "canonical-871",
-                "cwd": cwd,
-                "timestamp": 100,
-                "message": {"content": "same occurrence"}
-            })
-        ),
-    )?;
-
-    let second = run_ingest_sessions(&conn, &[scan_root], &IngestOptions::default())?;
-
-    assert_eq!(second.failed_files, 0);
-    assert_eq!(
-        conn.query_row("SELECT COUNT(*) FROM raw_messages", [], |row| {
-            row.get::<_, i64>(0)
-        })?,
-        1
-    );
-    assert_eq!(
-        conn.query_row(
-            "SELECT transcript_identity_id || ':' || session_id
-             FROM raw_messages",
-            [],
-            |row| row.get::<_, String>(0)
-        )?,
-        format!("{identity_id}:canonical-871")
-    );
-    Ok(())
-}
-
-#[test]
-fn raw_sessions_have_created_at_leading_index() {
-    let conn = setup_conn();
-    let exists: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master
-             WHERE type = 'index' AND name = 'idx_raw_messages_created_source_project_session'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-
-    assert_eq!(exists, 1);
-}
-
-#[test]
-fn scan_root_parse_accepts_label_path_and_rejects_bad_specs() {
-    let parsed = ScanRoot::parse("starlight=/tmp/remote-sessions").unwrap();
-    assert_eq!(parsed.label, "starlight");
-    assert_eq!(parsed.path, PathBuf::from("/tmp/remote-sessions"));
-
-    assert!(ScanRoot::parse("no-separator").is_err());
-    assert!(ScanRoot::parse("=path-only").is_err());
-    assert!(ScanRoot::parse("label=").is_err());
-}
+#[path = "tests/transactional.rs"]
+mod transactional;

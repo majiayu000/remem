@@ -79,6 +79,7 @@ fn cli_parses_raw_sessions_window() {
                     until,
                     project,
                     sample,
+                    latest,
                     json,
                 },
         } => {
@@ -86,6 +87,7 @@ fn cli_parses_raw_sessions_window() {
             assert_eq!(until.as_deref(), Some("2026-02-01"));
             assert_eq!(project.as_deref(), Some("/repo"));
             assert_eq!(sample, 3);
+            assert_eq!(latest, None);
             assert!(json);
         }
         _ => panic!("expected raw sessions command"),
@@ -98,6 +100,8 @@ fn cli_parses_exact_raw_messages_selector_and_cursor() {
         "remem",
         "raw",
         "messages",
+        "--host",
+        "codex-cli",
         "--source-root",
         "remote",
         "--project",
@@ -115,6 +119,7 @@ fn cli_parses_exact_raw_messages_selector_and_cursor() {
         Commands::Raw {
             action:
                 RawAction::Messages {
+                    host,
                     source_root,
                     project,
                     session_id,
@@ -123,6 +128,7 @@ fn cli_parses_exact_raw_messages_selector_and_cursor() {
                     json,
                 },
         } => {
+            assert_eq!(host, "codex-cli");
             assert_eq!(source_root, "remote");
             assert_eq!(project, "/repo");
             assert_eq!(session_id, "session-1");
@@ -140,6 +146,8 @@ fn cli_raw_messages_defaults_to_500_and_requires_exact_tuple() {
         "remem",
         "raw",
         "messages",
+        "--host",
+        "codex-cli",
         "--source-root",
         "local",
         "--project",
@@ -158,6 +166,20 @@ fn cli_raw_messages_defaults_to_500_and_requires_exact_tuple() {
         "remem",
         "raw",
         "messages",
+        "--host",
+        "codex-cli",
+        "--project",
+        "/repo",
+        "--session-id",
+        "session-1",
+    ])
+    .is_err());
+    assert!(Cli::try_parse_from([
+        "remem",
+        "raw",
+        "messages",
+        "--source-root",
+        "local",
         "--project",
         "/repo",
         "--session-id",

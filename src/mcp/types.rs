@@ -373,6 +373,8 @@ pub(super) struct ListRawSessionsParams {
         description = "Sample up to N role=user message texts per session, ascending by time (default 0 = no samples)"
     )]
     pub sample: Option<i64>,
+    #[schemars(description = "Return only the newest N sessions")]
+    pub latest: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]

@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rmcp::ServiceExt;
+use rusqlite::params;
 use serde_json::{json, Map, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -399,7 +400,7 @@ fn seed_wire_fixture() -> anyhow::Result<WireFixture> {
         },
     )?;
 
-    insert_raw_message(
+    let raw = insert_raw_message(
         &conn,
         "raw-session-wire",
         "/repo",
@@ -408,6 +409,24 @@ fn seed_wire_fixture() -> anyhow::Result<WireFixture> {
         SOURCE_HOOK,
         Some("main"),
         Some("/repo"),
+    )?
+    .ok_or_else(|| anyhow::anyhow!("wire raw row was unexpectedly deduplicated"))?;
+    conn.execute(
+        "INSERT INTO raw_session_identities
+         (source_root, transcript_path, host, fallback_session_id,
+          canonical_session_id, project, legacy_project, status,
+          contract_version, observed_mtime_ns, observed_size_bytes,
+          first_seen_at_epoch, last_seen_at_epoch)
+         VALUES ('local', '/tmp/.codex/sessions/raw-session-wire.jsonl',
+                 'codex-cli', 'raw-session-wire', 'raw-session-wire',
+                 '/repo', '/repo', 'active', 1, 1, 1, 1, 1)",
+        [],
+    )?;
+    conn.execute(
+        "UPDATE raw_messages
+         SET transcript_identity_id = ?1, transcript_record_ordinal = 1
+         WHERE id = ?2",
+        params![conn.last_insert_rowid(), raw.id],
     )?;
     conn.execute(
         "INSERT INTO workstreams

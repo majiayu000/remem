@@ -183,6 +183,23 @@ curated memory 没有找到精确对话证据时，再查询 raw archive。
 remem raw search "exact phrase" --since 2026-06-01 --json
 ```
 
+读取精确会话前，先列出带 host 绑定的完整会话：
+
+```bash
+remem raw sessions --latest 20 --json
+remem raw messages --host codex-cli --source-root local \
+  --project "/path/to/project" --session-id SESSION_ID --json
+remem ingest-sessions --root codex-cli:archive=/path/to/sessions --json
+```
+
+把同一条 `raw sessions` 摘要中的 `host`、`source_root`、`project` 和
+`session_id` 原样传给 `raw messages`。旧脚本必须补上必填的 `--host`，并把
+`--root LABEL=PATH` 改成 `--root HOST:LABEL=PATH`；`raw reconcile` 使用相同
+格式。`HOST` 只能是 `claude-code` 或 `codex-cli`，`LABEL` 会持久化为
+`source_root`。Cursor snapshot 证据需要手动配置并验证
+`remem summarize --host cursor` Stop 集成；文件系统 `--root` 摄取和对账会
+明确拒绝 `cursor`。
+
 ### 审核与治理
 
 ```bash

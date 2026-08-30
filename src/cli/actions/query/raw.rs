@@ -42,15 +42,18 @@ pub(in crate::cli) fn run_raw(action: RawAction) -> Result<()> {
             until,
             project,
             sample,
+            latest,
             json,
         } => run_raw_sessions(
             since.as_deref().map(parse_time_lower_bound).transpose()?,
             until.as_deref().map(parse_time_upper_bound).transpose()?,
             project.as_deref(),
             sample,
+            latest,
             json,
         ),
         RawAction::Messages {
+            host,
             source_root,
             project,
             session_id,
@@ -58,6 +61,7 @@ pub(in crate::cli) fn run_raw(action: RawAction) -> Result<()> {
             cursor,
             json,
         } => run_raw_messages(
+            &host,
             &source_root,
             &project,
             &session_id,
@@ -80,6 +84,7 @@ pub(in crate::cli) fn run_raw(action: RawAction) -> Result<()> {
 }
 
 fn run_raw_messages(
+    host: &str,
     source_root: &str,
     project: &str,
     session_id: &str,
@@ -91,6 +96,7 @@ fn run_raw_messages(
     let output = query_raw_session_messages(
         &conn,
         &RawSessionMessagesRequest {
+            host: host.to_string(),
             source_root: source_root.to_string(),
             project: project.to_string(),
             session_id: session_id.to_string(),
@@ -107,7 +113,7 @@ fn run_raw_messages(
         output.count, output.order, output.has_more
     );
     if let Some(cursor) = output.next_cursor {
-        println!("Next: remem raw messages --source-root <LABEL> --project <PROJECT> --session-id <SESSION_ID> --cursor {cursor}");
+        println!("Next: remem raw messages --host {host} --source-root <LABEL> --project <PROJECT> --session-id <SESSION_ID> --cursor {cursor}");
     }
     Ok(())
 }
@@ -234,6 +240,7 @@ pub(super) fn run_raw_sessions(
     until_epoch: Option<i64>,
     project: Option<&str>,
     sample: i64,
+    latest: Option<i64>,
     json: bool,
 ) -> Result<()> {
     let conn = db::open_db_read_only_current()?;
@@ -242,6 +249,7 @@ pub(super) fn run_raw_sessions(
         until_epoch,
         project: project.map(str::to_string),
         sample_user_messages: sample.max(0),
+        latest,
     };
     let sessions = list_sessions(&conn, &query)?;
 
@@ -263,13 +271,15 @@ pub(super) fn render_raw_sessions(sessions: &[RawSessionSummary]) -> String {
     output.push_str(&format!("{} sessions in window:\n\n", sessions.len()));
     for session in sessions {
         output.push_str(&format!(
-            "  [{}] {} | {} | {} .. {} | {} messages\n",
+            "  [{}:{}] {} | {} | {} .. {} | {} messages | {}\n",
             session.source_root,
+            session.host,
             session.project,
             session.session_id,
             format_memory_timestamp(session.first_epoch),
             format_memory_timestamp(session.last_epoch),
-            session.message_count
+            session.message_count,
+            session.content_hash
         ));
         for sample in &session.user_message_samples {
             output.push_str(&format!("      user: {}\n", sample.replace('\n', " ")));
@@ -368,7 +378,8 @@ mod reconcile_exit_tests {
 
 #[cfg(test)]
 mod lock_contention_tests {
-    use anyhow::Result;
+    use anyhow::{Context, Result};
+    use rusqlite::params;
 
     use super::{run_raw_search, run_raw_sessions};
 
@@ -376,7 +387,7 @@ mod lock_contention_tests {
     fn raw_search_and_sessions_actions_succeed_during_normal_write_contention() -> Result<()> {
         let _data_dir = crate::db::test_support::ScopedTestDataDir::new("raw-actions-write-lock");
         let writer = crate::db::open_db()?;
-        crate::memory::raw_archive::insert_raw_message(
+        let raw = crate::memory::raw_archive::insert_raw_message(
             &writer,
             "lock-session",
             "lock-project",
@@ -385,11 +396,29 @@ mod lock_contention_tests {
             crate::memory::raw_archive::SOURCE_MANUAL,
             None,
             None,
+        )?
+        .context("lock fixture raw row")?;
+        writer.execute(
+            "INSERT INTO raw_session_identities
+             (source_root, transcript_path, host, fallback_session_id,
+              canonical_session_id, project, legacy_project, status,
+              contract_version, observed_mtime_ns, observed_size_bytes,
+              first_seen_at_epoch, last_seen_at_epoch)
+             VALUES ('local', '/tmp/.codex/sessions/lock-session.jsonl',
+                     'codex-cli', 'lock-session', 'lock-session',
+                     'lock-project', 'lock-project', 'active', 1, 1, 1, 1, 1)",
+            [],
+        )?;
+        writer.execute(
+            "UPDATE raw_messages
+             SET transcript_identity_id = ?1, transcript_record_ordinal = 1
+             WHERE id = ?2",
+            params![writer.last_insert_rowid(), raw.id],
         )?;
         writer.execute_batch("BEGIN IMMEDIATE")?;
 
         let search_result = run_raw_search("visible", None, None, None, 20, 0, None, None, true);
-        let sessions_result = run_raw_sessions(None, None, None, 0, true);
+        let sessions_result = run_raw_sessions(None, None, None, 0, None, true);
         writer.execute_batch("ROLLBACK")?;
 
         search_result?;
