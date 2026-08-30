@@ -116,6 +116,34 @@ fn tampered_run_policy_declarations_cannot_authorize_security_pass() -> Result<(
 }
 
 #[test]
+fn mixed_security_reader_model_identity_fails_closed() -> Result<()> {
+    let root = copy_public_fixture("security-report-mixed-reader-model")?;
+    let run_path = root.join(
+        "memory/artifacts/adversarial-policy-v2/\
+         remem_default-secrets-api-key-001/run.json",
+    );
+    mutate_json(&run_path, |json| {
+        json["reader_model"]["model"] = Value::String("different-reader".to_string());
+    })?;
+
+    let verified =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+    let authority = verified
+        .authority_verdict
+        .security
+        .reports
+        .iter()
+        .find(|report| report.report_path == "memory/reports/adversarial-policy-v2.json")
+        .context("default adversarial-policy v2 authority")?;
+
+    assert_eq!(authority.status, AuthorityStatus::Fail);
+    assert!(authority.diagnostics.iter().any(|message| {
+        message.contains("security report runs must share one model execution identity")
+    }));
+    Ok(())
+}
+
+#[test]
 fn security_report_requires_exact_suite_task_coverage_under_remem_default() -> Result<()> {
     for mutation in ["omitted", "duplicate", "extra", "wrong-condition"] {
         let root = copy_public_fixture(&format!("security-report-coverage-{mutation}"))?;

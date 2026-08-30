@@ -174,6 +174,12 @@ pub(in crate::eval::bench_artifact) mod implementation {
                         .components()
                         .any(|component| matches!(component, Component::ParentDir))
             })
+            || paths.iter().any(|path| {
+                path.starts_with(':')
+                    || path
+                        .chars()
+                        .any(|character| matches!(character, '*' | '?' | '['))
+            })
             || paths.iter().collect::<BTreeSet<_>>().len() != paths.len()
             || !paths.contains(&PRODUCTION_PATHSPEC_CONTRACT)
         {
@@ -195,6 +201,32 @@ pub(in crate::eval::bench_artifact) mod implementation {
             "true" => Some(true),
             "false" => Some(false),
             _ => None,
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::parse_production_pathspec;
+
+        #[test]
+        fn production_pathspec_rejects_git_magic_and_wildcard_paths() {
+            assert!(parse_production_pathspec(include_str!(
+                "../../../eval/production-input-pathspec-v1.json"
+            ))
+            .is_some());
+
+            for dangerous_path in [":(exclude)src", "src/**"] {
+                let contract = serde_json::json!({
+                    "schema_version": 1,
+                    "contract_id": "remem-production-input-pathspec-v1",
+                    "paths": [dangerous_path, "eval/production-input-pathspec-v1.json"]
+                });
+
+                assert!(
+                    parse_production_pathspec(&contract.to_string()).is_none(),
+                    "dangerous pathspec must be rejected: {dangerous_path}"
+                );
+            }
         }
     }
 }
@@ -324,6 +356,12 @@ fn evaluate_security(
             });
         }
         let binding = security_report_binding(&report_runs);
+        if !binding.model_execution_identity_consistent {
+            diagnostics.push(
+                "security report runs must share one model execution identity after excluding prompt_hash"
+                    .to_string(),
+            );
+        }
         if !binding.ready {
             diagnostics.push("security report run identity binding is incomplete".to_string());
         }
@@ -459,6 +497,7 @@ fn security_report_coverage_diagnostics(
 struct SecurityReportBinding {
     target: Option<String>,
     models: Vec<Value>,
+    model_execution_identity_consistent: bool,
     platforms: Vec<String>,
     producing_shas: Vec<String>,
     production_input_trees: Vec<String>,
@@ -470,6 +509,7 @@ fn security_report_binding(
     runs: &[&super::types::VerifiedArtifact<super::types::MemoryRunArtifact>],
 ) -> SecurityReportBinding {
     let mut models = BTreeMap::new();
+    let mut model_execution_identities = BTreeSet::new();
     let mut platforms = BTreeSet::new();
     let mut targets = BTreeSet::new();
     let mut producing_shas = BTreeSet::new();
@@ -480,6 +520,12 @@ fn security_report_binding(
             let environment = &run.value.environment;
             let model_key = serde_json::to_string(&run.value.reader_model).unwrap_or_default();
             models.insert(model_key, run.value.reader_model.clone());
+            let mut execution_identity = run.value.reader_model.clone();
+            if let Some(object) = execution_identity.as_object_mut() {
+                object.remove("prompt_hash");
+            }
+            model_execution_identities
+                .insert(serde_json::to_string(&execution_identity).unwrap_or_default());
             platforms.insert(format!("{}/{}", environment.os, environment.arch));
             if let Some(target) = target_triple(&environment.os, &environment.arch) {
                 targets.insert(target);
@@ -497,6 +543,7 @@ fn security_report_binding(
         });
     let ready = all_runs_bound
         && !models.is_empty()
+        && model_execution_identities.len() == 1
         && platforms.len() == 1
         && targets.len() == 1
         && producing_shas.len() == 1
@@ -507,6 +554,7 @@ fn security_report_binding(
             .then(|| targets.into_iter().next())
             .flatten(),
         models: models.into_values().collect(),
+        model_execution_identity_consistent: model_execution_identities.len() == 1,
         platforms: platforms.into_iter().collect(),
         producing_shas: producing_shas.into_iter().collect(),
         production_input_trees: production_input_trees.into_iter().collect(),
