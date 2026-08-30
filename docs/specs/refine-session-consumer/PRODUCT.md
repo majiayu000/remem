@@ -30,6 +30,7 @@ valid Codex observations as `platform_unknown`.
 
 - `session_ref`: stable `remem://raw-session/v2/...` reference;
 - `host`: `claude-code`, `codex-cli`, or `cursor`;
+- `session_mode`: `interactive`, `unattended`, `subagent`, or `unknown`;
 - `content_hash`: SHA-256 fingerprint of the ordered immutable raw
   occurrences selected for the session.
 
@@ -46,8 +47,13 @@ not enumerate an unbounded archive and truncate it afterward.
 - A session whose raw rows cannot be attributed to exactly one supported host
   is omitted from the successful contract and makes the command fail with an
   actionable error.
+- Unbound `hook` fallback rows are partial capture evidence rather than complete
+  transcripts. They remain available on raw occurrence/search surfaces but do
+  not enter the Refine session contract or poison unrelated session listing.
 - Two hosts must never collapse into one session summary, even when project and
   session ID are equal.
+- Conflicting known session modes for one session fail explicitly. A missing or
+  unrecognized upstream mode remains the honest `unknown` value.
 - A malformed or zero `--latest` value is rejected.
 - The command never falls back to a downstream filesystem scanner.
 
@@ -61,6 +67,8 @@ not enumerate an unbounded archive and truncate it afterward.
 ## Acceptance Criteria
 
 - Claude Code, Codex CLI, and Cursor fixtures emit the exact host.
+- Codex TUI/Desktop, automation, `codex_exec`/Symphony, and subagent fixtures
+  emit their exact trusted session mode; other inputs emit `unknown`.
 - Same project/session ID across two hosts yields two independently selectable
   summaries and references.
 - Unchanged ordered occurrences yield an unchanged content hash; adding or

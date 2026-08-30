@@ -12,6 +12,7 @@ pub(super) fn ensure_provenance_resolved(
              SELECT 1 FROM raw_messages r \
              LEFT JOIN raw_session_identities i ON i.id = r.transcript_identity_id \
              WHERE r.source_root = ?1 AND r.project = ?2 AND r.session_id = ?3 \
+               AND NOT (r.source = 'hook' AND r.transcript_identity_id IS NULL) \
                AND (i.id IS NULL OR i.host IS NULL \
                     OR (i.host = ?4 AND i.status != 'active')) \
          )",
@@ -80,4 +81,88 @@ pub(super) fn content_hash(
         fingerprint.push(identity_id, ordinal, &role, &hash, epoch);
     }
     Ok(fingerprint.finish())
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::{Context, Result};
+    use rusqlite::params;
+
+    use super::super::{query_raw_session_messages, RawSessionMessagesRequest};
+    use crate::memory::raw_archive::{
+        insert_raw_message_from_root_at, list_sessions, RawSessionQuery, ROLE_ASSISTANT, ROLE_USER,
+        SOURCE_HOOK, SOURCE_TRANSCRIPT,
+    };
+
+    #[test]
+    fn unbound_hook_fallback_does_not_poison_transcript_page_or_hash() -> Result<()> {
+        let conn = rusqlite::Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        let transcript_id = insert_raw_message_from_root_at(
+            &conn,
+            "s1",
+            "/repo",
+            ROLE_USER,
+            "question",
+            SOURCE_TRANSCRIPT,
+            None,
+            Some("/repo"),
+            "root-a",
+            Some(10),
+        )?
+        .context("transcript row")?
+        .id;
+        conn.execute(
+            "INSERT INTO raw_session_identities
+             (source_root, transcript_path, host, session_mode, fallback_session_id,
+              canonical_session_id, project, legacy_project, status,
+              contract_version, observed_mtime_ns, observed_size_bytes,
+              first_seen_at_epoch, last_seen_at_epoch)
+             VALUES ('root-a', '/tmp/.codex/sessions/s1.jsonl', 'codex-cli',
+                     'interactive', 's1', 's1', '/repo', '/repo',
+                     'active', 1, 1, 1, 1, 1)",
+            [],
+        )?;
+        conn.execute(
+            "UPDATE raw_messages
+             SET transcript_identity_id = ?1, transcript_record_ordinal = 1
+             WHERE id = ?2",
+            params![conn.last_insert_rowid(), transcript_id],
+        )?;
+        insert_raw_message_from_root_at(
+            &conn,
+            "s1",
+            "/repo",
+            ROLE_ASSISTANT,
+            "partial hook fallback",
+            SOURCE_HOOK,
+            None,
+            Some("/repo"),
+            "root-a",
+            Some(20),
+        )?
+        .context("hook fallback row")?;
+
+        let summaries = list_sessions(&conn, &RawSessionQuery::default())?;
+        let page = query_raw_session_messages(
+            &conn,
+            &RawSessionMessagesRequest {
+                host: "codex-cli".to_string(),
+                source_root: "root-a".to_string(),
+                project: "/repo".to_string(),
+                session_id: "s1".to_string(),
+                limit: 2,
+                cursor: None,
+            },
+        )?;
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].message_count, 1);
+        assert_eq!(page.messages.len(), 1);
+        assert_eq!(page.messages[0].id, transcript_id);
+        assert_eq!(page.content_hash, summaries[0].content_hash);
+        assert!(!page.has_more);
+        assert!(page.next_cursor.is_none());
+        Ok(())
+    }
 }

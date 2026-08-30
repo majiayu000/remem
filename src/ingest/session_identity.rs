@@ -31,6 +31,7 @@ impl IdentitySource {
 #[derive(Debug, Clone)]
 pub(crate) struct TranscriptPlan {
     pub host: Option<InstallHost>,
+    pub session_mode: String,
     pub source_root: String,
     pub path: PathBuf,
     pub transcript_path: String,
@@ -91,6 +92,7 @@ pub(crate) fn probe(
 }
 
 pub(crate) fn probe_with_project_cache(
+    host: InstallHost,
     source_root: &str,
     scan_root: &Path,
     file: &Path,
@@ -104,7 +106,7 @@ pub(crate) fn probe_with_project_cache(
         fallback_project,
         Some(project_cache),
         None,
-        None,
+        Some(host),
     )
 }
 
@@ -174,8 +176,15 @@ fn probe_inner(
             .unwrap_or_else(|| legacy_project.clone()),
     };
 
+    let host = host_override.or_else(|| host_from_transcript_path(file));
+    let session_mode = if host == Some(InstallHost::CodexCli) {
+        context.codex_session_mode.as_str()
+    } else {
+        "unknown"
+    };
     Ok(TranscriptPlan {
-        host: host_override.or_else(|| host_from_transcript_path(file)),
+        host,
+        session_mode: session_mode.to_string(),
         source_root: source_root.to_string(),
         path: file.to_path_buf(),
         transcript_path: file.to_string_lossy().to_string(),
@@ -219,17 +228,25 @@ fn host_from_transcript_path(path: &Path) -> Option<InstallHost> {
 }
 
 pub(crate) fn upsert_claim(conn: &Connection, plan: &TranscriptPlan, now: i64) -> Result<i64> {
-    let existing: Option<(i64, Option<String>, i64, i64)> = conn
+    let existing: Option<(i64, Option<String>, String, i64, i64)> = conn
         .query_row(
-            "SELECT id, host, observed_mtime_ns, observed_size_bytes
+            "SELECT id, host, session_mode, observed_mtime_ns, observed_size_bytes
              FROM raw_session_identities
              WHERE source_root = ?1 AND transcript_path = ?2",
             params![plan.source_root, plan.transcript_path],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .optional()?;
     let proposed_host = plan.host.map(InstallHost::as_db_value);
-    if let Some((_, Some(existing_host), _, _)) = existing.as_ref() {
+    if let Some((_, Some(existing_host), _, _, _)) = existing.as_ref() {
         if proposed_host.is_some_and(|host| host != existing_host) {
             bail!(
                 "transcript host provenance conflict for {:?}: stored host is {:?}, proposed host is {:?}",
@@ -239,33 +256,51 @@ pub(crate) fn upsert_claim(conn: &Connection, plan: &TranscriptPlan, now: i64) -
             );
         }
     }
+    if let Some((_, _, existing_mode, _, _)) = existing.as_ref() {
+        if existing_mode != "unknown"
+            && plan.session_mode != "unknown"
+            && existing_mode != &plan.session_mode
+        {
+            bail!(
+                "transcript session-mode provenance conflict for {:?}: stored mode is {:?}, proposed mode is {:?}",
+                plan.transcript_path,
+                existing_mode,
+                plan.session_mode
+            );
+        }
+    }
     let tuple_changed = existing
         .as_ref()
-        .map(|(_, _, mtime, size)| {
+        .map(|(_, _, _, mtime, size)| {
             *mtime != plan.observed_mtime_ns || *size != plan.observed_size_bytes
         })
         .unwrap_or(true);
     let changed = conn.execute(
         "INSERT INTO raw_session_identities (
-            source_root, transcript_path, host, fallback_session_id,
+            source_root, transcript_path, host, session_mode, fallback_session_id,
             canonical_session_id, project, legacy_project, status,
             contract_version, observed_mtime_ns, observed_size_bytes,
             first_seen_at_epoch, last_seen_at_epoch
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'active', 0, ?8, ?9, ?10, ?10)
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'active', 0, ?9, ?10, ?11, ?11)
          ON CONFLICT(source_root, transcript_path) DO UPDATE SET
             host = COALESCE(raw_session_identities.host, excluded.host),
+            session_mode = CASE
+                WHEN raw_session_identities.session_mode = 'unknown'
+                    THEN excluded.session_mode
+                ELSE raw_session_identities.session_mode
+            END,
             fallback_session_id = excluded.fallback_session_id,
             project = excluded.project,
             legacy_project = excluded.legacy_project,
             observed_mtime_ns = excluded.observed_mtime_ns,
             observed_size_bytes = excluded.observed_size_bytes,
-            contract_version = CASE WHEN ?11 THEN 0 ELSE contract_version END,
+            contract_version = CASE WHEN ?12 THEN 0 ELSE contract_version END,
             event_index_status =
-                CASE WHEN ?11 THEN 'pending' ELSE event_index_status END,
-            first_event_epoch = CASE WHEN ?11 THEN NULL ELSE first_event_epoch END,
-            last_event_epoch = CASE WHEN ?11 THEN NULL ELSE last_event_epoch END,
+                CASE WHEN ?12 THEN 'pending' ELSE event_index_status END,
+            first_event_epoch = CASE WHEN ?12 THEN NULL ELSE first_event_epoch END,
+            last_event_epoch = CASE WHEN ?12 THEN NULL ELSE last_event_epoch END,
             missing_event_time_count =
-                CASE WHEN ?11 THEN 0 ELSE missing_event_time_count END,
+                CASE WHEN ?12 THEN 0 ELSE missing_event_time_count END,
             last_seen_at_epoch = excluded.last_seen_at_epoch
          WHERE raw_session_identities.host IS NULL
             OR excluded.host IS NULL
@@ -274,6 +309,7 @@ pub(crate) fn upsert_claim(conn: &Connection, plan: &TranscriptPlan, now: i64) -
             plan.source_root,
             plan.transcript_path,
             plan.host.map(InstallHost::as_db_value),
+            plan.session_mode,
             plan.fallback_session_id,
             plan.canonical_session_id,
             plan.project,
@@ -555,6 +591,41 @@ struct TranscriptContext {
     session_id: Option<String>,
     cwd: Option<String>,
     branch: Option<String>,
+    codex_session_mode: CodexSessionMode,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum CodexSessionMode {
+    Interactive,
+    Unattended,
+    Subagent,
+    #[default]
+    Unknown,
+}
+
+impl CodexSessionMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Interactive => "interactive",
+            Self::Unattended => "unattended",
+            Self::Subagent => "subagent",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    fn merge(self, observed: Self) -> Self {
+        let rank = |mode| match mode {
+            Self::Unknown => 0,
+            Self::Interactive => 1,
+            Self::Unattended => 2,
+            Self::Subagent => 3,
+        };
+        if rank(observed) > rank(self) {
+            observed
+        } else {
+            self
+        }
+    }
 }
 
 fn probe_context(file: &Path, byte_limit: Option<u64>) -> Result<TranscriptContext> {
@@ -587,6 +658,26 @@ fn probe_context(file: &Path, byte_limit: Option<u64>) -> Result<TranscriptConte
             continue;
         };
         let payload = value.get("payload");
+        if value.get("type").and_then(serde_json::Value::as_str) == Some("session_meta") {
+            let observed_mode = match payload
+                .and_then(|payload| payload.get("thread_source"))
+                .and_then(serde_json::Value::as_str)
+            {
+                Some("subagent") => CodexSessionMode::Subagent,
+                Some("automation") => CodexSessionMode::Unattended,
+                _ => match payload
+                    .and_then(|payload| payload.get("originator"))
+                    .and_then(serde_json::Value::as_str)
+                {
+                    Some("codex-tui" | "Codex Desktop" | "codex_cli_rs" | "codex_work_desktop") => {
+                        CodexSessionMode::Interactive
+                    }
+                    Some("codex_exec" | "symphony-orchestrator") => CodexSessionMode::Unattended,
+                    _ => CodexSessionMode::Unknown,
+                },
+            };
+            context.codex_session_mode = context.codex_session_mode.merge(observed_mode);
+        }
         context.session_id = context.session_id.or_else(|| {
             value
                 .get("sessionId")

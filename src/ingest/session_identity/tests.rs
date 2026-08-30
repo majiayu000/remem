@@ -153,6 +153,131 @@ fn established_host_survives_unknown_reprobe_and_rejects_conflict_before_mutatio
 }
 
 #[test]
+fn codex_probe_preserves_trusted_session_modes() {
+    for (name, metadata, expected) in [
+        (
+            "interactive-mode",
+            r#"{"type":"session_meta","payload":{"id":"interactive","originator":"codex-tui","thread_source":"user"}}"#,
+            "interactive",
+        ),
+        (
+            "vscode-desktop-mode",
+            r#"{"type":"session_meta","payload":{"id":"vscode","originator":"codex_work_desktop","thread_source":"user","source":"vscode"}}"#,
+            "interactive",
+        ),
+        (
+            "unattended-mode",
+            r#"{"type":"session_meta","payload":{"id":"exec","originator":"codex_exec","thread_source":"user"}}"#,
+            "unattended",
+        ),
+        (
+            "automation-mode",
+            r#"{"type":"session_meta","payload":{"id":"automation","originator":"Codex Desktop","thread_source":"automation"}}"#,
+            "unattended",
+        ),
+        (
+            "subagent-mode",
+            r#"{"type":"session_meta","payload":{"id":"child","originator":"codex-tui","thread_source":"subagent"}}"#,
+            "subagent",
+        ),
+        (
+            "subagent-precedes-inherited-parent-metadata",
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"child\",\"originator\":\"codex_exec\",\"thread_source\":\"subagent\"}}\n",
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"parent\",\"originator\":\"codex-tui\",\"thread_source\":\"user\"}}"
+            ),
+            "subagent",
+        ),
+        (
+            "unknown-mode",
+            r#"{"type":"session_meta","payload":{"id":"unknown","originator":"future-origin"}}"#,
+            "unknown",
+        ),
+    ] {
+        let path = temp_transcript(name, metadata);
+        let plan = probe_with_host(
+            InstallHost::CodexCli,
+            "local",
+            path.parent().expect("fixture parent"),
+            &path,
+            None,
+            None,
+        )
+        .expect("probe Codex provenance");
+        assert_eq!(plan.session_mode, expected);
+        std::fs::remove_file(path).expect("remove fixture");
+    }
+}
+
+#[test]
+fn codex_probe_ignores_mode_fields_outside_session_metadata() {
+    let path = temp_transcript(
+        "mode-only-from-session-meta",
+        concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"stable\",\"originator\":\"codex-tui\"}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"originator\":\"codex_exec\",\"thread_source\":\"subagent\"}}"
+        ),
+    );
+    let plan = probe_with_host(
+        InstallHost::CodexCli,
+        "local",
+        path.parent().expect("fixture parent"),
+        &path,
+        None,
+        None,
+    )
+    .expect("probe Codex provenance");
+
+    assert_eq!(plan.session_mode, "interactive");
+    std::fs::remove_file(path).expect("remove fixture");
+}
+
+#[test]
+fn session_mode_promotes_from_unknown_and_rejects_known_conflict() {
+    let conn = setup_identity_db();
+    let path = temp_transcript(
+        "mode-monotonic",
+        r#"{"type":"session_meta","payload":{"id":"stable","originator":"future-origin"}}"#,
+    );
+    let root = path.parent().expect("fixture parent");
+    let unknown = probe_with_host(InstallHost::CodexCli, "local", root, &path, None, None)
+        .expect("probe unknown mode");
+    let identity_id = upsert_claim(&conn, &unknown, 1).expect("persist unknown mode");
+
+    std::fs::write(
+        &path,
+        r#"{"type":"session_meta","payload":{"id":"stable","originator":"codex-tui"}}"#,
+    )
+    .expect("write interactive metadata");
+    let interactive = probe_with_host(InstallHost::CodexCli, "local", root, &path, None, None)
+        .expect("probe interactive mode");
+    upsert_claim(&conn, &interactive, 2).expect("promote trusted mode");
+
+    std::fs::write(
+        &path,
+        r#"{"type":"session_meta","payload":{"id":"stable","originator":"codex_exec"}}"#,
+    )
+    .expect("write conflicting metadata");
+    let unattended = probe_with_host(InstallHost::CodexCli, "local", root, &path, None, None)
+        .expect("probe conflicting mode");
+    let error = upsert_claim(&conn, &unattended, 3)
+        .expect_err("known session-mode conflict must fail before mutation");
+    assert!(error
+        .to_string()
+        .contains("session-mode provenance conflict"));
+    assert_eq!(
+        conn.query_row(
+            "SELECT session_mode, last_seen_at_epoch FROM raw_session_identities WHERE id = ?1",
+            [identity_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        )
+        .expect("load preserved session mode"),
+        ("interactive".to_string(), 2)
+    );
+    std::fs::remove_file(path).expect("remove fixture");
+}
+
+#[test]
 fn same_fallback_id_resolves_independently_per_host() -> anyhow::Result<()> {
     let conn = setup_identity_db();
     conn.execute_batch(

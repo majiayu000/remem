@@ -151,7 +151,8 @@ pub fn run_ingest_sessions(
         }
         for file in files {
             summary.scanned += 1;
-            let mut plan = match super::session_identity::probe_with_project_cache(
+            let plan = match super::session_identity::probe_with_project_cache(
+                root.host,
                 &root.label,
                 &root.path,
                 &file,
@@ -168,7 +169,6 @@ pub fn run_ingest_sessions(
                     continue;
                 }
             };
-            plan.host = Some(root.host);
             let mtime_epoch = plan.observed_mtime_ns / 1_000_000_000;
             let phase_b_eligible = options.since_epoch.is_none_or(|since| mtime_epoch >= since);
             discovered.push((root.clone(), plan, phase_b_eligible));

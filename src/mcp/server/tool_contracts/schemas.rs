@@ -530,6 +530,7 @@ struct RawSessionsOutput {
 struct RawSessionOutput {
     session_ref: String,
     host: String,
+    session_mode: String,
     source_root: String,
     project: String,
     session_id: String,

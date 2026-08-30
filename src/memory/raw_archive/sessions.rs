@@ -21,6 +21,7 @@ pub struct RawSessionQuery {
 pub struct RawSessionSummary {
     pub session_ref: String,
     pub host: String,
+    pub session_mode: String,
     pub source_root: String,
     pub project: String,
     pub session_id: String,
@@ -68,10 +69,11 @@ pub fn list_sessions(conn: &Connection, query: &RawSessionQuery) -> Result<Vec<R
                 r.source_root, r.project, r.session_id, r.role, \
                 r.content_hash, r.created_at_epoch, \
                 CASE WHEN i.status = 'active' THEN i.host END, \
+                CASE WHEN i.status = 'active' THEN i.session_mode END, \
                 CASE WHEN ?1 > 0 AND r.role = 'user' THEN r.content END \
          FROM raw_messages r \
          LEFT JOIN raw_session_identities i ON i.id = r.transcript_identity_id \
-         WHERE 1=1",
+         WHERE NOT (r.source = 'hook' AND r.transcript_identity_id IS NULL)",
     );
     let mut binds: Vec<Box<dyn rusqlite::types::ToSql>> =
         vec![Box::new(query.sample_user_messages.max(0))];
@@ -97,20 +99,43 @@ pub fn list_sessions(conn: &Connection, query: &RawSessionQuery) -> Result<Vec<R
                 row.get::<_, i64>(7)?,
                 row.get::<_, Option<String>>(8)?,
                 row.get::<_, Option<String>>(9)?,
+                row.get::<_, Option<String>>(10)?,
             ))
         },
     )?;
 
     let mut grouped = BTreeMap::new();
     for row in rows {
-        let (identity_id, ordinal, root, project, session_id, role, hash, epoch, host, sample) =
-            row?;
+        let (
+            identity_id,
+            ordinal,
+            root,
+            project,
+            session_id,
+            role,
+            hash,
+            epoch,
+            host,
+            session_mode,
+            sample,
+        ) = row?;
         let host = host.with_context(|| {
             format!(
                 "raw session provenance is missing or conflicted for ({root:?}, {project:?}, {session_id:?}); re-ingest its transcript"
             )
         })?;
         crate::identity::InstallHost::parse(&host)?;
+        let session_mode = session_mode.with_context(|| {
+            format!(
+                "raw session mode provenance is missing for ({root:?}, {project:?}, {session_id:?}); re-ingest its transcript"
+            )
+        })?;
+        if !matches!(
+            session_mode.as_str(),
+            "interactive" | "unattended" | "subagent" | "unknown"
+        ) {
+            anyhow::bail!("raw session mode provenance is invalid: {session_mode:?}");
+        }
         let identity_id =
             identity_id.context("identified raw row is missing transcript identity")?;
         let ordinal = ordinal.context("identified raw row is missing transcript ordinal")?;
@@ -120,18 +145,26 @@ pub fn list_sessions(conn: &Connection, query: &RawSessionQuery) -> Result<Vec<R
             project.clone(),
             session_id.clone(),
         );
-        grouped
-            .entry(key)
-            .or_insert_with(|| Accumulator::new(root, host, project, session_id, epoch))
-            .push(
-                identity_id,
-                ordinal,
-                &role,
-                &hash,
-                epoch,
-                sample.as_deref(),
-                query.sample_user_messages.max(0),
+        let accumulator = grouped.entry(key).or_insert_with(|| {
+            Accumulator::new(root, host, session_mode.clone(), project, session_id, epoch)
+        });
+        if accumulator.session_mode != session_mode {
+            anyhow::bail!(
+                "raw session mode provenance conflicts for ({:?}, {:?}, {:?})",
+                accumulator.source_root,
+                accumulator.project,
+                accumulator.session_id
             );
+        }
+        accumulator.push(
+            identity_id,
+            ordinal,
+            &role,
+            &hash,
+            epoch,
+            sample.as_deref(),
+            query.sample_user_messages.max(0),
+        );
     }
 
     let mut sessions = grouped
@@ -181,6 +214,7 @@ fn push_selector_window(
          LEFT JOIN raw_session_identities wi ON wi.id = w.transcript_identity_id \
          WHERE w.source_root = r.source_root AND w.project = r.project \
            AND w.session_id = r.session_id \
+           AND NOT (w.source = 'hook' AND w.transcript_identity_id IS NULL) \
            AND ((i.status = 'active' AND wi.status = 'active' AND wi.host = i.host) \
                 OR i.id IS NULL OR i.status != 'active' OR i.host IS NULL)",
     );
@@ -198,6 +232,7 @@ fn push_selector_window(
 struct Accumulator {
     source_root: String,
     host: String,
+    session_mode: String,
     project: String,
     session_id: String,
     first_epoch: i64,
@@ -210,11 +245,19 @@ struct Accumulator {
 }
 
 impl Accumulator {
-    fn new(root: String, host: String, project: String, session: String, epoch: i64) -> Self {
+    fn new(
+        root: String,
+        host: String,
+        session_mode: String,
+        project: String,
+        session: String,
+        epoch: i64,
+    ) -> Self {
         let fingerprint = SessionFingerprint::new(&host, &root, &project, &session);
         Self {
             source_root: root,
             host,
+            session_mode,
             project,
             session_id: session,
             first_epoch: epoch,
@@ -263,6 +306,7 @@ impl Accumulator {
                 &self.session_id,
             ),
             host: self.host,
+            session_mode: self.session_mode,
             source_root: self.source_root,
             project: self.project,
             session_id: self.session_id,

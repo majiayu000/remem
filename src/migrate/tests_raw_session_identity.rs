@@ -199,6 +199,9 @@ fn v091_backfills_known_hosts_and_leaves_unknown_paths_explicit() -> Result<()> 
         "/tmp/.claude/projects/repo/a.jsonl",
         "/tmp/.codex/sessions/2026/08/b.jsonl",
         "/tmp/.cursor/projects/repo/c.jsonl",
+        r"C:\Users\me\.claude\projects\repo\windows-a.jsonl",
+        r"C:\Users\me\.codex\sessions\2026\08\windows-b.jsonl",
+        r"C:\Users\me\.cursor\projects\repo\windows-c.jsonl",
         "/tmp/unclassified/d.jsonl",
         "/tmp/.codex/sessions/.claude/projects/ambiguous.jsonl",
         "/tmp/.CLAUDE/projects/case-near-miss.jsonl",
@@ -240,6 +243,9 @@ fn v091_backfills_known_hosts_and_leaves_unknown_paths_explicit() -> Result<()> 
             Some("claude-code".to_string()),
             Some("codex-cli".to_string()),
             Some("cursor".to_string()),
+            Some("claude-code".to_string()),
+            Some("codex-cli".to_string()),
+            Some("cursor".to_string()),
             None,
             None,
             None,
@@ -252,6 +258,20 @@ fn v091_backfills_known_hosts_and_leaves_unknown_paths_explicit() -> Result<()> 
     assert!(conn
         .execute(
             "UPDATE raw_session_identities SET host = 'guessed' WHERE id = 1",
+            [],
+        )
+        .is_err());
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM raw_session_identities WHERE session_mode = 'unknown'",
+            [],
+            |row| row.get::<_, i64>(0)
+        )?,
+        13
+    );
+    assert!(conn
+        .execute(
+            "UPDATE raw_session_identities SET session_mode = 'guessed' WHERE id = 1",
             [],
         )
         .is_err());

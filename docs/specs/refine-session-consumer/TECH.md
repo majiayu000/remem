@@ -7,8 +7,8 @@ Date: 2026-08-30
 
 - Canonical raw occurrences live in `raw_messages`.
 - Identified occurrences reference `raw_session_identities`. Migration v091
-  adds the authoritative nullable `host`; trusted ingestion writes it together
-  with the transcript path.
+  adds the authoritative nullable `host` and closed `session_mode`; trusted
+  ingestion writes them together with the transcript path.
 - `raw sessions` and the MCP `list_raw_sessions` tool already share
   `RawSessionSummary`.
 - `raw messages` already requires the exact `source_root + project +
@@ -28,8 +28,10 @@ New ingestion resolves with path components, not substring matching. Migration
 v091 backfills only unambiguous legacy path shapes. Every raw
 occurrence in a returned session must have an identified transcript and all
 identities must resolve to the same host. Legacy unidentified rows and mixed
-hosts fail closed. The host rules remain in Remem; consumers receive only the
-resolved value.
+hosts fail closed. Unbound `source=hook` fallbacks are explicitly outside this
+complete-transcript surface and remain queryable through the existing raw
+occurrence/search paths. The host rules remain in Remem; consumers receive only
+the resolved value.
 
 ## Session Identity
 
@@ -44,6 +46,18 @@ opaque reference for consumers, not a filesystem path and not authorization.
 Raw messages continue to be selected using the explicit tuple fields supplied
 in the summary; Remem validates that the selected rows resolve back to the
 same host.
+
+## Session Mode
+
+For Codex transcripts, Remem reads `session_meta.payload.thread_source` and
+`originator` at the existing transcript probe boundary. `subagent` has highest
+precedence, followed by unattended originators (`codex_exec` and
+`symphony-orchestrator`) or the explicit `automation` thread source, then
+interactive TUI/Desktop originators. Unknown values remain `unknown`; Claude
+Code and Cursor currently report `unknown`.
+An identity may promote from unknown to a known mode, but conflicting known
+modes fail before mutation. A grouped raw session also fails if contributing
+identities disagree.
 
 ## Content Fingerprint
 
@@ -71,8 +85,8 @@ metadata scan limit.
 
 ## Consumer Contract
 
-Refine first lists bounded summaries. It compares `session_ref + content_hash`
-with its local projection. Only new or changed sessions
+Refine first lists bounded summaries. It compares `session_ref + content_hash +
+session_mode` with its local projection. Only new or changed sessions
 invoke paginated `raw messages`. Each page is bound to the exact `host` and
 returns the fingerprint of its frozen cursor snapshot; Refine must reject the
 export if that fingerprint differs from the selected summary or changes between

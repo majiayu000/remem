@@ -2,6 +2,21 @@ use super::*;
 use rusqlite::params;
 
 fn identify_raw_row(conn: &Connection, row_id: i64, host: &str, transcript: &str) {
+    let session_mode = if host == "codex-cli" {
+        "interactive"
+    } else {
+        "unknown"
+    };
+    identify_raw_row_with_mode(conn, row_id, host, session_mode, transcript);
+}
+
+fn identify_raw_row_with_mode(
+    conn: &Connection,
+    row_id: i64,
+    host: &str,
+    session_mode: &str,
+    transcript: &str,
+) {
     let (root, project, session): (String, String, String) = conn
         .query_row(
             "SELECT source_root, project, session_id FROM raw_messages WHERE id = ?1",
@@ -11,12 +26,12 @@ fn identify_raw_row(conn: &Connection, row_id: i64, host: &str, transcript: &str
         .unwrap();
     conn.execute(
         "INSERT INTO raw_session_identities
-         (source_root, transcript_path, host, fallback_session_id,
+         (source_root, transcript_path, host, session_mode, fallback_session_id,
           canonical_session_id, project, legacy_project, status,
           contract_version, observed_mtime_ns, observed_size_bytes,
           first_seen_at_epoch, last_seen_at_epoch)
-         VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?5, 'active', 1, 1, 1, 1, 1)",
-        params![root, transcript, host, session, project],
+         VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?6, 'active', 1, 1, 1, 1, 1)",
+        params![root, transcript, host, session_mode, session, project],
     )
     .unwrap();
     let identity_id = conn.last_insert_rowid();
@@ -27,6 +42,31 @@ fn identify_raw_row(conn: &Connection, row_id: i64, host: &str, transcript: &str
         params![identity_id, row_id],
     )
     .unwrap();
+}
+
+#[test]
+fn list_sessions_rejects_conflicting_modes_across_contributing_identities() {
+    let conn = setup_conn();
+    let first = insert_at_epoch(&conn, "shared", "/repo", ROLE_USER, "first", 100);
+    let second = insert_at_epoch(&conn, "shared", "/repo", ROLE_ASSISTANT, "second", 200);
+    identify_raw_row_with_mode(
+        &conn,
+        first,
+        "codex-cli",
+        "interactive",
+        "/tmp/.codex/sessions/first.jsonl",
+    );
+    identify_raw_row_with_mode(
+        &conn,
+        second,
+        "codex-cli",
+        "unattended",
+        "/tmp/.codex/sessions/second.jsonl",
+    );
+
+    let error = list_sessions(&conn, &RawSessionQuery::default())
+        .expect_err("one raw session cannot merge conflicting trusted modes");
+    assert!(error.to_string().contains("mode provenance conflicts"));
 }
 
 #[test]
@@ -50,9 +90,53 @@ fn list_sessions_separates_same_selector_across_hosts() {
     let sessions = list_sessions(&conn, &RawSessionQuery::default()).unwrap();
     assert_eq!(sessions.len(), 2);
     assert_eq!(sessions[0].host, "codex-cli");
+    assert_eq!(sessions[0].session_mode, "interactive");
     assert_eq!(sessions[1].host, "claude-code");
+    assert_eq!(sessions[1].session_mode, "unknown");
     assert_ne!(sessions[0].session_ref, sessions[1].session_ref);
     assert_ne!(sessions[0].content_hash, sessions[1].content_hash);
+}
+
+#[test]
+fn list_sessions_keeps_unbound_hook_fallbacks_outside_the_transcript_contract() {
+    let conn = setup_conn();
+    let identified = insert_at_epoch(&conn, "shared", "/repo", ROLE_USER, "question", 100);
+    identify_raw_row(
+        &conn,
+        identified,
+        "codex-cli",
+        "/tmp/.codex/sessions/shared.jsonl",
+    );
+    insert_raw_message(
+        &conn,
+        "shared",
+        "/repo",
+        ROLE_ASSISTANT,
+        "hook fallback",
+        SOURCE_HOOK,
+        None,
+        None,
+    )
+    .unwrap();
+    insert_raw_message(
+        &conn,
+        "hook-only",
+        "/repo",
+        ROLE_ASSISTANT,
+        "partial fallback",
+        SOURCE_HOOK,
+        None,
+        None,
+    )
+    .unwrap();
+
+    let sessions = list_sessions(&conn, &RawSessionQuery::default()).unwrap();
+
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].session_id, "shared");
+    assert_eq!(sessions[0].message_count, 1);
+    assert_eq!(sessions[0].user_message_count, 1);
+    assert_eq!(sessions[0].assistant_message_count, 0);
 }
 
 #[test]
@@ -113,6 +197,11 @@ fn list_sessions_latest_is_bounded_and_missing_host_fails_closed() {
 
     let missing = insert_at_epoch(&conn, "missing-host", "/repo", ROLE_USER, "missing", 300);
     assert!(missing > 0);
+    conn.execute(
+        "UPDATE raw_messages SET source = 'transcript' WHERE id = ?1",
+        [missing],
+    )
+    .unwrap();
     let error = list_sessions(&conn, &RawSessionQuery::default())
         .expect_err("unidentified raw provenance must not be guessed");
     assert!(error
