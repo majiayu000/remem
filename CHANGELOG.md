@@ -8,7 +8,7 @@
   ordered-occurrence content fingerprint, and bounded newest-session listing.
   Exact host-bound message reads prevent cross-runtime session-ID collisions,
   while unidentified legacy provenance fails visibly.
-- Staged source version `0.6.83` extends `remem eval-gates` with the GH969
+- Staged source version `0.6.84` extends `remem eval-gates` with the GH969
   executable ship matrix and outcome scorecard. Required repository evidence
   now fails closed when missing or invalid, while absent governed GH931,
   GH935, and public-claim runs remain explicit `unavailable` measures instead
