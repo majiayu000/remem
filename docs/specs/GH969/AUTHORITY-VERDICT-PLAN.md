@@ -1,11 +1,15 @@
 # GH969 / PR #1052 Authority-Verdict Convergence Plan
 
-Status: local implementation and prior commit-specific verification are
-complete on `work/pr1052-authority-verdict`; latest-main content integration is
-resolved in the current merge and merged-tree macOS arm64 evidence has been
-regenerated. The overall verifier remains blocked by existing Linux evidence;
-a fresh full preflight remains pending, as do hosted four-target evidence and
-review work.
+Status: architecture and latest-main integration are complete; the synchronized
+staged-unpublished version is `0.6.84`. Canonical macOS arm64 and Linux x64
+checked-in evidence are current for production-input tree
+`2a1c0de1ea616c2f0fcadb2cf003b5647342e0aa946a77b1ba7a70f3b54f146e`. Hosted run
+`33331549128` at exact head
+`3fe5ffcbb4e13dc5286b8105e4186405d19930c4` proved all four native target rows
+and aggregate release `PASS`; final full local preflight passed on
+`cc6a90e6ca2022a8abb73f9104afd8b8ea9dd7dc`. Remaining work is to push the
+final evidence/plan head, obtain the latest CI/native rerun, complete independent
+review and thread cleanup, merge, and close #1049.
 
 ## Objective
 
@@ -16,10 +20,10 @@ and emit one serializable `AuthorityVerdict`. The ship matrix, scorecard, and
 Python public-claims checks will project that verdict and inspect wording; they
 will not independently promote registry/report declarations to PASS.
 
-This change is limited to the files authorized by the task. It does not create
-unsupported macOS/Linux evidence, change package/release versions, or push.
-README retains main's current #1051 navigation without superseded benchmark
-material.
+This change is limited to the files authorized by the task and requires one
+synchronized staged-unpublished `0.6.84` bump after main/#1054 already owned
+`0.6.83`; no published assets were fabricated. README retains main's current
+#1051 navigation without superseded benchmark material.
 
 ## Minimal architecture
 
@@ -222,17 +226,44 @@ referenced artifact hashes matched their run declarations. The 20 runs are
 `75e453b59848fa6ba82d458c0bae20bdbfef5b06474dbc2566791ef6f295b870`. The exact
 repository verifier exited 0 with `passed=true`; both checked-in macOS arm64
 and Linux x64 security authorities are `PASS` with 20 recomputed runs, zero
-policy failures, and leak rate `0.0`. Release readiness remains false with only
-two current targets; final four-target evidence, clean full preflight, CI,
-independent review, and thread cleanup remain pending.
+policy failures, and leak rate `0.0`. At that checkpoint, release readiness
+remained false with only two current targets; final four-target evidence, clean
+full preflight, CI, independent review, and thread cleanup remained pending.
+
+### Final execution summary
+
+The first full post-main preflight exposed the real required version bump plus
+transient web-smoke and two `project_id` timeouts under heavy resource load;
+focused reruns passed unchanged, with no threshold or assertion weakened. Commit
+`74d5300f` synchronized staged-unpublished `0.6.84` across Cargo/Cargo.lock,
+plugin, npm, server, release manifest, and CHANGELOG while preserving empty
+release assets and #1054's separate `0.6.83` raw-session bullet. A subsequent
+full preflight passed 26/27 gates and correctly failed eval-gates because the
+version changed the production tree while older evidence was stale; full Cargo
+tests passed 4126/0/1.
+
+Commit `3fe5ffcb` contains real regenerated macOS arm64 evidence from the clean
+`74d5300f` tree, with 120/120 artifact hashes verified. GitHub run `33331549128`
+at that exact head passed all four native jobs and aggregate release authority:
+the exact four targets had no missing or stale rows, each had 20 runs, policy
+failures and leaks were zero, and the production tree was
+`2a1c0de1ea616c2f0fcadb2cf003b5647342e0aa946a77b1ba7a70f3b54f146e`. Node 20
+deprecation annotations were warnings only. Commit `cc6a90e6` imports only
+genuine hosted Linux x64 evidence: 142 files were inverse-relocation-equal,
+120/120 artifact hashes matched, and 20 runs were verified. Clean eval-gates
+reported 114 metrics with `command_passed=true` and `merge_ready=true`, and
+public claims passed; local `release_ready` remains false intentionally because
+only two targets are checked in.
+
+The final full preflight on `cc6a90e6`, with fresh data/log directories and two
+test threads, passed all 27 gates; the library result was 4126 passed, 0 failed,
+1 ignored, and all integration/documentation tests passed.
 
 ## Honest constraints and risks
 
-- Commit/push, full hosted four-platform evidence, the aggregate hosted
-  verdict, latest pushed CI, independent review, thread cleanup, merge, and
-  issue closure remain pending. No missing platform evidence will be fabricated.
-- PR #1051 is merged through main SHA `0bf31e98`; README now follows main's
+- Push the final evidence/plan head, obtain the latest CI/native rerun, complete
+  independent review and thread cleanup, merge, and close #1049.
+- Latest main integration is through SHA `1e08dcd8`; README follows main's
   current navigation content without restoring superseded benchmark material.
-- Existing historical report/spec material may describe earlier authority
-  behavior. Current typed verifier code and tests are the source of truth for
-  the completed local implementation.
+- Official GH931 evidence remains unavailable and therefore fail-closed; no
+  official claim evidence has been fabricated.
