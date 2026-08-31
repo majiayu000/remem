@@ -280,8 +280,9 @@ coding-agent outcome evidence. Verify it locally with:
 cargo run -- bench verify --root eval/public --json-out /tmp/remem-bench-verify.json
 ```
 
-For a public root outside the repository layout, pass its trusted registry with
-`--claim-registry /absolute/path/to/registry.json` so verification is independent of the caller's working directory.
+Verification resolves `claims/registry.json` beside the parent of `--root`, so
+an external bundle keeps `public/` and `claims/` as siblings and is independent
+of the caller's working directory.
 
 The current public report is deliberately labeled
 `directional_only_no_public_claim`. The historical isolated coding baseline is

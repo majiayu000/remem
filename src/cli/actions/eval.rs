@@ -11,9 +11,7 @@ use crate::cli::eval_types::{
 
 pub(in crate::cli) async fn run_bench(action: BenchAction) -> Result<()> {
     match action {
-        BenchAction::Verify(args) => {
-            run_bench_verify(&args.root, args.claim_registry.as_deref(), &args.json_out)
-        }
+        BenchAction::Verify(args) => run_bench_verify(&args.root, &args.json_out),
         BenchAction::Memory(args) => {
             run_bench_memory(
                 &args.suite,
@@ -30,10 +28,7 @@ pub(in crate::cli) async fn run_bench(action: BenchAction) -> Result<()> {
             let report = crate::eval::bench_artifact::write_public_baseline_report(
                 crate::eval::bench_artifact::BenchReportOptions {
                     root: root.to_path_buf(),
-                    claim_registry_path: claim_registry_path_for_public_root(
-                        root,
-                        args.claim_registry.as_deref(),
-                    ),
+                    claim_registry_path: claim_registry_path_for_public_root(root),
                     json_out: Path::new(&args.json_out).to_path_buf(),
                     markdown_out: Path::new(&args.markdown_out).to_path_buf(),
                 },
@@ -44,12 +39,12 @@ pub(in crate::cli) async fn run_bench(action: BenchAction) -> Result<()> {
     }
 }
 
-fn run_bench_verify(root: &str, claim_registry: Option<&str>, json_out: &str) -> Result<()> {
+fn run_bench_verify(root: &str, json_out: &str) -> Result<()> {
     let root = Path::new(root);
     let report = crate::eval::bench_artifact::verify_benchmark_artifacts(
         crate::eval::bench_artifact::BenchVerifyOptions::new(
             root.to_path_buf(),
-            claim_registry_path_for_public_root(root, claim_registry),
+            claim_registry_path_for_public_root(root),
         ),
     )?;
     let report_json = serde_json::to_string_pretty(&report)?;
@@ -75,10 +70,7 @@ fn run_bench_verify(root: &str, claim_registry: Option<&str>, json_out: &str) ->
     Ok(())
 }
 
-fn claim_registry_path_for_public_root(root: &Path, explicit: Option<&str>) -> PathBuf {
-    if let Some(explicit) = explicit {
-        return PathBuf::from(explicit);
-    }
+fn claim_registry_path_for_public_root(root: &Path) -> PathBuf {
     let parent = root.parent().filter(|path| !path.as_os_str().is_empty());
     parent
         .map(|path| path.join("claims/registry.json"))
@@ -509,19 +501,12 @@ mod bench_path_tests {
     #[test]
     fn claim_registry_is_resolved_from_public_root_not_caller_cwd() {
         assert_eq!(
-            claim_registry_path_for_public_root(Path::new("/tmp/bundle/eval/public"), None),
+            claim_registry_path_for_public_root(Path::new("/tmp/bundle/eval/public")),
             Path::new("/tmp/bundle/eval/claims/registry.json")
         );
         assert_eq!(
-            claim_registry_path_for_public_root(Path::new("eval/public"), None),
+            claim_registry_path_for_public_root(Path::new("eval/public")),
             Path::new("eval/claims/registry.json")
-        );
-        assert_eq!(
-            claim_registry_path_for_public_root(
-                Path::new("/tmp/bundle/public"),
-                Some("/trusted/claims/registry.json")
-            ),
-            Path::new("/trusted/claims/registry.json")
         );
     }
 }

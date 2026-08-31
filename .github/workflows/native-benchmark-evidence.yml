@@ -79,7 +79,8 @@ jobs:
           ARTIFACT_REL="memory/artifacts/adversarial-policy-v2-${TARGET}"
           VERDICT="${ROW_ROOT}/row-verifier-${TARGET}.json"
           BUNDLE="${ROW_ROOT}/native-adversarial-policy-v2-${TARGET}.tar.gz"
-          mkdir -p "$ROW_ROOT"
+          mkdir -p "$ROW_ROOT/claims"
+          cp eval/claims/registry.json "$ROW_ROOT/claims/registry.json"
           cp -R eval/public "$PUBLIC_ROOT"
           find "$PUBLIC_ROOT/memory/manifests" -maxdepth 1 -type f -name 'adversarial-policy-v2*.json' -delete
           {
@@ -123,10 +124,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo run --locked ${{ matrix.cargo_flags }} -- bench verify \
-            --root "$PUBLIC_ROOT" \
-            --claim-registry "$GITHUB_WORKSPACE/eval/claims/registry.json" \
-            --json-out "$VERDICT"
+          cargo run --locked ${{ matrix.cargo_flags }} -- bench verify --root "$PUBLIC_ROOT" --json-out "$VERDICT"
       - name: Assert row authority and exact artifact bindings
         shell: bash
         run: |
@@ -261,7 +259,8 @@ jobs:
           AGG_ROOT="${RUNNER_TEMP}/remem-native-aggregate"
           PUBLIC_ROOT="${AGG_ROOT}/public"
           VERDICT="${AGG_ROOT}/authority-verdict.json"
-          mkdir -p "$AGG_ROOT"
+          mkdir -p "$AGG_ROOT/claims"
+          cp eval/claims/registry.json "$AGG_ROOT/claims/registry.json"
           cp -R eval/public "$PUBLIC_ROOT"
           find "$PUBLIC_ROOT/memory/manifests" -maxdepth 1 -type f -name 'adversarial-policy-v2*.json' -delete
           mapfile -t bundles < <(find "$RUNNER_TEMP/remem-native-bundles" -type f -name '*.tar.gz' | sort)
@@ -283,10 +282,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo run --locked -- bench verify \
-            --root "$PUBLIC_ROOT" \
-            --claim-registry "$GITHUB_WORKSPACE/eval/claims/registry.json" \
-            --json-out "$VERDICT"
+          cargo run --locked -- bench verify --root "$PUBLIC_ROOT" --json-out "$VERDICT"
       - name: Assert closed release verdict
         shell: bash
         run: |
