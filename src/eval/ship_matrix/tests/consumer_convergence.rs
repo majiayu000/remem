@@ -190,6 +190,7 @@ fn scorecard_projects_only_remem_e2e_completion_from_verdict() {
     let gh931 = &mut report.artifact_verifier.authority_verdict.gh931;
     gh931.completeness.complete = true;
     gh931.completeness.attempts_ready = true;
+    gh931.completeness.machine_outcomes_ready = true;
     gh931.report = Some(crate::eval::bench_artifact::Gh931ReportBinding {
         path: "coding/reports/official.json".to_string(),
         sha256: "d".repeat(64),
