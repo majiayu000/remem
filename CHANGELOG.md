@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.85` closes the remaining #1052 review gates by
+  aligning native evidence with release feature profiles and production-input
+  triggers, tightening public artifact contracts, and keeping incomplete
+  machine outcomes unavailable.
 - Staged source version `0.6.84` keeps unresolvable pre-identity transcript
   rows in the encrypted raw archive while reporting their exclusion counts on
   host-bound session listings. Exact single-host re-ingestion can converge
