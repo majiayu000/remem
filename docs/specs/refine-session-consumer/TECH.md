@@ -27,10 +27,22 @@ New ingestion resolves with path components, not substring matching. Migration
 v091 backfills only unambiguous legacy path shapes. Every raw
 occurrence in a returned session must have an identified transcript and all
 identities must resolve to the same host. Legacy unidentified rows and mixed
-hosts fail closed. Unbound `source=hook` fallbacks are explicitly outside this
-complete-transcript surface and remain queryable through the existing raw
-occurrence/search paths. The host rules remain in Remem; consumers receive only
-the resolved value.
+hosts do not enter a successful complete session. Unbound `source=hook`
+fallbacks remain outside this surface. Pre-v071 `source=transcript` rows with
+no identity and `event_time_source=legacy_unknown` are also excluded, retained,
+and reported through aggregate `excluded_legacy_rows` and
+`excluded_legacy_sessions` fields. Other missing, inactive, or conflicting
+provenance still fails closed. The host rules remain in Remem; consumers
+receive only the resolved value.
+
+Batch re-ingestion may converge a pre-identity row only after Phase A has
+persisted all candidate transcript identities. The row's source root,
+project aliases, and session aliases must resolve to exactly the current
+host-bearing identity, and an identified occurrence must match content,
+content hash, role, source, and permitted legacy timestamp upgrade semantics.
+Cross-host, multi-identity, unmatched, or stable-field mismatches roll back the
+group. Evidence references are rewritten before the duplicate legacy row is
+removed.
 
 Cursor does not enter this transcript-identity path. A virtual Cursor
 outcome-only session can expose `host: cursor` plus `capture_health`, but it has
@@ -103,6 +115,7 @@ host, timestamps, and derived observations.
 - Claude Code and Codex CLI transcript host fixtures;
 - Cursor outcome-only metadata is not accepted as a complete transcript;
 - mixed/unidentified identity rejection;
+- explicit pre-identity exclusion counts and single-host exact convergence;
 - same session ID collision isolation across hosts;
 - deterministic fingerprint and mutation sensitivity;
 - deterministic `--latest` ordering and argument validation;

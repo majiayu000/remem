@@ -181,7 +181,7 @@ fn corrupt_file_is_isolated_and_batch_continues() {
 }
 
 #[test]
-fn hostless_legacy_drain_makes_batch_fail_closed_without_duplicates() {
+fn unique_hook_legacy_drain_converges_without_duplicates() {
     let conn = setup_conn();
     let root = TempRoot::new("hook-dedup");
     let cwd = root.path.to_string_lossy().to_string();
@@ -207,15 +207,21 @@ fn hostless_legacy_drain_makes_batch_fail_closed_without_duplicates() {
     .unwrap();
     assert_eq!(hook_report.inserted, 2);
     assert_eq!(raw_message_count(&conn), 2);
+    conn.execute(
+        "UPDATE raw_messages SET created_at_epoch = 1
+         WHERE transcript_identity_id IS NULL",
+        [],
+    )
+    .unwrap();
 
     let summary = run(&conn, &[root.scan_root("local")]);
-    assert_eq!(summary.failed_files, 1);
+    assert_eq!(summary.failed_files, 0);
     assert_eq!(summary.ingested_messages, 0);
     assert_eq!(raw_message_count(&conn), 2);
-    assert_eq!(cursor_count(&conn), 0);
+    assert_eq!(cursor_count(&conn), 1);
     assert_eq!(
         conn.query_row(
-            "SELECT COUNT(*) FROM raw_messages WHERE transcript_identity_id IS NULL",
+            "SELECT COUNT(*) FROM raw_messages WHERE transcript_identity_id IS NOT NULL",
             [],
             |row| row.get::<_, i64>(0)
         )
@@ -392,6 +398,47 @@ fn same_fallback_filename_isolated_across_batch_hosts() -> anyhow::Result<()> {
                 "codex-canonical".to_string(),
             ),
         ]
+    );
+    Ok(())
+}
+
+#[test]
+fn single_host_reingest_converges_exact_legacy_row() -> anyhow::Result<()> {
+    let conn = setup_conn();
+    let root = TempRoot::new_codex("single-host-legacy");
+    let transcript = serde_json::json!({
+        "type": "response_item",
+        "timestamp": "2026-08-30T00:00:00Z",
+        "payload": {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "trusted legacy content"}]
+        }
+    });
+    root.write("2026/08/30/single-host.jsonl", &format!("{transcript}\n"));
+    conn.execute(
+        "INSERT INTO raw_messages (
+            id, session_id, project, role, content, content_hash, source,
+            created_at_epoch, source_root, event_time_source
+         ) VALUES (41, 'single-host', '2026/08/30', 'user', 'trusted legacy content', ?1,
+                   'transcript', 100, 'local', 'legacy_unknown')",
+        [crate::db::content_identity_hash(b"trusted legacy content")],
+    )?;
+
+    let summary =
+        run_ingest_sessions(&conn, &[root.scan_root("local")], &IngestOptions::default())?;
+
+    assert_eq!(summary.failed_files, 0);
+    assert_eq!(raw_message_count(&conn), 1);
+    assert_eq!(
+        conn.query_row(
+            "SELECT i.host || ':' || r.session_id || ':' || r.transcript_record_ordinal
+             FROM raw_messages r
+             JOIN raw_session_identities i ON i.id = r.transcript_identity_id",
+            [],
+            |row| row.get::<_, String>(0)
+        )?,
+        "codex-cli:single-host:0"
     );
     Ok(())
 }

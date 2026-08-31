@@ -2,7 +2,9 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 mod sessions;
-pub(crate) use sessions::SessionFingerprint;
+pub(crate) use sessions::{
+    build_session_listing_json, list_sessions_with_exclusions, SessionFingerprint,
+};
 pub use sessions::{
     build_sessions_json, list_sessions, RawSessionQuery, RawSessionSummary, RawSessionsJson,
 };
