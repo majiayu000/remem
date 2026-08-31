@@ -118,6 +118,7 @@ pub(in crate::eval::bench_artifact) fn evaluate(
             observed_runs: runs.len(),
             complete,
             attempts_ready,
+            machine_outcomes_ready,
         },
         condition_completion: condition_completion(&runs, verified),
         paired_statistics,

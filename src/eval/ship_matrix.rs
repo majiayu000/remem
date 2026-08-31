@@ -61,7 +61,13 @@ fn security_report_for_platform(os: &str, arch: &str) -> PathBuf {
     match (os, arch) {
         ("macos", "aarch64") => PathBuf::from(DEFAULT_SECURITY_REPORT),
         ("linux", "x86_64") => PathBuf::from(LINUX_X86_64_SECURITY_REPORT),
-        (os, arch) => PathBuf::from(format!(
+        ("macos", "x86_64") => PathBuf::from(
+            "eval/public/memory/reports/adversarial-policy-v2-x86_64-apple-darwin.json",
+        ),
+        ("linux", "aarch64") => PathBuf::from(
+            "eval/public/memory/reports/adversarial-policy-v2-aarch64-unknown-linux-gnu.json",
+        ),
+        _ => PathBuf::from(format!(
             "eval/public/memory/reports/adversarial-policy-v2-{os}-{arch}.json"
         )),
     }

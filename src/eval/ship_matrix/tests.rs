@@ -220,8 +220,18 @@ fn default_security_report_is_platform_specific() {
         PathBuf::from(DEFAULT_SECURITY_REPORT)
     );
     assert_eq!(
+        security_report_for_platform("macos", "x86_64"),
+        PathBuf::from("eval/public/memory/reports/adversarial-policy-v2-x86_64-apple-darwin.json")
+    );
+    assert_eq!(
         security_report_for_platform("linux", "x86_64"),
         PathBuf::from(LINUX_X86_64_SECURITY_REPORT)
+    );
+    assert_eq!(
+        security_report_for_platform("linux", "aarch64"),
+        PathBuf::from(
+            "eval/public/memory/reports/adversarial-policy-v2-aarch64-unknown-linux-gnu.json"
+        )
     );
     assert_eq!(
         security_report_for_platform("windows", "x86_64"),

@@ -15,6 +15,7 @@ exclude = [
   "eval/locomo/locomo10.json",
   "eval/locomo/results/",
   "eval/local/results/",
+  "eval/public/**/*.sqlite3",
   "plan/",
   "docs/",
   "SPEC-*.md",

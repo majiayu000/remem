@@ -8,7 +8,10 @@ on:
       - .github/workflows/ci.yml
       - Cargo.lock
       - Cargo.toml
+      - .cargo/**
+      - assets/**
       - build.rs
+      - prompts/**
       - rust-toolchain.toml
       - src/**
       - eval/claims/**
@@ -29,12 +32,16 @@ jobs:
         include:
           - target: x86_64-apple-darwin
             runner: macos-15-intel
+            cargo_flags: --no-default-features --features eval
           - target: aarch64-apple-darwin
             runner: macos-15
+            cargo_flags: ""
           - target: x86_64-unknown-linux-gnu
             runner: ubuntu-24.04
+            cargo_flags: ""
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
+            cargo_flags: ""
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
@@ -89,7 +96,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo run --locked --no-default-features --features eval -- bench memory --suite adversarial-policy --condition remem_default \
+          cargo run --locked ${{ matrix.cargo_flags }} -- bench memory --suite adversarial-policy --condition remem_default \
             --root "$PUBLIC_ROOT" \
             --artifact-prefix "$ARTIFACT_REL" \
             --json-out "$PUBLIC_ROOT/$REPORT_REL"
@@ -116,7 +123,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo run --locked --no-default-features --features eval -- bench verify --root "$PUBLIC_ROOT" --json-out "$VERDICT"
+          cargo run --locked ${{ matrix.cargo_flags }} -- bench verify --root "$PUBLIC_ROOT" --json-out "$VERDICT"
       - name: Assert row authority and exact artifact bindings
         shell: bash
         run: |
@@ -273,7 +280,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo run --locked --no-default-features --features eval -- bench verify --root "$PUBLIC_ROOT" --json-out "$VERDICT"
+          cargo run --locked -- bench verify --root "$PUBLIC_ROOT" --json-out "$VERDICT"
       - name: Assert closed release verdict
         shell: bash
         run: |

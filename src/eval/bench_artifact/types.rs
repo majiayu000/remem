@@ -199,6 +199,7 @@ pub struct Gh931Completeness {
     pub observed_runs: usize,
     pub complete: bool,
     pub attempts_ready: bool,
+    pub machine_outcomes_ready: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

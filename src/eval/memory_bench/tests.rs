@@ -6,7 +6,7 @@ use anyhow::Result;
 use super::fixture::{
     load_suite, load_suite_file_with_content_identity, validate_suite, validate_suite_selection,
 };
-use super::runner::{run_memory_bench, MemoryBenchOptions};
+use super::runner::{is_checked_in_public_root, run_memory_bench, MemoryBenchOptions};
 use super::types::{
     MemoryBenchCondition, ADVERSARIAL_POLICY_SUITE, DEFAULT_PUBLIC_ROOT, DEFAULT_SUITE,
 };
@@ -56,6 +56,18 @@ fn memory_bench_conditions_are_supported() {
         );
     }
     assert_eq!(MemoryBenchCondition::parse("unknown"), None);
+}
+
+#[test]
+fn two_missing_roots_are_not_treated_as_the_same_public_root() {
+    let suffix = format!(
+        "{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    );
+    let requested = std::env::temp_dir().join(format!("remem-missing-requested-{suffix}"));
+    assert!(!requested.exists());
+    assert!(!is_checked_in_public_root(&requested));
 }
 
 #[test]

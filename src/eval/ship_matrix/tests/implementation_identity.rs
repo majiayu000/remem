@@ -29,3 +29,34 @@ fn production_identity_implementations_share_machine_contract() {
     assert!(!ship_matrix.contains("option_env!"));
     assert!(!ship_matrix.contains("production_input_tree_sha256("));
 }
+
+#[test]
+fn native_workflow_tracks_every_production_input_root() {
+    let workflow = include_str!("../../../../.github/workflows/native-benchmark-evidence.yml");
+    for trigger in [".cargo/**", "assets/**", "prompts/**"] {
+        assert!(
+            workflow.contains(&format!("- {trigger}")),
+            "native evidence trigger is missing production input {trigger}"
+        );
+    }
+}
+
+#[test]
+fn native_workflow_uses_the_release_feature_profile() {
+    let workflow = include_str!("../../../../.github/workflows/native-benchmark-evidence.yml");
+    assert!(workflow.contains("cargo_flags: --no-default-features --features eval"));
+    assert_eq!(workflow.matches("cargo_flags: \"\"").count(), 3);
+    assert_eq!(
+        workflow
+            .matches("cargo run --locked ${{ matrix.cargo_flags }} --")
+            .count(),
+        2
+    );
+    assert!(workflow.contains("cargo run --locked -- bench verify --root \"$PUBLIC_ROOT\""));
+}
+
+#[test]
+fn crate_package_excludes_public_sqlite_snapshots() {
+    let manifest = include_str!("../../../../Cargo.toml");
+    assert!(manifest.contains("\"eval/public/**/*.sqlite3\""));
+}

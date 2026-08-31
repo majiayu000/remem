@@ -239,3 +239,31 @@ fn scorecard_projects_only_remem_e2e_completion_from_verdict() {
         Some("coding/reports/official.json#sha256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd")
     );
 }
+
+#[test]
+fn scorecard_keeps_completion_unavailable_without_complete_machine_outcomes() {
+    let mut report = baseline_fixture();
+    let gh931 = &mut report.artifact_verifier.authority_verdict.gh931;
+    gh931.completeness.complete = true;
+    gh931.completeness.attempts_ready = true;
+    gh931.completeness.machine_outcomes_ready = false;
+    let completion = gh931
+        .condition_completion
+        .iter_mut()
+        .find(|completion| completion.condition == "remem_e2e")
+        .expect("remem_e2e completion");
+    completion.eligible_started = 48;
+    completion.resolved = 47;
+
+    let public = public_fixture(report);
+    let scorecard = build_scorecard(&public, Path::new(DEFAULT_SECURITY_REPORT));
+    let completion = scorecard
+        .fields
+        .iter()
+        .find(|field| field.id == "task_completion_rate")
+        .expect("task completion field");
+
+    assert_eq!(completion.measurement_state, MeasurementState::Unavailable);
+    assert_eq!(completion.numerator.value, None);
+    assert_eq!(completion.denominator.value, None);
+}

@@ -43,7 +43,13 @@
       "then": {
         "required": ["artifact_sha256", "suite_content_identity"],
         "properties": {
-          "artifact_sha256": { "minProperties": 1 },
+          "artifacts": {
+            "required": ["reader_input", "retrieved_evidence", "answer", "score", "diagnosis", "remem_db_snapshot"]
+          },
+          "artifact_sha256": {
+            "minProperties": 6,
+            "required": ["reader_input", "retrieved_evidence", "answer", "score", "diagnosis", "remem_db_snapshot"]
+          },
           "environment": {
             "required": ["os", "arch", "source_dirty", "production_input_tree_sha256"],
             "properties": {

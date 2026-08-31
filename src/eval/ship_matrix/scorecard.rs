@@ -13,7 +13,9 @@ pub(super) fn build_scorecard(
     let gh931 = public.authority_verdict().map(|verdict| &verdict.gh931);
     let task_completion = gh931
         .filter(|authority| {
-            authority.completeness.complete && authority.completeness.attempts_ready
+            authority.completeness.complete
+                && authority.completeness.attempts_ready
+                && authority.completeness.machine_outcomes_ready
         })
         .and_then(|authority| {
             authority

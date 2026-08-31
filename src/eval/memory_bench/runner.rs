@@ -727,8 +727,14 @@ fn benchmark_container_image_digest() -> Option<String> {
         .or_else(|| Some("local-fixture-no-docker".to_string()))
 }
 
-fn is_checked_in_public_root(public_root: &Path) -> bool {
-    public_root.canonicalize().ok() == Path::new(DEFAULT_PUBLIC_ROOT).canonicalize().ok()
+pub(super) fn is_checked_in_public_root(public_root: &Path) -> bool {
+    match (
+        public_root.canonicalize(),
+        Path::new(DEFAULT_PUBLIC_ROOT).canonicalize(),
+    ) {
+        (Ok(requested), Ok(checked_in)) => requested == checked_in,
+        _ => false,
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -24,8 +24,33 @@ fn adversarial_policy_v2_schema_requires_provenance_and_artifact_hashes() -> ser
     for field in ["artifact_sha256", "suite_content_identity"] {
         assert!(required.iter().any(|value| value == field), "{field}");
     }
+    let required_artifacts = [
+        "reader_input",
+        "retrieved_evidence",
+        "answer",
+        "score",
+        "diagnosis",
+        "remem_db_snapshot",
+    ];
+    let artifacts = &schema["allOf"][0]["then"]["properties"]["artifacts"];
+    let artifact_required = artifacts["required"]
+        .as_array()
+        .expect("v2 required artifact paths");
     let artifact_hashes = &schema["allOf"][0]["then"]["properties"]["artifact_sha256"];
-    assert_eq!(artifact_hashes["minProperties"], 1);
+    let artifact_hash_required = artifact_hashes["required"]
+        .as_array()
+        .expect("v2 required artifact hashes");
+    assert_eq!(artifact_hashes["minProperties"], required_artifacts.len());
+    for field in required_artifacts {
+        assert!(
+            artifact_required.iter().any(|value| value == field),
+            "{field}"
+        );
+        assert!(
+            artifact_hash_required.iter().any(|value| value == field),
+            "{field} hash"
+        );
+    }
     let environment = &schema["allOf"][0]["then"]["properties"]["environment"];
     let environment_required = environment["required"]
         .as_array()
