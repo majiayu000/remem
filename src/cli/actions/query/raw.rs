@@ -3,8 +3,8 @@ use rusqlite::Connection;
 
 use crate::cli::types::{RawAction, RawRole};
 use crate::memory::raw_archive::{
-    build_sessions_json, list_sessions, RawMessage, RawSearchRequest, RawSessionQuery,
-    RawSessionSummary,
+    build_session_listing_json, list_sessions_with_exclusions, RawMessage, RawSearchRequest,
+    RawSessionQuery, RawSessionSummary,
 };
 use crate::memory::raw_query::{
     build_raw_search_json, parse_time_lower_bound, parse_time_upper_bound,
@@ -251,12 +251,18 @@ pub(super) fn run_raw_sessions(
         sample_user_messages: sample.max(0),
         latest,
     };
-    let sessions = list_sessions(&conn, &query)?;
+    let sessions = list_sessions_with_exclusions(&conn, &query)?;
 
     if json {
-        let output = build_sessions_json(&query, sessions);
+        let output = build_session_listing_json(&query, sessions);
         println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
+    }
+    if sessions.excluded_legacy_rows > 0 {
+        println!(
+            "Excluded {} pre-identity legacy transcript rows across {} sessions; raw archive rows were retained.",
+            sessions.excluded_legacy_rows, sessions.excluded_legacy_sessions
+        );
     }
     print!("{}", render_raw_sessions(&sessions));
     Ok(())

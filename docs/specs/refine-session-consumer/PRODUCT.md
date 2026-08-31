@@ -34,6 +34,11 @@ valid Codex observations as `platform_unknown`.
 - `content_hash`: SHA-256 fingerprint of the ordered immutable raw
   occurrences selected for the session.
 
+The JSON envelope also reports `excluded_legacy_rows` and
+`excluded_legacy_sessions`. These counts cover retained pre-identity
+transcript rows that cannot safely enter a host-bound complete-session
+summary.
+
 The existing `source_root`, `project`, and `session_id` fields remain the exact
 raw-message selector. `source_root` identifies storage location; it is not a
 host name.
@@ -48,9 +53,14 @@ not enumerate an unbounded archive and truncate it afterward.
 
 ## Failure Semantics
 
-- A session whose raw rows cannot be attributed to exactly one supported host
-  is omitted from the successful contract and makes the command fail with an
-  actionable error.
+- Identified or current transcript rows that cannot be attributed to exactly
+  one supported host make the command fail with an actionable error.
+- Pre-identity transcript rows with no identity and `legacy_unknown` event
+  time are omitted from complete sessions and counted explicitly in the JSON
+  envelope. They remain in the encrypted raw archive and raw search surfaces.
+- Re-ingestion may merge a pre-identity row only when one trusted transcript
+  identity is the sole candidate and the stored stable fields match an exact
+  identified occurrence. Ambiguity remains fail-closed.
 - Unbound `hook` fallback rows are partial capture evidence rather than complete
   transcripts. They remain available on raw occurrence/search surfaces but do
   not enter the Refine session contract or poison unrelated session listing.

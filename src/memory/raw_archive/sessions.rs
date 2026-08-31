@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension};
@@ -34,6 +34,21 @@ pub struct RawSessionSummary {
     pub user_message_samples: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RawSessionListing {
+    pub(crate) sessions: Vec<RawSessionSummary>,
+    pub(crate) excluded_legacy_rows: usize,
+    pub(crate) excluded_legacy_sessions: usize,
+}
+
+impl std::ops::Deref for RawSessionListing {
+    type Target = [RawSessionSummary];
+
+    fn deref(&self) -> &Self::Target {
+        &self.sessions
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RawSessionsJson {
     pub since_epoch: Option<i64>,
@@ -60,14 +75,52 @@ pub fn build_sessions_json(
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct RawSessionListingJson {
+    since_epoch: Option<i64>,
+    until_epoch: Option<i64>,
+    project: Option<String>,
+    sample: i64,
+    latest: Option<i64>,
+    count: usize,
+    excluded_legacy_rows: usize,
+    excluded_legacy_sessions: usize,
+    sessions: Vec<RawSessionSummary>,
+}
+
+pub(crate) fn build_session_listing_json(
+    query: &RawSessionQuery,
+    listing: RawSessionListing,
+) -> RawSessionListingJson {
+    RawSessionListingJson {
+        since_epoch: query.since_epoch,
+        until_epoch: query.until_epoch,
+        project: query.project.clone(),
+        sample: query.sample_user_messages,
+        latest: query.latest,
+        count: listing.sessions.len(),
+        excluded_legacy_rows: listing.excluded_legacy_rows,
+        excluded_legacy_sessions: listing.excluded_legacy_sessions,
+        sessions: listing.sessions,
+    }
+}
+
 pub fn list_sessions(conn: &Connection, query: &RawSessionQuery) -> Result<Vec<RawSessionSummary>> {
+    Ok(list_sessions_with_exclusions(conn, query)?.sessions)
+}
+
+pub(crate) fn list_sessions_with_exclusions(
+    conn: &Connection,
+    query: &RawSessionQuery,
+) -> Result<RawSessionListing> {
     if query.latest.is_some_and(|latest| latest <= 0) {
         anyhow::bail!("raw sessions latest must be positive");
     }
     let mut sql = String::from(
         "SELECT r.transcript_identity_id, r.transcript_record_ordinal, \
                 r.source_root, r.project, r.session_id, r.role, \
-                r.content_hash, r.created_at_epoch, r.id, \
+                r.content_hash, r.created_at_epoch, r.id, r.source, \
+                r.event_time_source, \
                 CASE WHEN i.status = 'active' THEN i.host END, \
                 CASE WHEN i.status = 'active' THEN i.session_mode END \
          FROM raw_messages r \
@@ -96,13 +149,17 @@ pub fn list_sessions(conn: &Connection, query: &RawSessionQuery) -> Result<Vec<R
                 row.get::<_, String>(6)?,
                 row.get::<_, i64>(7)?,
                 row.get::<_, i64>(8)?,
-                row.get::<_, Option<String>>(9)?,
-                row.get::<_, Option<String>>(10)?,
+                row.get::<_, String>(9)?,
+                row.get::<_, String>(10)?,
+                row.get::<_, Option<String>>(11)?,
+                row.get::<_, Option<String>>(12)?,
             ))
         },
     )?;
 
     let mut grouped = BTreeMap::new();
+    let mut excluded_legacy_rows = 0_usize;
+    let mut excluded_legacy_sessions = BTreeSet::new();
     for row in rows {
         let (
             identity_id,
@@ -114,9 +171,17 @@ pub fn list_sessions(conn: &Connection, query: &RawSessionQuery) -> Result<Vec<R
             hash,
             epoch,
             row_id,
+            source,
+            event_time_source,
             host,
             session_mode,
         ) = row?;
+        if identity_id.is_none() && source == "transcript" && event_time_source == "legacy_unknown"
+        {
+            excluded_legacy_rows += 1;
+            excluded_legacy_sessions.insert((root, project, session_id));
+            continue;
+        }
         let host = host.with_context(|| {
             format!(
                 "raw session provenance is missing or conflicted for ({root:?}, {project:?}, {session_id:?}); re-ingest its transcript"
@@ -186,7 +251,7 @@ pub fn list_sessions(conn: &Connection, query: &RawSessionQuery) -> Result<Vec<R
          FROM raw_messages
          WHERE id = ?1 AND role = 'user'",
     )?;
-    accumulators
+    let sessions = accumulators
         .into_iter()
         .map(|accumulator| {
             let samples = accumulator
@@ -204,7 +269,12 @@ pub fn list_sessions(conn: &Connection, query: &RawSessionQuery) -> Result<Vec<R
                 .collect::<Result<Vec<_>>>()?;
             Ok(accumulator.finish(samples))
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    Ok(RawSessionListing {
+        sessions,
+        excluded_legacy_rows,
+        excluded_legacy_sessions: excluded_legacy_sessions.len(),
+    })
 }
 
 fn accumulator_selector_cmp(left: &Accumulator, right: &Accumulator) -> std::cmp::Ordering {

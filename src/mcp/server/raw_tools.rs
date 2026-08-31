@@ -135,10 +135,11 @@ impl MemoryServer {
                 sample_user_messages: params.sample.unwrap_or(0).max(0),
                 latest: params.latest,
             };
-            let sessions = raw_archive::list_sessions(conn, &query).map_err(|e| {
-                crate::log::warn("mcp", &format!("list_raw_sessions failed: {}", e));
-                McpToolError::db_query(TOOL, e)
-            })?;
+            let sessions =
+                raw_archive::list_sessions_with_exclusions(conn, &query).map_err(|e| {
+                    crate::log::warn("mcp", &format!("list_raw_sessions failed: {}", e));
+                    McpToolError::db_query(TOOL, e)
+                })?;
 
             crate::log::info(
                 "mcp",
@@ -148,7 +149,10 @@ impl MemoryServer {
                     start.elapsed().as_millis()
                 ),
             );
-            errors::to_json_pretty(TOOL, &raw_archive::build_sessions_json(&query, sessions))
+            errors::to_json_pretty(
+                TOOL,
+                &raw_archive::build_session_listing_json(&query, sessions),
+            )
         })
     }
 }

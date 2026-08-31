@@ -23,6 +23,27 @@ impl std::fmt::Display for RawIdentityConflict {
 
 impl std::error::Error for RawIdentityConflict {}
 
+pub(crate) fn legacy_row_has_unique_identity(
+    conn: &Connection,
+    raw_message_id: i64,
+    expected_identity_id: i64,
+) -> Result<bool> {
+    let mut statement = conn.prepare(
+        "SELECT DISTINCT i.id
+         FROM raw_messages r
+         JOIN raw_session_identities i
+           ON i.source_root = r.source_root
+          AND r.session_id IN (i.fallback_session_id, i.canonical_session_id)
+          AND r.project IN (i.project, i.legacy_project)
+         WHERE r.id = ?1 AND i.host IS NOT NULL
+         ORDER BY i.id",
+    )?;
+    let candidates = statement
+        .query_map([raw_message_id], |row| row.get::<_, i64>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(candidates == [expected_identity_id])
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn insert_transcript_occurrence(
     conn: &Connection,
@@ -48,7 +69,7 @@ pub(crate) fn insert_transcript_occurrence(
     } else {
         EVENT_TIME_FALLBACK
     };
-    reject_matching_unresolved_legacy_row(
+    reject_ambiguous_matching_unresolved_legacy_row(
         conn,
         source_root,
         role,
@@ -188,15 +209,15 @@ fn existing_occurrence(
     Ok(Some(id))
 }
 
-fn reject_matching_unresolved_legacy_row(
+fn reject_ambiguous_matching_unresolved_legacy_row(
     conn: &Connection,
     source_root: &str,
     role: &str,
     content_hash: &str,
     identity_id: i64,
 ) -> Result<()> {
-    let row_id: Option<i64> = conn
-        .query_row(
+    let row_ids = {
+        let mut statement = conn.prepare(
             "SELECT r.id
              FROM raw_messages r
              JOIN raw_session_identities i ON i.id = ?1
@@ -206,18 +227,25 @@ fn reject_matching_unresolved_legacy_row(
                AND r.session_id IN (i.fallback_session_id, i.canonical_session_id)
                AND r.role = ?3 AND r.content_hash = ?4
                AND r.source = 'transcript'
-            ORDER BY r.id LIMIT 1",
-            params![identity_id, source_root, role, content_hash],
-            |row| row.get(0),
-        )
-        .optional()?;
-    if let Some(row_id) = row_id {
-        return Err(RawIdentityConflict {
-            reason: format!(
-                "legacy raw row {row_id} has no trusted host provenance and cannot be claimed"
-            ),
+            ORDER BY r.id",
+        )?;
+        let rows = statement
+            .query_map(
+                params![identity_id, source_root, role, content_hash],
+                |row| row.get::<_, i64>(0),
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+    for row_id in row_ids {
+        if !legacy_row_has_unique_identity(conn, row_id, identity_id)? {
+            return Err(RawIdentityConflict {
+                reason: format!(
+                    "legacy raw row {row_id} has ambiguous or untrusted host provenance and cannot be claimed"
+                ),
+            }
+            .into());
         }
-        .into());
     }
     Ok(())
 }

@@ -306,6 +306,16 @@ fn production_null_paths_are_valid_in_every_nullable_output_family() -> anyhow::
         &raw_sessions,
         property(&raw_sessions, "since_epoch")
     ));
+    assert!(has_property(
+        &raw_sessions,
+        &raw_sessions,
+        "excluded_legacy_rows"
+    ));
+    assert!(has_property(
+        &raw_sessions,
+        &raw_sessions,
+        "excluded_legacy_sessions"
+    ));
     Ok(())
 }
 

@@ -130,13 +130,47 @@ fn list_sessions_keeps_unbound_hook_fallbacks_outside_the_transcript_contract() 
     )
     .unwrap();
 
-    let sessions = list_sessions(&conn, &RawSessionQuery::default()).unwrap();
+    let sessions = list_sessions_with_exclusions(&conn, &RawSessionQuery::default()).unwrap();
 
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].session_id, "shared");
     assert_eq!(sessions[0].message_count, 1);
     assert_eq!(sessions[0].user_message_count, 1);
     assert_eq!(sessions[0].assistant_message_count, 0);
+}
+
+#[test]
+fn list_sessions_keeps_preidentity_legacy_rows_outside_the_transcript_contract() {
+    let conn = setup_conn();
+    let identified = insert_at_epoch(&conn, "current", "/repo", ROLE_USER, "current", 200);
+    identify_raw_row(
+        &conn,
+        identified,
+        "codex-cli",
+        "/tmp/.codex/sessions/current.jsonl",
+    );
+    let legacy = insert_at_epoch(&conn, "legacy", "/old", ROLE_USER, "legacy", 100);
+    conn.execute(
+        "UPDATE raw_messages
+         SET source = 'transcript', event_time_source = 'legacy_unknown'
+         WHERE id = ?1",
+        [legacy],
+    )
+    .unwrap();
+
+    let sessions = list_sessions_with_exclusions(&conn, &RawSessionQuery::default()).unwrap();
+
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].session_id, "current");
+    assert_eq!(sessions.excluded_legacy_rows, 1);
+    assert_eq!(sessions.excluded_legacy_sessions, 1);
+    let output = serde_json::to_value(build_session_listing_json(
+        &RawSessionQuery::default(),
+        sessions,
+    ))
+    .unwrap();
+    assert_eq!(output["excluded_legacy_rows"], 1);
+    assert_eq!(output["excluded_legacy_sessions"], 1);
 }
 
 #[test]
@@ -198,7 +232,9 @@ fn list_sessions_latest_is_bounded_and_missing_host_fails_closed() {
     let missing = insert_at_epoch(&conn, "missing-host", "/repo", ROLE_USER, "missing", 300);
     assert!(missing > 0);
     conn.execute(
-        "UPDATE raw_messages SET source = 'transcript' WHERE id = ?1",
+        "UPDATE raw_messages
+         SET source = 'transcript', event_time_source = 'transcript_event'
+         WHERE id = ?1",
         [missing],
     )
     .unwrap();

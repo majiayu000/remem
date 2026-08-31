@@ -522,6 +522,8 @@ struct RawSessionsOutput {
     sample: i64,
     latest: Option<i64>,
     count: usize,
+    excluded_legacy_rows: usize,
+    excluded_legacy_sessions: usize,
     sessions: Vec<RawSessionOutput>,
 }
 
