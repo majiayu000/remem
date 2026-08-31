@@ -44,7 +44,15 @@
         "required": ["artifact_sha256", "suite_content_identity"],
         "properties": {
           "artifacts": {
-            "required": ["reader_input", "retrieved_evidence", "answer", "score", "diagnosis", "remem_db_snapshot"]
+            "required": ["reader_input", "retrieved_evidence", "answer", "score", "diagnosis", "remem_db_snapshot"],
+            "properties": {
+              "reader_input": { "type": "string", "minLength": 1 },
+              "retrieved_evidence": { "type": "string", "minLength": 1 },
+              "answer": { "type": "string", "minLength": 1 },
+              "score": { "type": "string", "minLength": 1 },
+              "diagnosis": { "type": "string", "minLength": 1 },
+              "remem_db_snapshot": { "type": "string", "minLength": 1 }
+            }
           },
           "artifact_sha256": {
             "minProperties": 6,

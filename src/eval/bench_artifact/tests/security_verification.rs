@@ -144,6 +144,25 @@ fn mixed_security_reader_model_identity_fails_closed() -> Result<()> {
 }
 
 #[test]
+fn security_run_prompt_hash_must_match_registered_task_prompt() -> Result<()> {
+    let root = copy_public_fixture("security-run-prompt-hash")?;
+    let run_path = root.join(
+        "memory/artifacts/adversarial-policy-v2/\
+         remem_default-secrets-api-key-001/run.json",
+    );
+    mutate_json(&run_path, |json| {
+        json["reader_model"]["prompt_hash"] = Value::String("sha256:invalid".to_string());
+    })?;
+
+    let verified =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+
+    assert!(!verified.passed);
+    assert!(failure_text(&verified).contains("reader prompt hash differs from typed suite task"));
+    Ok(())
+}
+
+#[test]
 fn security_report_requires_exact_suite_task_coverage_under_remem_default() -> Result<()> {
     for mutation in ["omitted", "duplicate", "extra", "wrong-condition"] {
         let root = copy_public_fixture(&format!("security-report-coverage-{mutation}"))?;
@@ -365,6 +384,34 @@ fn verifier_rejects_snapshot_with_unrelated_captured_event() -> Result<()> {
 
     assert!(!report.passed);
     assert!(failure_text(&report).contains("closed-world snapshot inventory"));
+    Ok(())
+}
+
+#[test]
+fn verifier_rejects_snapshot_with_trailing_bytes() -> Result<()> {
+    let root = copy_public_fixture("security-snapshot-trailing-bytes")?;
+    let run_path = root.join(
+        "memory/artifacts/adversarial-policy-v2/\
+         remem_default-secrets-api-key-001/run.json",
+    );
+    let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;
+    let snapshot_relative = run["artifacts"]["remem_db_snapshot"]
+        .as_str()
+        .context("security run must name its snapshot")?;
+    let snapshot = root.join(snapshot_relative);
+    let mut bytes = fs::read(&snapshot)?;
+    bytes.extend_from_slice(b"private trailing payload");
+    fs::write(&snapshot, &bytes)?;
+    let mutated_sha256 = format!("{:x}", Sha256::digest(&bytes));
+    mutate_json(&run_path, |json| {
+        json["artifact_sha256"]["remem_db_snapshot"] = Value::String(mutated_sha256);
+    })?;
+
+    let verified =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+
+    assert!(!verified.passed);
+    assert!(failure_text(&verified).contains("SQLite snapshot length differs from header"));
     Ok(())
 }
 

@@ -194,7 +194,7 @@ pub(super) fn validate_security_snapshot(
 }
 
 pub(super) fn open_consumed_read_only_sqlite(bytes: &[u8]) -> Result<Connection> {
-    ensure!(!bytes.is_empty(), "SQLite snapshot is empty");
+    validate_sqlite_image_length(bytes)?;
     let allocation_size = u64::try_from(bytes.len()).context("SQLite snapshot is too large")?;
     // SAFETY: sqlite3_malloc64 returns either null or an allocation owned by SQLite. We copy
     // exactly `bytes.len()` initialized bytes into that allocation, create no aliases to it, and
@@ -211,6 +211,35 @@ pub(super) fn open_consumed_read_only_sqlite(bytes: &[u8]) -> Result<Connection>
         .deserialize(DatabaseName::Main, owned, true)
         .context("deserialize consumed SQLite snapshot as read-only")?;
     Ok(connection)
+}
+
+fn validate_sqlite_image_length(bytes: &[u8]) -> Result<()> {
+    ensure!(bytes.len() >= 100, "SQLite snapshot header is incomplete");
+    ensure!(
+        &bytes[..16] == b"SQLite format 3\0",
+        "SQLite snapshot header magic is invalid"
+    );
+    let raw_page_size = u16::from_be_bytes([bytes[16], bytes[17]]);
+    let page_size = if raw_page_size == 1 {
+        65_536usize
+    } else {
+        usize::from(raw_page_size)
+    };
+    ensure!(
+        page_size == 65_536 || (512..=32_768).contains(&page_size) && page_size.is_power_of_two(),
+        "SQLite snapshot page size is invalid"
+    );
+    let page_count = u32::from_be_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]) as usize;
+    ensure!(page_count > 0, "SQLite snapshot page count is zero");
+    let expected_len = page_size
+        .checked_mul(page_count)
+        .context("SQLite snapshot image length overflows")?;
+    ensure!(
+        bytes.len() == expected_len,
+        "SQLite snapshot length differs from header: expected {expected_len} bytes, got {}",
+        bytes.len()
+    );
+    Ok(())
 }
 
 fn validate_semantics(
@@ -238,6 +267,12 @@ fn validate_semantics(
         .iter()
         .find(|task| task.id == run.task_id)
         .context("run task is absent from typed suite")?;
+    let expected_prompt_hash = format!("sha256:{:x}", Sha256::digest(task.prompt.as_bytes()));
+    ensure!(
+        run.reader_model.get("prompt_hash").and_then(Value::as_str)
+            == Some(expected_prompt_hash.as_str()),
+        "reader prompt hash differs from typed suite task"
+    );
     ensure!(
         run.reference_time_epoch == task.reference_time_epoch
             && run.retrieval.gold_supporting_event_ids == task.gold_supporting_event_ids,

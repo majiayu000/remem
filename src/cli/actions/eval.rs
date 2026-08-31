@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 
@@ -24,10 +24,11 @@ pub(in crate::cli) async fn run_bench(action: BenchAction) -> Result<()> {
         }
         BenchAction::Coding(args) => run_bench_coding(*args).await,
         BenchAction::Report(args) => {
+            let root = Path::new(&args.root);
             let report = crate::eval::bench_artifact::write_public_baseline_report(
                 crate::eval::bench_artifact::BenchReportOptions {
-                    root: Path::new(&args.root).to_path_buf(),
-                    claim_registry_path: Path::new("eval/claims/registry.json").to_path_buf(),
+                    root: root.to_path_buf(),
+                    claim_registry_path: claim_registry_path_for_public_root(root),
                     json_out: Path::new(&args.json_out).to_path_buf(),
                     markdown_out: Path::new(&args.markdown_out).to_path_buf(),
                 },
@@ -39,10 +40,11 @@ pub(in crate::cli) async fn run_bench(action: BenchAction) -> Result<()> {
 }
 
 fn run_bench_verify(root: &str, json_out: &str) -> Result<()> {
+    let root = Path::new(root);
     let report = crate::eval::bench_artifact::verify_benchmark_artifacts(
         crate::eval::bench_artifact::BenchVerifyOptions::new(
-            Path::new(root).to_path_buf(),
-            Path::new("eval/claims/registry.json").to_path_buf(),
+            root.to_path_buf(),
+            claim_registry_path_for_public_root(root),
         ),
     )?;
     let report_json = serde_json::to_string_pretty(&report)?;
@@ -66,6 +68,13 @@ fn run_bench_verify(root: &str, json_out: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn claim_registry_path_for_public_root(root: &Path) -> PathBuf {
+    let parent = root.parent().filter(|path| !path.as_os_str().is_empty());
+    parent
+        .map(|path| path.join("claims/registry.json"))
+        .unwrap_or_else(|| PathBuf::from("claims/registry.json"))
 }
 
 async fn run_bench_memory(
@@ -483,4 +492,21 @@ fn write_coding_bench_json(path: &str, report_json: &str) -> Result<()> {
     fs::write(path, report_json)
         .with_context(|| format!("write coding benchmark report {path}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod bench_path_tests {
+    use super::*;
+
+    #[test]
+    fn claim_registry_is_resolved_from_public_root_not_caller_cwd() {
+        assert_eq!(
+            claim_registry_path_for_public_root(Path::new("/tmp/bundle/eval/public")),
+            Path::new("/tmp/bundle/eval/claims/registry.json")
+        );
+        assert_eq!(
+            claim_registry_path_for_public_root(Path::new("eval/public")),
+            Path::new("eval/claims/registry.json")
+        );
+    }
 }

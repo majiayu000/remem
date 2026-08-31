@@ -40,7 +40,7 @@ pub(super) fn build_scorecard(
             "eligible started remem_e2e runs",
             "registered GH931 threshold when official matrix is complete",
             gh931_claim_level(gh931),
-            task_completion_source,
+            task_completion_source.clone(),
         ),
         unavailable_field(
             "correct_memory_help_rate",
@@ -80,13 +80,7 @@ pub(super) fn build_scorecard(
         security_ratio_field(public, security_source.clone()),
         abstention_field(public, security_source),
         latency_field(public, security_report_path),
-        unavailable_field(
-            "maintenance_time_and_ai_usage",
-            "official GH931 target-blind curator and remem_e2e runs",
-            "maintenance minutes and AI usage units",
-            "100 eligible sessions and official task runs",
-            "governed official execution has not occurred",
-        ),
+        maintenance_field(gh931, task_completion_source),
     ];
     OutcomeScorecard {
         schema_version: 1,
@@ -96,6 +90,73 @@ pub(super) fn build_scorecard(
             MeasurementState::NotApplicable,
         ],
         fields,
+    }
+}
+
+fn maintenance_field(
+    authority: Option<&crate::eval::bench_artifact::Gh931AuthorityVerdict>,
+    source: Option<String>,
+) -> ScorecardField {
+    let measured = authority.and_then(|authority| {
+        let maintenance = &authority.maintenance;
+        if maintenance.status != AuthorityStatus::Pass || maintenance.curator_sessions == 0 {
+            return None;
+        }
+        Some((
+            authority,
+            maintenance.curator_minutes?,
+            maintenance.curated_minutes_per_100_sessions?,
+            maintenance
+                .remem_sessions
+                .filter(|sessions| *sessions > 0)?,
+            maintenance.remem_minutes_per_100_sessions?,
+            maintenance.reduction_pct?,
+            source?,
+        ))
+    });
+    let Some((
+        authority,
+        curator_minutes,
+        curated_rate,
+        remem_sessions,
+        remem_rate,
+        reduction,
+        source,
+    )) = measured
+    else {
+        return unavailable_field(
+            "maintenance_time_and_ai_usage",
+            "official GH931 target-blind curator and remem_e2e runs",
+            "maintenance minutes and AI usage units",
+            "100 eligible sessions and official task runs",
+            "governed maintenance-time evidence is incomplete",
+        );
+    };
+    let mut values = BTreeMap::new();
+    values.insert("curated_minutes_per_100_sessions".to_string(), curated_rate);
+    values.insert("remem_minutes_per_100_sessions".to_string(), remem_rate);
+    values.insert("maintenance_reduction_pct".to_string(), reduction);
+    ScorecardField {
+        id: "maintenance_time_and_ai_usage",
+        measurement_state: MeasurementState::Measured,
+        eligible_population: "official GH931 target-blind curator and remem_e2e sessions"
+            .to_string(),
+        numerator: ScorecardComponent {
+            definition: "target-blind curator maintenance minutes".to_string(),
+            value: Some(curator_minutes),
+        },
+        denominator: ScorecardComponent {
+            definition: "eligible curator sessions".to_string(),
+            value: Some(authority.maintenance.curator_sessions as f64),
+        },
+        values,
+        threshold: "registered GH931 maintenance-reduction threshold".to_string(),
+        source: Some(source),
+        claim_level: gh931_claim_level(Some(authority)).to_string(),
+        note: format!(
+            "Maintenance time is verifier-measured across {} remem sessions; AI usage remains unavailable.",
+            remem_sessions
+        ),
     }
 }
 

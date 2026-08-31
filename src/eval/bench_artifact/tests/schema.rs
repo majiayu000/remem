@@ -50,6 +50,8 @@ fn adversarial_policy_v2_schema_requires_provenance_and_artifact_hashes() -> ser
             artifact_hash_required.iter().any(|value| value == field),
             "{field} hash"
         );
+        assert_eq!(artifacts["properties"][field]["type"], "string");
+        assert_eq!(artifacts["properties"][field]["minLength"], 1);
     }
     let environment = &schema["allOf"][0]["then"]["properties"]["environment"];
     let environment_required = environment["required"]

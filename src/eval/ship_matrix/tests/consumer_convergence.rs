@@ -268,3 +268,57 @@ fn scorecard_keeps_completion_unavailable_without_complete_machine_outcomes() {
     assert_eq!(completion.numerator.value, None);
     assert_eq!(completion.denominator.value, None);
 }
+
+#[test]
+fn scorecard_projects_verified_maintenance_time() {
+    let mut report = baseline_fixture();
+    let gh931 = &mut report.artifact_verifier.authority_verdict.gh931;
+    gh931.report = Some(crate::eval::bench_artifact::Gh931ReportBinding {
+        path: "coding/reports/official.json".to_string(),
+        sha256: "e".repeat(64),
+        conditions: vec![
+            "no_memory".to_string(),
+            "remem_e2e".to_string(),
+            "curated_file_budgeted".to_string(),
+        ],
+        models_by_condition: BTreeMap::new(),
+        platforms: vec!["linux/x86_64".to_string()],
+        producing_shas: vec!["a".repeat(40)],
+        production_input_trees: vec!["b".repeat(64)],
+        source_dirty_attestations: vec![Some(false)],
+    });
+    gh931.maintenance.status = AuthorityStatus::Pass;
+    gh931.maintenance.curator_sessions = 100;
+    gh931.maintenance.curator_minutes = Some(20.0);
+    gh931.maintenance.curated_minutes_per_100_sessions = Some(20.0);
+    gh931.maintenance.remem_sessions = Some(100);
+    gh931.maintenance.remem_minutes_per_100_sessions = Some(4.0);
+    gh931.maintenance.reduction_pct = Some(80.0);
+    let public = public_fixture(report);
+
+    let scorecard = build_scorecard(&public, Path::new(DEFAULT_SECURITY_REPORT));
+    let maintenance = scorecard
+        .fields
+        .iter()
+        .find(|field| field.id == "maintenance_time_and_ai_usage")
+        .expect("maintenance scorecard field");
+
+    assert_eq!(maintenance.measurement_state, MeasurementState::Measured);
+    assert_eq!(
+        maintenance.values.get("curated_minutes_per_100_sessions"),
+        Some(&20.0)
+    );
+    assert_eq!(
+        maintenance.values.get("remem_minutes_per_100_sessions"),
+        Some(&4.0)
+    );
+    assert_eq!(
+        maintenance.values.get("maintenance_reduction_pct"),
+        Some(&80.0)
+    );
+    assert!(maintenance.note.contains("AI usage remains unavailable"));
+    assert_eq!(
+        maintenance.source.as_deref(),
+        Some("coding/reports/official.json#sha256=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+    );
+}
