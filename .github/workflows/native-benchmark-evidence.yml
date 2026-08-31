@@ -123,7 +123,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo run --locked ${{ matrix.cargo_flags }} -- bench verify --root "$PUBLIC_ROOT" --json-out "$VERDICT"
+          cargo run --locked ${{ matrix.cargo_flags }} -- bench verify \
+            --root "$PUBLIC_ROOT" \
+            --claim-registry "$GITHUB_WORKSPACE/eval/claims/registry.json" \
+            --json-out "$VERDICT"
       - name: Assert row authority and exact artifact bindings
         shell: bash
         run: |
@@ -280,7 +283,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo run --locked -- bench verify --root "$PUBLIC_ROOT" --json-out "$VERDICT"
+          cargo run --locked -- bench verify \
+            --root "$PUBLIC_ROOT" \
+            --claim-registry "$GITHUB_WORKSPACE/eval/claims/registry.json" \
+            --json-out "$VERDICT"
       - name: Assert closed release verdict
         shell: bash
         run: |

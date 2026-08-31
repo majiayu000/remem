@@ -17,6 +17,9 @@ pub(in crate::cli) struct BenchVerifyArgs {
     /// Public benchmark artifact root.
     #[arg(long, default_value = "eval/public")]
     pub(in crate::cli) root: String,
+    /// Claim registry path; inferred beside the public root when omitted.
+    #[arg(long)]
+    pub(in crate::cli) claim_registry: Option<String>,
     /// Verification report output path.
     #[arg(long)]
     pub(in crate::cli) json_out: String,
@@ -125,6 +128,9 @@ pub(in crate::cli) struct BenchReportArgs {
     /// Public benchmark artifact root.
     #[arg(long, default_value = "eval/public")]
     pub(in crate::cli) root: String,
+    /// Claim registry path; inferred beside the public root when omitted.
+    #[arg(long)]
+    pub(in crate::cli) claim_registry: Option<String>,
     /// Baseline report JSON output path.
     #[arg(long)]
     pub(in crate::cli) json_out: String,
