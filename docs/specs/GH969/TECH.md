@@ -510,8 +510,11 @@ valid while changed production inputs fail. Unsupported platforms remain
 copied or relabeled across platforms. A charter is not a cross-host result,
 ordinary regressions are not default-on authority, and directional baseline
 strings are not coding/public claim authority. Merge and release readiness
-inherit the legacy eval-gate verdict; the running binary SHA/tree must match the
-clean checkout before security, merge, release, or claim authority can pass.
+inherit the legacy eval-gate verdict; the running binary's production-input
+tree and pathspec must match the clean checkout before security, merge, release,
+or claim authority can pass. Public security SQLite snapshots are size-bounded
+canonical `VACUUM` images, and official coding outcomes must carry the exact
+registered scorer command set.
 The Rust verifier consumes the coding policy and evidence once, recomputes claim
 readiness, and emits the runtime authority verdict. The Python public wording
 guard consumes only that verdict: it checks the emitted allowed/forbidden wording

@@ -1,11 +1,9 @@
 use std::collections::BTreeMap;
 #[cfg(test)]
 use std::{cell::RefCell, path::Path};
-use std::{ptr, ptr::NonNull};
 
 use anyhow::{ensure, Context, Result};
-use rusqlite::serialize::OwnedData;
-use rusqlite::{ffi, Connection, DatabaseName};
+use rusqlite::Connection;
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -16,9 +14,13 @@ use crate::eval::memory_bench::types::{
     MemoryBenchCondition, MemoryBenchPolicyOutcome, MemoryBenchSuiteFixture, MemoryBenchTask,
 };
 
+pub(super) mod image;
 mod inventory;
 #[cfg(test)]
 mod tests;
+
+pub(super) use image::open_read_only as open_consumed_read_only_sqlite;
+pub(super) use image::validate_size as validate_snapshot_size;
 
 #[cfg(test)]
 thread_local! {
@@ -145,6 +147,13 @@ pub(super) fn validate_security_snapshot(
         Ok(bytes) => bytes,
         Err(()) => return,
     };
+    if let Err(error) = image::validate_canonical(&snapshot_bytes) {
+        state.fail(
+            raw_path.clone(),
+            format!("validate canonical SQLite snapshot image: {error:#}"),
+        );
+        return;
+    }
     run_after_security_snapshot_consumed_hook(&path);
     let connection = match open_consumed_read_only_sqlite(&snapshot_bytes) {
         Ok(connection) => connection,
@@ -191,55 +200,6 @@ pub(super) fn validate_security_snapshot(
             "v2 memory run lacks suite_content_identity",
         );
     }
-}
-
-pub(super) fn open_consumed_read_only_sqlite(bytes: &[u8]) -> Result<Connection> {
-    validate_sqlite_image_length(bytes)?;
-    let allocation_size = u64::try_from(bytes.len()).context("SQLite snapshot is too large")?;
-    // SAFETY: sqlite3_malloc64 returns either null or an allocation owned by SQLite. We copy
-    // exactly `bytes.len()` initialized bytes into that allocation, create no aliases to it, and
-    // immediately transfer exclusive ownership to OwnedData, whose Drop uses sqlite3_free.
-    let owned = unsafe {
-        let allocation = ffi::sqlite3_malloc64(allocation_size);
-        let allocation =
-            NonNull::new(allocation.cast::<u8>()).context("allocate consumed SQLite snapshot")?;
-        ptr::copy_nonoverlapping(bytes.as_ptr(), allocation.as_ptr(), bytes.len());
-        OwnedData::from_raw_nonnull(allocation, bytes.len())
-    };
-    let mut connection = Connection::open_in_memory().context("open in-memory SQLite handle")?;
-    connection
-        .deserialize(DatabaseName::Main, owned, true)
-        .context("deserialize consumed SQLite snapshot as read-only")?;
-    Ok(connection)
-}
-
-fn validate_sqlite_image_length(bytes: &[u8]) -> Result<()> {
-    ensure!(bytes.len() >= 100, "SQLite snapshot header is incomplete");
-    ensure!(
-        &bytes[..16] == b"SQLite format 3\0",
-        "SQLite snapshot header magic is invalid"
-    );
-    let raw_page_size = u16::from_be_bytes([bytes[16], bytes[17]]);
-    let page_size = if raw_page_size == 1 {
-        65_536usize
-    } else {
-        usize::from(raw_page_size)
-    };
-    ensure!(
-        page_size == 65_536 || (512..=32_768).contains(&page_size) && page_size.is_power_of_two(),
-        "SQLite snapshot page size is invalid"
-    );
-    let page_count = u32::from_be_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]) as usize;
-    ensure!(page_count > 0, "SQLite snapshot page count is zero");
-    let expected_len = page_size
-        .checked_mul(page_count)
-        .context("SQLite snapshot image length overflows")?;
-    ensure!(
-        bytes.len() == expected_len,
-        "SQLite snapshot length differs from header: expected {expected_len} bytes, got {}",
-        bytes.len()
-    );
-    Ok(())
 }
 
 fn validate_semantics(

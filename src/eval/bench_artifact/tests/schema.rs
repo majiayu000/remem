@@ -76,6 +76,20 @@ fn adversarial_policy_v2_schema_requires_provenance_and_artifact_hashes() -> ser
 }
 
 #[test]
+fn memory_report_schema_types_all_string_arrays() -> serde_json::Result<()> {
+    let schema: Value = serde_json::from_str(include_str!(
+        "../../../../eval/public/schemas/memory-report.schema.json"
+    ))?;
+
+    for field in ["conditions", "schema_refs", "run_artifacts"] {
+        let items = &schema["properties"][field]["items"];
+        assert_eq!(items["type"], "string", "{field}");
+        assert_eq!(items["minLength"], 1, "{field}");
+    }
+    Ok(())
+}
+
+#[test]
 fn duplicate_coding_claim_contract_is_removed_from_runtime() {
     let duplicate_name = ["coding-claim", "-contract-v1.json"].concat();
     assert!(!std::path::Path::new("eval/public/claims")

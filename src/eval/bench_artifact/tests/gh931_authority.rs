@@ -5,6 +5,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use super::{copy_public_fixture, mutate_json};
+use crate::eval::bench_artifact::authority::gh931::meets_non_inferiority_margin;
 use crate::eval::bench_artifact::types::{
     AuthorityStatus, BenchmarkLayer, ClaimRegistryGate, ClaimRegistryPolicy, CodingMemoryContract,
     CodingRunArtifact, CodingRunMetrics, CuratorBudget, CuratorLogArtifact, CuratorSession,
@@ -51,6 +52,65 @@ fn tampered_registry_pass_cannot_authorize_smoke_evidence() -> Result<()> {
         .authority_verdict
         .consumed_bytes
         .contains_key("claim-registry.json"));
+    Ok(())
+}
+
+#[test]
+fn locked_registry_rejects_relaxed_numeric_claim_gates() -> Result<()> {
+    for mutation in [
+        "superiority-effect",
+        "superiority-ci",
+        "non-inferiority-margin",
+        "maintenance-reduction",
+        "memory-hurt",
+        "stale-memory",
+    ] {
+        let mut verified = complete_verified_matrix(AuthorityStatus::Insufficient)?;
+        let policy = &mut verified.claim_registry.as_mut().unwrap().value;
+        match mutation {
+            "superiority-effect" => {
+                let ClaimRegistryGate::Superiority(gate) = &mut policy.claims[0].gate else {
+                    panic!("superiority gate")
+                };
+                gate.min_effect_pp = -100.0;
+            }
+            "superiority-ci" => {
+                let ClaimRegistryGate::Superiority(gate) = &mut policy.claims[0].gate else {
+                    panic!("superiority gate")
+                };
+                gate.ci_lower_bound_pp_gt = -100.0;
+            }
+            "non-inferiority-margin" => {
+                let ClaimRegistryGate::NonInferiority(gate) = &mut policy.claims[1].gate else {
+                    panic!("non-inferiority gate")
+                };
+                gate.non_inferiority_margin_pp = 100.0;
+            }
+            "maintenance-reduction" => {
+                let ClaimRegistryGate::NonInferiority(gate) = &mut policy.claims[1].gate else {
+                    panic!("non-inferiority gate")
+                };
+                gate.human_maintenance_reduction_min_pct = -100.0;
+            }
+            "memory-hurt" => {
+                let ClaimRegistryGate::StopLoss(gate) = &mut policy.claims[2].gate else {
+                    panic!("stop-loss gate")
+                };
+                gate.memory_hurt_max_pct = 100.0;
+            }
+            "stale-memory" => {
+                let ClaimRegistryGate::StopLoss(gate) = &mut policy.claims[2].gate else {
+                    panic!("stop-loss gate")
+                };
+                gate.stale_memory_followed_max_pct = 100.0;
+            }
+            _ => unreachable!(),
+        }
+
+        let verdict = evaluate_gh931(&verified, &[]);
+        assert!(!verdict.registry.policy_valid, "{mutation}");
+        assert_ne!(verdict.status, AuthorityStatus::Pass, "{mutation}");
+    }
     Ok(())
 }
 
@@ -309,35 +369,8 @@ fn mixed_or_malformed_official_provenance_is_insufficient() -> Result<()> {
 
 #[test]
 fn exact_non_inferiority_ci_margin_is_inclusive() -> Result<()> {
-    let mut verified = complete_verified_matrix(AuthorityStatus::Insufficient)?;
-    attach_curator_evidence(&mut verified);
-    attach_treatment_evidence(&mut verified, 0.0, 1);
-    let initial = evaluate_gh931(&verified, &[]);
-    let ci_lower = initial
-        .paired_statistics
-        .iter()
-        .find(|statistic| statistic.comparison_id == "remem-e2e-vs-curated-file-budgeted-v1")
-        .and_then(|statistic| statistic.ci_lower_pp)
-        .expect("computed curated CI lower bound");
-    let policy = &mut verified.claim_registry.as_mut().unwrap().value;
-    let claim = policy
-        .claims
-        .iter_mut()
-        .find(|claim| claim.id == "remem-e2e-vs-curated-file-budgeted-v1")
-        .unwrap();
-    let ClaimRegistryGate::NonInferiority(gate) = &mut claim.gate else {
-        panic!("registered non-inferiority gate");
-    };
-    gate.non_inferiority_margin_pp = -ci_lower;
-
-    let verdict = evaluate_gh931(&verified, &[]);
-    let claim = verdict
-        .claims
-        .iter()
-        .find(|claim| claim.id == "remem-e2e-vs-curated-file-budgeted-v1")
-        .unwrap();
-
-    assert_eq!(claim.status, AuthorityStatus::Pass);
+    assert!(meets_non_inferiority_margin(-3.0, -3.0, 3.0));
+    assert!(!meets_non_inferiority_margin(-3.0, -3.000_001, 3.0));
     Ok(())
 }
 

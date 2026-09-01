@@ -84,6 +84,7 @@ pub(super) async fn retrieve_with_production_pipeline(
     Vec<u8>,
 )> {
     let (conn, retrieved, measurement) = execute_production_pipeline(task).await?;
+    conn.execute_batch("VACUUM")?;
     let snapshot = conn.serialize(DatabaseName::Main)?.to_vec();
     Ok((retrieved, measurement, snapshot))
 }

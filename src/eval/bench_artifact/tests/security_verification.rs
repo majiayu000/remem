@@ -163,6 +163,163 @@ fn security_run_prompt_hash_must_match_registered_task_prompt() -> Result<()> {
 }
 
 #[test]
+fn security_authority_rejects_semantically_identical_unregistered_suite_bytes() -> Result<()> {
+    let root = copy_public_fixture("unregistered-security-suite-bytes")?;
+    let suite_path = root.join("memory/suites/adversarial-policy/suite.json");
+    let mut suite_bytes = fs::read(&suite_path)?;
+    suite_bytes.extend_from_slice(b" \n");
+    fs::write(&suite_path, &suite_bytes)?;
+    let suite_identity = format!("sha256-raw-suite-v1:{:x}", Sha256::digest(&suite_bytes));
+
+    for report_relative in [
+        "memory/reports/adversarial-policy-v2.json",
+        "memory/reports/adversarial-policy-v2-linux-x86_64.json",
+    ] {
+        let report_path = root.join(report_relative);
+        let report: Value = serde_json::from_slice(&fs::read(&report_path)?)?;
+        let run_paths = report["run_artifacts"]
+            .as_array()
+            .context("security report run artifacts")?
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .context("security run path must be a string")
+                    .map(str::to_string)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        mutate_json(&report_path, |json| {
+            json["aggregate_metrics"]["suite_content_identity"] =
+                Value::String(suite_identity.clone());
+        })?;
+        for run_path in run_paths {
+            mutate_json(&root.join(run_path), |json| {
+                json["suite_content_identity"] = Value::String(suite_identity.clone());
+            })?;
+        }
+    }
+
+    let verified =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+
+    assert!(!verified.passed);
+    assert!(failure_text(&verified).contains("registered adversarial security suite identity"));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn verifier_rejects_artifact_symlink_that_escapes_public_root() -> Result<()> {
+    use std::os::unix::fs::symlink;
+
+    let root = copy_public_fixture("security-artifact-symlink-escape")?;
+    let run_path = root.join(
+        "memory/artifacts/adversarial-policy-v2/\
+         remem_default-secrets-api-key-001/run.json",
+    );
+    let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;
+    let answer_relative = run["artifacts"]["answer"]
+        .as_str()
+        .context("security answer path")?;
+    let answer_path = root.join(answer_relative);
+    let outside_path = root.with_extension("outside-answer.json");
+    fs::copy(&answer_path, &outside_path)?;
+    fs::remove_file(&answer_path)?;
+    symlink(&outside_path, &answer_path)?;
+
+    let verified =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+
+    assert!(!verified.passed);
+    assert!(failure_text(&verified).contains("artifact target must stay inside benchmark root"));
+    Ok(())
+}
+
+#[test]
+fn oversized_security_snapshot_is_rejected_before_consumption() -> Result<()> {
+    let root = copy_public_fixture("oversized-security-snapshot")?;
+    let run_path = root.join(
+        "memory/artifacts/adversarial-policy-v2/\
+         remem_default-secrets-api-key-001/run.json",
+    );
+    let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;
+    let snapshot_relative = run["artifacts"]["remem_db_snapshot"]
+        .as_str()
+        .context("security snapshot path")?;
+    fs::File::create(root.join(snapshot_relative))?.set_len(64 * 1024 * 1024 + 1)?;
+
+    let verified =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+
+    assert!(!verified.passed);
+    assert!(failure_text(&verified).contains("security SQLite snapshot exceeds 67108864 bytes"));
+    Ok(())
+}
+
+#[test]
+fn security_snapshot_rejects_payload_hidden_in_unallocated_page_bytes() -> Result<()> {
+    let root = copy_public_fixture("security-snapshot-hidden-page-payload")?;
+    let run_path = root.join(
+        "memory/artifacts/adversarial-policy-v2/\
+         remem_default-secrets-api-key-001/run.json",
+    );
+    let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;
+    let snapshot_relative = run["artifacts"]["remem_db_snapshot"]
+        .as_str()
+        .context("security snapshot path")?;
+    let snapshot_path = root.join(snapshot_relative);
+    let mut bytes = fs::read(&snapshot_path)?;
+    inject_unallocated_page_payload(&mut bytes, b"hidden private reviewer payload")?;
+    fs::write(&snapshot_path, &bytes)?;
+    let snapshot_sha = format!("{:x}", Sha256::digest(&bytes));
+    mutate_json(&run_path, |json| {
+        json["artifact_sha256"]["remem_db_snapshot"] = Value::String(snapshot_sha);
+    })?;
+
+    let verified =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+
+    assert!(!verified.passed);
+    assert!(verified.failures.iter().any(|failure| {
+        failure.path == snapshot_relative
+            && failure.message.contains("canonical SQLite snapshot image")
+    }));
+    Ok(())
+}
+
+fn inject_unallocated_page_payload(bytes: &mut [u8], payload: &[u8]) -> Result<()> {
+    let raw_page_size = u16::from_be_bytes([bytes[16], bytes[17]]);
+    let page_size = if raw_page_size == 1 {
+        65_536
+    } else {
+        usize::from(raw_page_size)
+    };
+    for page_start in (0..bytes.len()).step_by(page_size) {
+        let header = page_start + usize::from(page_start == 0) * 100;
+        let header_size = match bytes.get(header).copied() {
+            Some(2 | 5) => 12,
+            Some(10 | 13) => 8,
+            _ => continue,
+        };
+        let cell_count = usize::from(u16::from_be_bytes([bytes[header + 3], bytes[header + 4]]));
+        let raw_cell_start =
+            usize::from(u16::from_be_bytes([bytes[header + 5], bytes[header + 6]]));
+        let cell_start = if raw_cell_start == 0 {
+            page_size
+        } else {
+            raw_cell_start
+        };
+        let gap_start = header + header_size + 2 * cell_count;
+        let gap_end = page_start + cell_start;
+        if gap_end.saturating_sub(gap_start) >= payload.len() {
+            bytes[gap_start..gap_start + payload.len()].copy_from_slice(payload);
+            return Ok(());
+        }
+    }
+    anyhow::bail!("fixture has no unallocated b-tree page gap large enough for the payload")
+}
+
+#[test]
 fn security_report_requires_exact_suite_task_coverage_under_remem_default() -> Result<()> {
     for mutation in ["omitted", "duplicate", "extra", "wrong-condition"] {
         let root = copy_public_fixture(&format!("security-report-coverage-{mutation}"))?;

@@ -246,6 +246,13 @@ fn validate_official_test_evidence(
         state.fail(label.to_string(), message);
         return;
     }
+    if !value.matches_registered_scorer_commands(&run.task_id) {
+        state.fail(
+            label.to_string(),
+            "official coding test evidence differs from the registered scorer command set",
+        );
+        return;
+    }
     let failure_reason = value.failure_reason();
     if run.resolved != value.resolved() || run.failure_reason.as_deref() != failure_reason {
         state.fail(

@@ -419,6 +419,14 @@ fn validate_v2_memory_artifact_hashes(
     label: &str,
     state: &mut VerifyState,
 ) {
+    if let Some(raw_path) = run.artifacts.get("remem_db_snapshot") {
+        let Some(path) = resolve_public_path(state, raw_path, raw_path) else {
+            return;
+        };
+        if !security_snapshot::validate_snapshot_size(&path, raw_path, state) {
+            return;
+        }
+    }
     if run.artifact_sha256.len() != run.artifacts.len() {
         state.fail(
             label.to_string(),
@@ -631,7 +639,19 @@ fn resolve_public_path(state: &mut VerifyState, raw: &str, label: &str) -> Optio
         );
         return None;
     }
-    Some(root.join(path))
+    let resolved = root.join(path);
+    if let (Ok(canonical_root), Ok(canonical_target)) =
+        (fs::canonicalize(&root), fs::canonicalize(&resolved))
+    {
+        if !canonical_target.starts_with(canonical_root) {
+            state.fail(
+                label.to_string(),
+                "artifact target must stay inside benchmark root",
+            );
+            return None;
+        }
+    }
+    Some(resolved)
 }
 
 fn scan_private_json(value: &Value, path: &Path, pointer: &str, state: &mut VerifyState) {

@@ -191,6 +191,7 @@ def registered_coding_claim_violation(
         return "coding claim marker is not backed by a recomputed verdict claim"
     if not (
         verifier_report["passed"] is True
+        and authority.get("status") == "PASS"
         and security.get("status") == "PASS"
         and security.get("policy_failure_count") == 0
         and bool(security_reports)
@@ -295,6 +296,7 @@ def run_self_test() -> int:
         return {
             "passed": verifier_passed,
             "authority_verdict": {
+                "status": "PASS",
                 "security": {
                     "status": security_status,
                     "policy_failure_count": security_policy_failure_count,
@@ -354,6 +356,8 @@ def run_self_test() -> int:
     security_malformed_leak_verdict["authority_verdict"]["security"]["reports"][0][
         "policy_summary"
     ]["non_retention_leak_rate"] = "zero"
+    stale_security_verdict = verifier_report()
+    stale_security_verdict["authority_verdict"]["status"] = "INSUFFICIENT"
     for report in [
         blocked_verdict,
         passed_verdict,
@@ -362,6 +366,7 @@ def run_self_test() -> int:
         security_policy_failed_verdict,
         security_missing_summaries_verdict,
         security_nonzero_leak_verdict,
+        stale_security_verdict,
     ]:
         validate_verifier_report(report)
     try:
@@ -437,6 +442,12 @@ def run_self_test() -> int:
             "nonzero non-retention leak rate blocks an otherwise passing coding claim",
             f"<!-- remem-claim:{claim_id} --> {allowed_wording} [evidence](eval/public/coding/reports/coding-claim.json)",
             security_nonzero_leak_verdict,
+            "coding-outcome superiority",
+        ),
+        (
+            "stale security evidence cannot authorize an otherwise passing coding claim",
+            f"<!-- remem-claim:{claim_id} --> {allowed_wording} [evidence](eval/public/coding/reports/coding-claim.json)",
+            stale_security_verdict,
             "coding-outcome superiority",
         ),
         (

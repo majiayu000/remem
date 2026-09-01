@@ -92,6 +92,7 @@ fn official_failing_or_timed_out_commands_cannot_authorize_declared_resolution()
         |json| {
             json["benchmark_id"] = Value::String("issue385-v1".to_string());
             json["benchmark_version"] = Value::String("official-v1".to_string());
+            json["task_id"] = Value::String("ticket-key-memory-convention".to_string());
             json["run_phase"] = Value::String("official".to_string());
             json["matrix_namespace"] = Value::String("issue385-v1/official-v1".to_string());
             json["condition"] = Value::String("no_memory".to_string());
@@ -108,22 +109,38 @@ fn official_failing_or_timed_out_commands_cannot_authorize_declared_resolution()
         root.join("coding/artifacts/smoke-coding-001/test.log"),
         serde_json::to_vec_pretty(&serde_json::json!({
             "schema_version": 1,
-            "task_id": "smoke-fix-startup-race-001",
+            "task_id": "ticket-key-memory-convention",
             "condition": "no_memory",
             "run_index": 0,
             "attempt_id": "official-attempt-001",
-            "commands": [
-                {
-                    "command": "cargo test --test score-a",
-                    "exit_code": 0,
-                    "timed_out": false
-                },
-                {
-                    "command": "cargo test --test score-b",
-                    "exit_code": 1,
-                    "timed_out": false
-                }
-            ]
+            "commands": [{
+                "command": "true",
+                "exit_code": 0,
+                "timed_out": false
+            }]
+        }))?,
+    )?;
+
+    let forged = verify_benchmark_artifacts(BenchVerifyOptions::new(
+        root.clone(),
+        "eval/claims/registry.json",
+    ))?;
+    assert!(!forged.passed);
+    assert!(failure_text(&forged).contains("registered scorer command"));
+
+    fs::write(
+        root.join("coding/artifacts/smoke-coding-001/test.log"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": 1,
+            "task_id": "ticket-key-memory-convention",
+            "condition": "no_memory",
+            "run_index": 0,
+            "attempt_id": "official-attempt-001",
+            "commands": [{
+                "command": "python3 -m unittest tests.test_ticket_hidden",
+                "exit_code": 1,
+                "timed_out": false
+            }]
         }))?,
     )?;
 
@@ -152,13 +169,13 @@ fn official_failing_or_timed_out_commands_cannot_authorize_declared_resolution()
         root.join("coding/artifacts/smoke-coding-001/test.log"),
         serde_json::to_vec_pretty(&serde_json::json!({
             "schema_version": 1,
-            "task_id": "smoke-fix-startup-race-001",
+            "task_id": "ticket-key-memory-convention",
             "condition": "no_memory",
             "run_index": 0,
             "attempt_id": "official-attempt-001",
             "commands": [
                 {
-                    "command": "cargo test --test score-timeout",
+                    "command": "python3 -m unittest tests.test_ticket_hidden",
                     "exit_code": null,
                     "timed_out": true
                 }
@@ -186,7 +203,7 @@ fn official_failing_or_timed_out_commands_cannot_authorize_declared_resolution()
         root.join("coding/artifacts/smoke-coding-001/test.log"),
         serde_json::to_vec_pretty(&serde_json::json!({
             "schema_version": 1,
-            "task_id": "smoke-fix-startup-race-001",
+            "task_id": "ticket-key-memory-convention",
             "condition": "no_memory",
             "run_index": 0,
             "attempt_id": "official-attempt-001",

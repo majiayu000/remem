@@ -82,7 +82,7 @@ pub(in crate::eval::bench_artifact) mod implementation {
         let production_pathspec_sha256 =
             production_pathspec_sha256.and_then(|value| normalize_lower_hex(value, 64));
         let executable_source_equivalent = build_git_sha.is_some()
-            && build_git_sha == checkout_git_sha
+            && checkout_git_sha.is_some()
             && build_tree.is_some()
             && build_tree == checkout_tree
             && production_pathspec_sha256.is_some()
@@ -237,6 +237,8 @@ const REQUIRED_RELEASE_TARGETS: [&str; 4] = [
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
 ];
+const REGISTERED_ADVERSARIAL_SUITE_SHA256: &str =
+    "56dad240cc175fb3d3900875f05351b9541f9ef845aa54eddfc460151f3e257d";
 
 pub(super) struct AuthorityEvaluation {
     pub verdict: AuthorityVerdict,
@@ -437,6 +439,13 @@ fn security_report_coverage_diagnostics(
             suites.len()
         )];
     };
+    let mut diagnostics = Vec::new();
+    if suite.sha256 != REGISTERED_ADVERSARIAL_SUITE_SHA256 {
+        diagnostics.push(
+            "security report does not use the registered adversarial security suite identity"
+                .to_string(),
+        );
+    }
     let expected = suite
         .value
         .tasks
@@ -462,7 +471,6 @@ fn security_report_coverage_diagnostics(
         .filter(|task| !expected.contains(**task))
         .copied()
         .collect::<Vec<_>>();
-    let mut diagnostics = Vec::new();
     if report.value.conditions.len() != 1 || report.value.conditions[0] != "remem_default" {
         diagnostics.push("security report conditions must be exactly remem_default".to_string());
     }
@@ -492,6 +500,23 @@ fn security_report_coverage_diagnostics(
         ));
     }
     diagnostics
+}
+
+#[cfg(test)]
+mod registered_security_suite_tests {
+    use sha2::{Digest, Sha256};
+
+    use super::REGISTERED_ADVERSARIAL_SUITE_SHA256;
+
+    #[test]
+    fn registered_suite_digest_matches_checked_in_bytes() {
+        let bytes =
+            include_bytes!("../../../eval/public/memory/suites/adversarial-policy/suite.json");
+        assert_eq!(
+            format!("{:x}", Sha256::digest(bytes)),
+            REGISTERED_ADVERSARIAL_SUITE_SHA256
+        );
+    }
 }
 
 struct SecurityReportBinding {

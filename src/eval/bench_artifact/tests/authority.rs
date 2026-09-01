@@ -36,7 +36,7 @@ fn authority_verdict_has_closed_four_target_release_set() -> Result<()> {
 }
 
 #[test]
-fn mismatched_build_and_checkout_identity_cannot_authorize_release() {
+fn source_equivalent_build_and_checkout_commits_can_authorize_release() {
     let binding = crate::eval::bench_artifact::authority::implementation::binding_from_parts(
         Some("0123456789abcdef0123456789abcdef01234567"),
         Some("1123456789abcdef0123456789abcdef01234567"),
@@ -44,6 +44,22 @@ fn mismatched_build_and_checkout_identity_cannot_authorize_release() {
         Some(false),
         Some("a".repeat(64).as_str()),
         Some("a".repeat(64).as_str()),
+        Some("b".repeat(64).as_str()),
+    );
+
+    assert!(binding.executable_source_equivalent);
+    assert!(crate::eval::bench_artifact::authority::implementation_allows_release(&binding));
+}
+
+#[test]
+fn mismatched_production_trees_cannot_authorize_release() {
+    let binding = crate::eval::bench_artifact::authority::implementation::binding_from_parts(
+        Some("0123456789abcdef0123456789abcdef01234567"),
+        Some("0123456789abcdef0123456789abcdef01234567"),
+        Some(false),
+        Some(false),
+        Some("a".repeat(64).as_str()),
+        Some("c".repeat(64).as_str()),
         Some("b".repeat(64).as_str()),
     );
 

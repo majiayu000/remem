@@ -361,6 +361,40 @@ impl OfficialCodingTestEvidence {
             .then_some("official coding command result is internally inconsistent")
     }
 
+    pub(crate) fn matches_registered_scorer_commands(&self, task_id: &str) -> bool {
+        let Ok(fixture): Result<Value, _> = serde_json::from_str(include_str!(
+            "../../../eval/coding-bench/fixtures/tasks.json"
+        )) else {
+            return false;
+        };
+        let Some(task) = fixture["tasks"].as_array().and_then(|tasks| {
+            tasks
+                .iter()
+                .find(|task| task["id"].as_str() == Some(task_id))
+        }) else {
+            return false;
+        };
+        let Some(expected) = task["score"]["commands"].as_array().and_then(|commands| {
+            commands
+                .iter()
+                .map(|command| {
+                    command
+                        .as_array()?
+                        .iter()
+                        .map(Value::as_str)
+                        .collect::<Option<Vec<_>>>()
+                        .map(|parts| parts.join(" "))
+                })
+                .collect::<Option<Vec<_>>>()
+        }) else {
+            return false;
+        };
+        self.commands
+            .iter()
+            .map(|result| result.command.as_str())
+            .eq(expected.iter().map(String::as_str))
+    }
+
     pub(crate) fn resolved(&self) -> bool {
         !self.commands.is_empty()
             && self

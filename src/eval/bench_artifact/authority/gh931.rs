@@ -572,9 +572,13 @@ fn non_inferiority_status(
     if !ready || statistic.status != "computed" {
         return AuthorityStatus::Insufficient;
     }
-    let margin = -gate.non_inferiority_margin_pp;
-    let non_inferior = statistic.effect_pp.is_some_and(|effect| effect >= margin)
-        && statistic.ci_lower_pp.is_some_and(|lower| lower >= margin);
+    let non_inferior =
+        statistic
+            .effect_pp
+            .zip(statistic.ci_lower_pp)
+            .is_some_and(|(effect, ci_lower)| {
+                meets_non_inferiority_margin(effect, ci_lower, gate.non_inferiority_margin_pp)
+            });
     if !non_inferior {
         diagnostics.push("resolved-rate non-inferiority threshold not satisfied".to_string());
         AuthorityStatus::Fail
@@ -584,6 +588,15 @@ fn non_inferiority_status(
         diagnostics.extend(maintenance.diagnostics.iter().cloned());
         maintenance.status
     }
+}
+
+pub(in crate::eval::bench_artifact) fn meets_non_inferiority_margin(
+    effect_pp: f64,
+    ci_lower_pp: f64,
+    margin_pp: f64,
+) -> bool {
+    let threshold = -margin_pp;
+    effect_pp >= threshold && ci_lower_pp >= threshold
 }
 
 fn policy_is_valid(policy: &ClaimRegistryPolicy) -> bool {
@@ -613,8 +626,8 @@ fn valid_superiority(claim: Option<&ClaimRegistryClaimPolicy>) -> bool {
                     gate.ci_level,
                     &gate.statistical_unit,
                     &gate.method,
-                ) && gate.min_effect_pp.is_finite()
-                    && gate.ci_lower_bound_pp_gt.is_finite()
+                ) && gate.min_effect_pp == 10.0
+                    && gate.ci_lower_bound_pp_gt == 0.0
             )
     })
 }
@@ -631,9 +644,8 @@ fn valid_non_inferiority(claim: Option<&ClaimRegistryClaimPolicy>) -> bool {
                     gate.ci_level,
                     &gate.statistical_unit,
                     &gate.method,
-                ) && gate.non_inferiority_margin_pp.is_finite()
-                    && gate.non_inferiority_margin_pp >= 0.0
-                    && gate.human_maintenance_reduction_min_pct.is_finite()
+                ) && gate.non_inferiority_margin_pp == 3.0
+                    && gate.human_maintenance_reduction_min_pct == 70.0
             )
     })
 }
@@ -646,8 +658,8 @@ fn valid_stop_loss(claim: Option<&ClaimRegistryClaimPolicy>) -> bool {
             && wording_policy_present(claim)
             && matches!(
                 &claim.gate,
-                ClaimRegistryGate::StopLoss(gate) if gate.memory_hurt_max_pct.is_finite()
-                    && gate.stale_memory_followed_max_pct.is_finite()
+                ClaimRegistryGate::StopLoss(gate) if gate.memory_hurt_max_pct == 2.0
+                    && gate.stale_memory_followed_max_pct == 1.0
             )
     })
 }

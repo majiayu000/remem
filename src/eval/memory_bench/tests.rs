@@ -92,6 +92,40 @@ fn memory_bench_fixture_rejects_mismatched_requested_suite() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn public_artifact_prefix_rejects_parent_traversal_before_writing() -> Result<()> {
+    let root = unique_temp_dir("remem-memory-bench-prefix-traversal")?;
+    copy_dir_all(std::path::Path::new(DEFAULT_PUBLIC_ROOT), &root)?;
+    let escaped_name = format!(
+        "escaped-{}",
+        root.file_name()
+            .expect("temporary root name")
+            .to_string_lossy()
+    );
+    let escaped = root
+        .parent()
+        .expect("temporary root parent")
+        .join(&escaped_name);
+    let result = run_memory_bench(MemoryBenchOptions {
+        suite: DEFAULT_SUITE.to_string(),
+        condition: Some("no_memory".to_string()),
+        json_out: root
+            .join("memory/reports/prefix-traversal.json")
+            .to_string_lossy()
+            .to_string(),
+        root: root.to_string_lossy().to_string(),
+        artifact_prefix: Some(format!("../{escaped_name}")),
+    })
+    .await;
+
+    assert!(result
+        .expect_err("parent traversal must fail")
+        .to_string()
+        .contains("artifact prefix"));
+    assert!(!escaped.exists());
+    Ok(())
+}
+
 #[test]
 fn adversarial_policy_fixture_covers_required_categories() -> Result<()> {
     let fixture = load_suite(ADVERSARIAL_POLICY_SUITE)?;

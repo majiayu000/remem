@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
@@ -57,6 +57,7 @@ pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBench
     let artifact_prefix = options
         .artifact_prefix
         .unwrap_or_else(|| format!("memory/artifacts/{}", fixture.fixture_revision));
+    validate_artifact_prefix(&artifact_prefix)?;
     let public_layout = path_starts_with(&json_out, &public_root);
     let execution_identity = execution_identity();
     if public_layout && is_checked_in_public_root(&public_root) {
@@ -160,6 +161,22 @@ pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBench
     fs::write(&json_out, serde_json::to_string_pretty(&report)?)
         .with_context(|| format!("write memory benchmark report {}", json_out.display()))?;
     Ok(report)
+}
+
+fn validate_artifact_prefix(raw: &str) -> Result<()> {
+    let path = Path::new(raw);
+    if raw.trim().is_empty()
+        || path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        anyhow::bail!("artifact prefix must be a nonempty relative path without parent traversal");
+    }
+    Ok(())
 }
 
 fn selected_conditions(condition: Option<&str>) -> Result<Vec<MemoryBenchCondition>> {
