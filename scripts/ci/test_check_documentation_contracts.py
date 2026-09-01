@@ -17,6 +17,28 @@ EXPECTED_WORKFLOW_RUNNER_TEST_COMMAND = (
 )
 SAFE_SHELLS = {"", "bash"}
 SAFE_WORKING_DIRECTORIES = {"", ".", "${{ github.workspace }}"}
+VALID_BILINGUAL_SURFACE = """
+brew install majiayu000/tap/remem
+curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh
+npm install -g @remem-ai/remem
+cargo install remem-ai --bin remem
+remem doctor
+remem status
+remem search "last decision"
+docs/README.md
+SECURITY.md
+docs/specs/SPEC-web-api.md
+docs/specs/README.md
+CHANGELOG.md
+CONTRIBUTING.md
+remem install --target cursor
+127.0.0.1
+Authorization: Bearer
+remem uninstall --dry-run
+REMEM_DATA_DIR
+directional_only_no_public_claim
+assets/remem-recall-demo.gif
+"""
 
 
 @dataclass
@@ -157,7 +179,7 @@ class DocumentationContractTests(unittest.TestCase):
         (self.root / "docs/specs/project-memory-pack").mkdir(parents=True)
         (self.root / "scripts/ci").mkdir(parents=True)
         (self.root / "README.md").write_text(
-            """# remem
+            f"""# remem
 
 <!-- remem-doc-contract:current-project-export:start -->
 ```bash
@@ -171,6 +193,8 @@ remem export --pack .remem-pack
 ```
 
 [SessionStart smoke](scripts/ci/smoke_sessionstart_context_gate.sh)
+
+{VALID_BILINGUAL_SURFACE}
 """,
             encoding="utf-8",
         )
@@ -315,6 +339,131 @@ remem export --pack .remem-pack/
         violations = check_documentation_contracts.check(self.root)
 
         self.assertTrue(any("missing Markdown anchor" in item for item in violations))
+
+    def test_local_links_accept_spaces_unicode_duplicates_and_ignored_targets(self) -> None:
+        guide = self.root / "docs/Guide With Space.md"
+        guide.write_text(
+            """# Guide
+
+## Пример Θ 中文
+
+## Repeat
+
+## Repeat
+""",
+            encoding="utf-8",
+        )
+        readme = self.root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8")
+            + """
+[Unicode](<docs/Guide With Space.md#пример-θ-中文>)
+[Duplicate](docs/Guide%20With%20Space.md#repeat-1 "title")
+[External](https://example.com/missing.md)
+[Mail](mailto:docs@example.com)
+[Custom](app://documentation)
+
+```markdown
+[Fenced false positive](docs/missing.md#not-real)
+```
+""",
+            encoding="utf-8",
+        )
+
+        violations: list[str] = []
+        check_documentation_contracts.check_local_markdown_links(
+            self.root, violations
+        )
+
+        self.assertEqual(violations, [])
+
+    def test_local_links_report_source_line_target_and_missing_file(self) -> None:
+        readme = self.root / "README.md"
+        text = readme.read_text(encoding="utf-8") + "\n[Broken](docs/missing.md)\n"
+        readme.write_text(text, encoding="utf-8")
+        expected_line = len(text.splitlines())
+
+        violations: list[str] = []
+        check_documentation_contracts.check_local_markdown_links(
+            self.root, violations
+        )
+
+        self.assertTrue(
+            any(
+                item.startswith(f"README.md:{expected_line}: docs/missing.md:")
+                and "missing local Markdown target" in item
+                for item in violations
+            )
+        )
+
+    def test_local_links_check_chinese_readme_fragments(self) -> None:
+        readme = self.root / "README.zh-CN.md"
+        text = readme.read_text(encoding="utf-8") + "\n[坏锚点](#不存在)\n"
+        readme.write_text(text, encoding="utf-8")
+        expected_line = len(text.splitlines())
+
+        violations: list[str] = []
+        check_documentation_contracts.check_local_markdown_links(
+            self.root, violations
+        )
+
+        self.assertTrue(
+            any(
+                item.startswith(f"README.zh-CN.md:{expected_line}: #不存在:")
+                and "missing Markdown anchor" in item
+                for item in violations
+            )
+        )
+
+    def test_github_slug_preserves_hyphen_runs_and_removes_other_whitespace(self) -> None:
+        self.assertEqual(
+            check_documentation_contracts.github_slug("Foo --- Bar\tΘ 中文"),
+            "foo-----barθ-中文",
+        )
+
+    def test_bilingual_invariants_report_missing_english_fact(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8").replace(
+                "directional_only_no_public_claim", "directional_only"
+            ),
+            encoding="utf-8",
+        )
+
+        violations: list[str] = []
+        check_documentation_contracts.check_bilingual_readme_invariants(
+            self.root, violations
+        )
+
+        self.assertTrue(
+            any(
+                item.startswith("README.md:")
+                and "public benchmark claim boundary" in item
+                for item in violations
+            )
+        )
+
+    def test_bilingual_invariants_report_missing_chinese_fact(self) -> None:
+        readme = self.root / "README.zh-CN.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8").replace(
+                "docs/specs/SPEC-web-api.md", "docs/specs/old-api.md"
+            ),
+            encoding="utf-8",
+        )
+
+        violations: list[str] = []
+        check_documentation_contracts.check_bilingual_readme_invariants(
+            self.root, violations
+        )
+
+        self.assertTrue(
+            any(
+                item.startswith("README.zh-CN.md:")
+                and "current API contract" in item
+                for item in violations
+            )
+        )
 
     def test_rejects_missing_executable_smoke_fixture(self) -> None:
         (self.root / "scripts/ci/smoke_sessionstart_context_gate.sh").unlink()

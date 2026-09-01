@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
-"""Check stable command and navigation contracts in current documentation."""
+"""Check stable commands, bilingual facts, and local links in current docs."""
 
 from __future__ import annotations
 
 import re
 import shlex
 import sys
-import unicodedata
+from html import unescape as html_unescape
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[2]
 README_PATHS = (Path("README.md"), Path("README.zh-CN.md"))
+LOCAL_LINK_SOURCES = (*README_PATHS, Path("docs/README.md"))
 HOMEBREW_DOCS = (*README_PATHS, Path("docs/installation.md"))
 CURRENT_EXPORT_DOCS = (*README_PATHS, Path("docs/specs/project-memory-pack/PRODUCT.md"))
 SESSIONSTART_SMOKE_SCRIPT = Path("scripts/ci/smoke_sessionstart_context_gate.sh")
@@ -24,8 +25,15 @@ SESSIONSTART_SMOKE_ROUTES = {
     Path("docs/README.md"): "../scripts/ci/smoke_sessionstart_context_gate.sh",
     SESSIONSTART_SMOKE_GUIDE: "scripts/ci/smoke_sessionstart_context_gate.sh",
 }
-LINK_PATTERN = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
-HEADING_PATTERN = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
+INLINE_LINK_PATTERN = re.compile(
+    r"!?\[[^\]\n]*\]\(\s*(<[^>\n]+>|[^\s)\n]+)"
+    r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)"
+)
+REFERENCE_DESTINATION_PATTERN = re.compile(
+    r"^\s{0,3}\[(?!\^)[^\]\n]+\]:\s*(<[^>\n]+>|\S+)"
+)
+HEADING_PATTERN = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")
+FENCE_PATTERN = re.compile(r"^\s*(`{3,}|~{3,})")
 SHELL_FENCE_PATTERN = re.compile(
     r"^[ \t]*```(?:bash|sh|shell)\s*\n(.*?)^[ \t]*```\s*$",
     re.MULTILINE | re.DOTALL,
@@ -39,27 +47,101 @@ class ShellCommand:
     argv: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class BilingualInvariant:
+    name: str
+    tokens: tuple[str, ...]
+
+
+BILINGUAL_README_INVARIANTS = (
+    BilingualInvariant(
+        "supported install channels",
+        (
+            "brew install majiayu000/tap/remem",
+            "curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh",
+            "npm install -g @remem-ai/remem",
+            "cargo install remem-ai --bin remem",
+        ),
+    ),
+    BilingualInvariant(
+        "first-run verification commands",
+        ('remem doctor', 'remem status', 'remem search "last decision"'),
+    ),
+    BilingualInvariant("documentation jump page", ("docs/README.md",)),
+    BilingualInvariant("security policy", ("SECURITY.md",)),
+    BilingualInvariant("current API contract", ("docs/specs/SPEC-web-api.md",)),
+    BilingualInvariant("current spec index", ("docs/specs/README.md",)),
+    BilingualInvariant("changelog", ("CHANGELOG.md",)),
+    BilingualInvariant("contribution guide", ("CONTRIBUTING.md",)),
+    BilingualInvariant("Cursor v1 limitation", ("remem install --target cursor",)),
+    BilingualInvariant(
+        "localhost bearer-token API", ("127.0.0.1", "Authorization: Bearer")
+    ),
+    BilingualInvariant(
+        "safe uninstall and data retention",
+        ("remem uninstall --dry-run", "REMEM_DATA_DIR"),
+    ),
+    BilingualInvariant(
+        "public benchmark claim boundary", ("directional_only_no_public_claim",)
+    ),
+    BilingualInvariant("shared demo asset", ("assets/remem-recall-demo.gif",)),
+)
+
+
 def read(root: Path, relative: Path) -> str:
     return (root / relative).read_text(encoding="utf-8")
 
 
 def github_slug(heading: str) -> str:
-    """Return the stable subset of GitHub's Markdown heading slug algorithm."""
-    normalized = unicodedata.normalize("NFKC", heading).strip().lower()
-    normalized = re.sub(r"<[^>]+>", "", normalized)
-    normalized = normalized.replace("`", "")
-    normalized = re.sub(r"[^\w\s-]", "", normalized, flags=re.UNICODE)
-    return re.sub(r"[\s-]+", "-", normalized).strip("-")
+    """Return GitHub's documented Markdown heading anchor form."""
+    visible = html_unescape(heading.strip().lower())
+    visible = re.sub(r"<[^>]+>", "", visible)
+    visible = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", visible)
+    visible = re.sub(r"[`*_~]", "", visible)
+    slug: list[str] = []
+    for character in visible:
+        if character == " ":
+            slug.append("-")
+        elif character == "-" or character.isalnum():
+            slug.append(character)
+        elif character.isspace():
+            continue
+    return "".join(slug)
+
+
+def markdown_lines(text: str):
+    """Yield source lines outside fenced code blocks."""
+    fence_character: str | None = None
+    fence_length = 0
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        fence = FENCE_PATTERN.match(line)
+        if fence:
+            marker = fence.group(1)
+            if fence_character is None:
+                fence_character = marker[0]
+                fence_length = len(marker)
+                continue
+            if marker[0] == fence_character and len(marker) >= fence_length:
+                fence_character = None
+                fence_length = 0
+            continue
+        if fence_character is None:
+            yield line_number, line
 
 
 def heading_anchors(text: str) -> set[str]:
-    counts: dict[str, int] = {}
     anchors: set[str] = set()
-    for heading in HEADING_PATTERN.findall(text):
-        base = github_slug(heading)
-        count = counts.get(base, 0)
-        counts[base] = count + 1
-        anchors.add(base if count == 0 else f"{base}-{count}")
+    for _, line in markdown_lines(text):
+        heading = HEADING_PATTERN.match(line)
+        if heading is None:
+            continue
+        base = github_slug(heading.group(1))
+        candidate = base
+        suffix = 1
+        while candidate in anchors:
+            candidate = f"{base}-{suffix}"
+            suffix += 1
+        anchors.add(candidate)
     return anchors
 
 
@@ -196,26 +278,67 @@ def check_channel_switch(root: Path, violations: list[str]) -> None:
         )
 
 
-def check_hub_links(root: Path, violations: list[str]) -> None:
-    source = root / "docs/README.md"
-    for raw_target in LINK_PATTERN.findall(source.read_text(encoding="utf-8")):
-        target = raw_target.strip().split(maxsplit=1)[0].strip("<>")
-        if target.startswith(("http://", "https://", "mailto:")):
-            continue
-        path_text, separator, fragment = target.partition("#")
-        destination = source if not path_text else (source.parent / unquote(path_text)).resolve()
-        if not destination.exists():
-            violations.append(f"docs/README.md: missing local Markdown target {target}")
-            continue
-        if not separator or not fragment or destination.suffix.lower() != ".md":
-            continue
-        anchors = heading_anchors(destination.read_text(encoding="utf-8"))
-        decoded_fragment = unquote(fragment).lower()
-        if decoded_fragment not in anchors:
-            violations.append(
-                f"docs/README.md: missing Markdown anchor {decoded_fragment} in "
-                f"{destination.relative_to(root.resolve())}"
-            )
+def markdown_destinations(text: str):
+    for line_number, line in markdown_lines(text):
+        without_inline_code = re.sub(r"`+[^`]*`+", "", line)
+        for match in INLINE_LINK_PATTERN.finditer(without_inline_code):
+            yield line_number, match.group(1).strip("<>")
+        reference = REFERENCE_DESTINATION_PATTERN.match(without_inline_code)
+        if reference:
+            yield line_number, reference.group(1).strip("<>")
+
+
+def check_local_markdown_links(root: Path, violations: list[str]) -> None:
+    repository = root.resolve()
+    anchor_cache: dict[Path, set[str]] = {}
+    for relative_source in LOCAL_LINK_SOURCES:
+        source = root / relative_source
+        for line_number, target in markdown_destinations(read(root, relative_source)):
+            parsed = urlsplit(target)
+            if parsed.scheme or parsed.netloc or target.startswith(("//", "/")):
+                continue
+            path_text = unquote(parsed.path)
+            destination = source if not path_text else source.parent / path_text
+            destination = destination.resolve()
+            try:
+                destination.relative_to(repository)
+            except ValueError:
+                violations.append(
+                    f"{relative_source}:{line_number}: {target}: local Markdown target "
+                    "escapes the repository"
+                )
+                continue
+            if not destination.exists():
+                violations.append(
+                    f"{relative_source}:{line_number}: {target}: "
+                    "missing local Markdown target"
+                )
+                continue
+            if not parsed.fragment or destination.suffix.lower() != ".md":
+                continue
+            anchors = anchor_cache.get(destination)
+            if anchors is None:
+                anchors = heading_anchors(destination.read_text(encoding="utf-8"))
+                anchor_cache[destination] = anchors
+            fragment = unquote(parsed.fragment).lower()
+            if fragment not in anchors:
+                destination_label = destination.relative_to(repository)
+                violations.append(
+                    f"{relative_source}:{line_number}: {target}: missing Markdown anchor "
+                    f"{fragment} in {destination_label}"
+                )
+
+
+def check_bilingual_readme_invariants(root: Path, violations: list[str]) -> None:
+    for path in README_PATHS:
+        text = read(root, path)
+        for invariant in BILINGUAL_README_INVARIANTS:
+            missing = [token for token in invariant.tokens if token not in text]
+            if missing:
+                violations.append(
+                    f"{path}: missing bilingual invariant {invariant.name}: "
+                    + ", ".join(missing)
+                )
 
 
 def check_sessionstart_smoke(root: Path, violations: list[str]) -> None:
@@ -281,7 +404,8 @@ def check(root: Path = ROOT) -> list[str]:
     check_homebrew_commands(root, violations)
     check_exports(root, violations)
     check_channel_switch(root, violations)
-    check_hub_links(root, violations)
+    check_local_markdown_links(root, violations)
+    check_bilingual_readme_invariants(root, violations)
     check_sessionstart_smoke(root, violations)
     check_fts_semantics(root, violations)
     return violations
