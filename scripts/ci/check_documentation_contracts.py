@@ -25,15 +25,14 @@ SESSIONSTART_SMOKE_ROUTES = {
     Path("docs/README.md"): "../scripts/ci/smoke_sessionstart_context_gate.sh",
     SESSIONSTART_SMOKE_GUIDE: "scripts/ci/smoke_sessionstart_context_gate.sh",
 }
-INLINE_DESTINATION_PATTERN = re.compile(
-    r"(?<!\\)\]\(\s*(<[^>\n]+>|[^\s)\n]+)"
-    r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)"
-)
+INLINE_DESTINATION_START_PATTERN = re.compile(r"(?<!\\)\]\(")
 REFERENCE_DESTINATION_PATTERN = re.compile(
     r"^\s{0,3}\[(?!\^)[^\]\n]+\]:\s*(<[^>\n]+>|\S+)"
 )
+REFERENCE_LABEL_ONLY_PATTERN = re.compile(r"^ {0,3}\[(?!\^)[^\]\n]+\]:\s*$")
 HEADING_PATTERN = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")
-FENCE_PATTERN = re.compile(r"^\s*(`{3,}|~{3,})")
+SETEXT_HEADING_PATTERN = re.compile(r"^ {0,3}(?:=+|-+)\s*$")
+FENCE_PATTERN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 SHELL_FENCE_PATTERN = re.compile(
     r"^[ \t]*```(?:bash|sh|shell)\s*\n(.*?)^[ \t]*```\s*$",
     re.MULTILINE | re.DOTALL,
@@ -76,7 +75,12 @@ BILINGUAL_README_INVARIANTS = (
     BilingualInvariant("contribution guide", ("CONTRIBUTING.md",)),
     BilingualInvariant("Cursor v1 limitation", ("remem install --target cursor",)),
     BilingualInvariant(
-        "localhost bearer-token API", ("127.0.0.1", "Authorization: Bearer")
+        "localhost bearer-token API",
+        ("127.0.0.1", "Authorization: Bearer"),
+        (
+            "The REST API binds to `127.0.0.1` and requires a bearer token.",
+            "REST API 只绑定 `127.0.0.1`，并要求 bearer token。",
+        ),
     ),
     BilingualInvariant(
         "safe uninstall and data retention",
@@ -99,10 +103,13 @@ def read(root: Path, relative: Path) -> str:
 
 def github_slug(heading: str) -> str:
     """Return GitHub's documented Markdown heading anchor form."""
-    visible = html_unescape(heading.strip().lower())
+    visible = heading.strip().lower()
     visible = re.sub(r"<[^>]+>", "", visible)
     visible = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", visible)
+    visible = re.sub(r"(?<!\w)_{1,3}(?=\S)", "", visible)
+    visible = re.sub(r"(?<=\S)_{1,3}(?!\w)", "", visible)
     visible = re.sub(r"[`*~]", "", visible)
+    visible = html_unescape(visible)
     slug: list[str] = []
     for character in visible:
         if character == " ":
@@ -140,17 +147,32 @@ def markdown_lines(text: str):
 
 def heading_anchors(text: str) -> set[str]:
     anchors: set[str] = set()
-    for _, line in markdown_lines(text):
-        heading = HEADING_PATTERN.match(line)
-        if heading is None:
-            continue
-        base = github_slug(heading.group(1))
+    previous_line: str | None = None
+
+    def add_anchor(heading: str) -> None:
+        base = github_slug(heading)
         candidate = base
         suffix = 1
         while candidate in anchors:
             candidate = f"{base}-{suffix}"
             suffix += 1
         anchors.add(candidate)
+
+    for _, line in markdown_lines(text):
+        atx_heading = HEADING_PATTERN.match(line)
+        if atx_heading is not None:
+            add_anchor(atx_heading.group(1))
+            previous_line = None
+            continue
+        if (
+            SETEXT_HEADING_PATTERN.match(line)
+            and previous_line is not None
+            and previous_line.strip()
+        ):
+            add_anchor(previous_line.strip())
+            previous_line = None
+            continue
+        previous_line = line if line.strip() else None
     return anchors
 
 
@@ -287,14 +309,63 @@ def check_channel_switch(root: Path, violations: list[str]) -> None:
         )
 
 
+def markdown_destination_at(text: str, start: int) -> str | None:
+    while start < len(text) and text[start].isspace():
+        start += 1
+    if start == len(text):
+        return None
+    if text[start] == "<":
+        end = start + 1
+        while end < len(text):
+            if text[end] == ">" and text[end - 1] != "\\":
+                return text[start + 1 : end]
+            end += 1
+        return None
+
+    destination: list[str] = []
+    depth = 0
+    index = start
+    while index < len(text):
+        character = text[index]
+        if character == "\\" and index + 1 < len(text):
+            destination.append(text[index + 1])
+            index += 2
+            continue
+        if character == "(":
+            depth += 1
+        elif character == ")":
+            if depth == 0:
+                return "".join(destination) or None
+            depth -= 1
+        elif character.isspace() and depth == 0:
+            return "".join(destination) or None
+        destination.append(character)
+        index += 1
+    return "".join(destination) if destination and depth == 0 else None
+
+
 def markdown_destinations(text: str):
-    for line_number, line in markdown_lines(text):
+    lines = list(markdown_lines(text))
+    for line_index, (line_number, line) in enumerate(lines):
         without_inline_code = re.sub(r"`+[^`]*`+", "", line)
-        for match in INLINE_DESTINATION_PATTERN.finditer(without_inline_code):
-            yield line_number, match.group(1).strip("<>")
+        for match in INLINE_DESTINATION_START_PATTERN.finditer(without_inline_code):
+            target = markdown_destination_at(without_inline_code, match.end())
+            if target is not None:
+                yield line_number, target
         reference = REFERENCE_DESTINATION_PATTERN.match(without_inline_code)
         if reference:
             yield line_number, reference.group(1).strip("<>")
+            continue
+        if (
+            REFERENCE_LABEL_ONLY_PATTERN.match(without_inline_code)
+            and line_index + 1 < len(lines)
+        ):
+            next_line_number, next_line = lines[line_index + 1]
+            continuation = re.match(r"^ {1,3}(\S.*)$", next_line)
+            if next_line_number == line_number + 1 and continuation is not None:
+                target = markdown_destination_at(continuation.group(1), 0)
+                if target is not None:
+                    yield next_line_number, target
 
 
 def check_local_markdown_links(root: Path, violations: list[str]) -> None:
