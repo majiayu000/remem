@@ -36,6 +36,7 @@ remem install --target cursor
 Authorization: Bearer
 remem uninstall --dry-run
 REMEM_DATA_DIR
+The encrypted database remains in the configured `REMEM_DATA_DIR`.
 directional_only_no_public_claim
 assets/remem-recall-demo.gif
 """
@@ -199,7 +200,12 @@ remem export --pack .remem-pack
             encoding="utf-8",
         )
         (self.root / "README.zh-CN.md").write_text(
-            (self.root / "README.md").read_text(encoding="utf-8"),
+            (self.root / "README.md")
+            .read_text(encoding="utf-8")
+            .replace(
+                "The encrypted database remains in the configured `REMEM_DATA_DIR`.",
+                "加密数据库会保留在配置的 `REMEM_DATA_DIR`。",
+            ),
             encoding="utf-8",
         )
         (self.root / "docs/installation.md").write_text(
@@ -396,6 +402,71 @@ remem export --pack .remem-pack/
             )
         )
 
+    def test_local_links_validate_outer_destination_of_wrapped_image(self) -> None:
+        readme = self.root / "README.md"
+        text = (
+            readme.read_text(encoding="utf-8")
+            + "\n[![Build](https://example.com/badge.svg)](docs/missing-wrapper.md)\n"
+        )
+        readme.write_text(text, encoding="utf-8")
+        expected_line = len(text.splitlines())
+
+        violations: list[str] = []
+        check_documentation_contracts.check_local_markdown_links(
+            self.root, violations
+        )
+
+        self.assertTrue(
+            any(
+                item.startswith(
+                    f"README.md:{expected_line}: docs/missing-wrapper.md:"
+                )
+                and "missing local Markdown target" in item
+                for item in violations
+            )
+        )
+
+    def test_local_links_keep_same_length_fence_with_info_string_open(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8")
+            + """
+```markdown
+```python
+[Still fenced](docs/missing-inside-fence.md)
+```
+""",
+            encoding="utf-8",
+        )
+
+        violations: list[str] = []
+        check_documentation_contracts.check_local_markdown_links(
+            self.root, violations
+        )
+
+        self.assertFalse(
+            any("docs/missing-inside-fence.md" in item for item in violations)
+        )
+
+    def test_local_link_fragments_are_case_sensitive(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8") + "\n[Wrong case](#Remem)\n",
+            encoding="utf-8",
+        )
+
+        violations: list[str] = []
+        check_documentation_contracts.check_local_markdown_links(
+            self.root, violations
+        )
+
+        self.assertTrue(
+            any(
+                "#Remem: missing Markdown anchor Remem in README.md" in item
+                for item in violations
+            )
+        )
+
     def test_local_links_check_chinese_readme_fragments(self) -> None:
         readme = self.root / "README.zh-CN.md"
         text = readme.read_text(encoding="utf-8") + "\n[坏锚点](#不存在)\n"
@@ -419,6 +490,12 @@ remem export --pack .remem-pack/
         self.assertEqual(
             check_documentation_contracts.github_slug("Foo --- Bar\tΘ 中文"),
             "foo-----barθ-中文",
+        )
+
+    def test_github_slug_preserves_underscores(self) -> None:
+        self.assertEqual(
+            check_documentation_contracts.github_slug("`captured_events`"),
+            "captured_events",
         )
 
     def test_bilingual_invariants_report_missing_english_fact(self) -> None:
@@ -461,6 +538,29 @@ remem export --pack .remem-pack/
             any(
                 item.startswith("README.zh-CN.md:")
                 and "current API contract" in item
+                for item in violations
+            )
+        )
+
+    def test_bilingual_invariants_require_affirmative_data_retention(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8").replace(
+                "The encrypted database remains in the configured `REMEM_DATA_DIR`.",
+                "The encrypted database is deleted from `REMEM_DATA_DIR`.",
+            ),
+            encoding="utf-8",
+        )
+
+        violations: list[str] = []
+        check_documentation_contracts.check_bilingual_readme_invariants(
+            self.root, violations
+        )
+
+        self.assertTrue(
+            any(
+                item.startswith("README.md:")
+                and "safe uninstall and data retention" in item
                 for item in violations
             )
         )

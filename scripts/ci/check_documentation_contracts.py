@@ -25,8 +25,8 @@ SESSIONSTART_SMOKE_ROUTES = {
     Path("docs/README.md"): "../scripts/ci/smoke_sessionstart_context_gate.sh",
     SESSIONSTART_SMOKE_GUIDE: "scripts/ci/smoke_sessionstart_context_gate.sh",
 }
-INLINE_LINK_PATTERN = re.compile(
-    r"!?\[[^\]\n]*\]\(\s*(<[^>\n]+>|[^\s)\n]+)"
+INLINE_DESTINATION_PATTERN = re.compile(
+    r"(?<!\\)\]\(\s*(<[^>\n]+>|[^\s)\n]+)"
     r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\s*\)"
 )
 REFERENCE_DESTINATION_PATTERN = re.compile(
@@ -51,6 +51,7 @@ class ShellCommand:
 class BilingualInvariant:
     name: str
     tokens: tuple[str, ...]
+    affirmative_clauses: tuple[str, str] | None = None
 
 
 BILINGUAL_README_INVARIANTS = (
@@ -80,6 +81,10 @@ BILINGUAL_README_INVARIANTS = (
     BilingualInvariant(
         "safe uninstall and data retention",
         ("remem uninstall --dry-run", "REMEM_DATA_DIR"),
+        (
+            "The encrypted database remains in the configured `REMEM_DATA_DIR`.",
+            "加密数据库会保留在配置的 `REMEM_DATA_DIR`。",
+        ),
     ),
     BilingualInvariant(
         "public benchmark claim boundary", ("directional_only_no_public_claim",)
@@ -97,12 +102,12 @@ def github_slug(heading: str) -> str:
     visible = html_unescape(heading.strip().lower())
     visible = re.sub(r"<[^>]+>", "", visible)
     visible = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", visible)
-    visible = re.sub(r"[`*_~]", "", visible)
+    visible = re.sub(r"[`*~]", "", visible)
     slug: list[str] = []
     for character in visible:
         if character == " ":
             slug.append("-")
-        elif character == "-" or character.isalnum():
+        elif character in {"-", "_"} or character.isalnum():
             slug.append(character)
         elif character.isspace():
             continue
@@ -121,7 +126,11 @@ def markdown_lines(text: str):
                 fence_character = marker[0]
                 fence_length = len(marker)
                 continue
-            if marker[0] == fence_character and len(marker) >= fence_length:
+            if (
+                marker[0] == fence_character
+                and len(marker) >= fence_length
+                and not line[fence.end() :].strip()
+            ):
                 fence_character = None
                 fence_length = 0
             continue
@@ -281,7 +290,7 @@ def check_channel_switch(root: Path, violations: list[str]) -> None:
 def markdown_destinations(text: str):
     for line_number, line in markdown_lines(text):
         without_inline_code = re.sub(r"`+[^`]*`+", "", line)
-        for match in INLINE_LINK_PATTERN.finditer(without_inline_code):
+        for match in INLINE_DESTINATION_PATTERN.finditer(without_inline_code):
             yield line_number, match.group(1).strip("<>")
         reference = REFERENCE_DESTINATION_PATTERN.match(without_inline_code)
         if reference:
@@ -320,7 +329,7 @@ def check_local_markdown_links(root: Path, violations: list[str]) -> None:
             if anchors is None:
                 anchors = heading_anchors(destination.read_text(encoding="utf-8"))
                 anchor_cache[destination] = anchors
-            fragment = unquote(parsed.fragment).lower()
+            fragment = unquote(parsed.fragment)
             if fragment not in anchors:
                 destination_label = destination.relative_to(repository)
                 violations.append(
@@ -330,10 +339,15 @@ def check_local_markdown_links(root: Path, violations: list[str]) -> None:
 
 
 def check_bilingual_readme_invariants(root: Path, violations: list[str]) -> None:
-    for path in README_PATHS:
+    for path_index, path in enumerate(README_PATHS):
         text = read(root, path)
         for invariant in BILINGUAL_README_INVARIANTS:
             missing = [token for token in invariant.tokens if token not in text]
+            if (
+                invariant.affirmative_clauses is not None
+                and invariant.affirmative_clauses[path_index] not in text
+            ):
+                missing.append("affirmative contract clause")
             if missing:
                 violations.append(
                     f"{path}: missing bilingual invariant {invariant.name}: "
