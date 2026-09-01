@@ -17,13 +17,13 @@
   "environment": {
     "os": "macos",
     "arch": "aarch64",
-    "remem_commit": "96c5e4a179bce1938dc81b9cbea9838a28b0cc6a",
+    "remem_commit": "2ade86be93a39cab4cfe4c053595291fd4146034",
     "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/cross-sentence-splicing-001",
     "docker_image_digest": "local-fixture-no-docker",
     "fixture_revision": "adversarial-policy-v2",
     "repo_base_commit": null,
     "source_dirty": false,
-    "production_input_tree_sha256": "3813ae8d9ccfc1bdf68245bcbc2f0369e504e594d47daa9b0ba2924442ba8874"
+    "production_input_tree_sha256": "f42eff067dd7bdc69c4ebceb6f6674b69223e54b21e16ca266bb7ac75389d5fd"
   },
   "answer": {
     "abstained": true,
@@ -97,7 +97,7 @@
     "answer": "4500d697f29f9e0cc3aae5f88cfab1ffb36a45f3eb99893dd279c71f42c8b6ed",
     "diagnosis": "b99d0d7f8df714d649862f5ba2e7c5f2824f2e0c89c786952331eb21577ac911",
     "reader_input": "9616f23eea7e2ddaa120fef8b3a894ffc9e272a158c5dfd1b37a73952a487bb0",
-    "remem_db_snapshot": "87dfa2afaa0b12dd0661f6d67d8b093b8bf82d6b5751bfc24dd4fe1f17cff84e",
+    "remem_db_snapshot": "2909db8c26c96cecc9b60137b5233355b964abce02c312324108b2509f581828",
     "retrieved_evidence": "07ceb47c33ba1ab2dcf1ba75829044fd2f9922e3a31a1d6e8f41f8b270f20595",
     "score": "9104fa05eb1c5d505b05892d47133caa21b33deba83a24a136a3fcc88446bf64"
   },
