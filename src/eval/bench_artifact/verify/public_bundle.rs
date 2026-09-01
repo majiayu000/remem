@@ -44,7 +44,7 @@ pub(super) fn private_string_violation(text: &str) -> Option<&'static str> {
     }
     if let Some(home) = dirs::home_dir().and_then(|path| path.into_os_string().into_string().ok()) {
         if text.contains(&home) {
-            return Some("contains an absolute path under the current user home");
+            return Some("contains an absolute user home path");
         }
     }
     contains_absolute_user_home_path(text).then_some("contains an absolute user home path")
