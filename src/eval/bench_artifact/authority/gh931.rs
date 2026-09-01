@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use super::super::report::{
     coding_paired_statistics, coding_report_structurally_complete, CodingPairedStatistic,
@@ -18,6 +19,8 @@ const EXPECTED_RUNS: usize = 16 * 3 * 3;
 const NO_MEMORY_CLAIM: &str = "remem-e2e-vs-no-memory-v1";
 const CURATED_CLAIM: &str = "remem-e2e-vs-curated-file-budgeted-v1";
 const STOP_LOSS_CLAIM: &str = "remem-e2e-stop-loss-v1";
+const REGISTERED_WORDING_SHA256: &str =
+    "c62388db626812265580780c03c345c284163ab3b75c424000f7627a6dffc18b";
 
 pub(in crate::eval::bench_artifact) fn evaluate(
     verified: &VerifiedBenchmarkArtifacts,
@@ -53,6 +56,7 @@ pub(in crate::eval::bench_artifact) fn evaluate(
     let evidence_ready = complete
         && attempts_ready
         && machine_outcomes_ready
+        && verified.official_evidence_authenticated
         && verifier_failures.is_empty()
         && provenance_ready;
 
@@ -65,6 +69,11 @@ pub(in crate::eval::bench_artifact) fn evaluate(
         );
     } else if !machine_outcomes_ready {
         diagnostics.push("official runs lack complete machine-readable test evidence".to_string());
+    } else if !verified.official_evidence_authenticated {
+        diagnostics.push(
+            "official claims require governed scorer and supervisor receipts; repository-local JSON is not authority"
+                .to_string(),
+        );
     } else if !verifier_failures.is_empty() {
         diagnostics
             .push("benchmark verifier failures make GH931 evidence insufficient".to_string());
@@ -600,7 +609,11 @@ pub(in crate::eval::bench_artifact) fn meets_non_inferiority_margin(
 }
 
 fn policy_is_valid(policy: &ClaimRegistryPolicy) -> bool {
-    if policy.schema_version != 1 || policy.issue != "#931" || policy.claims.len() != 3 {
+    if policy.schema_version != 1
+        || policy.issue != "#931"
+        || policy.claims.len() != 3
+        || !registered_wording_matches(policy)
+    {
         return false;
     }
     let claims = policy
@@ -612,6 +625,16 @@ fn policy_is_valid(policy: &ClaimRegistryPolicy) -> bool {
         && valid_superiority(claims.get(NO_MEMORY_CLAIM).copied())
         && valid_non_inferiority(claims.get(CURATED_CLAIM).copied())
         && valid_stop_loss(claims.get(STOP_LOSS_CLAIM).copied())
+}
+
+fn registered_wording_matches(policy: &ClaimRegistryPolicy) -> bool {
+    let wording = policy
+        .claims
+        .iter()
+        .map(|claim| (&claim.id, &claim.allowed_wording, &claim.forbidden_wording))
+        .collect::<Vec<_>>();
+    serde_json::to_vec(&wording)
+        .is_ok_and(|bytes| format!("{:x}", Sha256::digest(bytes)) == REGISTERED_WORDING_SHA256)
 }
 
 fn valid_superiority(claim: Option<&ClaimRegistryClaimPolicy>) -> bool {

@@ -64,6 +64,8 @@ fn locked_registry_rejects_relaxed_numeric_claim_gates() -> Result<()> {
         "maintenance-reduction",
         "memory-hurt",
         "stale-memory",
+        "allowed-wording",
+        "forbidden-wording",
     ] {
         let mut verified = complete_verified_matrix(AuthorityStatus::Insufficient)?;
         let policy = &mut verified.claim_registry.as_mut().unwrap().value;
@@ -103,6 +105,12 @@ fn locked_registry_rejects_relaxed_numeric_claim_gates() -> Result<()> {
                     panic!("stop-loss gate")
                 };
                 gate.stale_memory_followed_max_pct = 100.0;
+            }
+            "allowed-wording" => {
+                policy.claims[0].allowed_wording = vec!["remem beats everything".to_string()];
+            }
+            "forbidden-wording" => {
+                policy.claims[0].forbidden_wording = vec!["unrelated phrase".to_string()];
             }
             _ => unreachable!(),
         }
@@ -151,6 +159,25 @@ fn complete_exact_matrix_reuses_registered_paired_statistics() -> Result<()> {
     assert_eq!(report.producing_shas, vec!["c".repeat(40)]);
     assert_eq!(report.production_input_trees, vec!["e".repeat(64)]);
     assert_eq!(report.source_dirty_attestations, vec![Some(false)]);
+    Ok(())
+}
+
+#[test]
+fn unsigned_official_evidence_cannot_authorize_gh931() -> Result<()> {
+    let mut verified = complete_verified_matrix(AuthorityStatus::Pass)?;
+    verified.official_evidence_authenticated = false;
+    attach_curator_evidence(&mut verified);
+    attach_treatment_evidence(&mut verified, 0.0, 1);
+
+    let verdict = evaluate_gh931(&verified, &[]);
+
+    assert_eq!(verdict.status, AuthorityStatus::Insufficient);
+    assert_eq!(verdict.stop_loss.status, AuthorityStatus::Insufficient);
+    assert_eq!(verdict.maintenance.status, AuthorityStatus::Insufficient);
+    assert!(verdict
+        .diagnostics
+        .iter()
+        .any(|message| message.contains("governed scorer and supervisor receipts")));
     Ok(())
 }
 
@@ -598,6 +625,7 @@ fn complete_verified_matrix(
             sha256: "b".repeat(64),
             value: policy,
         }),
+        official_evidence_authenticated: true,
         ..VerifiedBenchmarkArtifacts::default()
     })
 }

@@ -3,6 +3,7 @@ use rusqlite::Connection;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::fs::OpenOptions;
 
 use super::{copy_public_fixture, failure_text, mutate_json};
 use crate::eval::bench_artifact::{verify_benchmark_artifacts, BenchVerifyOptions};
@@ -47,6 +48,91 @@ fn verifier_rejects_mutated_related_business_row() -> Result<()> {
         )?;
         Ok(())
     })
+}
+
+#[test]
+fn verifier_rejects_unreferenced_files_in_security_run_directory() -> Result<()> {
+    let root = copy_public_fixture("unreferenced-security-artifact")?;
+    let run_path = root.join(SECURITY_RUN);
+    fs::write(
+        run_path
+            .parent()
+            .context("security run parent")?
+            .join("private.log"),
+        "private prompt payload",
+    )?;
+
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+
+    assert!(!report.passed);
+    assert!(failure_text(&report).contains("unreferenced file"));
+    Ok(())
+}
+
+#[test]
+fn verifier_privacy_scans_declared_text_artifact_payloads() -> Result<()> {
+    let root = copy_public_fixture("private-declared-artifact")?;
+    let run_path = root.join(SECURITY_RUN);
+    let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;
+    let answer_relative = run["artifacts"]["answer"]
+        .as_str()
+        .context("security run answer artifact")?;
+    let answer_path = root.join(answer_relative);
+    fs::write(
+        &answer_path,
+        serde_json::to_vec(&serde_json::json!({
+            "abstained": true,
+            "text": format!("{}/.remem/private", dirs::home_dir().context("home")?.display())
+        }))?,
+    )?;
+    let answer_sha256 = format!("{:x}", Sha256::digest(fs::read(&answer_path)?));
+    mutate_json(&run_path, |json| {
+        json["artifact_sha256"]["answer"] = Value::String(answer_sha256);
+    })?;
+
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+
+    assert!(!report.passed);
+    assert!(failure_text(&report).contains("private remem path"));
+    Ok(())
+}
+
+#[test]
+fn verifier_bounds_declared_non_sqlite_artifacts_before_reading() -> Result<()> {
+    let root = copy_public_fixture("oversized-declared-artifact")?;
+    let run: Value = serde_json::from_slice(&fs::read(root.join(SECURITY_RUN))?)?;
+    let answer_relative = run["artifacts"]["answer"]
+        .as_str()
+        .context("security run answer artifact")?;
+    OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(root.join(answer_relative))?
+        .set_len(64 * 1024 * 1024 + 1)?;
+
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+
+    assert!(!report.passed);
+    assert!(failure_text(&report).contains("exceeds the 64 MiB public artifact limit"));
+    Ok(())
+}
+
+#[test]
+fn security_identity_failure_makes_top_level_verifier_fail() -> Result<()> {
+    let root = copy_public_fixture("security-identity-top-level-failure")?;
+    mutate_json(&root.join(SECURITY_RUN), |run| {
+        run["reader_model"]["model"] = Value::String("different-model".to_string());
+    })?;
+
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+
+    assert!(!report.passed);
+    assert!(failure_text(&report).contains("model execution identity"));
+    Ok(())
 }
 
 fn assert_snapshot_attack_rejected(

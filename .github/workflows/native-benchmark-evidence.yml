@@ -15,6 +15,7 @@ on:
       - rust-toolchain.toml
       - src/**
       - eval/claims/**
+      - eval/coding-bench/fixtures/tasks.json
       - eval/production-input-pathspec-v1.json
       - eval/public/**
       - scripts/ci/check_public_claims.py
@@ -258,8 +259,9 @@ jobs:
           set -euo pipefail
           AGG_ROOT="${RUNNER_TEMP}/remem-native-aggregate"
           PUBLIC_ROOT="${AGG_ROOT}/public"
+          RECEIPT_ROOT="${AGG_ROOT}/receipts"
           VERDICT="${AGG_ROOT}/authority-verdict.json"
-          mkdir -p "$AGG_ROOT/claims"
+          mkdir -p "$AGG_ROOT/claims" "$RECEIPT_ROOT"
           cp eval/claims/registry.json "$AGG_ROOT/claims/registry.json"
           cp -R eval/public "$PUBLIC_ROOT"
           find "$PUBLIC_ROOT/memory/manifests" -maxdepth 1 -type f -name 'adversarial-policy-v2*.json' -delete
@@ -271,13 +273,80 @@ jobs:
           for bundle in "${bundles[@]}"; do
             stage="$(mktemp -d "${RUNNER_TEMP}/remem-native-stage.XXXXXX")"
             tar -xzf "$bundle" -C "$stage"
+            mapfile -t receipts < <(find "$stage" -maxdepth 1 -type f -name 'row-verifier-*.json')
+            if [ "${#receipts[@]}" -ne 1 ]; then
+              echo "::error::Expected one native row verifier receipt in $bundle"
+              exit 1
+            fi
+            cp "${receipts[0]}" "$RECEIPT_ROOT/"
             cp -R "$stage/public/." "$PUBLIC_ROOT/"
           done
           {
             echo "AGG_ROOT=$AGG_ROOT"
             echo "PUBLIC_ROOT=$PUBLIC_ROOT"
+            echo "RECEIPT_ROOT=$RECEIPT_ROOT"
             echo "VERDICT=$VERDICT"
           } >> "$GITHUB_ENV"
+      - name: Authenticate downloaded native row receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          required = {
+              "x86_64-apple-darwin": "macos/x86_64",
+              "aarch64-apple-darwin": "macos/aarch64",
+              "x86_64-unknown-linux-gnu": "linux/x86_64",
+              "aarch64-unknown-linux-gnu": "linux/aarch64",
+          }
+          receipt_root = Path(os.environ["RECEIPT_ROOT"])
+          public_root = Path(os.environ["PUBLIC_ROOT"])
+          receipts = sorted(receipt_root.glob("row-verifier-*.json"))
+          assert len(receipts) == len(required)
+          head = subprocess.check_output(
+              ["git", "rev-parse", "HEAD"], text=True
+          ).strip()
+          seen_targets = set()
+          for receipt_path in receipts:
+              target = receipt_path.stem.removeprefix("row-verifier-")
+              assert target in required and target not in seen_targets
+              seen_targets.add(target)
+              verdict = json.loads(receipt_path.read_text(encoding="utf-8"))
+              authority = verdict["authority_verdict"]
+              implementation = authority["implementation"]
+              report_path = f"memory/reports/adversarial-policy-v2-{target}.json"
+              reports = [
+                  report for report in authority["security"]["reports"]
+                  if report["report_path"] == report_path
+              ]
+              assert verdict["passed"] is True and len(reports) == 1
+              report = reports[0]
+              assert report["status"] == "PASS"
+              assert report["target"] == target
+              assert report["platforms"] == [required[target]]
+              assert report["producing_shas"] == [head]
+              assert report["runs_recomputed"] == 20
+              assert report["policy_failure_count"] == 0
+              assert implementation["build_git_sha"] == head
+              assert implementation["checkout_git_sha"] == head
+              assert implementation["build_source_dirty"] is False
+              assert implementation["checkout_source_dirty"] is False
+              assert implementation["executable_source_equivalent"] is True
+              trees = report["production_input_trees"]
+              assert len(trees) == 1
+              assert implementation["build_production_input_tree_sha256"] == trees[0]
+              assert implementation["checkout_production_input_tree_sha256"] == trees[0]
+              report_bytes = (public_root / report_path).read_bytes()
+              report_sha256 = hashlib.sha256(report_bytes).hexdigest()
+              assert report["report_sha256"] == report_sha256
+              assert authority["consumed_bytes"][report_path] == report_sha256
+          assert seen_targets == set(required)
+          PY
       - name: Verify aggregate four-target evidence once
         shell: bash
         run: |

@@ -359,13 +359,20 @@ fn evaluate_security(
         }
         let binding = security_report_binding(&report_runs);
         if !binding.model_execution_identity_consistent {
-            diagnostics.push(
-                "security report runs must share one model execution identity after excluding prompt_hash"
-                    .to_string(),
-            );
+            let message = "security report runs must share one model execution identity after excluding prompt_hash".to_string();
+            diagnostics.push(message.clone());
+            failures.push(BenchVerifyFailure {
+                path: report.path.clone(),
+                message,
+            });
         }
         if !binding.ready {
-            diagnostics.push("security report run identity binding is incomplete".to_string());
+            let message = "security report run identity binding is incomplete".to_string();
+            diagnostics.push(message.clone());
+            failures.push(BenchVerifyFailure {
+                path: report.path.clone(),
+                message,
+            });
         }
         let status = if complete && diagnostics.is_empty() {
             AuthorityStatus::Pass
@@ -644,7 +651,7 @@ fn evaluate_release(
         .filter(|target| !current.contains(target.as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    let ready = missing.is_empty();
+    let ready = release_is_ready(&missing, &stale);
     let mut diagnostics = Vec::new();
     if !implementation_current {
         diagnostics.push(
@@ -656,6 +663,12 @@ fn evaluate_release(
         diagnostics.push(format!(
             "missing genuine current evidence for targets: {}",
             missing.join(", ")
+        ));
+    }
+    if !stale.is_empty() {
+        diagnostics.push(format!(
+            "stale evidence remains for targets: {}",
+            stale.iter().cloned().collect::<Vec<_>>().join(", ")
         ));
     }
     ReleaseAuthorityVerdict {
@@ -671,6 +684,10 @@ fn evaluate_release(
         stale_targets: stale.into_iter().collect(),
         diagnostics,
     }
+}
+
+fn release_is_ready(missing: &[String], stale: &BTreeSet<String>) -> bool {
+    missing.is_empty() && stale.is_empty()
 }
 
 pub(in crate::eval::bench_artifact) fn implementation_allows_release(
@@ -693,9 +710,11 @@ fn target_triple(os: &str, arch: &str) -> Option<String> {
 
 #[cfg(test)]
 mod registered_security_suite_tests {
+    use std::collections::BTreeSet;
+
     use sha2::{Digest, Sha256};
 
-    use super::REGISTERED_ADVERSARIAL_SUITE_SHA256;
+    use super::{release_is_ready, REGISTERED_ADVERSARIAL_SUITE_SHA256};
 
     #[test]
     fn registered_suite_digest_matches_checked_in_bytes() {
@@ -705,5 +724,13 @@ mod registered_security_suite_tests {
             format!("{:x}", Sha256::digest(bytes)),
             REGISTERED_ADVERSARIAL_SUITE_SHA256
         );
+    }
+
+    #[test]
+    fn release_rejects_stale_duplicate_of_current_target() {
+        let missing = Vec::new();
+        let stale = BTreeSet::from(["aarch64-apple-darwin".to_string()]);
+
+        assert!(!release_is_ready(&missing, &stale));
     }
 }

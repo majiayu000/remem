@@ -7,6 +7,8 @@
     "Cargo.toml",
     "assets",
     "build.rs",
+    "eval/claims/registry.json",
+    "eval/coding-bench/fixtures/tasks.json",
     "eval/production-input-pathspec-v1.json",
     "eval/public/memory/suites/adversarial-policy/suite.json",
     "prompts",

@@ -152,8 +152,11 @@ def acquire_verifier_report(verdict_path: Path | None) -> dict[str, object]:
         return load_verifier_report(output)
 
 
-def line_is_closed_policy_contract(text: str) -> bool:
-    return text.strip() in RELEASE_POLICY_CONTRACT_LINES
+def line_is_closed_policy_contract(text: str, surface_path: str | None) -> bool:
+    return (
+        surface_path == "docs/release-lifecycle.md"
+        and text.strip() in RELEASE_POLICY_CONTRACT_LINES
+    )
 
 
 def registered_coding_claim_violation(
@@ -245,13 +248,16 @@ def registered_coding_claim_violation(
 
 
 def classify_violation(
-    text: str, verifier_report: dict[str, object], _context: str | None = None
+    text: str,
+    verifier_report: dict[str, object],
+    _context: str | None = None,
+    surface_path: str | None = None,
 ) -> str | None:
     if not STRONG_CLAIM_RE.search(text):
         return None
     # Authorization is line-local. Adjacent headings and prose cannot turn an
     # otherwise unsupported claim into policy or negative wording.
-    if line_is_closed_policy_contract(text):
+    if line_is_closed_policy_contract(text, surface_path):
         return None
 
     if SOTA_CLAIM_RE.search(text):
@@ -272,7 +278,7 @@ def check_surfaces(verifier_report: dict[str, object]) -> list[str]:
         lines = path.read_text(encoding="utf-8").splitlines()
         for index, line in enumerate(lines):
             context = "\n".join(lines[max(0, index - 2) : index + 2])
-            reason = classify_violation(line, verifier_report, context)
+            reason = classify_violation(line, verifier_report, context, rel_path)
             if reason:
                 failures.append(f"{rel_path}:{index + 1}: {reason}: {line.strip()}")
     return failures
@@ -375,6 +381,16 @@ def run_self_test() -> int:
         pass
     else:
         print("self-test failed: malformed security leak summary was accepted", file=sys.stderr)
+        return 1
+
+    copied_policy_line = "- `remem_e2e` beats `no_memory` on resolved rate by at least 10 percentage"
+    copied_policy_violation = classify_violation(
+        copied_policy_line,
+        blocked_verdict,
+        surface_path="README.md",
+    )
+    if copied_policy_violation is None:
+        print("self-test failed: copied policy line bypassed README claim checks", file=sys.stderr)
         return 1
 
     cases = [

@@ -13,6 +13,8 @@ fn build_script_watches_the_benchmark_authority_suite() {
     let contract = include_str!("../../../../eval/production-input-pathspec-v1.json");
     assert!(build_script.contains("production-input-pathspec-v1.json"));
     assert!(contract.contains("eval/public/memory/suites/adversarial-policy/suite.json"));
+    assert!(contract.contains("eval/coding-bench/fixtures/tasks.json"));
+    assert!(contract.contains("eval/claims/registry.json"));
     assert!(!build_script.contains(":(exclude)src/eval/ship_matrix"));
     assert!(!build_script.contains(":(exclude)src/eval/gates.rs"));
 }
@@ -33,7 +35,13 @@ fn production_identity_implementations_share_machine_contract() {
 #[test]
 fn native_workflow_tracks_every_production_input_root() {
     let workflow = include_str!("../../../../.github/workflows/native-benchmark-evidence.yml");
-    for trigger in [".cargo/**", "assets/**", "prompts/**"] {
+    for trigger in [
+        ".cargo/**",
+        "assets/**",
+        "prompts/**",
+        "eval/coding-bench/fixtures/tasks.json",
+        "eval/claims/**",
+    ] {
         assert!(
             workflow.contains(&format!("- {trigger}")),
             "native evidence trigger is missing production input {trigger}"
@@ -53,6 +61,9 @@ fn native_workflow_uses_the_release_feature_profile() {
         2
     );
     assert!(workflow.contains("cargo run --locked -- bench verify --root \"$PUBLIC_ROOT\""));
+    assert!(workflow.contains("Authenticate downloaded native row receipts"));
+    assert!(workflow.contains("row-verifier-*.json"));
+    assert!(workflow.contains("seen_targets"));
 }
 
 #[test]

@@ -13,6 +13,7 @@ use super::types::{
 
 pub(super) mod coding;
 mod policy;
+mod public_bundle;
 pub(super) mod security_snapshot;
 
 const MEMORY_ARTIFACT_KEYS: [&str; 5] = [
@@ -403,6 +404,11 @@ fn validate_memory_run_artifact(
     if run.benchmark_id == "adversarial-policy" && run.benchmark_version == "v2" {
         require_artifact_key(&run.artifacts, "remem_db_snapshot", &label, state);
         validate_v2_memory_artifact_hashes(&run, &label, state);
+        for (path, message) in
+            public_bundle::unreferenced_run_entries(&state.root, run_path, &run.artifacts)
+        {
+            state.fail(path, message);
+        }
         security_snapshot::validate_security_snapshot(&run, &label, state, context);
     }
     scan_private_json(
@@ -446,7 +452,13 @@ fn validate_v2_memory_artifact_hashes(
             continue;
         };
         match state.consume_file(&path, &format!("read artifact {key}")) {
-            Ok(bytes) if format!("{:x}", Sha256::digest(&bytes)) == *expected => {}
+            Ok(bytes) if format!("{:x}", Sha256::digest(&bytes)) == *expected => {
+                if key != "remem_db_snapshot" {
+                    if let Some(message) = public_bundle::private_payload_violation(&bytes) {
+                        state.fail(raw_path.clone(), message);
+                    }
+                }
+            }
             Ok(_) => state.fail(raw_path.clone(), format!("artifact {key} SHA-256 mismatch")),
             Err(()) => {}
         }
@@ -672,29 +684,12 @@ fn scan_private_json(value: &Value, path: &Path, pointer: &str, state: &mut Veri
 }
 
 fn scan_private_string(text: &str, path: &Path, pointer: &str, state: &mut VerifyState) {
-    if text.contains("~/.remem")
-        || text.contains("$HOME/.remem")
-        || text.contains("${HOME}/.remem")
-        || contains_user_remem_path(text)
-    {
+    if let Some(message) = public_bundle::private_string_violation(text) {
         state.fail(
             rel_display(&state.root, path),
-            format!("{pointer} contains a private remem path"),
+            format!("{pointer} {message}"),
         );
     }
-    if let Some(home) = dirs::home_dir().and_then(|path| path.into_os_string().into_string().ok()) {
-        if text.starts_with(&home) {
-            state.fail(
-                rel_display(&state.root, path),
-                format!("{pointer} contains an absolute path under the current user home"),
-            );
-        }
-    }
-}
-
-fn contains_user_remem_path(text: &str) -> bool {
-    text.contains("/.remem/")
-        && (text.contains("/Users/") || text.contains("/home/") || text.contains("/var/home/"))
 }
 
 fn rel_display(root: &Path, path: &Path) -> String {
@@ -749,7 +744,7 @@ impl VerifyState {
         if let Some(bytes) = self.consumed_file_bytes.get(&display) {
             return Ok(bytes.clone());
         }
-        match fs::read(path) {
+        match public_bundle::read_bounded(path) {
             Ok(bytes) => {
                 self.consumed_bytes
                     .insert(display.clone(), format!("{:x}", Sha256::digest(&bytes)));

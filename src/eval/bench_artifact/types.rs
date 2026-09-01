@@ -96,6 +96,7 @@ pub(crate) struct VerifiedBenchmarkArtifacts {
     pub official_coding_tests: BTreeMap<String, VerifiedArtifact<OfficialCodingTestEvidence>>,
     pub treatment_maintenance:
         BTreeMap<String, VerifiedArtifact<OfficialCodingMaintenanceEvidence>>,
+    pub official_evidence_authenticated: bool,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]

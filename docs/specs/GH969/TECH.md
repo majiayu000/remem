@@ -514,7 +514,15 @@ inherit the legacy eval-gate verdict; the running binary's production-input
 tree and pathspec must match the clean checkout before security, merge, release,
 or claim authority can pass. Public security SQLite snapshots are size-bounded
 canonical `VACUUM` images, and official coding outcomes must carry the exact
-registered scorer command set.
+registered scorer command set. Every declared public artifact is read through
+one 64 MiB boundary, text payloads receive the same privacy scan as typed JSON,
+and each v2 run directory is closed against unreferenced files. The native
+aggregate consumes four unique row-verifier receipts from its four required
+native jobs and binds each receipt to the exact target, report hash, clean head,
+and production-input tree before evaluating the four-target release structure.
+Repository-local coding JSON never authenticates scorer causal labels or
+supervisor-timed maintenance by itself; without governed external receipts the
+GH931 verdict remains `INSUFFICIENT`.
 The Rust verifier consumes the coding policy and evidence once, recomputes claim
 readiness, and emits the runtime authority verdict. The Python public wording
 guard consumes only that verdict: it checks the emitted allowed/forbidden wording
