@@ -188,6 +188,8 @@ async fn build_fixture(
         serde_json::to_value(&task.gold_supporting_event_ids)?;
     run["environment"]["os"] = Value::String(os.to_string());
     run["environment"]["arch"] = Value::String(arch.to_string());
+    run["reader_model"]["prompt_hash"] =
+        Value::String(format!("sha256:{}", sha256(task.prompt.as_bytes())));
     run["suite_content_identity"] = Value::String(format!("sha256-raw-suite-v1:{suite_sha256}"));
     refresh_artifact_hashes(&root, &mut run)?;
     let condition = MemoryBenchCondition::parse(
