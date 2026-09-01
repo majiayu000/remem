@@ -5,6 +5,7 @@ use anyhow::Result;
 
 use super::{TrustedSnapshotCacheKey, VerificationContext};
 use crate::eval::memory_bench::types::{MemoryBenchSuiteFixture, MemoryBenchTask};
+use crate::eval::memory_bench::TrustedSecurityReplay;
 use crate::eval::security_snapshot_identity::SnapshotIdentity;
 
 fn task() -> Result<MemoryBenchTask> {
@@ -20,6 +21,13 @@ fn task() -> Result<MemoryBenchTask> {
 
 fn identity(marker: &str) -> SnapshotIdentity {
     BTreeMap::from([("sqlite_schema".to_string(), marker.to_string())])
+}
+
+fn replay(marker: &str) -> TrustedSecurityReplay {
+    TrustedSecurityReplay {
+        snapshot_identity: identity(marker),
+        retrieved_event_ids: Vec::new(),
+    }
 }
 
 #[test]
@@ -48,13 +56,13 @@ fn same_task_id_in_different_suites_does_not_reuse_replay() -> Result<()> {
     let mut context = VerificationContext::new();
     let mut calls = 0;
 
-    let first = context.trusted_snapshot_identity("suite-a", &task, "macos", "aarch64", |_| {
+    let first = context.trusted_snapshot_replay("suite-a", &task, "macos", "aarch64", |_| {
         calls += 1;
-        Ok(identity("suite-a"))
+        Ok(replay("suite-a"))
     })?;
-    let second = context.trusted_snapshot_identity("suite-b", &task, "macos", "aarch64", |_| {
+    let second = context.trusted_snapshot_replay("suite-b", &task, "macos", "aarch64", |_| {
         calls += 1;
-        Ok(identity("suite-b"))
+        Ok(replay("suite-b"))
     })?;
 
     assert_eq!(calls, 2);
@@ -68,13 +76,13 @@ fn macos_and_linux_runs_do_not_share_replay_identity() -> Result<()> {
     let mut context = VerificationContext::new();
     let mut calls = 0;
 
-    let mac = context.trusted_snapshot_identity("suite-a", &task, "macos", "aarch64", |_| {
+    let mac = context.trusted_snapshot_replay("suite-a", &task, "macos", "aarch64", |_| {
         calls += 1;
-        Ok(identity("mac"))
+        Ok(replay("mac"))
     })?;
-    let linux = context.trusted_snapshot_identity("suite-a", &task, "linux", "x86_64", |_| {
+    let linux = context.trusted_snapshot_replay("suite-a", &task, "linux", "x86_64", |_| {
         calls += 1;
-        Ok(identity("linux"))
+        Ok(replay("linux"))
     })?;
 
     assert_eq!(calls, 2);
@@ -87,18 +95,15 @@ fn consecutive_verification_invocations_replay_after_input_change() -> Result<()
     let task = task()?;
     let mut first_invocation = VerificationContext::new();
     let first =
-        first_invocation.trusted_snapshot_identity("suite-a", &task, "macos", "aarch64", |_| {
-            Ok(identity("before-input-change"))
+        first_invocation.trusted_snapshot_replay("suite-a", &task, "macos", "aarch64", |_| {
+            Ok(replay("before-input-change"))
         })?;
 
     let mut second_invocation = VerificationContext::new();
-    let second = second_invocation.trusted_snapshot_identity(
-        "suite-a",
-        &task,
-        "macos",
-        "aarch64",
-        |_| Ok(identity("after-input-change")),
-    )?;
+    let second =
+        second_invocation.trusted_snapshot_replay("suite-a", &task, "macos", "aarch64", |_| {
+            Ok(replay("after-input-change"))
+        })?;
 
     assert_ne!(first, second, "a new invocation must not observe old state");
     Ok(())
@@ -117,8 +122,8 @@ fn parallel_verification_invocations_are_isolated() -> Result<()> {
             let mut context = VerificationContext::new();
             barrier.wait();
             let result =
-                context.trusted_snapshot_identity("suite-a", &task, "linux", "x86_64", |_| {
-                    Ok(identity(marker))
+                context.trusted_snapshot_replay("suite-a", &task, "linux", "x86_64", |_| {
+                    Ok(replay(marker))
                 })?;
             results.lock().expect("results lock").push(result);
             Ok(())
@@ -129,8 +134,10 @@ fn parallel_verification_invocations_are_isolated() -> Result<()> {
         handle.join().expect("verification thread")?;
     }
     let mut results = results.lock().expect("results lock").clone();
-    results.sort_by(|left, right| left["sqlite_schema"].cmp(&right["sqlite_schema"]));
-    assert_eq!(results, vec![identity("left"), identity("right")]);
+    results.sort_by(|left, right| {
+        left.snapshot_identity["sqlite_schema"].cmp(&right.snapshot_identity["sqlite_schema"])
+    });
+    assert_eq!(results, vec![replay("left"), replay("right")]);
     Ok(())
 }
 
@@ -138,14 +145,13 @@ fn parallel_verification_invocations_are_isolated() -> Result<()> {
 fn failed_replay_is_not_cached() -> Result<()> {
     let task = task()?;
     let mut context = VerificationContext::new();
-    let failed = context.trusted_snapshot_identity("suite-a", &task, "linux", "x86_64", |_| {
+    let failed = context.trusted_snapshot_replay("suite-a", &task, "linux", "x86_64", |_| {
         anyhow::bail!("replay failed")
     });
     assert!(failed.is_err());
 
-    let retried = context.trusted_snapshot_identity("suite-a", &task, "linux", "x86_64", |_| {
-        Ok(identity("retry"))
-    })?;
-    assert_eq!(retried, identity("retry"));
+    let retried = context
+        .trusted_snapshot_replay("suite-a", &task, "linux", "x86_64", |_| Ok(replay("retry")))?;
+    assert_eq!(retried, replay("retry"));
     Ok(())
 }

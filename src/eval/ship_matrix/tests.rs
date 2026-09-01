@@ -356,8 +356,14 @@ fn measured_security_ratio_binds_the_exact_selected_artifact() {
     let selected = temp.join("security.json");
     let selected_bytes = br#"{"aggregate_metrics":{"policy":{"non_retention_cases":4,"non_retention_leak_rate":0.0}}}"#;
     std::fs::write(&selected, selected_bytes).unwrap();
+    let mut baseline = crate::eval::bench_artifact::generate_public_baseline_report(
+        Path::new(DEFAULT_PUBLIC_ROOT),
+        Path::new(DEFAULT_CLAIM_REGISTRY),
+    )
+    .unwrap();
+    baseline.artifact_verifier.passed = true;
     let public = PublicEvidence {
-        report: None,
+        report: Some(baseline),
         report_error: None,
         security_claim_level: Some("directional_memory_suite_no_public_claim".to_string()),
         security_source: Some(format!(
@@ -401,7 +407,56 @@ fn measured_security_ratio_binds_the_exact_selected_artifact() {
     );
     assert_eq!(security.measurement_state, MeasurementState::Measured);
     assert_eq!(security.source.as_deref(), Some(expected.as_str()));
+
+    let mut public = public;
+    public.report.as_mut().unwrap().artifact_verifier.passed = false;
+    let scorecard = build_scorecard(&public, &selected);
+    let security = scorecard
+        .fields
+        .iter()
+        .find(|field| field.id == "poison_policy_leak_rate")
+        .unwrap();
+    assert_eq!(security.measurement_state, MeasurementState::Unavailable);
     std::fs::remove_dir_all(temp).unwrap();
+}
+
+#[test]
+fn unauthenticated_gh931_completion_is_not_measured() {
+    let mut report = crate::eval::bench_artifact::generate_public_baseline_report(
+        Path::new(DEFAULT_PUBLIC_ROOT),
+        Path::new(DEFAULT_CLAIM_REGISTRY),
+    )
+    .unwrap();
+    let gh931 = &mut report.artifact_verifier.authority_verdict.gh931;
+    gh931.measurement_ready = false;
+    gh931.completeness.complete = true;
+    gh931.completeness.attempts_ready = true;
+    gh931.completeness.machine_outcomes_ready = true;
+    let completion = gh931
+        .condition_completion
+        .iter_mut()
+        .find(|completion| completion.condition == "remem_e2e")
+        .unwrap();
+    completion.eligible_started = 16;
+    completion.resolved = 16;
+    let public = PublicEvidence {
+        report: Some(report),
+        report_error: None,
+        security_claim_level: None,
+        security_source: None,
+        security_error: None,
+        security_authority: None,
+    };
+
+    let scorecard = build_scorecard(&public, Path::new(DEFAULT_SECURITY_REPORT));
+    let completion = scorecard
+        .fields
+        .iter()
+        .find(|field| field.id == "task_completion_rate")
+        .unwrap();
+    assert_eq!(completion.measurement_state, MeasurementState::Unavailable);
+    assert_eq!(completion.numerator.value, None);
+    assert_eq!(completion.denominator.value, None);
 }
 
 #[test]

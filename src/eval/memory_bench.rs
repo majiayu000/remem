@@ -11,6 +11,13 @@ pub use runner::{run_memory_bench, MemoryBenchOptions};
 pub use types::{MemoryBenchCondition, MemoryBenchSuiteFixture};
 
 pub(crate) const SAFE_ABSTENTION_ANSWER: &str = "Insufficient benchmark evidence to answer.";
+const PROJECT: &str = "/tmp/remem-memory-bench/repo";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TrustedSecurityReplay {
+    pub snapshot_identity: crate::eval::security_snapshot_identity::SnapshotIdentity,
+    pub retrieved_event_ids: Vec<String>,
+}
 
 pub(crate) struct VerifiedSecurityPolicyState {
     pub active_claim_count: u32,
@@ -52,9 +59,9 @@ pub(crate) fn summarize_verified_security_policy(
     types::summarize_policy_outcomes(outcomes)
 }
 
-pub(crate) fn replay_trusted_security_snapshot_identity(
+pub(crate) fn replay_trusted_security_snapshot(
     task: &types::MemoryBenchTask,
-) -> anyhow::Result<crate::eval::security_snapshot_identity::SnapshotIdentity> {
+) -> anyhow::Result<TrustedSecurityReplay> {
     #[cfg(test)]
     let replay_probe = production_pipeline::current_replay_probe();
     let task = task.clone();
@@ -64,7 +71,7 @@ pub(crate) fn replay_trusted_security_snapshot_identity(
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?
-            .block_on(production_pipeline::trusted_snapshot_identity(&task))
+            .block_on(production_pipeline::trusted_snapshot_replay(&task))
     })
     .join()
     .map_err(|_| anyhow::anyhow!("trusted security snapshot worker panicked"))?

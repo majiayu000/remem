@@ -162,7 +162,6 @@ fn volatile_generation_field(table: &str, column: &str) -> bool {
                 "legacy_surface_state",
                 "exhausted_at_epoch" | "updated_at_epoch"
             )
-            | ("memories", "created_at_epoch" | "updated_at_epoch")
             | ("memory_activation_requests", "created_at_epoch")
             | ("memory_candidates", "created_at_epoch" | "updated_at_epoch")
             | ("memory_edges", "created_at_epoch")
@@ -226,6 +225,28 @@ mod tests {
         )?)?;
 
         assert_eq!(first, second);
+        Ok(())
+    }
+
+    #[test]
+    fn snapshot_identity_preserves_memory_recency_timestamps() -> Result<()> {
+        fn connection(updated_at_epoch: i64) -> Result<Connection> {
+            let connection = Connection::open_in_memory()?;
+            connection.execute(
+                "CREATE TABLE memories (created_at_epoch INTEGER, updated_at_epoch INTEGER)",
+                [],
+            )?;
+            connection.execute(
+                "INSERT INTO memories (created_at_epoch, updated_at_epoch) VALUES (1, ?1)",
+                [updated_at_epoch],
+            )?;
+            Ok(connection)
+        }
+
+        let first = snapshot_identity(&connection(1_700_000_000)?)?;
+        let second = snapshot_identity(&connection(1_800_000_000)?)?;
+
+        assert_ne!(first, second);
         Ok(())
     }
 }

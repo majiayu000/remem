@@ -212,6 +212,34 @@ jobs:
           assert set(release["missing_targets"]) == set(required) - {target}
           assert release["ready"] is False
           PY
+      - name: Replace runner-local receipt paths with logical labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          receipt_path = Path(os.environ["VERDICT"])
+          public_root = os.environ["PUBLIC_ROOT"]
+          registry_path = str(Path(os.environ["ROW_ROOT"]) / "claims/registry.json")
+          receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+          receipt["root"] = "public"
+          authority = receipt["authority_verdict"]
+          consumed = {}
+          for path, sha256 in authority["consumed_bytes"].items():
+              if path == registry_path:
+                  path = "../claims/registry.json"
+              elif path.startswith(public_root + os.sep):
+                  path = path.removeprefix(public_root + os.sep)
+              consumed[path] = sha256
+          authority["consumed_bytes"] = consumed
+          registry = authority["gh931"]["registry"]
+          if registry["path"] == registry_path:
+              registry["path"] = "../claims/registry.json"
+          receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+          PY
       - name: Package generated target evidence
         shell: bash
         run: |

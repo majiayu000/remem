@@ -58,6 +58,26 @@ fn memory_bench_conditions_are_supported() {
     assert_eq!(MemoryBenchCondition::parse("unknown"), None);
 }
 
+#[tokio::test]
+async fn adversarial_policy_v2_rejects_non_production_conditions() -> Result<()> {
+    let root = unique_temp_dir("adversarial-policy-condition")?;
+    let error = run_memory_bench(MemoryBenchOptions {
+        suite: ADVERSARIAL_POLICY_SUITE.to_string(),
+        condition: None,
+        json_out: root.join("report.json").display().to_string(),
+        root: root.display().to_string(),
+        artifact_prefix: None,
+    })
+    .await
+    .expect_err("v2 security evidence must use only remem_default");
+
+    assert!(
+        format!("{error:#}").contains("requires --condition remem_default"),
+        "unexpected error: {error:#}"
+    );
+    Ok(())
+}
+
 #[test]
 fn two_missing_roots_are_not_treated_as_the_same_public_root() {
     let suffix = format!(

@@ -526,11 +526,15 @@ fn require_artifact_key(
         );
         return;
     }
-    if state
-        .consume_file(&path, &format!("read artifact file for {key}"))
-        .is_err()
-    {
-        return;
+    match state.consume_file(&path, &format!("read artifact file for {key}")) {
+        Ok(bytes) => {
+            if key != "remem_db_snapshot" {
+                if let Some(message) = public_bundle::private_payload_violation(&bytes) {
+                    state.fail(raw_path.clone(), message);
+                }
+            }
+        }
+        Err(()) => return,
     }
     state.artifact_files.insert(rel_display(&state.root, &path));
 }

@@ -5,7 +5,7 @@ use std::{cell::RefCell, path::Path};
 use anyhow::{ensure, Context, Result};
 use rusqlite::Connection;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use super::{resolve_public_path, VerifyState};
@@ -81,10 +81,8 @@ impl TrustedSnapshotCacheKey {
 
 #[derive(Debug, Default)]
 pub(super) struct VerificationContext {
-    trusted_security_snapshots: BTreeMap<
-        TrustedSnapshotCacheKey,
-        crate::eval::security_snapshot_identity::SnapshotIdentity,
-    >,
+    trusted_security_snapshots:
+        BTreeMap<TrustedSnapshotCacheKey, crate::eval::memory_bench::TrustedSecurityReplay>,
 }
 
 impl VerificationContext {
@@ -92,7 +90,7 @@ impl VerificationContext {
         Self::default()
     }
 
-    fn trusted_snapshot_identity(
+    fn trusted_snapshot_replay(
         &mut self,
         suite_content_sha256: &str,
         task: &MemoryBenchTask,
@@ -100,9 +98,8 @@ impl VerificationContext {
         artifact_arch: &str,
         replay: impl FnOnce(
             &MemoryBenchTask,
-        )
-            -> Result<crate::eval::security_snapshot_identity::SnapshotIdentity>,
-    ) -> Result<crate::eval::security_snapshot_identity::SnapshotIdentity> {
+        ) -> Result<crate::eval::memory_bench::TrustedSecurityReplay>,
+    ) -> Result<crate::eval::memory_bench::TrustedSecurityReplay> {
         let key =
             TrustedSnapshotCacheKey::new(suite_content_sha256, task, artifact_os, artifact_arch)?;
         if let Some(identity) = self.trusted_security_snapshots.get(&key) {
@@ -252,6 +249,7 @@ fn validate_semantics(
     validate_full_snapshot_identity(
         connection,
         task,
+        &run.retrieval.retrieved_supporting_evidence_ids,
         &suite_artifact.sha256,
         &run.environment.os,
         &run.environment.arch,
@@ -264,23 +262,28 @@ fn validate_semantics(
 fn validate_full_snapshot_identity(
     connection: &Connection,
     task: &MemoryBenchTask,
+    declared_retrieved_event_ids: &[String],
     suite_content_sha256: &str,
     artifact_os: &str,
     artifact_arch: &str,
     context: &mut VerificationContext,
 ) -> Result<()> {
     let actual = crate::eval::security_snapshot_identity::snapshot_identity(connection)?;
-    let expected = context.trusted_snapshot_identity(
+    let expected = context.trusted_snapshot_replay(
         suite_content_sha256,
         task,
         artifact_os,
         artifact_arch,
-        crate::eval::memory_bench::replay_trusted_security_snapshot_identity,
+        crate::eval::memory_bench::replay_trusted_security_snapshot,
     )?;
     ensure!(
-        actual == expected,
+        declared_retrieved_event_ids == expected.retrieved_event_ids,
+        "declared retrieved event IDs differ from trusted production replay"
+    );
+    ensure!(
+        actual == expected.snapshot_identity,
         "complete typed snapshot identity differs: {}",
-        snapshot_identity_delta(&expected, &actual)
+        snapshot_identity_delta(&expected.snapshot_identity, &actual)
     );
     Ok(())
 }
@@ -574,6 +577,29 @@ fn recompute_policy_outcome(
     ensure!(
         retrieved_event_ids == run.retrieval.retrieved_supporting_evidence_ids,
         "typed run retrieval differs from referenced retrieval evidence"
+    );
+    let score = referenced_json(run, "score", state)?;
+    let expected_score = json!({
+        "support_coverage": run.metrics["support_coverage"],
+        "answer_score": run.metrics["answer_score"],
+        "citation_recall": run.metrics["citation_recall"],
+        "citation_precision": run.metrics["citation_precision"],
+        "staleness_accuracy": run.metrics["staleness_accuracy"],
+        "abstention_accuracy": run.metrics["abstention_accuracy"],
+        "forbidden_evidence_count": run.metrics["forbidden_evidence_count"],
+    });
+    ensure!(
+        score == expected_score,
+        "referenced score differs from typed run metrics"
+    );
+    let diagnosis = referenced_json(run, "diagnosis", state)?;
+    let expected_diagnosis = json!({
+        "notes": run.diagnosis.notes,
+        "missing_event_ids": run.retrieval.missing_supporting_evidence_ids,
+    });
+    ensure!(
+        diagnosis == expected_diagnosis,
+        "referenced diagnosis differs from typed run diagnosis"
     );
 
     let active_claim_count: i64 = connection.query_row(

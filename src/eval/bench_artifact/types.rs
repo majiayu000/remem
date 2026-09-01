@@ -137,6 +137,7 @@ pub struct ImplementationAuthorityBinding {
 #[derive(Debug, Clone, Serialize)]
 pub struct Gh931AuthorityVerdict {
     pub status: AuthorityStatus,
+    pub measurement_ready: bool,
     pub registry: Gh931RegistryBinding,
     pub report: Option<Gh931ReportBinding>,
     pub completeness: Gh931Completeness,

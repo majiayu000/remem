@@ -10,8 +10,9 @@ use std::sync::{
     Arc,
 };
 
-use super::runner::{RetrievedEvidence, PROJECT};
+use super::runner::RetrievedEvidence;
 use super::types::{MemoryBenchEvidence, MemoryBenchPolicyMeasurement, MemoryBenchTask};
+use super::PROJECT;
 
 const LEASE_OWNER: &str = "memory-bench-production-pipeline";
 
@@ -89,15 +90,21 @@ pub(super) async fn retrieve_with_production_pipeline(
     Ok((retrieved, measurement, snapshot))
 }
 
-pub(super) async fn trusted_snapshot_identity(
+pub(super) async fn trusted_snapshot_replay(
     task: &MemoryBenchTask,
-) -> Result<crate::eval::security_snapshot_identity::SnapshotIdentity> {
+) -> Result<super::TrustedSecurityReplay> {
     #[cfg(test)]
     record_trusted_replay();
 
     let conn = trusted_schema_connection()?;
-    let (conn, _, _) = execute_production_pipeline_with_connection(conn, task).await?;
-    crate::eval::security_snapshot_identity::snapshot_identity(&conn)
+    let (conn, retrieved, _) = execute_production_pipeline_with_connection(conn, task).await?;
+    Ok(super::TrustedSecurityReplay {
+        snapshot_identity: crate::eval::security_snapshot_identity::snapshot_identity(&conn)?,
+        retrieved_event_ids: retrieved
+            .into_iter()
+            .map(|evidence| evidence.event_id)
+            .collect(),
+    })
 }
 
 async fn execute_production_pipeline(
@@ -126,6 +133,10 @@ async fn execute_production_pipeline_with_connection(
 
     record_fixture_events(&conn, task, explicitly_approved)?;
     run_observation_and_candidate_tasks(&mut conn, task, poisoning_expected).await?;
+    conn.execute(
+        "UPDATE memories SET created_at_epoch = ?1, updated_at_epoch = ?1",
+        [task.reference_time_epoch],
+    )?;
 
     let active_memories =
         crate::memory::list_memories(&conn, PROJECT, None, i64::MAX, 0, false, Some("main"))?;

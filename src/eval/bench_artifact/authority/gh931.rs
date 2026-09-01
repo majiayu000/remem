@@ -117,6 +117,7 @@ pub(in crate::eval::bench_artifact) fn evaluate(
 
     Gh931AuthorityVerdict {
         status,
+        measurement_ready: evidence_ready,
         registry: registry_binding(registry, policy_valid),
         report: report.map(|report| report_binding(report, &runs)),
         completeness: Gh931Completeness {

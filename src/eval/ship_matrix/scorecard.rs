@@ -13,7 +13,8 @@ pub(super) fn build_scorecard(
     let gh931 = public.authority_verdict().map(|verdict| &verdict.gh931);
     let task_completion = gh931
         .filter(|authority| {
-            authority.completeness.complete
+            authority.measurement_ready
+                && authority.completeness.complete
                 && authority.completeness.attempts_ready
                 && authority.completeness.machine_outcomes_ready
         })
@@ -98,6 +99,9 @@ fn maintenance_field(
     source: Option<String>,
 ) -> ScorecardField {
     let measured = authority.and_then(|authority| {
+        if !authority.measurement_ready {
+            return None;
+        }
         let maintenance = &authority.maintenance;
         if maintenance.status != AuthorityStatus::Pass || maintenance.curator_sessions == 0 {
             return None;
@@ -300,6 +304,9 @@ fn gh931_claim_level(
 fn verified_security_summary(
     public: &PublicEvidence,
 ) -> Option<&crate::eval::memory_bench::types::MemoryBenchPolicySummary> {
+    if !public.report.as_ref()?.artifact_verifier.passed {
+        return None;
+    }
     let authority = public.security_authority.as_ref()?;
     if authority.status != AuthorityStatus::Pass
         || authority.target.is_none()

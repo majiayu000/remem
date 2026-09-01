@@ -24,18 +24,15 @@ use super::types::{
     MemoryBenchEvidence, MemoryBenchPolicyMeasurement, MemoryBenchRunOutcome,
     MemoryBenchSuiteFixture, MemoryBenchTask, ADVERSARIAL_POLICY_SUITE, DEFAULT_PUBLIC_ROOT,
 };
-
-pub(super) const PROJECT: &str = "/tmp/remem-memory-bench/repo";
+use super::PROJECT;
 const READER_PROVIDER: &str = "fixture";
 const READER_MODEL: &str = "deterministic-memory-reader";
-
 #[derive(Debug, Clone)]
 struct ExecutionIdentity {
     remem_commit: Option<String>,
     source_dirty: Option<bool>,
     production_input_tree_sha256: Option<String>,
 }
-
 #[derive(Debug, Clone)]
 pub struct MemoryBenchOptions {
     pub suite: String,
@@ -44,10 +41,15 @@ pub struct MemoryBenchOptions {
     pub root: String,
     pub artifact_prefix: Option<String>,
 }
-
 pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBenchmarkReport> {
     let (fixture, suite_content_identity) = load_suite_with_content_identity(&options.suite)?;
     let conditions = selected_conditions(options.condition.as_deref())?;
+    if fixture.benchmark_id == "adversarial-policy"
+        && fixture.version == "v2"
+        && conditions.as_slice() != [MemoryBenchCondition::RememDefault]
+    {
+        bail!("adversarial-policy v2 requires --condition remem_default");
+    }
     let public_root = PathBuf::from(if options.root.trim().is_empty() {
         DEFAULT_PUBLIC_ROOT
     } else {
@@ -102,7 +104,6 @@ pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBench
             outcomes.push(outcome);
         }
     }
-
     let mut aggregate_metrics = json!({
         "suite": fixture.suite,
         "suite_version": fixture.version,
@@ -763,7 +764,7 @@ pub(super) fn is_checked_in_public_root(public_root: &Path) -> bool {
 #[derive(Debug, Clone)]
 pub(super) struct RetrievedEvidence {
     memory_id: i64,
-    event_id: String,
+    pub(super) event_id: String,
     title: String,
     content: String,
     status: String,

@@ -66,6 +66,86 @@ fn verifier_rejects_hash_valid_snapshot_with_mutated_security_semantics() -> Res
 }
 
 #[test]
+fn verifier_binds_referenced_score_and_diagnosis_semantics() -> Result<()> {
+    for (key, expected_failure) in [
+        ("score", "referenced score differs from typed run metrics"),
+        (
+            "diagnosis",
+            "referenced diagnosis differs from typed run diagnosis",
+        ),
+    ] {
+        let root = copy_public_fixture(&format!("security-{key}-semantic-mismatch"))?;
+        let run_path = root.join(
+            "memory/artifacts/adversarial-policy-v2/\
+             remem_default-secrets-api-key-001/run.json",
+        );
+        let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;
+        let relative = run["artifacts"][key]
+            .as_str()
+            .with_context(|| format!("security run must name its {key} artifact"))?;
+        let artifact_path = root.join(relative);
+        mutate_json(&artifact_path, |json| {
+            json["reviewer_tamper"] = Value::Bool(true);
+        })?;
+        let sha256 = format!("{:x}", Sha256::digest(fs::read(&artifact_path)?));
+        mutate_json(&run_path, |json| {
+            json["artifact_sha256"][key] = Value::String(sha256);
+        })?;
+
+        let report =
+            verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+        assert!(!report.passed);
+        assert!(failure_text(&report).contains(expected_failure));
+    }
+    Ok(())
+}
+
+#[test]
+fn verifier_binds_declared_retrieval_to_trusted_replay() -> Result<()> {
+    let root = copy_public_fixture("security-retrieval-replay-mismatch")?;
+    let run_path = root.join(
+        "memory/artifacts/adversarial-policy-v2/\
+         remem_default-approved-external-source-001/run.json",
+    );
+    let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;
+    let relative = run["artifacts"]["retrieved_evidence"]
+        .as_str()
+        .context("security run must name retrieval evidence")?;
+    let artifact_path = root.join(relative);
+    mutate_json(&artifact_path, |json| {
+        json["retrieved"][0]["event_id"] = Value::String("reviewer-forged:event".to_string());
+    })?;
+    let sha256 = format!("{:x}", Sha256::digest(fs::read(&artifact_path)?));
+    mutate_json(&run_path, |json| {
+        json["retrieval"]["retrieved_supporting_evidence_ids"][0] =
+            Value::String("reviewer-forged:event".to_string());
+        json["artifact_sha256"]["retrieved_evidence"] = Value::String(sha256);
+    })?;
+
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+    assert!(!report.passed);
+    assert!(failure_text(&report)
+        .contains("declared retrieved event IDs differ from trusted production replay"));
+    Ok(())
+}
+
+#[test]
+fn verifier_privacy_scans_declared_coding_text_artifacts() -> Result<()> {
+    let root = copy_public_fixture("coding-private-text-artifact")?;
+    fs::write(
+        root.join("coding/artifacts/smoke-coding-001/patch.diff"),
+        "read /Users/reviewer/private/file\n",
+    )?;
+
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+    assert!(!report.passed);
+    assert!(failure_text(&report).contains("contains an absolute user home path"));
+    Ok(())
+}
+
+#[test]
 fn tampered_security_report_aggregate_fails_closed_against_exact_verified_shape() -> Result<()> {
     let root = copy_public_fixture("security-report-aggregate-mismatch")?;
     let report_path = root.join("memory/reports/adversarial-policy-v2.json");
