@@ -502,23 +502,6 @@ fn security_report_coverage_diagnostics(
     diagnostics
 }
 
-#[cfg(test)]
-mod registered_security_suite_tests {
-    use sha2::{Digest, Sha256};
-
-    use super::REGISTERED_ADVERSARIAL_SUITE_SHA256;
-
-    #[test]
-    fn registered_suite_digest_matches_checked_in_bytes() {
-        let bytes =
-            include_bytes!("../../../eval/public/memory/suites/adversarial-policy/suite.json");
-        assert_eq!(
-            format!("{:x}", Sha256::digest(bytes)),
-            REGISTERED_ADVERSARIAL_SUITE_SHA256
-        );
-    }
-}
-
 struct SecurityReportBinding {
     target: Option<String>,
     models: Vec<Value>,
@@ -705,5 +688,22 @@ fn target_triple(os: &str, arch: &str) -> Option<String> {
         ("linux", "x86_64") => Some("x86_64-unknown-linux-gnu".to_string()),
         ("linux", "aarch64") => Some("aarch64-unknown-linux-gnu".to_string()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod registered_security_suite_tests {
+    use sha2::{Digest, Sha256};
+
+    use super::REGISTERED_ADVERSARIAL_SUITE_SHA256;
+
+    #[test]
+    fn registered_suite_digest_matches_checked_in_bytes() {
+        let bytes =
+            include_bytes!("../../../eval/public/memory/suites/adversarial-policy/suite.json");
+        assert_eq!(
+            format!("{:x}", Sha256::digest(bytes)),
+            REGISTERED_ADVERSARIAL_SUITE_SHA256
+        );
     }
 }
