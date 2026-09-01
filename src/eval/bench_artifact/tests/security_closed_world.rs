@@ -100,6 +100,48 @@ fn verifier_privacy_scans_declared_text_artifact_payloads() -> Result<()> {
 }
 
 #[test]
+fn verifier_rejects_non_utf8_declared_text_artifacts() -> Result<()> {
+    let root = copy_public_fixture("non-utf8-declared-artifact")?;
+    let run_path = root.join(SECURITY_RUN);
+    let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;
+    let answer_relative = run["artifacts"]["answer"]
+        .as_str()
+        .context("security run answer artifact")?;
+    let answer_path = root.join(answer_relative);
+    fs::write(&answer_path, [0xff, 0xfe])?;
+    let answer_sha256 = format!("{:x}", Sha256::digest(fs::read(&answer_path)?));
+    mutate_json(&run_path, |json| {
+        json["artifact_sha256"]["answer"] = Value::String(answer_sha256);
+    })?;
+
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+
+    assert!(!report.passed);
+    assert!(failure_text(&report).contains("must be UTF-8"));
+    Ok(())
+}
+
+#[test]
+fn verifier_binds_security_report_suite_identity_to_suite_bytes() -> Result<()> {
+    let root = copy_public_fixture("security-report-suite-identity")?;
+    mutate_json(
+        &root.join("memory/reports/adversarial-policy-v2.json"),
+        |report| {
+            report["aggregate_metrics"]["suite_content_identity"] =
+                Value::String(format!("sha256-raw-suite-v1:{}", "f".repeat(64)));
+        },
+    )?;
+
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
+
+    assert!(!report.passed);
+    assert!(failure_text(&report).contains("report suite identity"));
+    Ok(())
+}
+
+#[test]
 fn verifier_bounds_declared_non_sqlite_artifacts_before_reading() -> Result<()> {
     let root = copy_public_fixture("oversized-declared-artifact")?;
     let run: Value = serde_json::from_slice(&fs::read(root.join(SECURITY_RUN))?)?;

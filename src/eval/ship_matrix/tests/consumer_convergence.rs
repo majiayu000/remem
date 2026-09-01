@@ -81,6 +81,23 @@ fn tampered_registry_pass_and_supporting_report_cannot_authorize_coding_row() {
 }
 
 #[test]
+fn failed_gh931_authority_fails_the_coding_row() {
+    let mut public = public_fixture(baseline_fixture());
+    public
+        .report
+        .as_mut()
+        .expect("baseline")
+        .artifact_verifier
+        .authority_verdict
+        .gh931
+        .status = AuthorityStatus::Fail;
+
+    let row = coding_gate(&ShipMatrixOptions::default(), &public);
+
+    assert_eq!(row.status, ShipGateStatus::Fail);
+}
+
+#[test]
 fn tampered_security_aggregate_cannot_make_scorecard_measured() {
     let mut report = baseline_fixture();
     let selected_relative = Path::new(DEFAULT_SECURITY_REPORT)

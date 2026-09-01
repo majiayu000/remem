@@ -453,6 +453,17 @@ fn security_report_coverage_diagnostics(
                 .to_string(),
         );
     }
+    let expected_suite_identity = format!("sha256-raw-suite-v1:{}", suite.sha256);
+    if report
+        .value
+        .aggregate_metrics
+        .get("suite_content_identity")
+        .and_then(Value::as_str)
+        != Some(expected_suite_identity.as_str())
+    {
+        diagnostics
+            .push("security report suite identity does not match consumed suite bytes".to_string());
+    }
     let expected = suite
         .value
         .tasks

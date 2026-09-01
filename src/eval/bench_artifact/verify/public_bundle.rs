@@ -15,7 +15,9 @@ pub(super) fn read_bounded(path: &Path) -> Result<Vec<u8>, String> {
 }
 
 pub(super) fn private_payload_violation(bytes: &[u8]) -> Option<&'static str> {
-    let text = std::str::from_utf8(bytes).ok()?;
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Some("declared text artifact must be UTF-8");
+    };
     if let Ok(value) = serde_json::from_str::<Value>(text) {
         return private_json_violation(&value);
     }

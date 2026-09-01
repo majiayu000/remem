@@ -39,8 +39,8 @@ async fn public_verifier_replays_same_task_id_after_suite_semantics_change() -> 
     assert_ne!(first.suite_sha256, second.suite_sha256);
     assert_ne!(first.task_sha256, second.task_sha256);
 
-    assert_public_verification_passes(&first.root)?;
-    assert_public_verification_passes(&second.root)?;
+    assert_public_fixture_semantics_pass(&first.root)?;
+    assert_public_fixture_semantics_pass(&second.root)?;
     Ok(())
 }
 
@@ -68,7 +68,7 @@ async fn parallel_public_verifier_invocations_cover_distinct_task_and_platform_k
         let report = handle
             .join()
             .map_err(|_| anyhow::anyhow!("public verifier thread panicked"))??;
-        assert!(report.passed, "{:#?}", report.failures);
+        assert_public_fixture_semantics_passed(&report);
     }
     Ok(())
 }
@@ -79,8 +79,8 @@ async fn public_verifier_replays_identical_input_on_every_invocation() -> Result
     let fixture = build_fixture("public-context-identical", &task, "macos", "aarch64").await?;
     let (probe, _probe_guard) = super::super::production_pipeline::scoped_replay_probe();
 
-    assert_public_verification_passes(&fixture.root)?;
-    assert_public_verification_passes(&fixture.root)?;
+    assert_public_fixture_semantics_pass(&fixture.root)?;
+    assert_public_fixture_semantics_pass(&fixture.root)?;
     assert_eq!(
         probe.count(),
         2,
@@ -111,7 +111,7 @@ async fn parallel_identical_public_verifier_invocations_have_thread_local_probes
         let (report, replay_count) = handle
             .join()
             .map_err(|_| anyhow::anyhow!("public verifier thread panicked"))??;
-        assert!(report.passed, "{:#?}", report.failures);
+        assert_public_fixture_semantics_passed(&report);
         assert_eq!(
             replay_count, 1,
             "each verifier thread must observe only its own replay"
@@ -173,6 +173,8 @@ async fn build_fixture(
     suite["tasks"] = serde_json::json!([task]);
     let suite_bytes = serde_json::to_vec_pretty(&suite)?;
     let suite_sha256 = sha256(&suite_bytes);
+    report["aggregate_metrics"]["suite_content_identity"] =
+        Value::String(format!("sha256-raw-suite-v1:{suite_sha256}"));
     let suite_path = root.join("memory/suites/adversarial-policy/suite.json");
     create_parent(&suite_path)?;
     fs::write(&suite_path, suite_bytes)?;
@@ -232,16 +234,25 @@ async fn build_fixture(
     })
 }
 
-fn assert_public_verification_passes(root: &Path) -> Result<()> {
+fn assert_public_fixture_semantics_pass(root: &Path) -> Result<()> {
     let report = verify_benchmark_artifacts(BenchVerifyOptions::new(
         root.to_path_buf(),
         "eval/claims/registry.json",
     ))?;
-    assert!(report.passed, "{:#?}", report.failures);
+    assert_public_fixture_semantics_passed(&report);
+    Ok(())
+}
+
+fn assert_public_fixture_semantics_passed(report: &BenchVerifyReport) {
+    assert!(!report.passed, "cropped test suite must not gain authority");
+    assert_eq!(report.failures.len(), 1, "{:#?}", report.failures);
+    assert_eq!(
+        report.failures[0].message,
+        "security report does not use the registered adversarial security suite identity"
+    );
     assert_eq!(report.manifests_checked, 1);
     assert_eq!(report.reports_checked, 1);
     assert_eq!(report.run_artifacts_checked, 1);
-    Ok(())
 }
 
 fn refresh_artifact_hashes(root: &Path, run: &mut Value) -> Result<()> {

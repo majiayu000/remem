@@ -126,7 +126,7 @@ pub(crate) fn run_eval_gates_with_ship_evidence(
     let baseline_path = options.baseline_path.clone();
     let thresholds_path = options.thresholds_path.clone();
     let golden_dataset_path = options.golden_dataset_path.clone();
-    let report = run_eval_gates(options)?;
+    let mut report = run_eval_gates(options)?;
     let ship_options = crate::eval::ship_matrix::ShipMatrixOptions {
         baseline_path,
         thresholds_path,
@@ -151,6 +151,7 @@ pub(crate) fn run_eval_gates_with_ship_evidence(
         ship_options,
     );
     let command_passed = ship_evidence.ship_matrix.summary.command_passed;
+    apply_combined_command_verdict(&mut report, command_passed);
     let summary = &ship_evidence.ship_matrix.summary;
     let ship_summary = format_ship_summary(summary);
     let mut report_value = serde_json::to_value(&report)?;
@@ -189,6 +190,10 @@ fn format_ship_summary(summary: &crate::eval::ship_matrix::ShipMatrixSummary) ->
         summary.coding_outcome_claim_ready,
         summary.public_claim_ready,
     )
+}
+
+fn apply_combined_command_verdict(report: &mut EvalGateReport, command_passed: bool) {
+    report.summary.passed = command_passed;
 }
 
 pub fn run_eval_gates(options: EvalGateOptions) -> Result<EvalGateReport> {

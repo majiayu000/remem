@@ -387,10 +387,10 @@ pub(super) fn coding_gate(options: &ShipMatrixOptions, public: &PublicEvidence) 
     ShipGateRow {
         id: "coding_outcome",
         owner: "docs/specs/GH931 + src/eval/bench_artifact",
-        status: if passed {
-            ShipGateStatus::Pass
-        } else {
-            ShipGateStatus::Unavailable
+        status: match authority.map(|authority| authority.status) {
+            Some(AuthorityStatus::Pass) if artifacts_verified => ShipGateStatus::Pass,
+            Some(AuthorityStatus::Fail) => ShipGateStatus::Fail,
+            _ => ShipGateStatus::Unavailable,
         },
         blocks: vec!["coding_outcome", "public_claim"],
         required_for_command_success: false,
