@@ -83,7 +83,7 @@ fn verifier_privacy_scans_declared_text_artifact_payloads() -> Result<()> {
         &answer_path,
         serde_json::to_vec(&serde_json::json!({
             "abstained": true,
-            "text": format!("{}/.remem/private", dirs::home_dir().context("home")?.display())
+            "text": "opened /home/runner/private.txt during verification"
         }))?,
     )?;
     let answer_sha256 = format!("{:x}", Sha256::digest(fs::read(&answer_path)?));
@@ -95,7 +95,7 @@ fn verifier_privacy_scans_declared_text_artifact_payloads() -> Result<()> {
         verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
-    assert!(failure_text(&report).contains("private remem path"));
+    assert!(failure_text(&report).contains("absolute user home path"));
     Ok(())
 }
 

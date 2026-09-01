@@ -42,9 +42,23 @@ pub(super) fn private_string_violation(text: &str) -> Option<&'static str> {
     {
         return Some("contains a private remem path");
     }
-    let home = dirs::home_dir()?.into_os_string().into_string().ok()?;
-    text.starts_with(&home)
-        .then_some("contains an absolute path under the current user home")
+    if let Some(home) = dirs::home_dir().and_then(|path| path.into_os_string().into_string().ok()) {
+        if text.contains(&home) {
+            return Some("contains an absolute path under the current user home");
+        }
+    }
+    contains_absolute_user_home_path(text).then_some("contains an absolute user home path")
+}
+
+fn contains_absolute_user_home_path(text: &str) -> bool {
+    ["/Users/", "/home/", "/var/home/"].iter().any(|prefix| {
+        text.match_indices(prefix).any(|(index, _)| {
+            let suffix = &text[index + prefix.len()..];
+            suffix
+                .split_once('/')
+                .is_some_and(|(user, path)| !user.is_empty() && !path.is_empty())
+        })
+    })
 }
 
 pub(super) fn unreferenced_run_entries(

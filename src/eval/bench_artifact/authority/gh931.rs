@@ -239,7 +239,7 @@ fn evaluate_maintenance(
     let threshold_failed = gate.is_some_and(|gate| {
         reduction_pct.is_some_and(|reduction| reduction < gate.human_maintenance_reduction_min_pct)
     });
-    let status = if threshold_failed {
+    let status = if evidence_ready && policy_ready && threshold_failed {
         AuthorityStatus::Fail
     } else if evidence_ready
         && policy_ready
@@ -252,7 +252,7 @@ fn evaluate_maintenance(
     } else {
         AuthorityStatus::Insufficient
     };
-    let diagnostics = if threshold_failed {
+    let diagnostics = if evidence_ready && policy_ready && threshold_failed {
         vec!["human-maintenance reduction threshold not satisfied".to_string()]
     } else if status == AuthorityStatus::Insufficient {
         vec!["raw curator or treatment maintenance evidence is incomplete".to_string()]
@@ -449,7 +449,7 @@ fn evaluate_stop_loss(
             || stale_memory_followed_rate_pct
                 .is_some_and(|rate| rate > gate.stale_memory_followed_max_pct)
     });
-    let status = if breached {
+    let status = if evidence_ready && policy_ready && breached {
         AuthorityStatus::Fail
     } else if evidence_ready
         && policy_ready
@@ -463,7 +463,7 @@ fn evaluate_stop_loss(
     };
     let diagnostics = if missing_attribution {
         vec!["one or more remem_e2e runs lack memory_hurt attribution".to_string()]
-    } else if breached {
+    } else if evidence_ready && policy_ready && breached {
         vec!["measured GH931 stop-loss threshold breached".to_string()]
     } else if status == AuthorityStatus::Insufficient {
         vec!["stop-loss evidence or locked policy is incomplete".to_string()]

@@ -16,10 +16,7 @@
     "aggregate_metrics": {
       "type": "object",
       "properties": {
-        "suite_content_identity": {
-          "type": "string",
-          "pattern": "^sha256-raw-suite-v1:[0-9a-f]{64}$"
-        }
+        "suite_content_identity": { "type": "string", "pattern": "^sha256-raw-suite-v1:[0-9a-f]{64}$" }
       }
     },
     "claim_level": { "type": "string", "minLength": 1 },
@@ -36,7 +33,20 @@
       },
       "then": {
         "properties": {
-          "aggregate_metrics": { "required": ["suite_content_identity"] }
+          "aggregate_metrics": {
+            "required": ["suite", "suite_version", "fixture_revision", "suite_content_identity", "run_count", "policy", "verification_paths", "measurement_sources"],
+            "properties": {
+              "suite": { "type": "string", "minLength": 1 },
+              "suite_version": { "type": "string", "minLength": 1 },
+              "fixture_revision": { "type": "string", "minLength": 1 },
+              "suite_content_identity": { "type": "string", "pattern": "^sha256-raw-suite-v1:[0-9a-f]{64}$" },
+              "run_count": { "type": "integer", "minimum": 1 },
+              "policy": { "type": "object" },
+              "verification_paths": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+              "measurement_sources": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+            },
+            "additionalProperties": false
+          }
         }
       }
     }

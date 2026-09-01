@@ -66,25 +66,17 @@ fn verifier_rejects_hash_valid_snapshot_with_mutated_security_semantics() -> Res
 }
 
 #[test]
-fn tampered_security_report_aggregate_fails_closed_against_recomputed_policy() -> Result<()> {
+fn tampered_security_report_aggregate_fails_closed_against_exact_verified_shape() -> Result<()> {
     let root = copy_public_fixture("security-report-aggregate-mismatch")?;
     let report_path = root.join("memory/reports/adversarial-policy-v2.json");
     mutate_json(&report_path, |json| {
-        json["aggregate_metrics"]["policy"] = serde_json::json!({
-            "non_retention_cases": 999,
-            "non_retention_leak_rate": 1.0,
-            "false_block_rate": 1.0,
-            "suppression_obeyed_rate": 0.0,
-            "sensitive_restricted_default_exclusion_rate": 0.0,
-            "policy_abstention_accuracy": 0.0,
-            "policy_failure_rate": 1.0
-        });
+        json["aggregate_metrics"]["overall"]["answer_score"] = Value::from(0.123);
     })?;
     let report =
         verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
-    assert!(failure_text(&report).contains("recomputed security aggregate mismatch"));
+    assert!(failure_text(&report).contains("exact recomputed security aggregate"));
     let verdict = serde_json::to_value(&report)?;
     assert_eq!(verdict["authority_verdict"]["security"]["status"], "FAIL");
     Ok(())

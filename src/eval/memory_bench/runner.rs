@@ -103,7 +103,7 @@ pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBench
         }
     }
 
-    let aggregate_metrics = json!({
+    let mut aggregate_metrics = json!({
         "suite": fixture.suite,
         "suite_version": fixture.version,
         "fixture_revision": fixture.fixture_revision,
@@ -122,6 +122,12 @@ pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBench
             .map(|outcome| outcome.policy.measurement_source.clone())
             .collect::<BTreeSet<_>>(),
     });
+    if fixture.benchmark_id == "adversarial-policy" && fixture.version == "v2" {
+        let metrics = aggregate_metrics.as_object_mut().expect("json object");
+        for key in "overall,by_category,conditions,failure_decomposition,performance".split(',') {
+            metrics.remove(key);
+        }
+    }
     let report = PublicBenchmarkReport {
         schema_version: 1,
         benchmark_id: fixture.benchmark_id.clone(),

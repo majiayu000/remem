@@ -72,6 +72,19 @@ fn adversarial_policy_v2_schema_requires_provenance_and_artifact_hashes() -> ser
         environment["properties"]["production_input_tree_sha256"]["pattern"],
         "^[0-9a-f]{64}$"
     );
+    let diagnosis = &schema["properties"]["diagnosis"];
+    let diagnosis_required = diagnosis["required"]
+        .as_array()
+        .expect("typed diagnosis required fields");
+    for field in [
+        "write_side_gap",
+        "retrieval_side_gap",
+        "reader_gap",
+        "policy_abstention",
+    ] {
+        assert!(diagnosis_required.iter().any(|value| value == field));
+        assert_eq!(diagnosis["properties"][field]["type"], "boolean");
+    }
     Ok(())
 }
 

@@ -604,6 +604,11 @@ then apply registry thresholds and both frozen stop-losses. Registry
 claim-contract file is removed; the verifier carries the consumed registry's
 wording policy in each recomputed claim verdict for Python to project.
 
+For `adversarial-policy/v2`, the public report aggregate is closed to suite
+identity, fixture revision, run count, recomputed policy summary, verification
+paths, and measurement sources. Derived performance summaries that the verifier
+does not independently recompute are not public authority fields.
+
 All populations must be keyed by condition and run phase; pre-target coding
 failures must be excluded, while missing official attempts leave the matrix
 `INSUFFICIENT`. Ship rows must use only their covered runs for model identity.

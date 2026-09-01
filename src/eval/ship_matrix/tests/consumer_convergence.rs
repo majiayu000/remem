@@ -287,7 +287,7 @@ fn scorecard_keeps_completion_unavailable_without_complete_machine_outcomes() {
 }
 
 #[test]
-fn scorecard_projects_verified_maintenance_time() {
+fn scorecard_keeps_combined_ai_usage_unavailable() {
     let mut report = baseline_fixture();
     let gh931 = &mut report.artifact_verifier.authority_verdict.gh931;
     gh931.report = Some(crate::eval::bench_artifact::Gh931ReportBinding {
@@ -320,7 +320,7 @@ fn scorecard_projects_verified_maintenance_time() {
         .find(|field| field.id == "maintenance_time_and_ai_usage")
         .expect("maintenance scorecard field");
 
-    assert_eq!(maintenance.measurement_state, MeasurementState::Measured);
+    assert_eq!(maintenance.measurement_state, MeasurementState::Unavailable);
     assert_eq!(
         maintenance.values.get("curated_minutes_per_100_sessions"),
         Some(&20.0)

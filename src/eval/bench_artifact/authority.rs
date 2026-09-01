@@ -329,12 +329,32 @@ fn evaluate_security(
         let summary = complete
             .then(|| crate::eval::memory_bench::summarize_verified_security_policy(&outcomes));
         if let Some(summary) = summary.as_ref() {
-            let recomputed = serde_json::to_value(summary).unwrap_or(Value::Null);
-            let declared = report.value.aggregate_metrics.get("policy");
-            if declared != Some(&recomputed) {
+            let suite = verified.memory_suites.iter().find(|suite| {
+                suite.value.benchmark_id == report.value.benchmark_id
+                    && suite.value.version == report.value.benchmark_version
+                    && report.value.suite.as_deref() == Some(suite.value.suite.as_str())
+            });
+            let recomputed = suite.map(|suite| {
+                serde_json::json!({
+                    "suite": suite.value.suite,
+                    "suite_version": suite.value.version,
+                    "fixture_revision": suite.value.fixture_revision,
+                    "suite_content_identity": format!("sha256-raw-suite-v1:{}", suite.sha256),
+                    "run_count": outcomes.len(),
+                    "policy": summary,
+                    "verification_paths": outcomes.iter()
+                        .map(|outcome| outcome.verification_path.clone())
+                        .collect::<BTreeSet<_>>(),
+                    "measurement_sources": outcomes.iter()
+                        .map(|outcome| outcome.measurement_source.clone())
+                        .collect::<BTreeSet<_>>(),
+                })
+            });
+            if recomputed.as_ref() != Some(&report.value.aggregate_metrics) {
                 let message = format!(
-                    "recomputed security aggregate mismatch: declared={} recomputed={recomputed}",
-                    declared.unwrap_or(&Value::Null)
+                    "security report must exactly match the exact recomputed security aggregate: declared={} recomputed={}",
+                    report.value.aggregate_metrics,
+                    recomputed.as_ref().unwrap_or(&Value::Null)
                 );
                 diagnostics.push(message.clone());
                 failures.push(BenchVerifyFailure {

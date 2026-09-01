@@ -24,7 +24,18 @@
     "retrieval": { "type": "object" },
     "evidence": { "type": "object" },
     "metrics": { "type": "object" },
-    "diagnosis": { "type": "object" },
+    "diagnosis": {
+      "type": "object",
+      "required": ["write_side_gap", "retrieval_side_gap", "reader_gap", "policy_abstention"],
+      "properties": {
+        "write_side_gap": { "type": "boolean" },
+        "retrieval_side_gap": { "type": "boolean" },
+        "reader_gap": { "type": "boolean" },
+        "policy_abstention": { "type": "boolean" },
+        "notes": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
     "artifacts": { "type": "object" },
     "artifact_sha256": {
       "type": "object",

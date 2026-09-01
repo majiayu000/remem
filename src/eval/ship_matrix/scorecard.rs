@@ -138,7 +138,7 @@ fn maintenance_field(
     values.insert("maintenance_reduction_pct".to_string(), reduction);
     ScorecardField {
         id: "maintenance_time_and_ai_usage",
-        measurement_state: MeasurementState::Measured,
+        measurement_state: MeasurementState::Unavailable,
         eligible_population: "official GH931 target-blind curator and remem_e2e sessions"
             .to_string(),
         numerator: ScorecardComponent {

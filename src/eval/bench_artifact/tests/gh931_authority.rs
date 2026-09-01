@@ -167,7 +167,7 @@ fn unsigned_official_evidence_cannot_authorize_gh931() -> Result<()> {
     let mut verified = complete_verified_matrix(AuthorityStatus::Pass)?;
     verified.official_evidence_authenticated = false;
     attach_curator_evidence(&mut verified);
-    attach_treatment_evidence(&mut verified, 0.0, 1);
+    attach_treatment_evidence(&mut verified, 3.0, 1);
 
     let verdict = evaluate_gh931(&verified, &[]);
 
