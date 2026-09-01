@@ -156,6 +156,7 @@ async fn build_fixture(
         "eval/public/memory/reports/adversarial-policy-v2.json",
     ))?;
     report["run_artifacts"] = serde_json::json!([RUN_RELATIVE]);
+    report["aggregate_metrics"]["run_count"] = Value::from(1);
 
     let base_artifact = Path::new(
         "eval/public/memory/artifacts/adversarial-policy-v2/\
