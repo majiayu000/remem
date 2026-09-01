@@ -50,6 +50,7 @@ fn verifier_rejects_hash_valid_snapshot_with_mutated_security_semantics() -> Res
          WHERE session_id = 'secrets-api-key-001'",
         [],
     )?;
+    connection.execute_batch("VACUUM")?;
     drop(connection);
     let mutated_sha256 = format!("{:x}", Sha256::digest(fs::read(&snapshot)?));
     mutate_json(&run_path, |json| {
@@ -530,6 +531,7 @@ fn verifier_rejects_snapshot_with_unrelated_captured_event() -> Result<()> {
          LIMIT 1",
         rusqlite::params![leaked, crate::db::content_identity_hash(leaked.as_bytes())],
     )?;
+    connection.execute_batch("VACUUM")?;
     drop(connection);
     let mutated_sha256 = format!("{:x}", Sha256::digest(fs::read(&snapshot)?));
     mutate_json(&run_path, |json| {
