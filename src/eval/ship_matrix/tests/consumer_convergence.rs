@@ -205,6 +205,7 @@ fn release_readiness_requires_verifier_release_and_legacy_gates() {
 fn scorecard_projects_only_remem_e2e_completion_from_verdict() {
     let mut report = baseline_fixture();
     let gh931 = &mut report.artifact_verifier.authority_verdict.gh931;
+    gh931.measurement_ready = true;
     gh931.completeness.complete = true;
     gh931.completeness.attempts_ready = true;
     gh931.completeness.machine_outcomes_ready = true;
@@ -290,6 +291,7 @@ fn scorecard_keeps_completion_unavailable_without_complete_machine_outcomes() {
 fn scorecard_keeps_combined_ai_usage_unavailable() {
     let mut report = baseline_fixture();
     let gh931 = &mut report.artifact_verifier.authority_verdict.gh931;
+    gh931.measurement_ready = true;
     gh931.report = Some(crate::eval::bench_artifact::Gh931ReportBinding {
         path: "coding/reports/official.json".to_string(),
         sha256: "e".repeat(64),

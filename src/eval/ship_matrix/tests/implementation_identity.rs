@@ -22,7 +22,7 @@ fn build_script_watches_the_benchmark_authority_suite() {
 #[test]
 fn production_identity_implementations_share_machine_contract() {
     let build_script = include_str!("../../../../build.rs");
-    let rust_authority = include_str!("../../bench_artifact/authority.rs");
+    let rust_authority = include_str!("../../bench_artifact/authority/implementation.rs");
     for implementation in [build_script, rust_authority] {
         assert!(implementation.contains("production-input-pathspec-v1.json"));
         assert!(!implementation.contains("\"Cargo.lock\""));
