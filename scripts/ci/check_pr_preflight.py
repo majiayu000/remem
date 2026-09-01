@@ -213,7 +213,16 @@ def positive_int(value: str) -> int:
 
 
 def cargo_test_command(test_threads: int) -> list[str]:
-    return ["cargo", "test", "--", "--test-threads", str(test_threads)]
+    return [
+        "cargo",
+        "test",
+        "--no-default-features",
+        "--features",
+        "local-onnx",
+        "--",
+        "--test-threads",
+        str(test_threads),
+    ]
 
 
 def parse_args() -> argparse.Namespace:
@@ -314,7 +323,12 @@ def main() -> int:
                     tmp / "eval-gates-capacity-regression.log",
                 )
             )
-        results.append(run("Run cargo test", cargo_test_command(args.cargo_test_threads)))
+        results.append(
+            run(
+                "Run production cargo tests without eval",
+                cargo_test_command(args.cargo_test_threads),
+            )
+        )
 
     return print_summary(results)
 

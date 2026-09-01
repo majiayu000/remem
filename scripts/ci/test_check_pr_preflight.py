@@ -65,12 +65,36 @@ class PreflightCargoTestThreadsTests(unittest.TestCase):
     def test_default_command_caps_rust_test_harness_at_four_threads(self) -> None:
         commands = self.run_main()
 
-        self.assertEqual(commands[-1], ["cargo", "test", "--", "--test-threads", "4"])
+        self.assertEqual(
+            commands[-1],
+            [
+                "cargo",
+                "test",
+                "--no-default-features",
+                "--features",
+                "local-onnx",
+                "--",
+                "--test-threads",
+                "4",
+            ],
+        )
 
     def test_override_changes_rust_test_harness_thread_count(self) -> None:
         commands = self.run_main("--cargo-test-threads", "8")
 
-        self.assertEqual(commands[-1], ["cargo", "test", "--", "--test-threads", "8"])
+        self.assertEqual(
+            commands[-1],
+            [
+                "cargo",
+                "test",
+                "--no-default-features",
+                "--features",
+                "local-onnx",
+                "--",
+                "--test-threads",
+                "8",
+            ],
+        )
 
     def test_zero_and_negative_thread_counts_are_rejected_before_gates(self) -> None:
         for value in ("0", "-1"):
