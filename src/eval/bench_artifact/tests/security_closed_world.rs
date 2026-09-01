@@ -63,6 +63,7 @@ fn assert_snapshot_attack_rejected(
     let snapshot = root.join(snapshot_relative);
     let connection = Connection::open(&snapshot)?;
     attack(&connection)?;
+    connection.execute_batch("VACUUM")?;
     drop(connection);
     let mutated_sha256 = format!("{:x}", Sha256::digest(fs::read(&snapshot)?));
     mutate_json(&run_path, |json| {
