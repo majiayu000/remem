@@ -7,6 +7,7 @@ Thanks for your interest in contributing!
 ```bash
 git clone https://github.com/majiayu000/remem.git
 cd remem
+python3 -m pip install --requirement scripts/ci/requirements.txt
 cargo build
 cargo test
 ```
@@ -26,7 +27,7 @@ Use this ladder to choose the smallest useful checks for the change:
 
 | Change type | Focused checks |
 | --- | --- |
-| Docs only | `git diff --check` and review rendered Markdown when formatting matters. |
+| Docs only | Run `python3 scripts/ci/test_check_documentation_contracts.py` and `python3 scripts/ci/check_documentation_contracts.py`, then `git diff --check`; review rendered Markdown when formatting matters. |
 | CLI behavior | Run the targeted CLI parser/action test, then `cargo test <changed_surface>` for the affected command. |
 | Plugin or npm wrapper | Run `node --test plugins/remem/scripts/remem-runtime.test.js plugins/remem/apps/remem/request-security.test.js plugins/remem/apps/remem/server.test.js npm/remem/scripts/install.test.js`; include `python3 scripts/ci/check_plugin_version_sync.py` when versions, runtime assets, or plugin metadata change. |
 | API behavior | Run the focused API test such as `cargo test api` or `cargo test --test api_public`, then check the relevant API docs/spec note. |
