@@ -60,6 +60,23 @@ pub struct GovernedMemory {
     pub new_status: String,
 }
 
+#[derive(Debug)]
+pub(crate) struct MemoryGovernanceVersionConflictError {
+    memory_id: i64,
+}
+
+impl std::fmt::Display for MemoryGovernanceVersionConflictError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "memory version does not match expected_versions for id={}",
+            self.memory_id
+        )
+    }
+}
+
+impl std::error::Error for MemoryGovernanceVersionConflictError {}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct GovernMemoryResult {
     pub dry_run: bool,
@@ -471,6 +488,22 @@ pub fn govern_memories(
     conn: &Connection,
     req: &GovernMemoryRequest<'_>,
 ) -> Result<GovernMemoryResult> {
+    govern_memories_inner(conn, req, None)
+}
+
+pub(crate) fn govern_memories_with_expected_versions(
+    conn: &Connection,
+    req: &GovernMemoryRequest<'_>,
+    expected_versions: &std::collections::BTreeMap<i64, i64>,
+) -> Result<GovernMemoryResult> {
+    govern_memories_inner(conn, req, Some(expected_versions))
+}
+
+fn govern_memories_inner(
+    conn: &Connection,
+    req: &GovernMemoryRequest<'_>,
+    expected_versions: Option<&std::collections::BTreeMap<i64, i64>>,
+) -> Result<GovernMemoryResult> {
     let ids = unique_ids(req.ids);
     if ids.is_empty() {
         bail!("memory governance requires at least one memory id");
@@ -483,6 +516,17 @@ pub fn govern_memories(
     let mut rule_source_ids = Vec::new();
     for id in ids {
         let target = load_target(&tx, req.project, id)?;
+        let expected_version = expected_versions
+            .map(|versions| {
+                versions
+                    .get(&id)
+                    .copied()
+                    .ok_or_else(|| anyhow!("expected_versions is missing memory id={id}"))
+            })
+            .transpose()?;
+        if expected_version.is_some_and(|version| version != target.version) {
+            return Err(MemoryGovernanceVersionConflictError { memory_id: id }.into());
+        }
         if req.action == MemoryGovernanceAction::AcknowledgePattern {
             validate_acknowledgement(&target, acknowledged_pattern)?;
         }
@@ -504,8 +548,24 @@ pub fn govern_memories(
             rule_source_ids.push(target.id);
         }
         let now = chrono::Utc::now().timestamp();
-        let updated = if req.action == MemoryGovernanceAction::AcknowledgePattern {
-            tx.execute(
+        let updated = match (req.action, expected_version) {
+            (MemoryGovernanceAction::AcknowledgePattern, Some(version)) => tx.execute(
+                "UPDATE memories
+                 SET acknowledged_pattern_id = ?1,
+                     acknowledged_pattern_version = ?2,
+                     acknowledged_at_epoch = ?3,
+                     updated_at_epoch = ?3
+                 WHERE id = ?4 AND project = ?5 AND version = ?6",
+                params![
+                    acknowledged_pattern,
+                    crate::memory::poisoning::INSTRUCTION_PATTERN_SET_VERSION,
+                    now,
+                    target.id,
+                    req.project,
+                    version
+                ],
+            )?,
+            (MemoryGovernanceAction::AcknowledgePattern, None) => tx.execute(
                 "UPDATE memories
                  SET acknowledged_pattern_id = ?1,
                      acknowledged_pattern_version = ?2,
@@ -519,16 +579,24 @@ pub fn govern_memories(
                     target.id,
                     req.project
                 ],
-            )?
-        } else {
-            tx.execute(
+            )?,
+            (_, Some(version)) => tx.execute(
+                "UPDATE memories
+                 SET status = ?1, updated_at_epoch = ?2
+                 WHERE id = ?3 AND project = ?4 AND version = ?5",
+                params![target_status, now, target.id, req.project, version],
+            )?,
+            (_, None) => tx.execute(
                 "UPDATE memories
                  SET status = ?1, updated_at_epoch = ?2
                  WHERE id = ?3 AND project = ?4",
                 params![target_status, now, target.id, req.project],
-            )?
+            )?,
         };
         if updated != 1 {
+            if expected_version.is_some() {
+                return Err(MemoryGovernanceVersionConflictError { memory_id: id }.into());
+            }
             return Err(anyhow!(
                 "failed to update memory governance target: id={} project={}",
                 target.id,
@@ -649,11 +717,12 @@ struct GovernanceTarget {
     title: String,
     content: String,
     status: String,
+    version: i64,
 }
 
 fn load_target(conn: &Connection, project: &str, id: i64) -> Result<GovernanceTarget> {
     conn.query_row(
-        "SELECT id, title, content, status
+        "SELECT id, title, content, status, version
          FROM memories
          WHERE id = ?1 AND project = ?2",
         params![id, project],
@@ -663,6 +732,7 @@ fn load_target(conn: &Connection, project: &str, id: i64) -> Result<GovernanceTa
                 title: row.get(1)?,
                 content: row.get(2)?,
                 status: row.get(3)?,
+                version: row.get(4)?,
             })
         },
     )

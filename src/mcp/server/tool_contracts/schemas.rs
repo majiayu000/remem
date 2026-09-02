@@ -429,6 +429,7 @@ struct GovernMemoryOutput {
     #[schemars(schema_with = "required_nullable_string_schema", required)]
     reason: Option<String>,
     affected: Vec<GovernedMemoryOutput>,
+    expected_versions: Option<std::collections::BTreeMap<i64, i64>>,
 }
 
 #[derive(Deserialize, JsonSchema)]

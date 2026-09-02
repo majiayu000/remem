@@ -20,6 +20,10 @@ source labels, pagination, and the next `get_observations` call to make.
 Use `get_observations(ids, source)` for selected full details. Do not fetch
 every result by default.
 
+Use `recall_user_context(query, project?, cwd?)` for a bounded, task-aware
+bundle. Supply either `project` or `cwd`; the MCP server does not infer this
+scope from its own process working directory.
+
 Use `search_raw(query)` when curated search is empty or too sparse and you need
 literal chat recall. Raw hits are transcript evidence, not curated memory.
 
@@ -46,6 +50,26 @@ Before saving, search for an existing topic and reuse a stable kebab-case
 
 If the user asks to save, write, or update a document, create or edit the local
 project file first. `save_memory` is only a long-term backup.
+
+Pass `host` when the calling host is known. An omitted host is recorded as
+`unknown`, never inferred as Codex.
+
+## Governance
+
+Call `govern_memory` with `dry_run=true` first. Its `expected_versions` object
+maps each affected memory ID to its current version. Pass that object back for
+a mutation, along with `confirm_destructive=true` and an explicit reason. If
+any version is stale, the whole batch fails without a partial mutation.
+
+## MCP contract migration (#1061)
+
+The MCP contract corrected by [#1061](https://github.com/majiayu000/remem/issues/1061)
+is intentionally stricter. Existing callers must supply `project` or `cwd` to
+`recall_user_context`, identify their host when known, and use the governance
+dry-run/version round trip described above. The prior `save_memory`,
+`recall_user_context`, and `govern_memory` tool-schema identities are retired in
+the public-surface manifest; the served tool metadata and contract tests define
+the new boundary.
 
 ## Workstreams
 

@@ -1,5 +1,6 @@
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
+use serde::Serialize;
 use serde_json::json;
 
 use super::super::types::{GovernMemoryParams, SaveMemoryParams, TimelineReportParams};
@@ -54,7 +55,56 @@ fn validate_governance_request(
             "memory governance mutation requires an explicit reason",
         ));
     }
+    let expected_versions = params.expected_versions.as_ref().ok_or_else(|| {
+        McpToolError::invalid_request(
+            tool,
+            "memory governance mutation requires expected_versions for every memory id; use dry_run=true to obtain current versions",
+        )
+    })?;
+    let ids = params
+        .ids
+        .iter()
+        .copied()
+        .filter(|id| *id > 0)
+        .collect::<std::collections::BTreeSet<_>>();
+    if expected_versions.len() != ids.len()
+        || expected_versions
+            .iter()
+            .any(|(id, version)| !ids.contains(id) || *version <= 0)
+    {
+        return Err(McpToolError::invalid_request(
+            tool,
+            "expected_versions must contain exactly one positive version for every memory id",
+        ));
+    }
     Ok(())
+}
+
+fn governance_versions(
+    conn: &rusqlite::Connection,
+    project: &str,
+    affected: &[crate::memory::governance::GovernedMemory],
+) -> anyhow::Result<std::collections::BTreeMap<i64, i64>> {
+    affected
+        .iter()
+        .map(|memory| {
+            conn.query_row(
+                "SELECT version FROM memories WHERE id = ?1 AND project = ?2",
+                rusqlite::params![memory.id, project],
+                |row| row.get(0),
+            )
+            .map(|version| (memory.id, version))
+            .map_err(Into::into)
+        })
+        .collect()
+}
+
+#[derive(Serialize)]
+struct GovernMemoryMcpResponse {
+    #[serde(flatten)]
+    result: crate::memory::governance::GovernMemoryResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expected_versions: Option<std::collections::BTreeMap<i64, i64>>,
 }
 
 #[tool_router(router = tool_router_write, vis = "pub(super)")]
@@ -99,7 +149,7 @@ impl MemoryServer {
                     .host
                     .clone()
                     .filter(|host| !host.trim().is_empty())
-                    .or_else(|| Some("codex-cli".to_string())),
+                    .or_else(|| Some("unknown".to_string())),
                 topic_key: params.topic_key.clone(),
                 memory_type: params.memory_type.clone(),
                 files: params.files.clone(),
@@ -178,8 +228,9 @@ impl MemoryServer {
 
     #[tool(
         description = "Auditably delete, reject, or mark curated memories stale. \
-        Use dry_run=true first to preview affected IDs. Non-dry-run mutations require \
-        confirm_destructive=true and an explicit reason. This never deletes raw archive data."
+        Use dry_run=true first to preview affected IDs and their current versions. Non-dry-run \
+        mutations require confirm_destructive=true, an explicit reason, and expected_versions \
+        containing every target ID. This never deletes raw archive data."
     )]
     pub(super) fn govern_memory(
         &self,
@@ -210,24 +261,48 @@ impl MemoryServer {
                     .unwrap_or_else(|| "unknown".to_string())
             });
         self.with_conn(TOOL, move |conn| {
-            let result = crate::memory::governance::govern_memories(
-                conn,
-                &crate::memory::governance::GovernMemoryRequest {
-                    project: &project,
-                    ids: &params.ids,
-                    action,
-                    reason: params.reason.as_deref(),
-                    actor: params.actor.as_deref().or(Some("mcp")),
-                    dry_run: params.dry_run.unwrap_or(false),
-                    confirm_destructive: params.confirm_destructive.unwrap_or(false),
-                    acknowledge_pattern: params.acknowledge_pattern.as_deref(),
-                },
-            )
+            let dry_run = params.dry_run.unwrap_or(false);
+            let request = crate::memory::governance::GovernMemoryRequest {
+                project: &project,
+                ids: &params.ids,
+                action,
+                reason: params.reason.as_deref(),
+                actor: params.actor.as_deref().or(Some("mcp")),
+                dry_run,
+                confirm_destructive: params.confirm_destructive.unwrap_or(false),
+                acknowledge_pattern: params.acknowledge_pattern.as_deref(),
+            };
+            let result = if dry_run {
+                crate::memory::governance::govern_memories(conn, &request)
+            } else {
+                crate::memory::governance::govern_memories_with_expected_versions(
+                    conn,
+                    &request,
+                    params
+                        .expected_versions
+                        .as_ref()
+                        .expect("validated non-dry-run expected_versions"),
+                )
+            }
             .map_err(|e| {
                 crate::log::warn("mcp", &format!("govern_memory failed: {}", e));
-                McpToolError::db_query(TOOL, e)
+                if e.is::<crate::memory::governance::MemoryGovernanceVersionConflictError>() {
+                    McpToolError::invalid_request(TOOL, e.to_string())
+                } else {
+                    McpToolError::db_query(TOOL, e)
+                }
             })?;
-            errors::to_json_string(TOOL, &result)
+            let expected_versions = dry_run
+                .then(|| governance_versions(conn, &project, &result.affected))
+                .transpose()
+                .map_err(|e| McpToolError::db_query(TOOL, e))?;
+            errors::to_json_string(
+                TOOL,
+                &GovernMemoryMcpResponse {
+                    result,
+                    expected_versions,
+                },
+            )
         })
     }
 
