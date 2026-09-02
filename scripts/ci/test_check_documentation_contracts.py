@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import check_documentation_contracts
+from documentation_contract_markdown_edge_tests import MarkdownEdgeContractTests
 
 
 EXPECTED_WORKFLOW_SMOKE_COMMAND = (
@@ -31,7 +32,7 @@ docs/specs/SPEC-web-api.md
 docs/specs/README.md
 CHANGELOG.md
 CONTRIBUTING.md
-remem install --target cursor
+remem install --target cursor not install automatic capture hooks 不会安装自动捕获 hook
 127.0.0.1
 Authorization: Bearer
 The REST API binds to `127.0.0.1` and requires a bearer token.

@@ -7,6 +7,7 @@ Thanks for your interest in contributing!
 ```bash
 git clone https://github.com/majiayu000/remem.git
 cd remem
+python3 -m pip install --requirement scripts/ci/requirements.txt
 cargo build
 cargo test
 ```

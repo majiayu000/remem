@@ -6,10 +6,17 @@ from __future__ import annotations
 import re
 import shlex
 import sys
-from html import unescape as html_unescape
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
+
+try:
+    from markdown_it import MarkdownIt
+except ModuleNotFoundError as exc:
+    raise SystemExit(
+        "missing CI dependency markdown-it-py; run "
+        "python3 -m pip install --requirement scripts/ci/requirements.txt"
+    ) from exc
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -25,17 +32,12 @@ SESSIONSTART_SMOKE_ROUTES = {
     Path("docs/README.md"): "../scripts/ci/smoke_sessionstart_context_gate.sh",
     SESSIONSTART_SMOKE_GUIDE: "scripts/ci/smoke_sessionstart_context_gate.sh",
 }
-INLINE_DESTINATION_START_PATTERN = re.compile(r"(?<!\\)\]\(")
-REFERENCE_DESTINATION_PATTERN = re.compile(
-    r"^\s{0,3}\[(?!\^)[^\]\n]+\]:\s*(<[^>\n]+>|\S+)"
-)
-REFERENCE_LABEL_ONLY_PATTERN = re.compile(r"^ {0,3}\[(?!\^)[^\]\n]+\]:\s*$")
-HEADING_PATTERN = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")
-SETEXT_HEADING_PATTERN = re.compile(r"^ {0,3}(?:=+|-+)\s*$")
-FENCE_PATTERN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 SHELL_FENCE_PATTERN = re.compile(
     r"^[ \t]*```(?:bash|sh|shell)\s*\n(.*?)^[ \t]*```\s*$",
     re.MULTILINE | re.DOTALL,
+)
+MARKDOWN = MarkdownIt("commonmark", {"html": True}).enable(
+    ["table", "strikethrough"]
 )
 
 
@@ -73,7 +75,14 @@ BILINGUAL_README_INVARIANTS = (
     BilingualInvariant("current spec index", ("docs/specs/README.md",)),
     BilingualInvariant("changelog", ("CHANGELOG.md",)),
     BilingualInvariant("contribution guide", ("CONTRIBUTING.md",)),
-    BilingualInvariant("Cursor v1 limitation", ("remem install --target cursor",)),
+    BilingualInvariant(
+        "Cursor v1 limitation",
+        ("remem install --target cursor",),
+        (
+            "not install automatic capture hooks",
+            "不会安装自动捕获 hook",
+        ),
+    ),
     BilingualInvariant(
         "localhost bearer-token API",
         ("127.0.0.1", "Authorization: Bearer"),
@@ -101,17 +110,9 @@ def read(root: Path, relative: Path) -> str:
     return (root / relative).read_text(encoding="utf-8")
 
 
-def github_slug(heading: str) -> str:
-    """Return GitHub's documented Markdown heading anchor form."""
-    visible = heading.strip().lower()
-    visible = re.sub(r"<[^>]+>", "", visible)
-    visible = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", visible)
-    visible = re.sub(r"(?<!\w)_{1,3}(?=\S)", "", visible)
-    visible = re.sub(r"(?<=\S)_{1,3}(?!\w)", "", visible)
-    visible = re.sub(r"[`*~]", "", visible)
-    visible = html_unescape(visible)
+def slug_from_visible_text(visible: str) -> str:
     slug: list[str] = []
-    for character in visible:
+    for character in visible.strip().lower():
         if character == " ":
             slug.append("-")
         elif character in {"-", "_"} or character.isalnum():
@@ -121,58 +122,35 @@ def github_slug(heading: str) -> str:
     return "".join(slug)
 
 
-def markdown_lines(text: str):
-    """Yield source lines outside fenced code blocks."""
-    fence_character: str | None = None
-    fence_length = 0
-    for line_number, line in enumerate(text.splitlines(), start=1):
-        fence = FENCE_PATTERN.match(line)
-        if fence:
-            marker = fence.group(1)
-            if fence_character is None:
-                fence_character = marker[0]
-                fence_length = len(marker)
-                continue
-            if (
-                marker[0] == fence_character
-                and len(marker) >= fence_length
-                and not line[fence.end() :].strip()
-            ):
-                fence_character = None
-                fence_length = 0
-            continue
-        if fence_character is None:
-            yield line_number, line
+def inline_visible_text(token) -> str:
+    visible: list[str] = []
+    for child in token.children or ():
+        if child.type in {"text", "code_inline", "image"}:
+            visible.append(child.content)
+        elif child.type in {"softbreak", "hardbreak"}:
+            visible.append(" ")
+    return "".join(visible)
+
+
+def github_slug(heading: str) -> str:
+    """Return GitHub's heading anchor form from rendered inline text."""
+    inline = MARKDOWN.parseInline(heading)[0]
+    return slug_from_visible_text(inline_visible_text(inline))
 
 
 def heading_anchors(text: str) -> set[str]:
     anchors: set[str] = set()
-    previous_line: str | None = None
-
-    def add_anchor(heading: str) -> None:
-        base = github_slug(heading)
+    tokens = MARKDOWN.parse(text)
+    for index, token in enumerate(tokens[:-1]):
+        if token.type != "heading_open" or tokens[index + 1].type != "inline":
+            continue
+        base = slug_from_visible_text(inline_visible_text(tokens[index + 1]))
         candidate = base
         suffix = 1
         while candidate in anchors:
             candidate = f"{base}-{suffix}"
             suffix += 1
         anchors.add(candidate)
-
-    for _, line in markdown_lines(text):
-        atx_heading = HEADING_PATTERN.match(line)
-        if atx_heading is not None:
-            add_anchor(atx_heading.group(1))
-            previous_line = None
-            continue
-        if (
-            SETEXT_HEADING_PATTERN.match(line)
-            and previous_line is not None
-            and previous_line.strip()
-        ):
-            add_anchor(previous_line.strip())
-            previous_line = None
-            continue
-        previous_line = line if line.strip() else None
     return anchors
 
 
@@ -309,63 +287,18 @@ def check_channel_switch(root: Path, violations: list[str]) -> None:
         )
 
 
-def markdown_destination_at(text: str, start: int) -> str | None:
-    while start < len(text) and text[start].isspace():
-        start += 1
-    if start == len(text):
-        return None
-    if text[start] == "<":
-        end = start + 1
-        while end < len(text):
-            if text[end] == ">" and text[end - 1] != "\\":
-                return text[start + 1 : end]
-            end += 1
-        return None
-
-    destination: list[str] = []
-    depth = 0
-    index = start
-    while index < len(text):
-        character = text[index]
-        if character == "\\" and index + 1 < len(text):
-            destination.append(text[index + 1])
-            index += 2
-            continue
-        if character == "(":
-            depth += 1
-        elif character == ")":
-            if depth == 0:
-                return "".join(destination) or None
-            depth -= 1
-        elif character.isspace() and depth == 0:
-            return "".join(destination) or None
-        destination.append(character)
-        index += 1
-    return "".join(destination) if destination and depth == 0 else None
-
-
 def markdown_destinations(text: str):
-    lines = list(markdown_lines(text))
-    for line_index, (line_number, line) in enumerate(lines):
-        without_inline_code = re.sub(r"`+[^`]*`+", "", line)
-        for match in INLINE_DESTINATION_START_PATTERN.finditer(without_inline_code):
-            target = markdown_destination_at(without_inline_code, match.end())
-            if target is not None:
-                yield line_number, target
-        reference = REFERENCE_DESTINATION_PATTERN.match(without_inline_code)
-        if reference:
-            yield line_number, reference.group(1).strip("<>")
+    for token in MARKDOWN.parse(text):
+        if token.type != "inline":
             continue
-        if (
-            REFERENCE_LABEL_ONLY_PATTERN.match(without_inline_code)
-            and line_index + 1 < len(lines)
-        ):
-            next_line_number, next_line = lines[line_index + 1]
-            continuation = re.match(r"^ {1,3}(\S.*)$", next_line)
-            if next_line_number == line_number + 1 and continuation is not None:
-                target = markdown_destination_at(continuation.group(1), 0)
-                if target is not None:
-                    yield next_line_number, target
+        line_number = token.map[0] + 1 if token.map is not None else 1
+        for child in token.children or ():
+            attribute = "href" if child.type == "link_open" else "src"
+            if child.type not in {"link_open", "image"}:
+                continue
+            target = child.attrGet(attribute)
+            if target:
+                yield line_number, target
 
 
 def check_local_markdown_links(root: Path, violations: list[str]) -> None:
@@ -375,6 +308,7 @@ def check_local_markdown_links(root: Path, violations: list[str]) -> None:
         source = root / relative_source
         for line_number, target in markdown_destinations(read(root, relative_source)):
             parsed = urlsplit(target)
+            target_label = unquote(target)
             if parsed.scheme or parsed.netloc or target.startswith(("//", "/")):
                 continue
             path_text = unquote(parsed.path)
@@ -384,13 +318,13 @@ def check_local_markdown_links(root: Path, violations: list[str]) -> None:
                 destination.relative_to(repository)
             except ValueError:
                 violations.append(
-                    f"{relative_source}:{line_number}: {target}: local Markdown target "
+                    f"{relative_source}:{line_number}: {target_label}: local Markdown target "
                     "escapes the repository"
                 )
                 continue
             if not destination.exists():
                 violations.append(
-                    f"{relative_source}:{line_number}: {target}: "
+                    f"{relative_source}:{line_number}: {target_label}: "
                     "missing local Markdown target"
                 )
                 continue
@@ -404,7 +338,7 @@ def check_local_markdown_links(root: Path, violations: list[str]) -> None:
             if fragment not in anchors:
                 destination_label = destination.relative_to(repository)
                 violations.append(
-                    f"{relative_source}:{line_number}: {target}: missing Markdown anchor "
+                    f"{relative_source}:{line_number}: {target_label}: missing Markdown anchor "
                     f"{fragment} in {destination_label}"
                 )
 
