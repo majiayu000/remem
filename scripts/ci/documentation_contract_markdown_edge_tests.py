@@ -247,6 +247,90 @@ class MarkdownEdgeContractTests(unittest.TestCase):
         self.assertNotIn("visible-hidden-tail", anchors)
         self.assertIn("visible--tail", anchors)
 
+    def test_bilingual_route_invariants_reject_external_suffix_match(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8")
+            + "\n[Security](https://example.com/SECURITY.md)\n",
+            encoding="utf-8",
+        )
+        violations: list[str] = []
+        check_documentation_contracts.check_bilingual_readme_invariants(
+            self.root, violations
+        )
+        self.assertTrue(
+            any(
+                item.startswith("README.md:") and "security policy" in item
+                for item in violations
+            )
+        )
+
+    def test_bilingual_route_invariants_accept_local_destination(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8") + "\n[Security](SECURITY.md)\n",
+            encoding="utf-8",
+        )
+        violations: list[str] = []
+        check_documentation_contracts.check_bilingual_readme_invariants(
+            self.root, violations
+        )
+        self.assertFalse(
+            any(
+                item.startswith("README.md:") and "security policy" in item
+                for item in violations
+            )
+        )
+
+    def test_bilingual_invariants_ignore_cross_block_hidden_text(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8").replace(
+                "The current public report does not support public benchmark claims.",
+                "<template>\n\nThe current public report does not support public "
+                "benchmark claims.\n\n</template>",
+            ),
+            encoding="utf-8",
+        )
+        violations: list[str] = []
+        check_documentation_contracts.check_bilingual_readme_invariants(
+            self.root, violations
+        )
+        self.assertTrue(
+            any(
+                item.startswith("README.md:")
+                and "public benchmark claim boundary" in item
+                for item in violations
+            )
+        )
+
+    def test_bilingual_routes_ignore_cross_block_hidden_links(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8")
+            + "\n<template>\n\n[Security](SECURITY.md)\n\n</template>\n",
+            encoding="utf-8",
+        )
+        violations: list[str] = []
+        check_documentation_contracts.check_bilingual_readme_invariants(
+            self.root, violations
+        )
+        self.assertTrue(
+            any(
+                item.startswith("README.md:") and "security policy" in item
+                for item in violations
+            )
+        )
+
+    def test_heading_anchors_ignore_cross_block_hidden_heading(self) -> None:
+        (self.root / "docs/hidden-heading.md").write_text(
+            "<template>\n\n# Configuration\n\n</template>\n", encoding="utf-8"
+        )
+        violations = self.local_link_violations(
+            "\n[Configuration](docs/hidden-heading.md#configuration)\n"
+        )
+        self.assertTrue(any("missing Markdown anchor" in item for item in violations))
+
 
 if __name__ == "__main__":
     unittest.main()

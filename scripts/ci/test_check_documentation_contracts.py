@@ -10,12 +10,8 @@ import check_documentation_contracts
 from documentation_contract_markdown_edge_tests import MarkdownEdgeContractTests
 
 
-EXPECTED_WORKFLOW_SMOKE_COMMAND = (
-    "python3 scripts/ci/run_sessionstart_context_gate_smoke.py"
-)
-EXPECTED_WORKFLOW_RUNNER_TEST_COMMAND = (
-    "python3 scripts/ci/test_run_sessionstart_context_gate_smoke.py"
-)
+EXPECTED_WORKFLOW_SMOKE_COMMAND = "python3 scripts/ci/run_sessionstart_context_gate_smoke.py"
+EXPECTED_WORKFLOW_RUNNER_TEST_COMMAND = "python3 scripts/ci/test_run_sessionstart_context_gate_smoke.py"
 SAFE_SHELLS = {"", "bash"}
 SAFE_WORKING_DIRECTORIES = {"", ".", "${{ github.workspace }}"}
 VALID_BILINGUAL_SURFACE = """
@@ -26,12 +22,9 @@ cargo install remem-ai --bin remem
 remem doctor
 remem status
 remem search "last decision"
-docs/README.md
-SECURITY.md
-docs/specs/SPEC-web-api.md
-docs/specs/README.md
-CHANGELOG.md
-CONTRIBUTING.md
+[Documentation](docs/README.md) [Security](SECURITY.md)
+[API contract](docs/specs/SPEC-web-api.md) [Spec index](docs/specs/README.md)
+[Changelog](CHANGELOG.md) [Contributing](CONTRIBUTING.md)
 remem install --target cursor not install automatic capture hooks 不会安装自动捕获 hook
 127.0.0.1
 Authorization: Bearer
@@ -40,7 +33,7 @@ remem uninstall --dry-run
 REMEM_DATA_DIR
 The encrypted database remains in the configured `REMEM_DATA_DIR`.
 directional_only_no_public_claim does not support public benchmark claims 不能用于对外 benchmark 声明
-assets/remem-recall-demo.gif
+![Recall demo](assets/remem-recall-demo.gif)
 """
 
 
@@ -289,6 +282,13 @@ remem export --pack .remem-pack/
 """,
             encoding="utf-8",
         )
+        for relative in (
+            "SECURITY.md docs/specs/SPEC-web-api.md docs/specs/README.md "
+            "CHANGELOG.md CONTRIBUTING.md assets/remem-recall-demo.gif"
+        ).split():
+            target = self.root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("fixture\n", encoding="utf-8")
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()

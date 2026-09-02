@@ -9,7 +9,7 @@ import sys
 import unicodedata
 from dataclasses import dataclass
 from html.parser import HTMLParser
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlsplit
 
 try:
@@ -55,8 +55,9 @@ class ShellCommand:
 @dataclass(frozen=True)
 class BilingualInvariant:
     name: str
-    tokens: tuple[str, ...]
+    tokens: tuple[str, ...] = ()
     affirmative_clauses: tuple[str, str] | None = None
+    local_routes: tuple[str, ...] = ()
 
 
 class LinkAttributeParser(HTMLParser):
@@ -95,22 +96,6 @@ class LinkAttributeParser(HTMLParser):
             self.hidden_depth -= 1
 
 
-def parse_html(fragment: str) -> LinkAttributeParser:
-    parser = LinkAttributeParser()
-    parser.feed(fragment)
-    parser.close()
-    return parser
-
-
-def parse_inline_html(token) -> LinkAttributeParser:
-    parser = LinkAttributeParser()
-    for child in token.children or ():
-        if child.type == "html_inline":
-            parser.feed(child.content)
-    parser.close()
-    return parser
-
-
 BILINGUAL_README_INVARIANTS = (
     BilingualInvariant(
         "supported install channels",
@@ -125,12 +110,14 @@ BILINGUAL_README_INVARIANTS = (
         "first-run verification commands",
         ('remem doctor', 'remem status', 'remem search "last decision"'),
     ),
-    BilingualInvariant("documentation jump page", ("docs/README.md",)),
-    BilingualInvariant("security policy", ("SECURITY.md",)),
-    BilingualInvariant("current API contract", ("docs/specs/SPEC-web-api.md",)),
-    BilingualInvariant("current spec index", ("docs/specs/README.md",)),
-    BilingualInvariant("changelog", ("CHANGELOG.md",)),
-    BilingualInvariant("contribution guide", ("CONTRIBUTING.md",)),
+    BilingualInvariant("documentation jump page", local_routes=("docs/README.md",)),
+    BilingualInvariant("security policy", local_routes=("SECURITY.md",)),
+    BilingualInvariant(
+        "current API contract", local_routes=("docs/specs/SPEC-web-api.md",)
+    ),
+    BilingualInvariant("current spec index", local_routes=("docs/specs/README.md",)),
+    BilingualInvariant("changelog", local_routes=("CHANGELOG.md",)),
+    BilingualInvariant("contribution guide", local_routes=("CONTRIBUTING.md",)),
     BilingualInvariant(
         "Cursor v1 limitation",
         ("remem install --target cursor",),
@@ -163,7 +150,9 @@ BILINGUAL_README_INVARIANTS = (
             "不能用于对外 benchmark 声明",
         ),
     ),
-    BilingualInvariant("shared demo asset", ("assets/remem-recall-demo.gif",)),
+    BilingualInvariant(
+        "shared demo asset", local_routes=("assets/remem-recall-demo.gif",)
+    ),
 )
 
 
@@ -187,9 +176,14 @@ def slug_from_visible_text(visible: str) -> str:
     return "".join(slug)
 
 
-def inline_visible_text(token, include_struck: bool = True) -> str:
+def inline_visible_text(
+    token,
+    include_struck: bool = True,
+    html: LinkAttributeParser | None = None,
+) -> str:
     visible: list[str] = []
-    html = LinkAttributeParser()
+    owns_html = html is None
+    html = html or LinkAttributeParser()
     struck_depth = 0
     for child in token.children or ():
         if child.type == "html_inline":
@@ -207,7 +201,8 @@ def inline_visible_text(token, include_struck: bool = True) -> str:
             visible.append(child.content)
         elif child.type in {"softbreak", "hardbreak"}:
             visible.append(" ")
-    html.close()
+    if owns_html:
+        html.close()
     return "".join(visible)
 
 
@@ -230,22 +225,31 @@ def without_front_matter(text: str) -> str:
 
 def heading_anchors(text: str) -> set[str]:
     anchors: set[str] = set()
+    generated: set[str] = set()
     tokens = MARKDOWN.parse(without_front_matter(text))
-    for index, token in enumerate(tokens[:-1]):
-        if token.type != "heading_open" or tokens[index + 1].type != "inline":
+    html = LinkAttributeParser()
+    for index, token in enumerate(tokens):
+        if token.type == "html_block":
+            html.feed(token.content)
+            anchors.update(html.anchors)
             continue
-        base = slug_from_visible_text(inline_visible_text(tokens[index + 1]))
+        if token.type != "inline":
+            continue
+        visible = inline_visible_text(token, html=html)
+        anchors.update(html.anchors)
+        if index == 0 or tokens[index - 1].type != "heading_open":
+            continue
+        if not visible.strip():
+            continue
+        base = slug_from_visible_text(visible)
         candidate = base
         suffix = 1
-        while candidate in anchors:
+        while candidate in generated:
             candidate = f"{base}-{suffix}"
             suffix += 1
+        generated.add(candidate)
         anchors.add(candidate)
-    for token in tokens:
-        if token.type == "html_block":
-            anchors.update(parse_html(token.content).anchors)
-        if token.type == "inline":
-            anchors.update(parse_inline_html(token).anchors)
+    html.close()
     return anchors
 
 
@@ -383,17 +387,26 @@ def check_channel_switch(root: Path, violations: list[str]) -> None:
 
 
 def markdown_destinations(text: str):
+    html = LinkAttributeParser()
     for token in MARKDOWN.parse(text):
         line_number = token.map[0] + 1 if token.map is not None else 1
         if token.type == "html_block":
-            parser = parse_html(token.content)
-            yield from ((line_number, target) for target in parser.targets)
+            target_count = len(html.targets)
+            html.feed(token.content)
+            yield from (
+                (line_number, target) for target in html.targets[target_count:]
+            )
         if token.type != "inline":
             continue
-        inline_html = parse_inline_html(token)
-        yield from ((line_number, target) for target in inline_html.targets)
         for child in token.children or ():
             if child.type == "html_inline":
+                target_count = len(html.targets)
+                html.feed(child.content)
+                yield from (
+                    (line_number, target) for target in html.targets[target_count:]
+                )
+                continue
+            if html.hidden_depth:
                 continue
             attribute = "href" if child.type == "link_open" else "src"
             if child.type not in {"link_open", "image"}:
@@ -401,17 +414,35 @@ def markdown_destinations(text: str):
             target = child.attrGet(attribute)
             if target:
                 yield line_number, target
+    html.close()
+
+
+def local_markdown_routes(text: str) -> set[str]:
+    routes: set[str] = set()
+    for _, target in markdown_destinations(text):
+        parsed = urlsplit(target)
+        if parsed.scheme or parsed.netloc or target.startswith(("//", "/")):
+            continue
+        if parsed.path:
+            routes.add(PurePosixPath(unquote(parsed.path)).as_posix())
+    return routes
 
 
 def markdown_contract_text(text: str) -> str:
     visible: list[str] = []
+    html = LinkAttributeParser()
     for token in MARKDOWN.parse(text):
         if token.type == "inline":
-            visible.append(inline_visible_text(token, include_struck=False))
-        elif token.type in {"fence", "code_block"}:
+            visible.append(
+                inline_visible_text(token, include_struck=False, html=html)
+            )
+        elif token.type in {"fence", "code_block"} and not html.hidden_depth:
             visible.append(token.content)
         elif token.type == "html_block":
-            visible.extend(parse_html(token.content).visible_text)
+            text_count = len(html.visible_text)
+            html.feed(token.content)
+            visible.extend(html.visible_text[text_count:])
+    html.close()
     visible.extend(target for _, target in markdown_destinations(text))
     return "\n".join(visible)
 
@@ -460,9 +491,16 @@ def check_local_markdown_links(root: Path, violations: list[str]) -> None:
 
 def check_bilingual_readme_invariants(root: Path, violations: list[str]) -> None:
     for path_index, path in enumerate(README_PATHS):
-        text = markdown_contract_text(read(root, path))
+        markdown = read(root, path)
+        text = markdown_contract_text(markdown)
+        local_routes = local_markdown_routes(markdown)
         for invariant in BILINGUAL_README_INVARIANTS:
             missing = [token for token in invariant.tokens if token not in text]
+            missing.extend(
+                f"local route {route}"
+                for route in invariant.local_routes
+                if route not in local_routes
+            )
             if (
                 invariant.affirmative_clauses is not None
                 and invariant.affirmative_clauses[path_index] not in text
