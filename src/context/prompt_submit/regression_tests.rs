@@ -27,6 +27,75 @@ fn insert_memory(conn: &Connection, project: &str, title: &str, content: &str) -
     Ok(id)
 }
 
+fn insert_active_workstreams(conn: &Connection, project: &str, count: usize) -> Result<()> {
+    for index in 0..count {
+        crate::workstream::upsert_workstream(
+            conn,
+            project,
+            &format!("prompt-continuity-{index}"),
+            &crate::workstream::ParsedWorkStream {
+                title: Some(format!("Prompt continuity {index}")),
+                progress: Some("In progress".to_string()),
+                next_action: Some("Continue implementation".to_string()),
+                blockers: None,
+                is_completed: false,
+            },
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn bounds_prompt_continuity_workstream_audit() -> Result<()> {
+    let conn = setup_conn()?;
+    let project = "/tmp/remem-prompt-submit-workstream-bound";
+    insert_active_workstreams(&conn, project, 25)?;
+
+    prompt_submit_additional_context(
+        &conn,
+        project,
+        project,
+        "sess-workstream-bound",
+        "continue",
+        Some("codex-cli"),
+    )?;
+
+    let audited: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM context_injection_items
+         WHERE session_id = 'sess-workstream-bound' AND item_kind = 'workstream'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(audited, 10);
+    Ok(())
+}
+
+#[test]
+fn routes_dropped_workstreams_to_prompt_continuity_channel() -> Result<()> {
+    let conn = setup_conn()?;
+    let project = "/tmp/remem-prompt-submit-workstream-channel";
+    insert_active_workstreams(&conn, project, 3)?;
+
+    prompt_submit_additional_context(
+        &conn,
+        project,
+        project,
+        "sess-workstream-channel",
+        "continue",
+        Some("codex-cli"),
+    )?;
+
+    let channel: String = conn.query_row(
+        "SELECT channel FROM context_injection_items
+         WHERE session_id = 'sess-workstream-channel'
+           AND item_kind = 'workstream' AND status = 'dropped'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(channel, "prompt_continuity");
+    Ok(())
+}
+
 #[test]
 fn quarantines_poisoned_session_next_steps() -> Result<()> {
     let conn = setup_conn()?;

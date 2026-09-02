@@ -40,8 +40,9 @@ async fn session_init_input(input: &str, host: Option<&str>) -> Result<Option<St
     db::upsert_session(&conn, &event.session_id, &event.project, None)?;
     let user_prompt = user_prompt_submit_prompt(input);
     if let Some(prompt) = user_prompt.as_deref() {
-        let event_id = user_prompt_submit_event_id(input);
-        db::record_captured_event_with_id(
+        let turn_id = user_prompt_submit_turn_id(input);
+        let event_id = user_prompt_submit_event_id(turn_id.as_deref());
+        db::record_captured_event_with_id_and_turn_id(
             &conn,
             &db::CaptureEventInput {
                 host: adapter_name,
@@ -55,6 +56,7 @@ async fn session_init_input(input: &str, host: Option<&str>) -> Result<Option<St
                 task_kind: Some(db::ExtractionTaskKind::SessionRollup),
             },
             event_id.as_deref(),
+            turn_id.as_deref(),
         )?;
     }
     let output = if let Some(prompt) = user_prompt {
@@ -109,7 +111,7 @@ fn user_prompt_submit_prompt(input: &str) -> Option<String> {
         .filter(|prompt| !prompt.is_empty())
 }
 
-fn user_prompt_submit_event_id(input: &str) -> Option<String> {
+fn user_prompt_submit_turn_id(input: &str) -> Option<String> {
     let hook: UserPromptSubmitInput = serde_json::from_str(input).ok()?;
     let event_name = hook.hook_event_name.as_deref()?.trim();
     if !event_name.eq_ignore_ascii_case("UserPromptSubmit") {
@@ -119,9 +121,13 @@ fn user_prompt_submit_event_id(input: &str) -> Option<String> {
     if turn_id.is_empty() {
         return None;
     }
+    Some(turn_id)
+}
+
+fn user_prompt_submit_event_id(turn_id: Option<&str>) -> Option<String> {
     Some(
         crate::identity::EventId::synthesize(
-            Some(&crate::identity::TurnId(turn_id)),
+            Some(&crate::identity::TurnId(turn_id?.to_string())),
             "UserPromptSubmit",
             None,
         )
@@ -145,7 +151,7 @@ mod tests {
 
     use super::{
         session_init_event, session_init_input, user_prompt_submit_event_id,
-        user_prompt_submit_output, user_prompt_submit_prompt,
+        user_prompt_submit_output, user_prompt_submit_prompt, user_prompt_submit_turn_id,
     };
 
     #[test]
@@ -197,7 +203,7 @@ mod tests {
             Some("continue")
         );
         assert_eq!(
-            user_prompt_submit_event_id(&input).as_deref(),
+            user_prompt_submit_event_id(user_prompt_submit_turn_id(&input).as_deref()).as_deref(),
             Some("turn-1:UserPromptSubmit")
         );
     }
@@ -222,17 +228,27 @@ mod tests {
         session_init_input(&input, Some("codex-cli")).await?;
 
         let conn = crate::db::open_db()?;
-        let (event_id, event_type, role, content): (
+        let (event_id, turn_id, event_type, role, content): (
             String,
+            Option<String>,
             String,
             Option<String>,
             Option<String>,
         ) = conn.query_row(
-            "SELECT event_id, event_type, role, content_text FROM captured_events",
+            "SELECT event_id, turn_id, event_type, role, content_text FROM captured_events",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )?;
         assert_eq!(event_id, "turn-capture-1:UserPromptSubmit");
+        assert_eq!(turn_id.as_deref(), Some("turn-capture-1"));
         assert_eq!(event_type, "user_prompt_submit");
         assert_eq!(role.as_deref(), Some("user"));
         assert_eq!(content.as_deref(), Some("I prefer concise code reviews."));

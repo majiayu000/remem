@@ -67,13 +67,14 @@ pub(super) fn load_first_turn_continuity(
         return Ok(PromptContinuity::default());
     }
 
-    let workstreams = crate::workstream::query_active_workstreams(conn, project)?;
+    let workstreams =
+        crate::workstream::query_active_workstreams_limited(conn, project, CONTINUITY_SCAN_LIMIT)?;
     let (mut safe_workstreams, poisoned_workstreams) =
         super::super::poisoning::partition_workstreams(workstreams);
     let mut audit_items = poisoned_workstreams
         .iter()
         .map(|workstream| {
-            ContextAuditItem::dropped_workstream(
+            ContextAuditItem::dropped_prompt_continuity_workstream(
                 workstream.id,
                 &workstream.title,
                 workstream.updated_at_epoch,
@@ -168,7 +169,7 @@ pub(super) fn load_first_turn_continuity(
     }
 
     for workstream in &safe_workstreams {
-        audit_items.push(ContextAuditItem::dropped_workstream(
+        audit_items.push(ContextAuditItem::dropped_prompt_continuity_workstream(
             workstream.id,
             &workstream.title,
             workstream.updated_at_epoch,
@@ -210,7 +211,7 @@ pub(super) fn render_prompt_submit_context(
                 render_order += 1;
                 audit_items.push(workstream_audit_item(workstream, render_order));
             } else {
-                audit_items.push(ContextAuditItem::dropped_workstream(
+                audit_items.push(ContextAuditItem::dropped_prompt_continuity_workstream(
                     workstream.id,
                     &workstream.title,
                     workstream.updated_at_epoch,
