@@ -116,7 +116,8 @@ pub(in crate::install) fn remem_data_dir() -> Result<PathBuf> {
 
 pub(in crate::install) fn binary_path() -> Result<String> {
     let override_path = std::env::var("REMEM_INSTALL_BINARY").ok();
-    let current_exe = std::env::current_exe().context("无法获取当前 remem 二进制路径")?;
+    let current_exe =
+        std::env::current_exe().context("failed to resolve the current remem binary path")?;
     resolve_binary_path(override_path, current_exe)
 }
 
@@ -130,7 +131,7 @@ fn resolve_binary_path(override_path: Option<String>, current_exe: PathBuf) -> R
     current_exe
         .to_str()
         .map(|s| s.to_string())
-        .context("remem 二进制路径包含非 UTF-8 字符")
+        .context("remem binary path contains non-UTF-8 characters")
 }
 
 #[cfg(test)]

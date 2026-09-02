@@ -34,7 +34,9 @@ pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool, repair: b
         );
     }
     if repair && matches!(target, InstallTarget::Cursor) {
-        bail!("`--repair` 首版只支持 Claude hooks；cursor 不支持 hook repair");
+        bail!(
+            "`--repair` currently supports Claude hooks only; cursor hook repair is not supported"
+        );
     }
     let with_cursor = !repair && cursor_selected(target);
     if matches!(target, InstallTarget::Auto)
@@ -45,8 +47,8 @@ pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool, repair: b
     }
     if hosts.is_empty() && !with_cursor {
         bail!(
-            "没检测到可用的 host（target=Auto 时仅安装已检测到的 host）。\n\
-             如需强制安装到全部 host，请使用 `--target all`。"
+            "no supported host detected (target=Auto installs only detected hosts).\n\
+             Use `--target all` to force installation into every known host."
         );
     }
 
@@ -56,9 +58,11 @@ pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool, repair: b
 
     if dry_run {
         if hooks_only {
-            eprintln!("remem install --hooks-only (dry-run) — 以下写入不会被执行:");
+            eprintln!(
+                "remem install --hooks-only (dry-run) — the following writes will not be executed:"
+            );
         } else {
-            eprintln!("remem install (dry-run) — 以下写入不会被执行:");
+            eprintln!("remem install (dry-run) — the following writes will not be executed:");
         }
         for host in &hosts {
             eprintln!("→ {}", host.name());
@@ -202,14 +206,15 @@ fn repair_install(
     if repairable_hosts == 0 {
         if matches!(target, InstallTarget::Auto) {
             bail!(
-                "没有检测到 Claude 配置；`--repair` 首版只支持 Claude hooks。请使用 `remem install --target claude --repair` 强制修复 Claude。"
+                "no Claude configuration detected; `--repair` currently supports Claude hooks only. \
+                 Run `remem install --target claude --repair` to force a Claude repair."
             );
         }
-        bail!("`--repair` 首版只支持 Claude hooks；target={target:?} 没有可修复 host");
+        bail!("`--repair` currently supports Claude hooks only; target={target:?} has no repairable host");
     }
 
     if dry_run {
-        eprintln!("remem install --repair (dry-run) — 以下写入不会被执行:");
+        eprintln!("remem install --repair (dry-run) — the following writes will not be executed:");
         for host in hosts {
             eprintln!("→ {}", host.name());
             if host.name() == "claude" {
@@ -512,9 +517,9 @@ pub fn uninstall(target: InstallTarget, dry_run: bool) -> Result<()> {
     };
 
     if dry_run {
-        eprintln!("remem uninstall (dry-run) — 以下删除不会被执行:");
+        eprintln!("remem uninstall (dry-run) — the following removals will not be executed:");
         for host in &hosts {
-            eprintln!("→ {}: 移除 {}", host.name(), host.config_path().display());
+            eprintln!("→ {}: remove {}", host.name(), host.config_path().display());
         }
         if with_cursor {
             print_cursor_dry_run(CursorOperation::Uninstall, &bin);
@@ -526,7 +531,7 @@ pub fn uninstall(target: InstallTarget, dry_run: bool) -> Result<()> {
         host.uninstall_mcp(&bin)?;
         host.uninstall_hooks(&bin)?;
         eprintln!(
-            "  {} 已清理 ({})",
+            "  {} uninstalled ({})",
             host.name(),
             host.config_path().display()
         );
@@ -534,7 +539,7 @@ pub fn uninstall(target: InstallTarget, dry_run: bool) -> Result<()> {
     if with_cursor {
         let plan = cursor::apply(CursorOperation::Uninstall, &bin)?;
         eprintln!(
-            "  cursor 已清理 ({} [{}], {} [{}])",
+            "  cursor uninstalled ({} [{}], {} [{}])",
             plan.hooks.snapshot.path.display(),
             plan.hooks.action.label(),
             plan.mcp.snapshot.path.display(),
@@ -542,8 +547,11 @@ pub fn uninstall(target: InstallTarget, dry_run: bool) -> Result<()> {
         );
     }
 
-    eprintln!("remem uninstall 完成");
-    eprintln!("  数据目录 {} 保留不动", remem_data_dir()?.display());
+    eprintln!("remem uninstall complete");
+    eprintln!(
+        "  data directory {} left untouched",
+        remem_data_dir()?.display()
+    );
 
     Ok(())
 }

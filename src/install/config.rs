@@ -195,7 +195,7 @@ pub(in crate::install) fn apply_hooks_json(
     let new_hooks = build_hooks(bin, strategy);
     let obj = doc
         .as_object_mut()
-        .with_context(|| format!("{} 根节点不是 Object", path.display()))?;
+        .with_context(|| format!("{} root is not an Object", path.display()))?;
     let hooks = obj.entry("hooks").or_insert_with(|| json!({}));
     if let (Some(existing), Some(new)) = (hooks.as_object_mut(), new_hooks.as_object()) {
         for (event_type, entries) in new {
@@ -224,7 +224,7 @@ pub(in crate::install) fn repair_hooks_json(
     let new_hooks = build_hooks(bin, strategy);
     let obj = doc
         .as_object_mut()
-        .with_context(|| format!("{} 根节点不是 Object", path.display()))?;
+        .with_context(|| format!("{} root is not an Object", path.display()))?;
     let hooks = obj.entry("hooks").or_insert_with(|| json!({}));
     if let (Some(existing), Some(new)) = (hooks.as_object_mut(), new_hooks.as_object()) {
         for (event_type, entries) in new {

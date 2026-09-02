@@ -36,7 +36,7 @@ impl InstallHost for ClaudeHost {
         remove_remem_mcp(&mut doc, bin);
         let obj = doc
             .as_object_mut()
-            .context("~/.claude.json 根节点不是 Object")?;
+            .context("~/.claude.json root is not an Object")?;
         let servers = obj.entry("mcpServers").or_insert_with(|| json!({}));
         if let Some(servers) = servers.as_object_mut() {
             servers.insert("remem".to_string(), build_mcp_server(bin));
