@@ -194,6 +194,10 @@ remem why <memory-id>
 remem current <state-key>
 ```
 
+`remem search` keeps the terminal clean: per-query `[INFO] [search-perf]`
+diagnostics are written to the log file, not stderr, in normal use. Set
+`REMEM_DEBUG=1` to mirror them to stderr while debugging.
+
 Agents can use MCP `search` for compact results, then `get_observations` for
 selected details. Use raw recall only when curated memory misses exact
 transcript evidence:

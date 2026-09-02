@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.86` polishes CLI surface details: install and
+  uninstall output is now English-only across the install flow, per-invocation
+  `search-perf` diagnostics no longer mirror to stderr at default log level,
+  and a missing-database `status` error now points at `remem install` /
+  `remem doctor` for recovery.
 - Staged source version `0.6.85` closes the remaining #1052 review gates by
   aligning native evidence with release feature profiles and production-input
   triggers, tightening public artifact contracts, and keeping incomplete

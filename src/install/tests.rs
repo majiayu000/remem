@@ -710,7 +710,7 @@ fn repair_hooks_json_invalid_settings_fails_with_path_context() -> anyhow::Resul
     let message = format!("{err:?}");
 
     assert!(message.contains(&path.display().to_string()), "{message}");
-    assert!(message.contains("解析"), "{message}");
+    assert!(message.contains("failed to parse"), "{message}");
     let _ = std::fs::remove_file(path);
     Ok(())
 }

@@ -452,6 +452,14 @@ fn status_report_refuses_missing_database_without_initializing() {
         "unexpected error: {message}"
     );
     assert!(
+        message.contains("remem install"),
+        "unexpected error: {message}"
+    );
+    assert!(
+        message.contains("remem doctor"),
+        "unexpected error: {message}"
+    );
+    assert!(
         !test_dir.path.exists(),
         "status must not create data dir for a missing database"
     );
