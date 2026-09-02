@@ -297,8 +297,8 @@ fn load_status_report() -> Result<StatusReport> {
 fn ensure_status_database_can_migrate(db_path: &std::path::Path) -> Result<()> {
     if !db_path.exists() {
         anyhow::bail!(
-            "database not found: {} — remem creates the store on first `remem install` or \
-             the first hooked session; run `remem install` first, or `remem doctor` to check readiness",
+            "database not found: {} — run `remem install` first to create the store, \
+             or `remem doctor` to check readiness",
             db_path.display()
         );
     }
