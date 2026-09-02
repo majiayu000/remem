@@ -58,6 +58,11 @@ fn query_recent_summaries_with_drops_matching(
         });
     }
 
+    let canonical_project = require_next_steps
+        .then(|| crate::project_alias::canonical_project_path_for_write(conn, project))
+        .transpose()?;
+    let project = canonical_project.as_deref().unwrap_or(project);
+
     let scan_limit = SUMMARY_MAX_SCAN.max(limit);
     let now_epoch = chrono::Utc::now().timestamp();
     let mut selected = Vec::new();
@@ -76,16 +81,30 @@ fn query_recent_summaries_with_drops_matching(
         }
 
         for row in batch {
+            let injectable = if require_next_steps {
+                crate::db::summary_poisoning::summary_injectable(
+                    conn,
+                    row.summary.id,
+                    &[
+                        ("request", Some(row.summary.request.as_str())),
+                        ("completed", row.summary.completed.as_deref()),
+                        ("next_steps", row.next_steps.as_deref()),
+                    ],
+                    "prompt_submit_continuity",
+                )
+            } else {
+                crate::db::summary_poisoning::summary_injectable(
+                    conn,
+                    row.summary.id,
+                    &[
+                        ("request", Some(row.summary.request.as_str())),
+                        ("completed", row.summary.completed.as_deref()),
+                    ],
+                    "context_recent_sessions",
+                )
+            };
             let summary = row.summary;
-            if !crate::db::summary_poisoning::summary_injectable(
-                conn,
-                summary.id,
-                &[
-                    ("request", Some(summary.request.as_str())),
-                    ("completed", summary.completed.as_deref()),
-                ],
-                "context_recent_sessions",
-            ) {
+            if !injectable {
                 poisoning_drops.push(summary);
                 continue;
             }
@@ -175,6 +194,7 @@ fn summary_drop(summary: SessionSummaryBrief, reason: &'static str) -> ContextPr
 struct SessionSummaryQueryRow {
     summary: SessionSummaryBrief,
     session_key: Option<String>,
+    next_steps: Option<String>,
 }
 
 fn query_summary_batch(
@@ -199,7 +219,8 @@ fn query_summary_batch(
                WHEN ss.session_row_id IS NOT NULL AND s.session_id IS NOT NULL THEN \
                  'mem-' || substr(s.session_id, 1, 8) \
                ELSE ss.memory_session_id \
-             END AS session_key \
+             END AS session_key, \
+             ss.next_steps \
          FROM session_summaries ss \
          LEFT JOIN sessions s ON s.id = ss.session_row_id \
          WHERE ss.request IS NOT NULL AND ss.request != '' \
@@ -232,6 +253,7 @@ fn query_summary_batch(
                     created_at_epoch: row.get(3)?,
                 },
                 session_key: row.get(4)?,
+                next_steps: row.get(5)?,
             })
         },
     )?;

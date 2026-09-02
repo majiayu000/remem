@@ -122,24 +122,10 @@ pub(super) fn load_first_turn_continuity(
             |row| row.get(0),
         )?;
         if let Some(next_steps) = next_steps {
-            if crate::db::summary_poisoning::summary_injectable(
-                conn,
-                summary.id,
-                &[("next_steps", Some(next_steps.as_str()))],
-                "prompt_submit_continuity",
-            ) {
-                unfinished_sessions.push(SessionAnchor {
-                    summary,
-                    next_steps,
-                });
-            } else {
-                audit_items.push(summary_audit_item(
-                    &summary,
-                    "dropped",
-                    Some("prompt_submit_poisoning_gate"),
-                    None,
-                ));
-            }
+            unfinished_sessions.push(SessionAnchor {
+                summary,
+                next_steps,
+            });
         } else {
             audit_items.push(summary_audit_item(
                 &summary,
