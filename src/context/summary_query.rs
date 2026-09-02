@@ -58,11 +58,6 @@ fn query_recent_summaries_with_drops_matching(
         });
     }
 
-    let canonical_project = require_next_steps
-        .then(|| crate::project_alias::canonical_project_path_for_write(conn, project))
-        .transpose()?;
-    let project = canonical_project.as_deref().unwrap_or(project);
-
     let scan_limit = SUMMARY_MAX_SCAN.max(limit);
     let now_epoch = chrono::Utc::now().timestamp();
     let mut selected = Vec::new();
@@ -204,7 +199,35 @@ fn query_summary_batch(
     offset: usize,
     require_next_steps: bool,
 ) -> Result<Vec<SessionSummaryQueryRow>> {
-    let mut stmt = conn.prepare_cached(
+    let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    let (owner_clause, idx) = crate::project_alias::push_project_value_filter(
+        conn,
+        "ss.owner_key",
+        project,
+        1,
+        &mut params_vec,
+    )?;
+    let (target_clause, idx) = crate::project_alias::push_project_value_filter(
+        conn,
+        "ss.target_project",
+        project,
+        idx,
+        &mut params_vec,
+    )?;
+    let (legacy_clause, idx) = crate::project_alias::push_project_value_filter(
+        conn,
+        "ss.project",
+        project,
+        idx,
+        &mut params_vec,
+    )?;
+    let limit_idx = idx;
+    params_vec.push(Box::new(limit as i64));
+    let offset_idx = limit_idx + 1;
+    params_vec.push(Box::new(offset as i64));
+    let next_steps_idx = offset_idx + 1;
+    params_vec.push(Box::new(i64::from(require_next_steps)));
+    let sql = format!(
         "SELECT ss.id, \
              CASE \
                WHEN ss.request LIKE 'Captured event range %..%' THEN \
@@ -231,32 +254,27 @@ fn query_summary_batch(
                 OR COALESCE(ss.learned, '') != '' \
                 OR COALESCE(ss.next_steps, '') != '' \
                 OR COALESCE(ss.preferences, '') != '') \
-           AND ((ss.owner_scope = 'repo' AND ss.owner_key = ?1) \
-                OR (ss.owner_scope = 'repo' AND ss.target_project = ?1) \
-                OR (ss.owner_scope IS NULL AND ss.project = ?1)) \
-           AND (?4 = 0 OR NULLIF(TRIM(ss.next_steps), '') IS NOT NULL) \
-         ORDER BY ss.created_at_epoch DESC, display_request ASC, ss.completed ASC LIMIT ?2 OFFSET ?3",
-    )?;
-    let rows = stmt.query_map(
-        rusqlite::params![
-            project,
-            limit as i64,
-            offset as i64,
-            i64::from(require_next_steps)
-        ],
-        |row| {
-            Ok(SessionSummaryQueryRow {
-                summary: SessionSummaryBrief {
-                    id: row.get(0)?,
-                    request: row.get(1)?,
-                    completed: row.get(2)?,
-                    created_at_epoch: row.get(3)?,
-                },
-                session_key: row.get(4)?,
-                next_steps: row.get(5)?,
-            })
-        },
-    )?;
+           AND ((ss.owner_scope = 'repo' AND {owner_clause}) \
+                OR (ss.owner_scope = 'repo' AND {target_clause}) \
+                OR (ss.owner_scope IS NULL AND {legacy_clause})) \
+           AND (?{next_steps_idx} = 0 OR NULLIF(TRIM(ss.next_steps), '') IS NOT NULL) \
+         ORDER BY ss.created_at_epoch DESC, display_request ASC, ss.completed ASC \
+         LIMIT ?{limit_idx} OFFSET ?{offset_idx}",
+    );
+    let mut stmt = conn.prepare_cached(&sql)?;
+    let refs = crate::db::to_sql_refs(&params_vec);
+    let rows = stmt.query_map(refs.as_slice(), |row| {
+        Ok(SessionSummaryQueryRow {
+            summary: SessionSummaryBrief {
+                id: row.get(0)?,
+                request: row.get(1)?,
+                completed: row.get(2)?,
+                created_at_epoch: row.get(3)?,
+            },
+            session_key: row.get(4)?,
+            next_steps: row.get(5)?,
+        })
+    })?;
     crate::db::query::collect_rows(rows)
 }
 

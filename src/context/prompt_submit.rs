@@ -10,7 +10,6 @@ use rusqlite::params;
 use crate::memory::Memory;
 
 use super::audit::{record_context_injection_items, ContextAuditItem};
-use super::fact_labels::annotate_memories_with_temporal_facts_for_query;
 use super::host::resolve_host_kind;
 use super::injection_gate::{injection_key_for_audit, ContextGateAction, ContextGateDecision};
 use super::invocation::ContextInvocation;
@@ -59,7 +58,8 @@ pub(crate) fn prompt_submit_additional_context(
         .unwrap_or(&[]);
     let current_branch = crate::db::detect_git_branch(cwd);
     let as_of_epoch = chrono::Utc::now().timestamp();
-    let mut retrieved = super::prompt_submit_retrieval::retrieve(
+    let already_injected = query_previously_injected_memory_ids(conn, &invocation)?;
+    let (mut retrieved, poisoning_safe_ids) = super::prompt_submit_retrieval::retrieve(
         conn,
         project,
         prompt,
@@ -67,12 +67,7 @@ pub(crate) fn prompt_submit_additional_context(
         excluded_types,
         PROMPT_SUBMIT_MEMORY_LIMIT,
         as_of_epoch,
-    )?;
-    annotate_memories_with_temporal_facts_for_query(
-        conn,
-        &mut retrieved,
-        Some(prompt),
-        Some(project),
+        &already_injected,
     )?;
     let mut g2_drops = Vec::new();
     let mut g2_errors = Vec::new();
@@ -86,7 +81,6 @@ pub(crate) fn prompt_submit_additional_context(
     if let Some(error) = g2_errors.first() {
         anyhow::bail!("prompt-submit memory visibility classification failed: {error:?}");
     }
-    let already_injected = query_previously_injected_memory_ids(conn, &invocation)?;
     let mut rendered = Vec::new();
     let mut audit_items = Vec::new();
     for drop in g2_drops {
@@ -105,7 +99,7 @@ pub(crate) fn prompt_submit_additional_context(
                 "prompt_submit",
                 "already_injected",
             ));
-        } else if !super::poisoning::should_inject_memory(conn, &memory, "prompt_submit")? {
+        } else if !poisoning_safe_ids.contains(&memory.id) {
             audit_items.push(ContextAuditItem::dropped_memory(
                 &memory,
                 "prompt_submit",
@@ -270,7 +264,7 @@ mod tests {
         crate::db::record_captured_event(
             conn,
             &crate::db::CaptureEventInput {
-                host: "codex-cli",
+                host: "claude-code",
                 session_id,
                 project,
                 cwd: Some(project),
@@ -314,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn first_prompt_continue_surfaces_continuity_but_later_prompt_does_not() -> Result<()> {
+    fn claude_repeated_continue_surfaces_continuity_only_once() -> Result<()> {
         let conn = setup_prompt_submit_conn()?;
         let project = "/tmp/remem-prompt-submit-continuity";
         crate::workstream::upsert_workstream(
@@ -336,20 +330,20 @@ mod tests {
             project,
             "sess-prompt-continuity",
             "continue",
-            Some("codex-cli"),
+            Some("claude-code"),
         )?
         .ok_or_else(|| anyhow::anyhow!("first prompt should surface continuity"))?;
         assert!(first.contains("Prompt-time recall rollout"), "{first}");
         assert!(first.contains("first_turn_continuity"), "{first}");
 
-        record_prompt_event(&conn, project, "sess-prompt-continuity", "what next")?;
+        record_prompt_event(&conn, project, "sess-prompt-continuity", "continue")?;
         let later = prompt_submit_additional_context(
             &conn,
             project,
             project,
             "sess-prompt-continuity",
             "unrelated quantum telemetry",
-            Some("codex-cli"),
+            Some("claude-code"),
         )?;
         assert!(
             later.is_none(),

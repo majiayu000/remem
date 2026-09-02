@@ -41,7 +41,7 @@ async fn session_init_input(input: &str, host: Option<&str>) -> Result<Option<St
     let user_prompt = user_prompt_submit_prompt(input);
     if let Some(prompt) = user_prompt.as_deref() {
         let turn_id = user_prompt_submit_turn_id(input);
-        let event_id = user_prompt_submit_event_id(turn_id.as_deref());
+        let event_id = user_prompt_submit_event_id(turn_id.as_deref(), prompt);
         db::record_captured_event_with_id_and_turn_id(
             &conn,
             &db::CaptureEventInput {
@@ -55,7 +55,7 @@ async fn session_init_input(input: &str, host: Option<&str>) -> Result<Option<St
                 content: prompt,
                 task_kind: Some(db::ExtractionTaskKind::SessionRollup),
             },
-            event_id.as_deref(),
+            Some(&event_id),
             turn_id.as_deref(),
         )?;
     }
@@ -124,15 +124,18 @@ fn user_prompt_submit_turn_id(input: &str) -> Option<String> {
     Some(turn_id)
 }
 
-fn user_prompt_submit_event_id(turn_id: Option<&str>) -> Option<String> {
-    Some(
-        crate::identity::EventId::synthesize(
-            Some(&crate::identity::TurnId(turn_id?.to_string())),
-            "UserPromptSubmit",
-            None,
-        )
-        .0,
-    )
+fn user_prompt_submit_event_id(turn_id: Option<&str>, prompt: &str) -> String {
+    match turn_id {
+        Some(turn_id) => {
+            crate::identity::EventId::synthesize(
+                Some(&crate::identity::TurnId(turn_id.to_string())),
+                "UserPromptSubmit",
+                None,
+            )
+            .0
+        }
+        None => crate::db::unique_capture_event_id("user_prompt_submit", prompt),
+    }
 }
 
 fn user_prompt_submit_output(additional_context: &str) -> Result<String> {
@@ -203,8 +206,8 @@ mod tests {
             Some("continue")
         );
         assert_eq!(
-            user_prompt_submit_event_id(user_prompt_submit_turn_id(&input).as_deref()).as_deref(),
-            Some("turn-1:UserPromptSubmit")
+            user_prompt_submit_event_id(user_prompt_submit_turn_id(&input).as_deref(), "continue"),
+            "turn-1:UserPromptSubmit"
         );
     }
 
@@ -273,6 +276,14 @@ mod tests {
             })?;
         assert_eq!(task_kind, "session_rollup");
         Ok(())
+    }
+
+    #[test]
+    fn claude_identical_prompts_receive_distinct_event_ids() {
+        let first = user_prompt_submit_event_id(None, "continue");
+        let second = user_prompt_submit_event_id(None, "continue");
+
+        assert_ne!(first, second);
     }
 
     #[tokio::test]

@@ -30,8 +30,10 @@ UserPromptSubmit
 
 The captured-event count is session state, not an intent heuristic. Codex uses
 its native `turn_id` to make a retry of the same UserPromptSubmit event
-idempotent. The continuity lane is omitted once the session contains more than
-one distinct prompt event.
+idempotent. Claude does not provide a turn id, so each hook occurrence receives
+a unique capture event id; repeated identical prompt text therefore still
+advances the session prompt count. The continuity lane is omitted once the
+session contains more than one distinct prompt event.
 
 ## Candidate Rendering
 
@@ -61,6 +63,9 @@ renderer remains an additive prompt block and never rewrites SessionStart.
   filters before their text can enter the prompt. Session `next_steps` is
   included in the final pre-injection summary scan.
 - Already injected memories remain excluded for the same host/project/session.
+- Canonical project summary reads include active historical aliases.
+- The four-item memory limit is applied only after G2, already-injected, and
+  poisoning admission, with a bounded ranked scan to backfill safe candidates.
 - RRF rank is a candidate ordering signal only. There is no final relevance
   threshold.
 - Only anchors and memories whose complete lines fit the 1,800-character
@@ -86,6 +91,8 @@ renderer remains an additive prompt block and never rewrites SessionStart.
 - Focused Rust tests for Codex hook generation, host capability,
   UserPromptSubmit parsing/capture, candidate rendering, first-turn continuity,
   filtering, determinism, and latency.
+- Injection evaluation requires the unrelated-prompt fixture to return no
+  additional context before its abstention metric can pass.
 - Version-sync and JavaScript plugin/npm tests.
 - `cargo fmt --check`, `cargo check`, and `cargo test`.
 - Isolated HOME/REMEM_DATA_DIR install, context, status, doctor, and plugin

@@ -339,7 +339,7 @@ fn backfills_after_more_than_limit_poisoned_next_steps() -> Result<()> {
 }
 
 #[test]
-fn resolves_registered_project_alias_for_summary_continuity() -> Result<()> {
+fn reads_historical_alias_summary_from_canonical_project() -> Result<()> {
     let conn = setup_conn()?;
     let canonical = "/tmp/remem-prompt-submit-canonical";
     let alias = "/virtual/remem-prompt-submit-alias";
@@ -383,21 +383,21 @@ fn resolves_registered_project_alias_for_summary_continuity() -> Result<()> {
     conn.execute(
         "INSERT INTO session_summaries
          (memory_session_id, project, request, completed, next_steps, created_at_epoch)
-         VALUES ('alias-safe', ?1, 'Canonical summary anchor',
+         VALUES ('alias-safe', ?1, 'Historical alias summary anchor',
                  'Partial', 'Continue through the registered alias', 100)",
-        [canonical],
+        [alias],
     )?;
     let summary_id = conn.last_insert_rowid();
 
     let output = prompt_submit_additional_context(
         &conn,
-        alias,
-        alias,
+        canonical,
+        canonical,
         "sess-summary-alias",
         "continue",
         Some("codex-cli"),
     )?
-    .ok_or_else(|| anyhow::anyhow!("alias should resolve to canonical summary scope"))?;
+    .ok_or_else(|| anyhow::anyhow!("canonical reads should include historical alias summaries"))?;
 
     assert!(
         output.contains(&format!("session_summary:#{summary_id}")),
