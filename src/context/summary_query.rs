@@ -33,6 +33,23 @@ pub(super) fn query_recent_summaries_with_drops(
     project: &str,
     limit: usize,
 ) -> Result<SummarySelection> {
+    query_recent_summaries_with_drops_matching(conn, project, limit, false)
+}
+
+pub(super) fn query_recent_unfinished_summaries_with_drops(
+    conn: &Connection,
+    project: &str,
+    limit: usize,
+) -> Result<SummarySelection> {
+    query_recent_summaries_with_drops_matching(conn, project, limit, true)
+}
+
+fn query_recent_summaries_with_drops_matching(
+    conn: &Connection,
+    project: &str,
+    limit: usize,
+    require_next_steps: bool,
+) -> Result<SummarySelection> {
     if limit == 0 {
         return Ok(SummarySelection {
             selected: Vec::new(),
@@ -53,7 +70,7 @@ pub(super) fn query_recent_summaries_with_drops(
 
     while selected.len() < limit && offset < scan_limit {
         let fetch_limit = SUMMARY_FETCH_BATCH_SIZE.min(scan_limit - offset);
-        let batch = query_summary_batch(conn, project, fetch_limit, offset)?;
+        let batch = query_summary_batch(conn, project, fetch_limit, offset, require_next_steps)?;
         if batch.is_empty() {
             break;
         }
@@ -165,6 +182,7 @@ fn query_summary_batch(
     project: &str,
     limit: usize,
     offset: usize,
+    require_next_steps: bool,
 ) -> Result<Vec<SessionSummaryQueryRow>> {
     let mut stmt = conn.prepare_cached(
         "SELECT ss.id, \
@@ -195,10 +213,16 @@ fn query_summary_batch(
            AND ((ss.owner_scope = 'repo' AND ss.owner_key = ?1) \
                 OR (ss.owner_scope = 'repo' AND ss.target_project = ?1) \
                 OR (ss.owner_scope IS NULL AND ss.project = ?1)) \
+           AND (?4 = 0 OR NULLIF(TRIM(ss.next_steps), '') IS NOT NULL) \
          ORDER BY ss.created_at_epoch DESC, display_request ASC, ss.completed ASC LIMIT ?2 OFFSET ?3",
     )?;
     let rows = stmt.query_map(
-        rusqlite::params![project, limit as i64, offset as i64],
+        rusqlite::params![
+            project,
+            limit as i64,
+            offset as i64,
+            i64::from(require_next_steps)
+        ],
         |row| {
             Ok(SessionSummaryQueryRow {
                 summary: SessionSummaryBrief {

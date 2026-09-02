@@ -15,7 +15,7 @@ use super::super::types::{ContextPreselectionItem, SessionSummaryBrief};
 
 const PROMPT_SUBMIT_CHAR_LIMIT: usize = 1_800;
 const CONTINUITY_LIMIT: usize = 2;
-const CONTINUITY_SCAN_LIMIT: usize = 200;
+const CONTINUITY_SCAN_LIMIT: usize = 10;
 const TITLE_LIMIT: usize = 120;
 const NEXT_ACTION_LIMIT: usize = 140;
 
@@ -82,11 +82,12 @@ pub(super) fn load_first_turn_continuity(
         })
         .collect::<Vec<_>>();
 
-    let summary_selection = super::super::summary_query::query_recent_summaries_with_drops(
-        conn,
-        project,
-        CONTINUITY_SCAN_LIMIT,
-    )?;
+    let summary_selection =
+        super::super::summary_query::query_recent_unfinished_summaries_with_drops(
+            conn,
+            project,
+            CONTINUITY_SCAN_LIMIT,
+        )?;
     audit_items.extend(summary_selection.poisoning_drops.iter().map(|summary| {
         summary_audit_item(
             summary,
