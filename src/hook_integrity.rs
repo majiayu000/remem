@@ -1,7 +1,9 @@
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
+mod expected;
 mod parse;
+use expected::{CLAUDE_EXPECTED, CODEX_EXPECTED};
 use parse::{parse_remem_hook_value, parse_remem_invocation};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,84 +72,6 @@ impl RememInvocation {
         self.host.as_deref().or(self.env_host.as_deref())
     }
 }
-
-const CLAUDE_EXPECTED: &[ExpectedHookSpec] = &[
-    ExpectedHookSpec {
-        event: "PostToolUse",
-        subcommand: "observe",
-        nested_subcommand: None,
-        host: "claude-code",
-        matcher: Some("Write|Edit|NotebookEdit|Bash|Grep|Glob|Agent|Task"),
-        timeout_seconds: Some(120),
-    },
-    ExpectedHookSpec {
-        event: "PreCompact",
-        subcommand: "summarize",
-        nested_subcommand: None,
-        host: "claude-code",
-        matcher: None,
-        timeout_seconds: Some(120),
-    },
-    ExpectedHookSpec {
-        event: "Stop",
-        subcommand: "summarize",
-        nested_subcommand: None,
-        host: "claude-code",
-        matcher: None,
-        timeout_seconds: Some(120),
-    },
-    ExpectedHookSpec {
-        event: "SessionStart",
-        subcommand: "context",
-        nested_subcommand: None,
-        host: "claude-code",
-        matcher: Some("startup|resume|clear|compact"),
-        timeout_seconds: Some(15),
-    },
-    ExpectedHookSpec {
-        event: "UserPromptSubmit",
-        subcommand: "session-init",
-        nested_subcommand: None,
-        host: "claude-code",
-        matcher: None,
-        timeout_seconds: Some(15),
-    },
-    ExpectedHookSpec {
-        event: "PreToolUse",
-        subcommand: "rules",
-        nested_subcommand: Some("eval"),
-        host: "claude-code",
-        matcher: Some("Bash"),
-        timeout_seconds: Some(5),
-    },
-];
-
-const CODEX_EXPECTED: &[ExpectedHookSpec] = &[
-    ExpectedHookSpec {
-        event: "SessionStart",
-        subcommand: "context",
-        nested_subcommand: None,
-        host: "codex-cli",
-        matcher: None,
-        timeout_seconds: None,
-    },
-    ExpectedHookSpec {
-        event: "UserPromptSubmit",
-        subcommand: "session-init",
-        nested_subcommand: None,
-        host: "codex-cli",
-        matcher: None,
-        timeout_seconds: None,
-    },
-    ExpectedHookSpec {
-        event: "Stop",
-        subcommand: "summarize",
-        nested_subcommand: None,
-        host: "codex-cli",
-        matcher: None,
-        timeout_seconds: None,
-    },
-];
 
 pub(crate) fn expected_specs(host: &str) -> &'static [ExpectedHookSpec] {
     match host {
