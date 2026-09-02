@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[2]
 README_PATHS = (Path("README.md"), Path("README.zh-CN.md"))
 LOCAL_LINK_SOURCES = (*README_PATHS, Path("docs/README.md"))
 MARKDOWN_SUFFIXES = {".md", ".markdown"}
+NON_RENDERED_HTML_TAGS = {"script", "style", "template"}
 HOMEBREW_DOCS = (*README_PATHS, Path("docs/installation.md"))
 CURRENT_EXPORT_DOCS = (*README_PATHS, Path("docs/specs/project-memory-pack/PRODUCT.md"))
 SESSIONSTART_SMOKE_SCRIPT = Path("scripts/ci/smoke_sessionstart_context_gate.sh")
@@ -64,11 +65,15 @@ class LinkAttributeParser(HTMLParser):
         self.targets: list[str] = []
         self.anchors: set[str] = set()
         self.visible_text: list[str] = []
+        self.hidden_depth = 0
 
     def handle_starttag(
         self, tag: str, attrs: list[tuple[str, str | None]]
     ) -> None:
         tag = tag.lower()
+        if tag in NON_RENDERED_HTML_TAGS:
+            self.hidden_depth += 1
+            return
         attributes = {name.lower(): value for name, value in attrs if value}
         if tag == "a" and "href" in attributes:
             self.targets.append(attributes["href"])
@@ -80,7 +85,12 @@ class LinkAttributeParser(HTMLParser):
             )
 
     def handle_data(self, data: str) -> None:
-        self.visible_text.append(data)
+        if self.hidden_depth == 0:
+            self.visible_text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in NON_RENDERED_HTML_TAGS and self.hidden_depth:
+            self.hidden_depth -= 1
 
 
 def parse_html(fragment: str) -> LinkAttributeParser:
@@ -189,9 +199,7 @@ def without_front_matter(text: str) -> str:
     for index, line in enumerate(lines[1:], start=1):
         if line.strip() != "---":
             continue
-        if any(re.match(r"^[\w.-]+:\s*", item) for item in lines[1:index]):
-            return "".join(lines[index + 1 :])
-        return text
+        return "".join(lines[index + 1 :])
     return text
 
 
