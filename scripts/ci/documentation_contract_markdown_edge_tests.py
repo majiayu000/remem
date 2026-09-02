@@ -158,6 +158,24 @@ class MarkdownEdgeContractTests(unittest.TestCase):
         self.assertFalse(any("not-rendered.js" in item for item in violations))
         self.assertFalse(any("not-a-link.md" in item for item in violations))
 
+    def test_local_links_preserve_combining_marks_in_heading_anchors(self) -> None:
+        (self.root / "docs/combining.md").write_text(
+            "## Cafe\u0301\n", encoding="utf-8"
+        )
+        violations = self.local_link_violations(
+            "\n[Café](docs/combining.md#café)\n"
+        )
+        self.assertFalse(any("docs/combining.md" in item for item in violations))
+
+    def test_local_links_exclude_front_matter_from_heading_anchors(self) -> None:
+        (self.root / "docs/front-matter.md").write_text(
+            "---\ntitle: Guide\n---\n\n# Real heading\n", encoding="utf-8"
+        )
+        violations = self.local_link_violations(
+            "\n[Not a heading](docs/front-matter.md#title-guide)\n"
+        )
+        self.assertTrue(any("missing Markdown anchor" in item for item in violations))
+
 
 if __name__ == "__main__":
     unittest.main()

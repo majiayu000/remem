@@ -6,6 +6,7 @@ from __future__ import annotations
 import re
 import shlex
 import sys
+import unicodedata
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
@@ -154,7 +155,11 @@ def slug_from_visible_text(visible: str) -> str:
     for character in visible.strip().lower():
         if character == " ":
             slug.append("-")
-        elif character in {"-", "_"} or character.isalnum():
+        elif (
+            character in {"-", "_"}
+            or character.isalnum()
+            or unicodedata.category(character).startswith("M")
+        ):
             slug.append(character)
         elif character.isspace():
             continue
@@ -177,9 +182,22 @@ def github_slug(heading: str) -> str:
     return slug_from_visible_text(inline_visible_text(inline))
 
 
+def without_front_matter(text: str) -> str:
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        return text
+    for index, line in enumerate(lines[1:], start=1):
+        if line.strip() != "---":
+            continue
+        if any(re.match(r"^[\w.-]+:\s*", item) for item in lines[1:index]):
+            return "".join(lines[index + 1 :])
+        return text
+    return text
+
+
 def heading_anchors(text: str) -> set[str]:
     anchors: set[str] = set()
-    tokens = MARKDOWN.parse(text)
+    tokens = MARKDOWN.parse(without_front_matter(text))
     for index, token in enumerate(tokens[:-1]):
         if token.type != "heading_open" or tokens[index + 1].type != "inline":
             continue
