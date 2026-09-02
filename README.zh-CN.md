@@ -77,7 +77,8 @@ remem search "last decision"
 ```
 
 Claude Code 或 Codex 安装正常时，remem 会在 SessionStart 注入相关项目记忆，
-并在 Stop 后排队提炼本次会话。`remem doctor` 会检查 schema、加密密钥、数据库、
+并在 Stop 后排队提炼本次会话。Codex 还会通过 `UserPromptSubmit` 捕获每个 prompt，
+并提供紧凑的可选记忆候选。`remem doctor` 会检查 schema、加密密钥、数据库、
 hooks、MCP 注册、worker 和常见的安装路径漂移。
 
 仓库贡献者可运行[隔离的可执行 smoke fixture](scripts/ci/smoke_sessionstart_context_gate.sh)，
@@ -163,6 +164,12 @@ CurrentTruth 会隔离这些记录，并留下原因。
 实验性的 `remem context-plan` 可以输出一次请求对应的 retrieval plan。两个
 opt-in 接口分别由 [Context Bundle](docs/specs/GH932/PRODUCT.md)和
 [retrieval router](docs/specs/GH934/PRODUCT.md)契约跟踪。
+
+默认 Codex 集成保持低噪音：`SessionStart` 提供稳定上下文，
+`UserPromptSubmit` 提供紧凑候选索引，`Stop` 排队后台总结。候选只包含 ID、标题、
+状态、召回原因、预计读取成本和详情查询提示，不预载记忆正文。模型可以忽略、
+打开候选或继续搜索。首个 prompt 最多还会获得两个连续性锚点，因此“继续”不依赖
+词面命中。现有 hybrid RRF 负责候选排序，不用最终置信阈值替模型判断相关性。
 
 ## 常用流程
 

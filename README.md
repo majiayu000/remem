@@ -86,9 +86,10 @@ remem search "last decision"
 ```
 
 A healthy Claude Code or Codex installation injects relevant project memory at
-SessionStart and queues durable session distillation at Stop. `remem doctor`
-checks the schema, encryption key, database, hooks, MCP registration, worker,
-and common install-path drift.
+SessionStart and queues durable session distillation at Stop. Codex also uses
+`UserPromptSubmit` to capture each prompt and surface compact optional memory
+candidates. `remem doctor` checks the schema, encryption key, database, hooks,
+MCP registration, worker, and common install-path drift.
 
 Repository contributors can verify duplicate SessionStart suppression with the
 [isolated executable smoke fixture](scripts/ci/smoke_sessionstart_context_gate.sh).
@@ -181,6 +182,16 @@ compiler to explicit callers. The experimental `remem context-plan` command
 prints a request-specific retrieval plan. These opt-in interfaces are tracked
 by the [Context Bundle](docs/specs/GH932/PRODUCT.md) and
 [retrieval-router](docs/specs/GH934/PRODUCT.md) contracts.
+
+The default Codex integration stays low-noise: `SessionStart` provides stable
+context, `UserPromptSubmit` provides a compact candidate index, and `Stop`
+queues background summarization. Prompt candidates contain IDs, titles,
+state, retrieval reason, estimated read cost, and a detail lookup hint, but no
+memory bodies. They are optional leads that Codex may ignore, open, or search
+beyond. The first prompt may also receive up to two continuity anchors so a
+prompt such as `continue` does not depend on lexical overlap. Existing hybrid
+RRF ranks memory candidates; no final confidence threshold decides relevance
+for the model.
 
 ## Everyday workflows
 

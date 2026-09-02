@@ -247,7 +247,13 @@ fn run_sandbox_eval_inner(
         .is_some_and(|output| output.contains("Migration locking fix"));
     let user_prompt_submit_memory_recall =
         InjectionRateMetric::new(usize::from(user_prompt_submit_passed), 1);
-    let user_prompt_submit_abstention_passed = user_prompt_abstention_context.is_none();
+    let user_prompt_submit_abstention_passed = user_prompt_abstention_context
+        .as_deref()
+        .is_none_or(|output| {
+            output.contains("Candidates are optional leads")
+                && output.contains("open=")
+                && !output.contains("Legacy release checklist for cache warmup.")
+        });
     let user_prompt_submit_abstention_false_positive_bound =
         InjectionRateMetric::new(usize::from(user_prompt_submit_abstention_passed), 1);
     let block_churn_unchanged =
@@ -286,7 +292,10 @@ fn run_sandbox_eval_inner(
             .push("UserPromptSubmit missing expected memory: Migration locking fix".to_string());
     }
     if !user_prompt_submit_abstention_passed {
-        failing_examples.push("UserPromptSubmit rendered unexpected additionalContext".to_string());
+        failing_examples.push(
+            "UserPromptSubmit unrelated retrieval did not stay a body-free optional candidate"
+                .to_string(),
+        );
     }
     if unchanged_changed_bytes != 0 {
         failing_examples.push(format!(

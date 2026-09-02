@@ -130,7 +130,11 @@ fn workstream_haystack(workstream: &crate::workstream::WorkStream) -> String {
     .join("\n")
 }
 
-fn should_inject_memory(conn: &Connection, memory: &Memory, channel: &str) -> Result<bool> {
+pub(super) fn should_inject_memory(
+    conn: &Connection,
+    memory: &Memory,
+    channel: &str,
+) -> Result<bool> {
     let Some(pattern_match) = scan_instruction_pattern(&memory_haystack(memory)) else {
         return Ok(true);
     };

@@ -12,7 +12,7 @@ pub(in crate::install) enum HookStrategy {
 
 impl HookStrategy {
     fn include_session_init(self) -> bool {
-        matches!(self, Self::ClaudeCode)
+        true
     }
 
     fn include_pre_compact(self) -> bool {

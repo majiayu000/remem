@@ -81,7 +81,7 @@ impl ContextHostProfile for CodexCliContextProfile {
         HostCapabilities {
             has_mcp_tools: true,
             has_session_start_hook: true,
-            has_user_prompt_submit_hook: false,
+            has_user_prompt_submit_hook: true,
             observes_native_file_edits: false,
             observes_bash: false,
         }
@@ -89,7 +89,7 @@ impl ContextHostProfile for CodexCliContextProfile {
 
     fn retrieval_hints(&self) -> RetrievalHints {
         RetrievalHints {
-            line: "Use `search`/`get_observations` for details. Codex automatic capture is Stop/context-focused, so save explicit decisions/bugfixes when they matter.",
+            line: "Use `search`/`get_observations` for details. Codex prompt and Stop capture are automatic; save explicit decisions/bugfixes when they matter.",
         }
     }
 }
@@ -178,12 +178,13 @@ mod tests {
         let profile = CodexCliContextProfile;
         let capabilities = profile.capabilities();
         assert!(capabilities.has_mcp_tools);
+        assert!(capabilities.has_user_prompt_submit_hook);
         assert!(!capabilities.observes_bash);
         assert!(!capabilities.observes_native_file_edits);
         assert!(profile
             .retrieval_hints()
             .line
-            .contains("Stop/context-focused"));
+            .contains("prompt and Stop capture"));
     }
 
     #[test]

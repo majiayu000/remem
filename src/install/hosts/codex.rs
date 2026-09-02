@@ -73,7 +73,7 @@ impl InstallHost for CodexHost {
                 codex_config_path().display()
             ),
             format!(
-                "  hooks  -> {} (SessionStart/Stop)",
+                "  hooks  -> {} (SessionStart/UserPromptSubmit/Stop)",
                 codex_hooks_path().display()
             ),
             format!("  binary -> {}", bin),
@@ -295,9 +295,13 @@ codex_hooks = true
     fn build_codex_hooks_uses_second_timeouts() {
         let hooks = build_codex_hooks("/tmp/remem");
         assert_eq!(hooks["SessionStart"][0]["hooks"][0]["timeout"], 15);
+        assert_eq!(hooks["UserPromptSubmit"][0]["hooks"][0]["timeout"], 15);
+        assert_eq!(
+            hooks["UserPromptSubmit"][0]["hooks"][0]["command"],
+            "/tmp/remem session-init --host codex-cli"
+        );
         assert!(hooks.get("PostToolUse").is_none());
         assert_eq!(hooks["Stop"][0]["hooks"][0]["timeout"], 120);
-        assert!(hooks.get("UserPromptSubmit").is_none());
         assert_eq!(
             hooks["Stop"][0]["hooks"][0]["command"],
             "/tmp/remem summarize --host codex-cli"
@@ -335,7 +339,10 @@ codex_hooks = true
 
         assert!(plan.contains("MCP"), "{plan}");
         assert!(plan.contains("set [features].hooks = true"), "{plan}");
-        assert!(plan.contains("SessionStart/Stop"), "{plan}");
+        assert!(
+            plan.contains("SessionStart/UserPromptSubmit/Stop"),
+            "{plan}"
+        );
     }
 
     #[test]

@@ -132,6 +132,14 @@ const CODEX_EXPECTED: &[ExpectedHookSpec] = &[
         timeout_seconds: None,
     },
     ExpectedHookSpec {
+        event: "UserPromptSubmit",
+        subcommand: "session-init",
+        nested_subcommand: None,
+        host: "codex-cli",
+        matcher: None,
+        timeout_seconds: None,
+    },
+    ExpectedHookSpec {
         event: "Stop",
         subcommand: "summarize",
         nested_subcommand: None,
@@ -685,6 +693,12 @@ mod tests {
                 "SessionStart": [{
                     "hooks": [{
                         "command": format!("{hook_s} context --host codex-cli"),
+                        "timeout": 15000
+                    }]
+                }],
+                "UserPromptSubmit": [{
+                    "hooks": [{
+                        "command": format!("{hook_s} session-init --host codex-cli"),
                         "timeout": 15000
                     }]
                 }],

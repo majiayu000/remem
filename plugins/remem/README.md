@@ -2,7 +2,7 @@
 
 This directory contains a local Codex plugin wrapper for remem.
 
-The plugin exposes `remem mcp` to Codex and provides a Remem skill for retrieval, saving, governance, and activation workflows. It does not silently install or ship auto-loaded hooks. Automatic SessionStart context injection and Stop summarization require explicit activation.
+The plugin exposes `remem mcp` to Codex and provides a Remem skill for retrieval, saving, governance, and activation workflows. It does not silently install or ship auto-loaded hooks. Automatic SessionStart context, UserPromptSubmit candidate recall, and Stop summarization require explicit activation.
 
 This is a development foundation. The plugin now manages a version-matched
 local runtime under plugin storage for local checkout testing, so it no longer
@@ -93,7 +93,8 @@ id.
 
 ## Hook Activation
 
-MCP tools work without hook activation. To enable automatic memory injection and Stop summarization for Codex:
+MCP tools work without hook activation. To enable stable SessionStart context,
+the prompt-time compact candidate index, and Stop summarization for Codex:
 
 ```bash
 node plugins/remem/scripts/activate-codex.js --dry-run

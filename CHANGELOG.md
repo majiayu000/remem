@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.86` installs Codex `UserPromptSubmit` and emits a
+  compact prompt-time candidate index. The first prompt can receive bounded
+  continuity anchors; task memories use the existing hybrid RRF path and
+  expose metadata plus detail lookup hints without body previews or a final
+  confidence threshold.
 - Staged source version `0.6.86` polishes CLI surface details: install and
   uninstall output is now English-only across the install flow, per-invocation
   `search-perf` diagnostics no longer mirror to stderr at default log level,
