@@ -126,7 +126,8 @@ pub fn get_summaries_by_ids(
 
     let mut stmt = conn.prepare(&format!(
         "SELECT id, memory_session_id, request, completed, decisions, learned, \
-         next_steps, preferences, created_at, created_at_epoch, project \
+         next_steps, preferences, COALESCE(created_at, datetime(created_at_epoch, 'unixepoch')), \
+         created_at_epoch, project \
          FROM session_summaries WHERE {} ORDER BY created_at_epoch DESC",
         conditions.join(" AND ")
     ))?;

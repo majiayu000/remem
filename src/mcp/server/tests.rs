@@ -529,11 +529,11 @@ fn get_observations_fetches_exact_session_summary_id() {
     conn.execute(
         "INSERT INTO session_summaries
          (memory_session_id, project, request, completed, decisions, learned,
-          next_steps, preferences, created_at, created_at_epoch)
+          next_steps, preferences, created_at_epoch)
          VALUES ('mem-session-detail', '/repo', 'Resume prompt-time recall',
                  'Implemented exact lookup', 'Keep one detail surface',
                  'Summary IDs have a separate namespace', 'Run focused tests',
-                 'Keep output compact', '2026-09-02 00:00:00', 1700000000)",
+                 'Keep output compact', 1700000000)",
         [],
     )
     .expect("summary inserts");
@@ -555,6 +555,7 @@ fn get_observations_fetches_exact_session_summary_id() {
     assert_eq!(json[0]["memory_session_id"], "mem-session-detail");
     assert_eq!(json[0]["next_steps"], "Run focused tests");
     assert_eq!(json[0]["project"], "/repo");
+    assert_eq!(json[0]["created_at"], "2023-11-14 22:13:20");
 }
 
 #[test]

@@ -181,3 +181,101 @@ fn session_anchor_points_to_exact_summary_details() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn scans_past_newer_completed_summaries_for_unfinished_continuity() -> Result<()> {
+    let conn = setup_conn()?;
+    let project = "/tmp/remem-prompt-submit-summary-scan";
+    let requests = [
+        "Alpha completed work",
+        "Bravo completed work",
+        "Charlie completed work",
+        "Delta completed work",
+        "Echo completed work",
+        "Foxtrot completed work",
+        "Golf completed work",
+        "Hotel completed work",
+        "India completed work",
+        "Juliet completed work",
+        "Kilo completed work",
+    ];
+    for (index, request) in requests.iter().enumerate() {
+        conn.execute(
+            "INSERT INTO session_summaries
+             (memory_session_id, project, request, completed, created_at_epoch)
+             VALUES (?1, ?2, ?3, 'Complete', ?4)",
+            params![
+                format!("completed-{index}"),
+                project,
+                request,
+                200 + index as i64
+            ],
+        )?;
+    }
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, request, completed, next_steps, created_at_epoch)
+         VALUES ('older-unfinished', ?1, 'Legacy unfinished anchor',
+                 'Partial', 'Resume the older unfinished work', 100)",
+        [project],
+    )?;
+    let summary_id = conn.last_insert_rowid();
+
+    let output = prompt_submit_additional_context(
+        &conn,
+        project,
+        project,
+        "sess-summary-scan",
+        "continue",
+        Some("codex-cli"),
+    )?
+    .ok_or_else(|| anyhow::anyhow!("older unfinished summary should be surfaced"))?;
+
+    assert!(
+        output.contains(&format!("session_summary:#{summary_id}")),
+        "{output}"
+    );
+    Ok(())
+}
+
+#[test]
+fn records_abstention_when_all_continuity_candidates_are_dropped() -> Result<()> {
+    let conn = setup_conn()?;
+    let project = "/tmp/remem-prompt-submit-all-continuity-dropped";
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, request, completed, created_at_epoch)
+         VALUES ('completed-only', ?1, 'Completed continuity candidate',
+                 'Everything is done', 100)",
+        [project],
+    )?;
+
+    let session_id = "sess-all-continuity-dropped";
+    let output = prompt_submit_additional_context(
+        &conn,
+        project,
+        project,
+        session_id,
+        "continue",
+        Some("codex-cli"),
+    )?;
+    assert!(output.is_none());
+
+    let abstained: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM context_injection_items
+         WHERE session_id = ?1 AND channel = 'prompt_submit'
+           AND status = 'abstained'",
+        [session_id],
+        |row| row.get(0),
+    )?;
+    let dropped: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM context_injection_items
+         WHERE session_id = ?1 AND channel = 'prompt_continuity'
+           AND status = 'dropped'",
+        [session_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(abstained, 1);
+    assert_eq!(dropped, 1);
+    Ok(())
+}

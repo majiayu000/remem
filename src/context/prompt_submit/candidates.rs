@@ -15,7 +15,7 @@ use super::super::types::{ContextPreselectionItem, SessionSummaryBrief};
 
 const PROMPT_SUBMIT_CHAR_LIMIT: usize = 1_800;
 const CONTINUITY_LIMIT: usize = 2;
-const CONTINUITY_SCAN_LIMIT: usize = 10;
+const CONTINUITY_SCAN_LIMIT: usize = 200;
 const TITLE_LIMIT: usize = 120;
 const NEXT_ACTION_LIMIT: usize = 140;
 

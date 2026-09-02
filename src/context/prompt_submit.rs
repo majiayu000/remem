@@ -126,11 +126,9 @@ pub(crate) fn prompt_submit_additional_context(
     audit_items.extend(continuity.audit_items().iter().cloned());
 
     if rendered.is_empty() && continuity.is_empty() {
-        if audit_items.is_empty() {
-            audit_items.push(prompt_submit_abstained_item(
-                "prompt_submit_no_relevant_context",
-            ));
-        }
+        audit_items.push(prompt_submit_abstained_item(
+            "prompt_submit_no_relevant_context",
+        ));
         let decision = empty_prompt_submit_decision();
         record_context_injection_items(conn, &invocation, &decision, &audit_items)?;
         return Ok(None);
@@ -769,6 +767,7 @@ mod tests {
             "SELECT drop_reason
              FROM context_injection_items
              WHERE session_id = 'sess-prompt-g2'
+               AND status = 'dropped'
              ORDER BY id DESC
              LIMIT 1",
             [],
