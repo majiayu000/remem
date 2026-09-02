@@ -1,6 +1,6 @@
 [package]
 name = "remem-ai"
-version = "0.6.84"
+version = "0.6.85"
 default-run = "remem"
 edition = "2021"
 description = "Local-first coding agent memory for Claude Code and OpenAI Codex"
@@ -15,6 +15,7 @@ exclude = [
   "eval/locomo/locomo10.json",
   "eval/locomo/results/",
   "eval/local/results/",
+  "eval/public/**/*.sqlite3",
   "plan/",
   "docs/",
   "SPEC-*.md",
@@ -72,6 +73,10 @@ windows-sys = { version = "=0.61.2", features = [
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+
+[build-dependencies]
+serde_json = "1"
+sha2 = "0.10"
 
 [features]
 default = ["local-onnx", "eval"]

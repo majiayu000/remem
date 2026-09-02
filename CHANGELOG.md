@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.85` closes the remaining #1052 review gates by
+  aligning native evidence with release feature profiles and production-input
+  triggers, tightening public artifact contracts, and keeping incomplete
+  machine outcomes unavailable.
 - Staged source version `0.6.84` keeps unresolvable pre-identity transcript
   rows in the encrypted raw archive while reporting their exclusion counts on
   host-bound session listings. Exact single-host re-ingestion can converge
@@ -13,6 +17,14 @@
   ordered-occurrence content fingerprint, and bounded newest-session listing.
   Exact host-bound message reads prevent cross-runtime session-ID collisions,
   while unidentified legacy provenance fails visibly.
+- Staged source version `0.6.84` extends `remem eval-gates` with the GH969
+  executable ship matrix and outcome scorecard. Required repository evidence
+  now fails closed when missing or invalid, while absent governed GH931,
+  GH935, and public-claim runs remain explicit `unavailable` measures instead
+  of synthetic zeroes or passes. Exact component metric sets, clean execution
+  and production-input binding, security stop-loss outcomes, clean release
+  identity, claim authority, and capability-specific default decisions are
+  verified separately.
 - Staged source version `0.6.82` routes every reviewed production activation
   through one transactional boundary with an immutable request ledger, bound
   route/trust/provenance/poisoning/supersede evidence, replay validation, and a

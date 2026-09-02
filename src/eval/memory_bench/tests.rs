@@ -3,11 +3,15 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use super::fixture::{load_suite, validate_suite, validate_suite_selection};
-use super::runner::{run_memory_bench, MemoryBenchOptions};
+use super::fixture::{
+    load_suite, load_suite_file_with_content_identity, validate_suite, validate_suite_selection,
+};
+use super::runner::{is_checked_in_public_root, run_memory_bench, MemoryBenchOptions};
 use super::types::{
     MemoryBenchCondition, ADVERSARIAL_POLICY_SUITE, DEFAULT_PUBLIC_ROOT, DEFAULT_SUITE,
 };
+
+mod invocation_isolation;
 
 #[test]
 fn remem_code_memory_fixture_covers_required_categories() -> Result<()> {
@@ -54,6 +58,38 @@ fn memory_bench_conditions_are_supported() {
     assert_eq!(MemoryBenchCondition::parse("unknown"), None);
 }
 
+#[tokio::test]
+async fn adversarial_policy_v2_rejects_non_production_conditions() -> Result<()> {
+    let root = unique_temp_dir("adversarial-policy-condition")?;
+    let error = run_memory_bench(MemoryBenchOptions {
+        suite: ADVERSARIAL_POLICY_SUITE.to_string(),
+        condition: None,
+        json_out: root.join("report.json").display().to_string(),
+        root: root.display().to_string(),
+        artifact_prefix: None,
+    })
+    .await
+    .expect_err("v2 security evidence must use only remem_default");
+
+    assert!(
+        format!("{error:#}").contains("requires --condition remem_default"),
+        "unexpected error: {error:#}"
+    );
+    Ok(())
+}
+
+#[test]
+fn two_missing_roots_are_not_treated_as_the_same_public_root() {
+    let suffix = format!(
+        "{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    );
+    let requested = std::env::temp_dir().join(format!("remem-missing-requested-{suffix}"));
+    assert!(!requested.exists());
+    assert!(!is_checked_in_public_root(&requested));
+}
+
 #[test]
 fn memory_bench_fixture_allows_suite_to_differ_from_benchmark_id() -> Result<()> {
     let mut fixture = load_suite(DEFAULT_SUITE)?;
@@ -73,6 +109,40 @@ fn memory_bench_fixture_rejects_mismatched_requested_suite() -> Result<()> {
         .unwrap_err()
         .to_string()
         .contains("must match requested suite"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn public_artifact_prefix_rejects_parent_traversal_before_writing() -> Result<()> {
+    let root = unique_temp_dir("remem-memory-bench-prefix-traversal")?;
+    copy_dir_all(std::path::Path::new(DEFAULT_PUBLIC_ROOT), &root)?;
+    let escaped_name = format!(
+        "escaped-{}",
+        root.file_name()
+            .expect("temporary root name")
+            .to_string_lossy()
+    );
+    let escaped = root
+        .parent()
+        .expect("temporary root parent")
+        .join(&escaped_name);
+    let result = run_memory_bench(MemoryBenchOptions {
+        suite: DEFAULT_SUITE.to_string(),
+        condition: Some("no_memory".to_string()),
+        json_out: root
+            .join("memory/reports/prefix-traversal.json")
+            .to_string_lossy()
+            .to_string(),
+        root: root.to_string_lossy().to_string(),
+        artifact_prefix: Some(format!("../{escaped_name}")),
+    })
+    .await;
+
+    assert!(result
+        .expect_err("parent traversal must fail")
+        .to_string()
+        .contains("artifact prefix"));
+    assert!(!escaped.exists());
     Ok(())
 }
 
@@ -163,6 +233,31 @@ fn adversarial_policy_fixture_covers_required_categories() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn runtime_suite_identity_changes_when_same_task_prompt_and_expected_change() -> Result<()> {
+    let temp = unique_temp_dir("remem-runtime-suite-identity")?;
+    fs::create_dir_all(&temp)?;
+    let path = temp.join("suite.json");
+    let mut suite: serde_json::Value = serde_json::from_slice(&fs::read(
+        super::fixture::suite_path(ADVERSARIAL_POLICY_SUITE),
+    )?)?;
+    fs::write(&path, serde_json::to_vec_pretty(&suite)?)?;
+    let (original, original_identity) =
+        load_suite_file_with_content_identity(&path, ADVERSARIAL_POLICY_SUITE)?;
+
+    suite["tasks"][0]["prompt"] = serde_json::json!("runtime-mutated prompt");
+    suite["tasks"][0]["expected_answer"] = serde_json::json!("runtime-mutated expected");
+    fs::write(&path, serde_json::to_vec_pretty(&suite)?)?;
+    let (mutated, mutated_identity) =
+        load_suite_file_with_content_identity(&path, ADVERSARIAL_POLICY_SUITE)?;
+
+    assert_eq!(original.tasks[0].id, mutated.tasks[0].id);
+    assert_ne!(original_identity, mutated_identity);
+    assert!(mutated_identity.starts_with("sha256-raw-suite-v1:"));
+    fs::remove_dir_all(temp)?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn remem_default_memory_bench_writes_verifiable_public_artifacts() -> Result<()> {
     let root = unique_temp_dir("remem-memory-bench-public")?;
@@ -186,7 +281,7 @@ async fn remem_default_memory_bench_writes_verifiable_public_artifacts() -> Resu
     assert!(metrics["by_category"]["prior_bug_root_cause"].is_object());
 
     let verify = crate::eval::bench_artifact::verify_benchmark_artifacts(
-        crate::eval::bench_artifact::BenchVerifyOptions { root },
+        crate::eval::bench_artifact::BenchVerifyOptions::new(root, "eval/claims/registry.json"),
     )?;
     assert!(verify.passed, "{:#?}", verify.failures);
     assert!(verify.run_artifacts_checked >= 10);
@@ -210,12 +305,26 @@ async fn adversarial_policy_bench_reports_zero_policy_leaks() -> Result<()> {
     assert_eq!(report.conditions, vec!["remem_default"]);
     assert_eq!(report.benchmark_version, "v2");
     assert_eq!(report.run_artifacts.len(), 20);
+    let suite_content_identity = report.aggregate_metrics["suite_content_identity"]
+        .as_str()
+        .expect("report suite content identity");
     for run_path in &report.run_artifacts {
         let run: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(root.join(run_path))?)?;
         assert_eq!(
             run["benchmark_version"], report.benchmark_version,
             "generated run {run_path} must inherit the suite version"
+        );
+        assert_eq!(
+            run["suite_content_identity"], suite_content_identity,
+            "generated run {run_path} must bind the exact suite bytes consumed by the runner"
+        );
+        assert!(run["environment"]["source_dirty"].is_boolean());
+        assert_eq!(
+            run["environment"]["production_input_tree_sha256"]
+                .as_str()
+                .map(str::len),
+            Some(64)
         );
     }
     let policy = &report.aggregate_metrics["policy"];
@@ -267,7 +376,7 @@ async fn adversarial_policy_bench_reports_zero_policy_leaks() -> Result<()> {
     assert_eq!(opaque["metrics"]["policy"]["policy_failure_count"], 0);
 
     let verify = crate::eval::bench_artifact::verify_benchmark_artifacts(
-        crate::eval::bench_artifact::BenchVerifyOptions { root },
+        crate::eval::bench_artifact::BenchVerifyOptions::new(root, "eval/claims/registry.json"),
     )?;
     assert!(verify.passed, "{:#?}", verify.failures);
     assert!(verify.run_artifacts_checked >= 25);

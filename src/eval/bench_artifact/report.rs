@@ -3,25 +3,27 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
 
 use super::types::{
-    BenchVerifyOptions, BenchVerifyReport, BenchmarkLayer, CodingRunArtifact, MemoryRunArtifact,
-    PublicBenchmarkManifest, PublicBenchmarkReport, RunEnvironment,
+    BenchVerifyOptions, BenchVerifyReport, BenchmarkLayer, PublicBenchmarkReport, RunEnvironment,
+    VerifiedArtifact, VerifiedBenchmarkArtifacts,
 };
 
 pub(super) mod matrix;
 mod statistics;
 
-pub(in crate::eval::bench_artifact) use statistics::coding_paired_statistics;
 use statistics::coding_variance;
+pub(in crate::eval::bench_artifact) use statistics::{
+    coding_paired_statistics, coding_report_structurally_complete,
+};
 pub use statistics::{CodingConditionVariance, CodingPairedStatistic};
 
 #[derive(Debug, Clone)]
 pub struct BenchReportOptions {
     pub root: PathBuf,
+    pub claim_registry_path: PathBuf,
     pub json_out: PathBuf,
     pub markdown_out: PathBuf,
 }
@@ -34,6 +36,7 @@ pub struct PublicBaselineReport {
     pub root: String,
     pub created_at_epoch: i64,
     pub claim_level: String,
+    #[serde(serialize_with = "super::types::serialize_persisted_bench_verify_report")]
     pub artifact_verifier: BenchVerifyReport,
     pub summary: BaselineSummary,
     pub reports: Vec<BaselineReportEntry>,
@@ -166,7 +169,7 @@ struct BuildState {
 }
 
 pub fn write_public_baseline_report(options: BenchReportOptions) -> Result<PublicBaselineReport> {
-    let report = generate_public_baseline_report(&options.root)?;
+    let report = generate_public_baseline_report(&options.root, &options.claim_registry_path)?;
     write_text_file(&options.json_out, &serde_json::to_string_pretty(&report)?)?;
     write_text_file(
         &options.markdown_out,
@@ -175,26 +178,39 @@ pub fn write_public_baseline_report(options: BenchReportOptions) -> Result<Publi
     Ok(report)
 }
 
-pub fn generate_public_baseline_report(root: &Path) -> Result<PublicBaselineReport> {
-    let artifact_verifier = super::verify::verify_benchmark_artifacts(BenchVerifyOptions {
-        root: root.to_path_buf(),
-    })?;
-    let manifest_paths = super::verify::collect_manifest_paths(root)?;
+pub fn generate_public_baseline_report(
+    root: &Path,
+    claim_registry_path: &Path,
+) -> Result<PublicBaselineReport> {
+    let artifact_verifier = super::verify::verify_benchmark_artifacts(BenchVerifyOptions::new(
+        root.to_path_buf(),
+        claim_registry_path.to_path_buf(),
+    ))?;
+    generate_public_baseline_report_from_verified(root, artifact_verifier)
+}
+
+pub(super) fn generate_public_baseline_report_from_verified(
+    root: &Path,
+    artifact_verifier: BenchVerifyReport,
+) -> Result<PublicBaselineReport> {
+    let verified = &artifact_verifier.verified_artifacts;
 
     let mut state = BuildState {
         max_created_at_epoch: 0,
         ..BuildState::default()
     };
 
-    for manifest_path in manifest_paths {
-        let manifest: PublicBenchmarkManifest = read_json(&manifest_path)?;
-        state.manifest_count += 1;
-        state.max_created_at_epoch = state.max_created_at_epoch.max(manifest.created_at_epoch);
-        for report_path in &manifest.reports {
-            let full_report_path = root.join(report_path);
-            if state.report_paths.insert(full_report_path.clone()) {
-                load_report(root, &full_report_path, &mut state)?;
-            }
+    state.manifest_count = verified.manifests.len();
+    state.max_created_at_epoch = verified
+        .manifests
+        .iter()
+        .map(|manifest| manifest.value.created_at_epoch)
+        .max()
+        .unwrap_or_default();
+    for report in &verified.reports {
+        let logical_path = PathBuf::from(&report.path);
+        if state.report_paths.insert(logical_path) {
+            load_verified_report(report, verified, &mut state)?;
         }
     }
 
@@ -415,9 +431,13 @@ pub fn render_public_baseline_markdown(report: &PublicBaselineReport) -> String 
     out
 }
 
-fn load_report(root: &Path, path: &Path, state: &mut BuildState) -> Result<()> {
-    let report: PublicBenchmarkReport = read_json(path)?;
-    let report_path = relative_path(root, path);
+fn load_verified_report(
+    artifact: &VerifiedArtifact<PublicBenchmarkReport>,
+    verified: &VerifiedBenchmarkArtifacts,
+    state: &mut BuildState,
+) -> Result<()> {
+    let report = &artifact.value;
+    let report_path = artifact.path.clone();
     match report.layer {
         BenchmarkLayer::MemorySystemCapability => {
             state.memory_benchmarks.insert(report.benchmark_id.clone());
@@ -425,7 +445,7 @@ fn load_report(root: &Path, path: &Path, state: &mut BuildState) -> Result<()> {
             for condition in &report.conditions {
                 state.memory_conditions.insert(condition.clone());
             }
-            load_memory_runs(root, &report_path, &report, state)?;
+            load_memory_runs(&report_path, report, verified, state)?;
         }
         BenchmarkLayer::CodingAgentOutcome => {
             state.coding_benchmarks.insert(report.benchmark_id.clone());
@@ -433,30 +453,36 @@ fn load_report(root: &Path, path: &Path, state: &mut BuildState) -> Result<()> {
             for condition in &report.conditions {
                 state.coding_conditions.insert(condition.clone());
             }
-            load_coding_runs(root, &report_path, &report, state)?;
+            load_coding_runs(&report_path, report, verified, state)?;
         }
     }
     state.reports.push(BaselineReportEntry {
         path: report_path,
-        benchmark_id: report.benchmark_id,
-        benchmark_version: report.benchmark_version,
+        benchmark_id: report.benchmark_id.clone(),
+        benchmark_version: report.benchmark_version.clone(),
         layer: report.layer,
-        conditions: report.conditions,
+        conditions: report.conditions.clone(),
         run_artifact_count: report.run_artifacts.len(),
-        claim_level: report.claim_level,
-        aggregate_metrics: report.aggregate_metrics,
+        claim_level: report.claim_level.clone(),
+        aggregate_metrics: report.aggregate_metrics.clone(),
     });
     Ok(())
 }
 
 fn load_memory_runs(
-    root: &Path,
     report_path: &str,
     report: &PublicBenchmarkReport,
+    verified: &VerifiedBenchmarkArtifacts,
     state: &mut BuildState,
 ) -> Result<()> {
     for run_path in &report.run_artifacts {
-        let run: MemoryRunArtifact = read_json(&root.join(run_path))?;
+        let run = verified
+            .memory_runs
+            .iter()
+            .find(|artifact| artifact.path == *run_path)
+            .with_context(|| format!("verified memory run is missing: {run_path}"))?
+            .value
+            .clone();
         observe_environment(&run.environment, state);
         observe_model(&run.reader_model, state);
         observe_prompt_hash(&run.reader_model, state);
@@ -503,13 +529,19 @@ fn load_memory_runs(
 }
 
 fn load_coding_runs(
-    root: &Path,
     report_path: &str,
     report: &PublicBenchmarkReport,
+    verified: &VerifiedBenchmarkArtifacts,
     state: &mut BuildState,
 ) -> Result<()> {
     for run_path in &report.run_artifacts {
-        let run: CodingRunArtifact = read_json(&root.join(run_path))?;
+        let run = verified
+            .coding_runs
+            .iter()
+            .find(|artifact| artifact.path == *run_path)
+            .with_context(|| format!("verified coding run is missing: {run_path}"))?
+            .value
+            .clone();
         observe_environment(&run.environment, state);
         observe_model(&run.model, state);
         observe_prompt_hash(&run.model, state);
@@ -625,11 +657,6 @@ fn layer_summary(
     }
 }
 
-fn read_json<T: DeserializeOwned>(path: &Path) -> Result<T> {
-    let content = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))
-}
-
 fn write_text_file(path: &Path, content: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -705,13 +732,6 @@ fn is_memory_specific_failure(reason: &str) -> bool {
 
 fn sorted_vec(set: BTreeSet<String>) -> Vec<String> {
     set.into_iter().collect()
-}
-
-fn relative_path(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
 }
 
 fn reproduction_commands() -> Vec<String> {

@@ -1,0 +1,10 @@
+condition: remem_default
+task_id: assistant-authored-unsupported-001
+category: unsupported_assistant_claims
+reference_time_epoch: 1760000000
+
+question:
+Should remem retain an unsupported assistant-authored claim?
+
+retrieved_evidence:
+(none)

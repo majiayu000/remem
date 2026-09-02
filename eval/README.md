@@ -119,7 +119,8 @@ The JSON report includes:
 ## Eval Regression Gates
 
 `remem eval-gates` runs the CI regression gate for golden retrieval,
-capacity degradation, SessionStart injection, and aggregate extraction quality:
+capacity degradation, SessionStart injection, aggregate extraction quality,
+and the GH969 executable ship matrix:
 
 ```bash
 remem eval-gates --json-out /tmp/remem-eval-gates.json
@@ -136,6 +137,32 @@ per-channel loss metrics for `fts`, `entity`, `fact`, `temporal`, `vector`, and
 CI also keeps the exact `eval-extraction --check-baseline` gate so extraction
 prompt, parser, replay fixture, and request-fingerprint changes cannot pass on
 aggregate rates alone.
+
+The JSON artifact adds `ship_matrix` and `outcome_scorecard` at the top level.
+The matrix separates merge, release, default-on, cross-host, coding-outcome,
+and public-claim readiness. Each row records its claim level, condition
+completeness, implementation/config/model identity, artifact hashes, deltas,
+stop-loss verdict, and diagnostics. Deterministic retrieval, capacity,
+SessionStart, and production-security rows are required for command success;
+missing required evidence or an incomplete metric-name set fails the command.
+The security row requires every run to attest a clean execution tree, verifies
+one production-input SHA-256 across Rust sources, prompts, assets, Cargo and
+toolchain inputs, binds the selected report to its verifier-covered manifest
+path, and compares the complete adversarial suite content with the suite at the
+run-attested commit. It rejects later production or suite changes, requires an
+exact OS/architecture evidence report for the evaluating platform, and evaluates
+aggregate zero-tolerance plus per-run policy stop-loss outcomes. Release
+readiness additionally requires the legacy gates, an exact Git SHA, and a clean
+source tree. GH931 coding outcomes and the public wording guard are authorized
+by the same locked, hash-bound, current-implementation claim registry. GH935 cross-host results, capability-
+specific default-on decisions, and Level 3 public-claim evidence remain scoped
+`unavailable` until their governed result/authority artifacts exist; a charter,
+ordinary regression pass, or directional report cannot promote them.
+
+Every outcome-scorecard field declares its eligible population, numerator,
+denominator, measurement state, source, and claim level. A null value paired
+with `unavailable` means the repository has no accepted evidence for that
+measure. Smoke/directional artifacts stay explicitly below public-claim level.
 
 The hidden `--simulate-golden-regression` and
 `--simulate-capacity-regression` flags are exercised in CI to prove the gate

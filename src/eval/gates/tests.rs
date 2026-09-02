@@ -145,6 +145,50 @@ fn gate_report_table_status_labels_are_stable() {
 }
 
 #[test]
+fn text_ship_summary_prints_the_combined_command_verdict() {
+    let summary = crate::eval::ship_matrix::ShipMatrixSummary {
+        command_passed: false,
+        merge_ready: false,
+        release_ready: false,
+        implementation_identified: true,
+        source_clean: true,
+        default_on_ready: false,
+        cross_host_claim_ready: false,
+        coding_outcome_claim_ready: false,
+        public_claim_ready: false,
+    };
+    let rendered = format_ship_summary(&summary);
+    assert!(rendered.contains("command_passed=false"));
+}
+
+#[test]
+fn text_report_uses_the_combined_command_verdict() {
+    let mut report = EvalGateReport {
+        version: "test".to_string(),
+        baseline_version: "baseline".to_string(),
+        thresholds_version: "thresholds".to_string(),
+        summary: EvalGateSummary {
+            metrics_checked: 1,
+            passed: true,
+        },
+        deltas: Vec::new(),
+        failures: Vec::new(),
+        source_reports: EvalSourceReports {
+            current_memory_contracts: serde_json::Value::Null,
+            capacity: serde_json::Value::Null,
+            golden: serde_json::Value::Null,
+            injection: serde_json::Value::Null,
+            extraction: serde_json::Value::Null,
+        },
+        source_artifacts: BTreeMap::new(),
+    };
+
+    apply_combined_command_verdict(&mut report, false);
+
+    assert!(format!("{report}").contains("metrics=1 passed=false"));
+}
+
+#[test]
 fn gate_blocks_zero_metric_when_min_value_requires_strictly_positive() {
     let key = "golden.slice.paraphrase.hit_at_k".to_string();
     let baseline = EvalGateBaseline {

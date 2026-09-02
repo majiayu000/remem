@@ -15,14 +15,14 @@ jobs:
         run: python3 -m pip install --requirement scripts/ci/requirements.txt
       - name: Check plugin version sync
         run: python3 scripts/ci/check_plugin_version_sync.py
+      - name: Self-test public benchmark claims
+        run: python3 scripts/ci/check_public_claims.py --self-test
       - name: Test documentation contracts
         run: python3 scripts/ci/test_check_documentation_contracts.py
       - name: Check documentation contracts
         run: python3 scripts/ci/check_documentation_contracts.py
       - name: Test SessionStart artifact runner
         run: python3 scripts/ci/test_run_sessionstart_context_gate_smoke.py
-      - name: Check public benchmark claims
-        run: python3 scripts/ci/check_public_claims.py
       - name: Check source file size guard
         run: python3 scripts/ci/check_file_size.py
       - name: Check active-memory write boundary
@@ -54,6 +54,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build current remem and prove isolated SessionStart smoke
         run: python3 scripts/ci/run_sessionstart_context_gate_smoke.py
+      - name: Generate public benchmark authority verdict
+        run: cargo run --locked -- bench verify --root eval/public --json-out "$RUNNER_TEMP/remem-public-bench-verify.json"
+      - name: Check public benchmark claims
+        run: python3 scripts/ci/check_public_claims.py --verdict "$RUNNER_TEMP/remem-public-bench-verify.json"
       - name: Check public and lifecycle surfaces
         run: python3 scripts/ci/check_public_surface.py
       - name: Check published surface baseline

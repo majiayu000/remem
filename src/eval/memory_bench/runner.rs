@@ -1,9 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::{Component, Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -18,18 +17,22 @@ use super::diagnostics::{
     classify_diagnosis, failure_decomposition, performance_by_condition, performance_metrics,
     score_policy,
 };
-use super::fixture::load_suite;
+use super::fixture::load_suite_with_content_identity;
 use super::production_pipeline::retrieve_with_production_pipeline;
 use super::types::{
     summarize_by_category, summarize_metrics, summarize_policy, MemoryBenchCondition,
     MemoryBenchEvidence, MemoryBenchPolicyMeasurement, MemoryBenchRunOutcome,
     MemoryBenchSuiteFixture, MemoryBenchTask, ADVERSARIAL_POLICY_SUITE, DEFAULT_PUBLIC_ROOT,
 };
-
-pub(super) const PROJECT: &str = "/tmp/remem-memory-bench/repo";
+use super::PROJECT;
 const READER_PROVIDER: &str = "fixture";
 const READER_MODEL: &str = "deterministic-memory-reader";
-
+#[derive(Debug, Clone)]
+struct ExecutionIdentity {
+    remem_commit: Option<String>,
+    source_dirty: Option<bool>,
+    production_input_tree_sha256: Option<String>,
+}
 #[derive(Debug, Clone)]
 pub struct MemoryBenchOptions {
     pub suite: String,
@@ -38,10 +41,15 @@ pub struct MemoryBenchOptions {
     pub root: String,
     pub artifact_prefix: Option<String>,
 }
-
 pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBenchmarkReport> {
-    let fixture = load_suite(&options.suite)?;
+    let (fixture, suite_content_identity) = load_suite_with_content_identity(&options.suite)?;
     let conditions = selected_conditions(options.condition.as_deref())?;
+    if fixture.benchmark_id == "adversarial-policy"
+        && fixture.version == "v2"
+        && conditions.as_slice() != [MemoryBenchCondition::RememDefault]
+    {
+        bail!("adversarial-policy v2 requires --condition remem_default");
+    }
     let public_root = PathBuf::from(if options.root.trim().is_empty() {
         DEFAULT_PUBLIC_ROOT
     } else {
@@ -51,7 +59,19 @@ pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBench
     let artifact_prefix = options
         .artifact_prefix
         .unwrap_or_else(|| format!("memory/artifacts/{}", fixture.fixture_revision));
+    validate_artifact_prefix(&artifact_prefix)?;
     let public_layout = path_starts_with(&json_out, &public_root);
+    let execution_identity = execution_identity();
+    if public_layout && is_checked_in_public_root(&public_root) {
+        if execution_identity.source_dirty != Some(false) {
+            bail!("checked-in public memory benchmarks require a clean Git source tree");
+        }
+        if execution_identity.remem_commit.is_none()
+            || execution_identity.production_input_tree_sha256.is_none()
+        {
+            bail!("checked-in public memory benchmarks require Git commit and production-input identities");
+        }
+    }
     let artifact_root = if public_layout {
         public_root.join(&artifact_prefix)
     } else {
@@ -68,7 +88,7 @@ pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBench
     let mut run_artifacts = Vec::new();
     for condition in conditions {
         for task in &fixture.tasks {
-            let outcome = run_task(&fixture, condition, task).await?;
+            let (outcome, database_snapshot) = run_task(&fixture, condition, task).await?;
             let run_json_path = write_run_artifacts(
                 &fixture,
                 &outcome,
@@ -76,16 +96,19 @@ pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBench
                 &artifact_root,
                 &public_root,
                 public_layout,
+                &execution_identity,
+                &suite_content_identity,
+                database_snapshot.as_deref(),
             )?;
             run_artifacts.push(run_json_path);
             outcomes.push(outcome);
         }
     }
-
-    let aggregate_metrics = json!({
+    let mut aggregate_metrics = json!({
         "suite": fixture.suite,
         "suite_version": fixture.version,
         "fixture_revision": fixture.fixture_revision,
+        "suite_content_identity": suite_content_identity,
         "run_count": outcomes.len(),
         "overall": summarize_metrics(&outcomes),
         "by_category": summarize_by_category(&outcomes),
@@ -100,6 +123,12 @@ pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBench
             .map(|outcome| outcome.policy.measurement_source.clone())
             .collect::<BTreeSet<_>>(),
     });
+    if fixture.benchmark_id == "adversarial-policy" && fixture.version == "v2" {
+        let metrics = aggregate_metrics.as_object_mut().expect("json object");
+        for key in "overall,by_category,conditions,failure_decomposition,performance".split(',') {
+            metrics.remove(key);
+        }
+    }
     let report = PublicBenchmarkReport {
         schema_version: 1,
         benchmark_id: fixture.benchmark_id.clone(),
@@ -141,6 +170,22 @@ pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBench
     Ok(report)
 }
 
+fn validate_artifact_prefix(raw: &str) -> Result<()> {
+    let path = Path::new(raw);
+    if raw.trim().is_empty()
+        || path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        anyhow::bail!("artifact prefix must be a nonempty relative path without parent traversal");
+    }
+    Ok(())
+}
+
 fn selected_conditions(condition: Option<&str>) -> Result<Vec<MemoryBenchCondition>> {
     match condition {
         Some(raw) => {
@@ -156,16 +201,14 @@ async fn run_task(
     fixture: &MemoryBenchSuiteFixture,
     condition: MemoryBenchCondition,
     task: &MemoryBenchTask,
-) -> Result<MemoryBenchRunOutcome> {
+) -> Result<(MemoryBenchRunOutcome, Option<Vec<u8>>)> {
     if fixture.suite == ADVERSARIAL_POLICY_SUITE && condition == MemoryBenchCondition::RememDefault
     {
-        let (retrieved, measurement) = retrieve_with_production_pipeline(task).await?;
-        return Ok(score_task(
-            fixture,
-            condition,
-            task,
-            retrieved,
-            Some(&measurement),
+        let (retrieved, measurement, database_snapshot) =
+            retrieve_with_production_pipeline(task).await?;
+        return Ok((
+            score_task(fixture, condition, task, retrieved, Some(&measurement)),
+            Some(database_snapshot),
         ));
     }
     let retrieved = if let Some(indices) = fixture_retrieval_indices(condition, task) {
@@ -176,7 +219,7 @@ async fn run_task(
     } else {
         retrieve_with_remem_search(task)?
     };
-    Ok(score_task(fixture, condition, task, retrieved, None))
+    Ok((score_task(fixture, condition, task, retrieved, None), None))
 }
 
 fn retrieve_with_remem_search(task: &MemoryBenchTask) -> Result<Vec<RetrievedEvidence>> {
@@ -280,7 +323,7 @@ fn score_task(
         0.0
     };
     let answer_text = if abstained {
-        "Insufficient benchmark evidence to answer.".to_string()
+        super::SAFE_ABSTENTION_ANSWER.to_string()
     } else {
         task.expected_answer.clone()
     };
@@ -428,6 +471,9 @@ fn write_run_artifacts(
     artifact_root: &Path,
     public_root: &Path,
     public_layout: bool,
+    execution_identity: &ExecutionIdentity,
+    suite_content_identity: &str,
+    database_snapshot: Option<&[u8]>,
 ) -> Result<String> {
     let run_dir = artifact_root.join(format!(
         "{}-{}",
@@ -442,7 +488,7 @@ fn write_run_artifacts(
     let answer_path = run_dir.join("answer.json");
     let score_path = run_dir.join("score.json");
     let diagnosis_path = run_dir.join("diagnosis.json");
-    let snapshot_path = run_dir.join("remem.db.snapshot.tar.zst");
+    let snapshot_path = run_dir.join("remem.db.snapshot.sqlite3");
     let run_path = run_dir.join("run.json");
 
     fs::write(&reader_input_path, &outcome.reader_input)?;
@@ -477,12 +523,11 @@ fn write_run_artifacts(
             "missing_event_ids": outcome.missing_event_ids,
         }))?,
     )?;
-    fs::write(
-        &snapshot_path,
-        "fixture placeholder: in-memory sqlite seeded from public suite evidence\n",
-    )?;
+    if let Some(snapshot) = database_snapshot {
+        fs::write(&snapshot_path, snapshot)?;
+    }
 
-    let artifacts = BTreeMap::from([
+    let mut artifacts = BTreeMap::from([
         (
             "reader_input".to_string(),
             artifact_path(&reader_input_path, public_root, public_layout)?,
@@ -503,11 +548,26 @@ fn write_run_artifacts(
             "diagnosis".to_string(),
             artifact_path(&diagnosis_path, public_root, public_layout)?,
         ),
-        (
+    ]);
+    if database_snapshot.is_some() {
+        artifacts.insert(
             "remem_db_snapshot".to_string(),
             artifact_path(&snapshot_path, public_root, public_layout)?,
-        ),
-    ]);
+        );
+    }
+    let artifact_sha256 = artifacts
+        .iter()
+        .map(|(key, relative)| {
+            let path = if public_layout {
+                public_root.join(relative)
+            } else {
+                PathBuf::from(relative)
+            };
+            let bytes = fs::read(&path)
+                .with_context(|| format!("read generated artifact {}", path.display()))?;
+            Ok((key.clone(), format!("{:x}", Sha256::digest(bytes))))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
     let run = MemoryRunArtifact {
         schema_version: 1,
         benchmark_id: fixture.benchmark_id.clone(),
@@ -527,16 +587,21 @@ fn write_run_artifacts(
         environment: RunEnvironment {
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
-            remem_commit: current_git_rev().unwrap_or_else(|| "unknown".to_string()),
+            remem_commit: execution_identity
+                .remem_commit
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
             remem_data_dir: format!(
                 "temp://remem-memory-bench/{}/{}/{}",
                 fixture.fixture_revision,
                 outcome.condition.as_str(),
                 outcome.task_id
             ),
-            docker_image_digest: Some("local-fixture-no-docker".to_string()),
+            docker_image_digest: benchmark_container_image_digest(),
             fixture_revision: Some(fixture.fixture_revision.clone()),
             repo_base_commit: None,
+            source_dirty: execution_identity.source_dirty,
+            production_input_tree_sha256: execution_identity.production_input_tree_sha256.clone(),
         },
         answer: json!({
             "text": outcome.answer_text,
@@ -593,6 +658,8 @@ fn write_run_artifacts(
             notes: outcome.diagnosis_notes.clone(),
         },
         artifacts,
+        artifact_sha256,
+        suite_content_identity: Some(suite_content_identity.to_string()),
     };
     fs::write(&run_path, serde_json::to_string_pretty(&run)?)?;
     artifact_path(&run_path, public_root, public_layout)
@@ -664,21 +731,40 @@ fn prompt_hash(prompt: &str) -> String {
     format!("sha256:{:x}", hasher.finalize())
 }
 
-fn current_git_rev() -> Option<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+fn execution_identity() -> ExecutionIdentity {
+    ExecutionIdentity {
+        remem_commit: option_env!("REMEM_BUILD_GIT_SHA").map(str::to_string),
+        source_dirty: option_env!("REMEM_BUILD_SOURCE_DIRTY").and_then(|value| match value {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        }),
+        production_input_tree_sha256: option_env!("REMEM_BUILD_PRODUCTION_INPUT_TREE_SHA256")
+            .map(str::to_string),
     }
-    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn benchmark_container_image_digest() -> Option<String> {
+    std::env::var("REMEM_BENCH_CONTAINER_IMAGE_DIGEST")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| Some("local-fixture-no-docker".to_string()))
+}
+
+pub(super) fn is_checked_in_public_root(public_root: &Path) -> bool {
+    match (
+        public_root.canonicalize(),
+        Path::new(DEFAULT_PUBLIC_ROOT).canonicalize(),
+    ) {
+        (Ok(requested), Ok(checked_in)) => requested == checked_in,
+        _ => false,
+    }
 }
 
 #[derive(Debug, Clone)]
 pub(super) struct RetrievedEvidence {
     memory_id: i64,
-    event_id: String,
+    pub(super) event_id: String,
     title: String,
     content: String,
     status: String,

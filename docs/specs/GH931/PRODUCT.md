@@ -147,6 +147,7 @@ workflow gate or authorization source.
 | `curated_file_budgeted` protocol | Protocol + schema + pre-run input/hash/order/budget verification + run attachment and maintenance-minutes-per-100-sessions aggregation |
 | Validation-only live approval | Implemented repository-local gate: verifies signed default-branch approval/trust root, exact plan/artifact/cost-cap bindings, and supervisor attestation under a hard zero-dispatch boundary; reports `local_gate_only`, so passing does not authorize an official run |
 | Claim registry + wording gate | `eval/claims/registry.json`, `eval/claims/claim_gate.py` |
+| Official outcome authority | Repository-local command, causal, or maintenance JSON remains `INSUFFICIENT`; only the pending governed scorer/supervisor receipt chain may authenticate it |
 | Dry-run and schema validation | `python3 eval/coding-bench/validate_schemas.py`, `claim_gate.py --self-test`, `cargo run -- bench coding --suite issue385-v1 --dry-run` |
 | Directional vs publishable distinction | `Directional evidence:` prefix rule enforced by the gate |
 
