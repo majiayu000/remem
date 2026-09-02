@@ -280,6 +280,14 @@ coding-agent outcome evidence. Verify it locally with:
 cargo run -- bench verify --root eval/public --json-out /tmp/remem-bench-verify.json
 ```
 
+Verification resolves `claims/registry.json` beside the parent of `--root`, so
+an external bundle keeps `public/` and `claims/` as siblings and is independent
+of the caller's working directory.
+
+Public adversarial SQLite snapshots are capped at 64 MiB and must be canonical
+`VACUUM` images; verifier-consumed artifact targets must also resolve inside the
+declared public root.
+
 The current public report is deliberately labeled
 `directional_only_no_public_claim`. The historical isolated coding baseline is
 useful engineering evidence, but its preloaded-memory condition is not
