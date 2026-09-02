@@ -10,6 +10,10 @@
     "benchmark_id": { "type": "string", "minLength": 1 },
     "benchmark_version": { "type": "string", "minLength": 1 },
     "suite": { "type": "string", "minLength": 1 },
+    "suite_content_identity": {
+      "type": "string",
+      "pattern": "^sha256-raw-suite-v1:[0-9a-f]{64}$"
+    },
     "condition": { "type": "string", "minLength": 1 },
     "task_id": { "type": "string", "minLength": 1 },
     "run_index": { "type": "integer", "minimum": 0 },
@@ -20,9 +24,65 @@
     "retrieval": { "type": "object" },
     "evidence": { "type": "object" },
     "metrics": { "type": "object" },
-    "diagnosis": { "type": "object" },
-    "artifacts": { "type": "object" }
+    "diagnosis": {
+      "type": "object",
+      "required": ["write_side_gap", "retrieval_side_gap", "reader_gap", "policy_abstention"],
+      "properties": {
+        "write_side_gap": { "type": "boolean" },
+        "retrieval_side_gap": { "type": "boolean" },
+        "reader_gap": { "type": "boolean" },
+        "policy_abstention": { "type": "boolean" },
+        "notes": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "artifacts": { "type": "object" },
+    "artifact_sha256": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+    }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "benchmark_id": { "const": "adversarial-policy" },
+          "benchmark_version": { "const": "v2" }
+        },
+        "required": ["benchmark_id", "benchmark_version"]
+      },
+      "then": {
+        "required": ["artifact_sha256", "suite_content_identity"],
+        "properties": {
+          "artifacts": {
+            "required": ["reader_input", "retrieved_evidence", "answer", "score", "diagnosis", "remem_db_snapshot"],
+            "properties": {
+              "reader_input": { "type": "string", "minLength": 1 },
+              "retrieved_evidence": { "type": "string", "minLength": 1 },
+              "answer": { "type": "string", "minLength": 1 },
+              "score": { "type": "string", "minLength": 1 },
+              "diagnosis": { "type": "string", "minLength": 1 },
+              "remem_db_snapshot": { "type": "string", "minLength": 1 }
+            }
+          },
+          "artifact_sha256": {
+            "minProperties": 6,
+            "required": ["reader_input", "retrieved_evidence", "answer", "score", "diagnosis", "remem_db_snapshot"]
+          },
+          "environment": {
+            "required": ["os", "arch", "source_dirty", "production_input_tree_sha256"],
+            "properties": {
+              "source_dirty": { "const": false },
+              "production_input_tree_sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "environment": {
       "type": "object",
@@ -32,6 +92,8 @@
         "arch": { "type": "string", "minLength": 1 },
         "remem_commit": { "type": "string", "minLength": 1 },
         "remem_data_dir": { "type": "string", "minLength": 1 },
+        "source_dirty": { "type": ["boolean", "null"] },
+        "production_input_tree_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
         "docker_image_digest": { "type": ["string", "null"] },
         "fixture_revision": { "type": ["string", "null"] },
         "repo_base_commit": { "type": ["string", "null"] }

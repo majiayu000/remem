@@ -17,11 +17,13 @@
   "environment": {
     "os": "macos",
     "arch": "aarch64",
-    "remem_commit": "ae80b955d41ae8f55dbf786bd36d70aa6e5e83fa",
+    "remem_commit": "42153a68142c53855efc55a251519adfce6a8cfd",
     "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/same-name-repos-001",
     "docker_image_digest": "local-fixture-no-docker",
     "fixture_revision": "adversarial-policy-v2",
-    "repo_base_commit": null
+    "repo_base_commit": null,
+    "source_dirty": false,
+    "production_input_tree_sha256": "04f2370811da222c9564419e39f3b49580287a7efb7092a344c9059f69f50a1f"
   },
   "answer": {
     "abstained": true,
@@ -87,8 +89,17 @@
     "answer": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/answer.json",
     "diagnosis": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/diagnosis.json",
     "reader_input": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/reader_input.txt",
-    "remem_db_snapshot": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/remem.db.snapshot.tar.zst",
+    "remem_db_snapshot": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/remem.db.snapshot.sqlite3",
     "retrieved_evidence": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/retrieved_evidence.json",
     "score": "memory/artifacts/adversarial-policy-v2/remem_default-same-name-repos-001/score.json"
-  }
+  },
+  "artifact_sha256": {
+    "answer": "4500d697f29f9e0cc3aae5f88cfab1ffb36a45f3eb99893dd279c71f42c8b6ed",
+    "diagnosis": "987df2247df7b2e78bd3d3f675bcac4663eca6854bcbb093ee318a7a7417d66d",
+    "reader_input": "857b62f1592edd60a16750e07da7167130c03d8231b4b10a89d3d4f79a09ba25",
+    "remem_db_snapshot": "365a2faab5b1565185185f79f01315bf5c8db39e65133aae36f9c0da78c11926",
+    "retrieved_evidence": "5160975d41c6e7deffd62e69e123fa4b64525a27e67d6b228dc1838fac2acdad",
+    "score": "9104fa05eb1c5d505b05892d47133caa21b33deba83a24a136a3fcc88446bf64"
+  },
+  "suite_content_identity": "sha256-raw-suite-v1:56dad240cc175fb3d3900875f05351b9541f9ef845aa54eddfc460151f3e257d"
 }

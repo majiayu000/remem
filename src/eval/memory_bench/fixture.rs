@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use sha2::{Digest, Sha256};
 
 use super::types::{MemoryBenchSuiteFixture, DEFAULT_SUITE_ROOT, SUPPORTED_SUITES};
 
@@ -10,21 +11,38 @@ pub fn suite_path(suite: &str) -> PathBuf {
     Path::new(DEFAULT_SUITE_ROOT).join(suite).join("suite.json")
 }
 
+#[cfg(test)]
 pub fn load_suite(suite: &str) -> Result<MemoryBenchSuiteFixture> {
+    load_suite_with_content_identity(suite).map(|(fixture, _)| fixture)
+}
+
+pub(super) fn load_suite_with_content_identity(
+    suite: &str,
+) -> Result<(MemoryBenchSuiteFixture, String)> {
     if !SUPPORTED_SUITES.contains(&suite) {
         bail!(
             "unknown memory benchmark suite {suite}; supported suites are {}",
             SUPPORTED_SUITES.join(", ")
         );
     }
-    let path = suite_path(suite);
-    let content = fs::read_to_string(&path)
+    load_suite_file_with_content_identity(&suite_path(suite), suite)
+}
+
+pub(super) fn load_suite_file_with_content_identity(
+    path: &Path,
+    requested_suite: &str,
+) -> Result<(MemoryBenchSuiteFixture, String)> {
+    let bytes = fs::read(path)
         .with_context(|| format!("read memory benchmark suite {}", path.display()))?;
-    let fixture: MemoryBenchSuiteFixture = serde_json::from_str(&content)
+    let fixture: MemoryBenchSuiteFixture = serde_json::from_slice(&bytes)
         .with_context(|| format!("parse memory benchmark suite {}", path.display()))?;
     validate_suite(&fixture)?;
-    validate_suite_selection(&fixture, suite)?;
-    Ok(fixture)
+    validate_suite_selection(&fixture, requested_suite)?;
+    Ok((fixture, suite_content_identity(&bytes)))
+}
+
+fn suite_content_identity(bytes: &[u8]) -> String {
+    format!("sha256-raw-suite-v1:{:x}", Sha256::digest(bytes))
 }
 
 pub(super) fn validate_suite_selection(

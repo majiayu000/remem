@@ -1,8 +1,8 @@
 # GH969 Technical Contract — Stabilization And Surface Governance
 
-Status: Current contract; activation, surface lifecycle, and dependency-direction guards implemented; later slices pending; Issue: #969
+Status: Current contract; activation, surface lifecycle, dependency-direction, and executable ship-matrix slices implemented; PR #1052 authority-verdict convergence in progress; final reconciliation pending; Issue: #969
 
-Last reconciled against `origin/main`: 2026-08-25 (`5b98e80d`)
+Last reconciled against `origin/main`: 2026-08-26 (`36f3d38c`)
 
 ## Contract Boundaries
 
@@ -493,11 +493,42 @@ The executable matrix must distinguish these gates:
 | Cross-host | GH935 sealed matrix | Cross-host continuity claims |
 | Coding outcome | GH931 official matrix and stop-loss artifact | Default/public claims about coding-task improvement |
 | Public claim | Hash-bound public report plus independent verification/authority | Any comparative, superiority, or SOTA wording |
+| Retrieval default decision | Accepted same-head baseline/enhanced ablation, thresholds, latency budget, and rollback artifact | Retrieval default-on |
+| Context default decision | Accepted capability-specific Context Bundle decision artifact with thresholds and rollback | Context default-on |
 
 Each report must include implementation SHA, dataset/fixture hash, config and
 model identity, environment/platform, condition completeness, metric deltas,
 stop-loss verdict, exclusions, and claim level. A missing arm is `incomplete`,
-not zero and not pass.
+not zero and not pass. Component gates bind the exact expected metric-name set,
+not only a prefix match. Security evidence binds every run to one producing
+revision, the exact verifier-covered selected report path, the complete
+runtime-consumed suite identity, the persisted SQLite snapshot and all artifact
+hashes, and one exact OS/architecture. Acceptance uses an attested
+production-input tree, not Git ancestry, so an equivalent squash/rebase remains
+valid while changed production inputs fail. Unsupported platforms remain
+`incomplete` until their own genuine report is verified; evidence is never
+copied or relabeled across platforms. A charter is not a cross-host result,
+ordinary regressions are not default-on authority, and directional baseline
+strings are not coding/public claim authority. Merge and release readiness
+inherit the legacy eval-gate verdict; the running binary's production-input
+tree and pathspec must match the clean checkout before security, merge, release,
+or claim authority can pass. Public security SQLite snapshots are size-bounded
+canonical `VACUUM` images, and official coding outcomes must carry the exact
+registered scorer command set. Every declared public artifact is read through
+one 64 MiB boundary, text payloads receive the same privacy scan as typed JSON,
+and each v2 run directory is closed against unreferenced files. The native
+aggregate consumes four unique row-verifier receipts from its four required
+native jobs and binds each receipt to the exact target, report hash, clean head,
+and production-input tree before evaluating the four-target release structure.
+Repository-local coding JSON never authenticates scorer causal labels or
+supervisor-timed maintenance by itself; without governed external receipts the
+GH931 verdict remains `INSUFFICIENT`.
+The Rust verifier consumes the coding policy and evidence once, recomputes claim
+readiness, and emits the runtime authority verdict. The Python public wording
+guard consumes only that verdict: it checks the emitted allowed/forbidden wording
+and verifier-bound report path/hash without re-deriving PASS or source
+equivalence. Policy prose on adjacent lines never authorizes claim wording.
+Level 3 claims still require independent authority.
 
 ## Outcome Scorecard
 
@@ -520,7 +551,10 @@ maintenance_time_and_ai_usage
 Every field must declare its numerator, denominator, eligible population, and
 whether it is measured, unavailable, or not applicable. Unavailable fields do
 not pass a gate. Security leak metrics have a zero-tolerance threshold unless a
-narrower contract is stricter.
+narrower contract is stricter. Task completion excludes runs where the target
+never started. Every measured ratio identifies the exact contributing report
+path and SHA-256. Deterministic fixture latency estimates remain unavailable
+rather than being labeled as measured wall-clock percentiles.
 
 ## Migration And Compatibility
 
@@ -550,6 +584,37 @@ untested reverse migration over user data.
 
 ## Implementation Slices
 
+### PR #1052 authority boundary (convergence in progress)
+
+This slice is not complete yet. Its target is for
+`bench_artifact::verify_benchmark_artifacts` to be the only runtime authority
+entry point: it must read each typed source and referenced byte stream once,
+retain its SHA-256 in the verified snapshot, and emit a runtime-only
+`AuthorityVerdict`. The verdict is never checked in. Baseline generation and
+ship-matrix construction must receive that verified snapshot rather than call
+a second verifier or reopen evidence.
+
+The verdict must own typed `PASS`/`FAIL`/`INSUFFICIENT` decisions for security,
+GH931, claim comparisons, and release readiness. Security decisions must use the
+canonical memory-bench policy scorer with recomputed measurements from exact
+answer/retrieval evidence and SQLite snapshots. GH931 decisions use the exact
+official matrix and existing task-cluster paired-bootstrap implementation,
+then apply registry thresholds and both frozen stop-losses. Registry
+`status`/`supporting_report` cannot become authority. The duplicate coding
+claim-contract file is removed; the verifier carries the consumed registry's
+wording policy in each recomputed claim verdict for Python to project.
+
+For `adversarial-policy/v2`, the public report aggregate is closed to suite
+identity, fixture revision, run count, recomputed policy summary, verification
+paths, and measurement sources. Derived performance summaries that the verifier
+does not independently recompute are not public authority fields.
+
+All populations must be keyed by condition and run phase; pre-target coding
+failures must be excluded, while missing official attempts leave the matrix
+`INSUFFICIENT`. Ship rows must use only their covered runs for model identity.
+Synthetic latency is not a measured metric. The four-target release set must be
+closed and fail-closed, and legacy eval gates must remain an input to readiness.
+
 After this spec is accepted, create focused implementation issues rather than
 one cross-repository PR:
 
@@ -570,9 +635,15 @@ one cross-repository PR:
    - Acceptance: self-tests pass; current violations are visible; synthetic new
      reverse edges and cycle growth fail.
 4. **Executable ship matrix and outcome scorecard**
+   - Status: implemented by #1049 in the v0.6.83 release line by extending
+     `remem eval-gates` with top-level `ship_matrix` and `outcome_scorecard`
+     artifacts.
    - Primary scope: existing eval gate/report aggregation.
    - Acceptance: gate scope and claim level are machine-readable; unavailable
-     measures cannot appear as pass.
+     measures cannot appear as pass; exact metric sets, clean execution and
+     production-input binding, security stop-loss outcomes, claim authority,
+     clean release identity, and capability-specific default decisions fail
+     closed.
 5. **Architecture/current-spec synchronization**
    - Primary scope: `docs/ARCHITECTURE.md`, specs index, manifest-linked drift
      checks.
@@ -605,6 +676,11 @@ node --test plugins/remem/scripts/remem-runtime.test.js \
 cargo run -- eval-extraction --json --check-baseline
 cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json
 ```
+
+The final command is also the deterministic #1049 acceptance command. Its
+required merge/release rows fail on missing or invalid repository evidence,
+while absent GH931/GH935/public-claim/default-decision runs remain explicit
+scoped `unavailable` rows and null scorecard values.
 
 Binary-impacting implementation PRs also satisfy the version-bump guard.
 Passing historical output from another SHA is not completion evidence.

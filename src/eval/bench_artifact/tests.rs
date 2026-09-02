@@ -7,6 +7,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{verify_benchmark_artifacts, BenchVerifyOptions};
 
+include!("tests/authority.rs");
+mod gh931_authority;
+mod schema;
+mod security_closed_world;
+mod security_verification;
+
 #[test]
 fn remem_backed_conditions_require_full_evidence() {
     for condition in [
@@ -167,15 +173,16 @@ fn claim_gate_requires_verified_unique_same_task_matrix() {
 
 #[test]
 fn committed_public_fixture_passes() -> Result<()> {
-    let report = verify_benchmark_artifacts(BenchVerifyOptions {
-        root: PathBuf::from("eval/public"),
-    })?;
+    let report = verify_benchmark_artifacts(BenchVerifyOptions::new(
+        PathBuf::from("eval/public"),
+        "eval/claims/registry.json",
+    ))?;
 
     assert!(report.passed, "{:#?}", report.failures);
-    assert_eq!(report.manifests_checked, 5);
-    assert_eq!(report.reports_checked, 5);
-    assert_eq!(report.run_artifacts_checked, 45);
-    assert_eq!(report.artifact_files_checked, 225);
+    assert_eq!(report.manifests_checked, 6);
+    assert_eq!(report.reports_checked, 6);
+    assert_eq!(report.run_artifacts_checked, 65);
+    assert_eq!(report.artifact_files_checked, 365);
     Ok(())
 }
 
@@ -187,7 +194,8 @@ fn verifier_rejects_report_version_that_differs_from_manifest() -> Result<()> {
         |json| json["version"] = Value::String("mismatched-v2".to_string()),
     )?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     assert_eq!(
@@ -210,7 +218,8 @@ fn verifier_rejects_memory_run_version_that_differs_from_report() -> Result<()> 
         |json| json["benchmark_version"] = Value::String("mismatched-v2".to_string()),
     )?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     assert_eq!(
@@ -232,7 +241,8 @@ fn verifier_rejects_memory_run_benchmark_id_that_differs_from_report() -> Result
         |json| json["benchmark_id"] = Value::String("misrouted-benchmark".to_string()),
     )?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     assert_eq!(
@@ -254,7 +264,8 @@ fn verifier_rejects_memory_run_suite_that_differs_from_report() -> Result<()> {
         |json| json["suite"] = Value::String("misrouted-suite".to_string()),
     )?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     assert_eq!(
@@ -270,13 +281,16 @@ fn verifier_rejects_memory_run_suite_that_differs_from_report() -> Result<()> {
 
 #[test]
 fn public_baseline_report_summarizes_committed_artifacts() -> Result<()> {
-    let report = super::generate_public_baseline_report(Path::new("eval/public"))?;
+    let report = super::generate_public_baseline_report(
+        Path::new("eval/public"),
+        Path::new("eval/claims/registry.json"),
+    )?;
 
     assert!(report.artifact_verifier.passed);
-    assert_eq!(report.summary.manifest_count, 5);
-    assert_eq!(report.summary.report_count, 5);
-    assert_eq!(report.summary.run_artifact_count, 45);
-    assert_eq!(report.summary.memory_system.run_artifact_count, 44);
+    assert_eq!(report.summary.manifest_count, 6);
+    assert_eq!(report.summary.report_count, 6);
+    assert_eq!(report.summary.run_artifact_count, 65);
+    assert_eq!(report.summary.memory_system.run_artifact_count, 64);
     assert_eq!(report.summary.coding_agent.run_artifact_count, 1);
     assert_eq!(
         report.claim_gate.coding_outcome_stop_loss_status,
@@ -296,7 +310,10 @@ fn public_baseline_report_summarizes_committed_artifacts() -> Result<()> {
 
 #[test]
 fn public_baseline_markdown_is_directional_and_separates_layers() -> Result<()> {
-    let report = super::generate_public_baseline_report(Path::new("eval/public"))?;
+    let report = super::generate_public_baseline_report(
+        Path::new("eval/public"),
+        Path::new("eval/claims/registry.json"),
+    )?;
     let markdown = super::render_public_baseline_markdown(&report);
 
     assert!(markdown.contains("directional_only_no_public_claim"));
@@ -393,7 +410,8 @@ fn verifier_rejects_missing_coding_test_log() -> Result<()> {
     let root = copy_public_fixture("missing-test-log")?;
     fs::remove_file(root.join("coding/artifacts/smoke-coding-001/test.log"))?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     assert!(failure_text(&report).contains("artifact file for test_log is missing"));
@@ -411,7 +429,8 @@ fn coding_bench_attribution_verifier_rejects_unknown_coding_failure_reason() -> 
         },
     )?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     assert!(failure_text(&report).contains("unknown failure_reason enum"));
@@ -434,7 +453,8 @@ fn verifier_rejects_legacy_bare_coding_condition_identity() -> Result<()> {
         |json| json["condition"] = Value::String("remem".to_string()),
     )?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     assert!(failure_text(&report).contains("unknown coding condition identity remem"));
@@ -449,7 +469,8 @@ fn verifier_rejects_coding_condition_layer_mismatch() -> Result<()> {
         |json| json["condition"] = Value::String("no_memory".to_string()),
     )?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     assert!(failure_text(&report).contains("condition must be declared by its report"));
@@ -464,7 +485,8 @@ fn verifier_rejects_duplicate_coding_run_artifact_reference() -> Result<()> {
         json["run_artifacts"].as_array_mut().unwrap().push(run_path);
     })?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     assert!(failure_text(&report).contains("run artifact path must be referenced only once"));
@@ -486,7 +508,8 @@ fn verifier_rejects_declared_coding_condition_without_run() -> Result<()> {
         })?;
     }
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     assert!(failure_text(&report)
@@ -509,7 +532,8 @@ fn verifier_accepts_not_applicable_context_audit_for_control() -> Result<()> {
         },
     )?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(report.passed, "{:#?}", report.failures);
     Ok(())
@@ -532,7 +556,8 @@ fn verifier_rejects_omitted_control_context_audit_nulls() -> Result<()> {
         },
     )?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     let text = failure_text(&report);
@@ -588,7 +613,8 @@ fn verifier_rejects_memory_contract_for_control() -> Result<()> {
         },
     )?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     assert!(failure_text(&report).contains("must not include memory_contract"));
@@ -614,34 +640,13 @@ fn verifier_requires_context_audit_for_current_remem_condition() -> Result<()> {
         },
     )?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     let text = failure_text(&report);
     assert!(text.contains("must carry verified ContextAudit status"));
     assert!(text.contains("must include a ContextAudit snapshot"));
-    Ok(())
-}
-
-#[test]
-fn coding_bench_attribution_verifier_rejects_invalid_memory_contract() -> Result<()> {
-    let root = copy_public_fixture("invalid-memory-contract")?;
-    mutate_json(
-        &root.join("coding/artifacts/smoke-coding-001/run.json"),
-        |json| {
-            json["resolved"] = Value::Bool(false);
-            json["failure_reason"] = Value::String("stale_memory_followed".to_string());
-            json["memory_contract"]["citation_precision"] = Value::from(1.5);
-            json["memory_contract"]["memory_hurt"] = Value::Bool(false);
-        },
-    )?;
-
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
-
-    assert!(!report.passed);
-    let text = failure_text(&report);
-    assert!(text.contains("memory_contract.citation_precision"));
-    assert!(text.contains("memory_contract.memory_hurt=true"));
     Ok(())
 }
 
@@ -655,7 +660,8 @@ fn verifier_rejects_missing_memory_supporting_ids() -> Result<()> {
         },
     )?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     assert!(failure_text(&report).contains("missing gold supporting evidence IDs"));
@@ -672,7 +678,8 @@ fn verifier_rejects_private_remem_data_path() -> Result<()> {
         },
     )?;
 
-    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
 
     assert!(!report.passed);
     let text = failure_text(&report);

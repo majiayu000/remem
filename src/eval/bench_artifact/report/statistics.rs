@@ -169,6 +169,12 @@ pub(in crate::eval::bench_artifact) fn coding_paired_statistics(
     statistics
 }
 
+pub(in crate::eval::bench_artifact) fn coding_report_structurally_complete(
+    outcomes: &[CodingTaskOutcome],
+) -> bool {
+    report_outcomes_structurally_complete(&outcomes.iter().collect::<Vec<_>>())
+}
+
 fn insufficient_coding_paired_statistic(
     comparison_id: &str,
     treatment: &str,

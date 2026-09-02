@@ -1,23 +1,142 @@
 use anyhow::{Context, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, DatabaseName};
 use serde_json::json;
 
-use super::runner::{RetrievedEvidence, PROJECT};
+#[cfg(test)]
+use std::cell::RefCell;
+#[cfg(test)]
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
+
+use super::runner::RetrievedEvidence;
 use super::types::{MemoryBenchEvidence, MemoryBenchPolicyMeasurement, MemoryBenchTask};
+use super::PROJECT;
 
 const LEASE_OWNER: &str = "memory-bench-production-pipeline";
 
+#[cfg(test)]
+thread_local! {
+    static REPLAY_PROBE: RefCell<Option<ReplayProbe>> = const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+pub(super) struct ReplayProbe {
+    replay_count: Arc<AtomicUsize>,
+}
+
+#[cfg(test)]
+impl ReplayProbe {
+    pub(super) fn count(&self) -> usize {
+        self.replay_count.load(Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+pub(super) struct ReplayProbeGuard {
+    previous: Option<ReplayProbe>,
+}
+
+#[cfg(test)]
+impl Drop for ReplayProbeGuard {
+    fn drop(&mut self) {
+        REPLAY_PROBE.with(|slot| {
+            slot.replace(self.previous.take());
+        });
+    }
+}
+
+#[cfg(test)]
+pub(super) fn scoped_replay_probe() -> (ReplayProbe, ReplayProbeGuard) {
+    let probe = ReplayProbe {
+        replay_count: Arc::new(AtomicUsize::new(0)),
+    };
+    let guard = attach_replay_probe(Some(probe.clone()));
+    (probe, guard)
+}
+
+#[cfg(test)]
+pub(super) fn current_replay_probe() -> Option<ReplayProbe> {
+    REPLAY_PROBE.with(|slot| slot.borrow().clone())
+}
+
+#[cfg(test)]
+pub(super) fn attach_replay_probe(probe: Option<ReplayProbe>) -> ReplayProbeGuard {
+    let previous = REPLAY_PROBE.with(|slot| slot.replace(probe));
+    ReplayProbeGuard { previous }
+}
+
+#[cfg(test)]
+fn record_trusted_replay() {
+    REPLAY_PROBE.with(|slot| {
+        if let Some(probe) = slot.borrow().as_ref() {
+            probe.replay_count.fetch_add(1, Ordering::SeqCst);
+        }
+    });
+}
+
 pub(super) async fn retrieve_with_production_pipeline(
     task: &MemoryBenchTask,
-) -> Result<(Vec<RetrievedEvidence>, MemoryBenchPolicyMeasurement)> {
-    let mut conn = Connection::open_in_memory()?;
+) -> Result<(
+    Vec<RetrievedEvidence>,
+    MemoryBenchPolicyMeasurement,
+    Vec<u8>,
+)> {
+    let (conn, retrieved, measurement) = execute_production_pipeline(task).await?;
+    conn.execute_batch("VACUUM")?;
+    let snapshot = conn.serialize(DatabaseName::Main)?.to_vec();
+    Ok((retrieved, measurement, snapshot))
+}
+
+pub(super) async fn trusted_snapshot_replay(
+    task: &MemoryBenchTask,
+) -> Result<super::TrustedSecurityReplay> {
+    #[cfg(test)]
+    record_trusted_replay();
+
+    let conn = trusted_schema_connection()?;
+    let (conn, retrieved, _) = execute_production_pipeline_with_connection(conn, task).await?;
+    Ok(super::TrustedSecurityReplay {
+        snapshot_identity: crate::eval::security_snapshot_identity::snapshot_identity(&conn)?,
+        retrieved_event_ids: retrieved
+            .into_iter()
+            .map(|evidence| evidence.event_id)
+            .collect(),
+    })
+}
+
+async fn execute_production_pipeline(
+    task: &MemoryBenchTask,
+) -> Result<(
+    Connection,
+    Vec<RetrievedEvidence>,
+    MemoryBenchPolicyMeasurement,
+)> {
+    let conn = Connection::open_in_memory()?;
     crate::migrate::run_migrations(&conn)?;
+    execute_production_pipeline_with_connection(conn, task).await
+}
+
+async fn execute_production_pipeline_with_connection(
+    mut conn: Connection,
+    task: &MemoryBenchTask,
+) -> Result<(
+    Connection,
+    Vec<RetrievedEvidence>,
+    MemoryBenchPolicyMeasurement,
+)> {
     let policy = task.policy.as_ref();
     let poisoning_expected = policy.is_some_and(|policy| policy.poisoning_quarantine_expected);
     let explicitly_approved = policy.is_some_and(|policy| policy.explicit_approval);
 
     record_fixture_events(&conn, task, explicitly_approved)?;
     run_observation_and_candidate_tasks(&mut conn, task, poisoning_expected).await?;
+    conn.execute(
+        "UPDATE memories SET created_at_epoch = ?1, updated_at_epoch = ?1",
+        [task.reference_time_epoch],
+    )?;
 
     let active_memories =
         crate::memory::list_memories(&conn, PROJECT, None, i64::MAX, 0, false, Some("main"))?;
@@ -57,7 +176,13 @@ pub(super) async fn retrieve_with_production_pipeline(
         poisoning_generated_surface_blocked: quarantined_observations > 0
             || quarantined_candidates > 0,
     };
-    Ok((retrieved, measurement))
+    Ok((conn, retrieved, measurement))
+}
+
+fn trusted_schema_connection() -> Result<Connection> {
+    let connection = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&connection)?;
+    Ok(connection)
 }
 
 fn record_fixture_events(

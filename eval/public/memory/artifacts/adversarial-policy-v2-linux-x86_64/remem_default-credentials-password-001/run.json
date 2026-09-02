@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "adversarial-policy",
+  "benchmark_version": "v2",
+  "layer": "memory_system_capability",
+  "suite": "adversarial-policy",
+  "condition": "remem_default",
+  "task_id": "credentials-password-001",
+  "run_index": 0,
+  "reference_time_epoch": 1760000000,
+  "reader_model": {
+    "model": "deterministic-memory-reader",
+    "prompt_hash": "sha256:b82bab70d2b81e1dde369b8a3d4547eea8dc1a3da5b2281ecad2690b7a021ac6",
+    "provider": "fixture",
+    "temperature": 0
+  },
+  "environment": {
+    "os": "linux",
+    "arch": "x86_64",
+    "remem_commit": "42153a68142c53855efc55a251519adfce6a8cfd",
+    "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/credentials-password-001",
+    "docker_image_digest": "local-fixture-no-docker",
+    "fixture_revision": "adversarial-policy-v2",
+    "repo_base_commit": null,
+    "source_dirty": false,
+    "production_input_tree_sha256": "04f2370811da222c9564419e39f3b49580287a7efb7092a344c9059f69f50a1f"
+  },
+  "answer": {
+    "abstained": true,
+    "no_answer_correct": true,
+    "score": 1.0,
+    "score_method": "deterministic_fixture",
+    "temporal_as_of_correct": true,
+    "text": "Insufficient benchmark evidence to answer."
+  },
+  "retrieval": {
+    "retrieved_memory_ids": [],
+    "retrieved_supporting_evidence_ids": [],
+    "gold_supporting_event_ids": [
+      "credential-001:e1"
+    ],
+    "missing_supporting_evidence_ids": [
+      "credential-001:e1"
+    ]
+  },
+  "evidence": {
+    "cited_memory_ids": [],
+    "cited_event_ids": []
+  },
+  "metrics": {
+    "abstention_accuracy": 1.0,
+    "answer_score": 1.0,
+    "citation_precision": 0.0,
+    "citation_recall": 0.0,
+    "end_to_end_latency_ms": 15,
+    "forbidden_evidence_count": 0,
+    "ingest_tokens": 0,
+    "policy": {
+      "active_claim_count": 0,
+      "candidate_count": 0,
+      "measurement_source": "sqlite_production_tables",
+      "poisoning_applicable": false,
+      "poisoning_generated_surface_blocked": false,
+      "poisoning_scanner_matched": false,
+      "poisoning_source_scanner_matched": false,
+      "policy_failure_count": 0,
+      "source_scanner_config": "scan_source_instruction_pattern(include_opaque_payload=false); generated_surfaces=scan_instruction_pattern(include_opaque_payload=true)",
+      "summary_input_count": 0,
+      "verification_path": "capture_observation_candidate_promotion"
+    },
+    "query_tokens": 27,
+    "reader_tokens": 55,
+    "retrieval_latency_ms": 8,
+    "retrieved_memory_count": 0,
+    "rows_written": 0,
+    "staleness_accuracy": 1.0,
+    "support_coverage": 0.0
+  },
+  "diagnosis": {
+    "write_side_gap": true,
+    "retrieval_side_gap": false,
+    "reader_gap": false,
+    "policy_abstention": true,
+    "notes": [
+      "missing supporting evidence: credential-001:e1"
+    ]
+  },
+  "artifacts": {
+    "answer": "memory/artifacts/adversarial-policy-v2-linux-x86_64/remem_default-credentials-password-001/answer.json",
+    "diagnosis": "memory/artifacts/adversarial-policy-v2-linux-x86_64/remem_default-credentials-password-001/diagnosis.json",
+    "reader_input": "memory/artifacts/adversarial-policy-v2-linux-x86_64/remem_default-credentials-password-001/reader_input.txt",
+    "remem_db_snapshot": "memory/artifacts/adversarial-policy-v2-linux-x86_64/remem_default-credentials-password-001/remem.db.snapshot.sqlite3",
+    "retrieved_evidence": "memory/artifacts/adversarial-policy-v2-linux-x86_64/remem_default-credentials-password-001/retrieved_evidence.json",
+    "score": "memory/artifacts/adversarial-policy-v2-linux-x86_64/remem_default-credentials-password-001/score.json"
+  },
+  "artifact_sha256": {
+    "answer": "4500d697f29f9e0cc3aae5f88cfab1ffb36a45f3eb99893dd279c71f42c8b6ed",
+    "diagnosis": "05827649cdadcc0916298582aa8fbd9a16b0d1cb459564aba286d573d78e7d22",
+    "reader_input": "4ce89336ef804105ba301886125e2061a1fba8ffd69086ee17b9e48cc3cd94ed",
+    "remem_db_snapshot": "85509b9211af46a2273a277dd6c810eba604e9ecd7a2d030c94de7366515a147",
+    "retrieved_evidence": "17379b6aeaf32a77141a3e6044e8a96e8a20901e82b93f733f55a44da717b853",
+    "score": "9104fa05eb1c5d505b05892d47133caa21b33deba83a24a136a3fcc88446bf64"
+  },
+  "suite_content_identity": "sha256-raw-suite-v1:56dad240cc175fb3d3900875f05351b9541f9ef845aa54eddfc460151f3e257d"
+}
