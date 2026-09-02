@@ -224,6 +224,29 @@ class MarkdownEdgeContractTests(unittest.TestCase):
         )
         self.assertTrue(any("missing Markdown anchor" in item for item in violations))
 
+    def test_bilingual_invariants_ignore_inline_hidden_html_text(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8").replace(
+                "The current public report does not support public benchmark claims.",
+                "Visible <template>The current public report does not support public "
+                "benchmark claims.</template>",
+            ),
+            encoding="utf-8",
+        )
+        violations: list[str] = []
+        check_documentation_contracts.check_bilingual_readme_invariants(
+            self.root, violations
+        )
+        self.assertTrue(any("public benchmark claim boundary" in item for item in violations))
+
+    def test_heading_anchors_ignore_inline_hidden_html_text(self) -> None:
+        anchors = check_documentation_contracts.heading_anchors(
+            "# Visible <template>hidden</template> tail\n"
+        )
+        self.assertNotIn("visible-hidden-tail", anchors)
+        self.assertIn("visible--tail", anchors)
+
 
 if __name__ == "__main__":
     unittest.main()

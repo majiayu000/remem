@@ -189,20 +189,25 @@ def slug_from_visible_text(visible: str) -> str:
 
 def inline_visible_text(token, include_struck: bool = True) -> str:
     visible: list[str] = []
+    html = LinkAttributeParser()
     struck_depth = 0
     for child in token.children or ():
+        if child.type == "html_inline":
+            html.feed(child.content)
+            continue
         if child.type == "s_open":
             struck_depth += 1
             continue
         if child.type == "s_close":
             struck_depth = max(0, struck_depth - 1)
             continue
-        if struck_depth and not include_struck:
+        if html.hidden_depth or (struck_depth and not include_struck):
             continue
         if child.type in {"text", "code_inline", "image"}:
             visible.append(child.content)
         elif child.type in {"softbreak", "hardbreak"}:
             visible.append(" ")
+    html.close()
     return "".join(visible)
 
 
