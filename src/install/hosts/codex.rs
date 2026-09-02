@@ -87,16 +87,16 @@ fn read_toml_doc(path: &Path) -> Result<DocumentMut> {
     if !path.exists() {
         return Ok(DocumentMut::new());
     }
-    let content =
-        std::fs::read_to_string(path).with_context(|| format!("读取 {} 失败", path.display()))?;
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
     content
         .parse::<DocumentMut>()
-        .with_context(|| format!("解析 {} 失败（非法 TOML）", path.display()))
+        .with_context(|| format!("failed to parse {} (invalid TOML)", path.display()))
 }
 
 fn write_toml_doc(path: &Path, doc: &DocumentMut) -> Result<()> {
     crate::atomic_file::write_atomic(path, doc.to_string())
-        .with_context(|| format!("写入 {} 失败", path.display()))?;
+        .with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
 }
 
@@ -107,7 +107,7 @@ fn apply_codex_hooks_json(path: &Path, bin: &str) -> Result<()> {
     let new_hooks = build_codex_hooks(bin);
     let obj = doc
         .as_object_mut()
-        .with_context(|| format!("{} 根节点不是 Object", path.display()))?;
+        .with_context(|| format!("{} root is not an Object", path.display()))?;
     let hooks = obj
         .entry("hooks".to_string())
         .or_insert_with(|| serde_json::json!({}));
@@ -166,7 +166,7 @@ fn enable_codex_hooks(doc: &mut DocumentMut) -> Result<()> {
         .entry("features")
         .or_insert(Item::Table(Table::new()))
         .as_table_mut()
-        .context("features 存在但不是 table，拒绝覆盖")?;
+        .context("features exists but is not a table; refusing to overwrite")?;
     features["hooks"] = value(true);
     features.remove("codex_hooks");
     Ok(())
@@ -190,7 +190,7 @@ fn upsert_remem_server(doc: &mut DocumentMut, bin: &str) -> Result<()> {
             t
         }))
         .as_table_mut()
-        .context("mcp_servers 存在但不是 table，拒绝覆盖")?;
+        .context("mcp_servers exists but is not a table; refusing to overwrite")?;
 
     let mut entry = Table::new();
     entry["command"] = value(bin);
@@ -364,7 +364,7 @@ codex_hooks = true
 "#;
         let mut doc: DocumentMut = src.parse().unwrap();
         let err = upsert_remem_server(&mut doc, "/tmp/remem").unwrap_err();
-        assert!(err.to_string().contains("不是 table"), "{err}");
+        assert!(err.to_string().contains("not a table"), "{err}");
     }
 
     #[test]

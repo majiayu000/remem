@@ -213,7 +213,9 @@ fn should_mirror_to_stderr_with_env(
     if stderr_to_log {
         return false;
     }
-    if level == "INFO" && component == "migrate" {
+    // Diagnostic-only telemetry stays in the log file unless explicitly
+    // debugging; interactive commands like `remem search` keep the terminal clean.
+    if level == "INFO" && matches!(component, "migrate" | "search-perf") {
         return debug_enabled;
     }
     true
@@ -495,6 +497,28 @@ mod tests {
         ));
         assert!(super::should_mirror_to_stderr_with_env(
             "ERROR", "migrate", false, false
+        ));
+    }
+
+    #[test]
+    fn search_perf_info_requires_debug_like_migrate() {
+        assert!(!super::should_mirror_to_stderr_with_env(
+            "INFO",
+            "search-perf",
+            false,
+            false
+        ));
+        assert!(super::should_mirror_to_stderr_with_env(
+            "INFO",
+            "search-perf",
+            true,
+            false
+        ));
+        assert!(super::should_mirror_to_stderr_with_env(
+            "DEBUG",
+            "search-perf",
+            false,
+            false
         ));
     }
 
