@@ -74,6 +74,8 @@ class LinkAttributeParser(HTMLParser):
         if tag in NON_RENDERED_HTML_TAGS:
             self.hidden_depth += 1
             return
+        if self.hidden_depth:
+            return
         attributes = {name.lower(): value for name, value in attrs if value}
         if tag == "a" and "href" in attributes:
             self.targets.append(attributes["href"])
@@ -96,6 +98,15 @@ class LinkAttributeParser(HTMLParser):
 def parse_html(fragment: str) -> LinkAttributeParser:
     parser = LinkAttributeParser()
     parser.feed(fragment)
+    parser.close()
+    return parser
+
+
+def parse_inline_html(token) -> LinkAttributeParser:
+    parser = LinkAttributeParser()
+    for child in token.children or ():
+        if child.type == "html_inline":
+            parser.feed(child.content)
     parser.close()
     return parser
 
@@ -176,9 +187,18 @@ def slug_from_visible_text(visible: str) -> str:
     return "".join(slug)
 
 
-def inline_visible_text(token) -> str:
+def inline_visible_text(token, include_struck: bool = True) -> str:
     visible: list[str] = []
+    struck_depth = 0
     for child in token.children or ():
+        if child.type == "s_open":
+            struck_depth += 1
+            continue
+        if child.type == "s_close":
+            struck_depth = max(0, struck_depth - 1)
+            continue
+        if struck_depth and not include_struck:
+            continue
         if child.type in {"text", "code_inline", "image"}:
             visible.append(child.content)
         elif child.type in {"softbreak", "hardbreak"}:
@@ -220,9 +240,7 @@ def heading_anchors(text: str) -> set[str]:
         if token.type == "html_block":
             anchors.update(parse_html(token.content).anchors)
         if token.type == "inline":
-            for child in token.children or ():
-                if child.type == "html_inline":
-                    anchors.update(parse_html(child.content).anchors)
+            anchors.update(parse_inline_html(token).anchors)
     return anchors
 
 
@@ -367,10 +385,10 @@ def markdown_destinations(text: str):
             yield from ((line_number, target) for target in parser.targets)
         if token.type != "inline":
             continue
+        inline_html = parse_inline_html(token)
+        yield from ((line_number, target) for target in inline_html.targets)
         for child in token.children or ():
             if child.type == "html_inline":
-                parser = parse_html(child.content)
-                yield from ((line_number, target) for target in parser.targets)
                 continue
             attribute = "href" if child.type == "link_open" else "src"
             if child.type not in {"link_open", "image"}:
@@ -384,7 +402,7 @@ def markdown_contract_text(text: str) -> str:
     visible: list[str] = []
     for token in MARKDOWN.parse(text):
         if token.type == "inline":
-            visible.append(inline_visible_text(token))
+            visible.append(inline_visible_text(token, include_struck=False))
         elif token.type in {"fence", "code_block"}:
             visible.append(token.content)
         elif token.type == "html_block":

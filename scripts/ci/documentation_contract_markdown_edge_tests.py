@@ -200,6 +200,30 @@ class MarkdownEdgeContractTests(unittest.TestCase):
         )
         self.assertTrue(any("missing Markdown anchor" in item for item in violations))
 
+    def test_bilingual_invariants_ignore_struck_through_prose(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8").replace(
+                "The current public report does not support public benchmark claims.",
+                "~~The current public report does not support public benchmark claims.~~",
+            ),
+            encoding="utf-8",
+        )
+        violations: list[str] = []
+        check_documentation_contracts.check_bilingual_readme_invariants(
+            self.root, violations
+        )
+        self.assertTrue(any("public benchmark claim boundary" in item for item in violations))
+
+    def test_local_links_ignore_anchors_inside_hidden_html(self) -> None:
+        (self.root / "docs/hidden-anchor.md").write_text(
+            '<template><a id="configuration"></a></template>\n', encoding="utf-8"
+        )
+        violations = self.local_link_violations(
+            "\n[Configuration](docs/hidden-anchor.md#configuration)\n"
+        )
+        self.assertTrue(any("missing Markdown anchor" in item for item in violations))
+
 
 if __name__ == "__main__":
     unittest.main()
