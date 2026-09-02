@@ -13,6 +13,23 @@ pub(super) struct ObservationDetailsOutput {
 enum DetailOutput {
     Memory(MemoryDetailOutput),
     Observation(ObservationDetailOutput),
+    SessionSummary(SessionSummaryDetailOutput),
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SessionSummaryDetailOutput {
+    id: i64,
+    memory_session_id: String,
+    request: Option<String>,
+    completed: Option<String>,
+    decisions: Option<String>,
+    learned: Option<String>,
+    next_steps: Option<String>,
+    preferences: Option<String>,
+    created_at: String,
+    created_at_epoch: i64,
+    project: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]

@@ -164,6 +164,8 @@ Descriptions remain concise but must agree with the annotations:
 - `lookup_commit` and `commits_for_session` disclose the same linked-summary
   quarantine possibility.
 - `get_observations` continues to disclose last-access/access-count writes.
+  Its `session_summary` source also discloses the poisoning quarantine side
+  effect and reads the requested summary ID in its own namespace.
 - Query tools may still say read-only when they do not mutate durable domain
   state; their `openWorldHint` separately reports optional remote embedding.
 
@@ -187,7 +189,7 @@ Focused tests cover:
 - undeclared, missing, wrong-type, invalid-null, nested, and union-branch
   mutations fail against the advertised contract;
 - every one of the 14 schema-bearing served routes returns a real non-empty
-  success through the adapter, covering both detail union branches and
+  success through the adapter, covering all three detail union branches and
   nested/nullable values;
 - `MemoryServer::new` remains lazy and does not open the database.
 

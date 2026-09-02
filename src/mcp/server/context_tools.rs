@@ -225,7 +225,7 @@ impl MemoryServer {
     }
 
     #[tool(
-        description = "Fetch full details for explicit IDs and record last-accessed metadata for returned rows. Use after search, not for discovery: pass selected IDs and the exact source from search.next_step.source or each result.source. source defaults to 'memory'; source='memory' returns curated memory detail objects and requires its access update to succeed, while source='observation' returns current extracted observations as detail objects in a JSON array and records its access update best-effort (a failed update is logged but details still return). Unsupported sources, any missing requested ID, detail-read failures, or memory access-update failures return a tool error."
+        description = "Fetch full details for explicit IDs and record last-accessed metadata for returned memory or observation rows. Use after search, not for discovery; prompt-time anchors may also direct this exact lookup. Pass selected IDs and the exact source from the result. source defaults to 'memory'; source='memory' returns curated memory details and requires its access update to succeed, source='observation' returns current extracted observations and records its access update best-effort (a failed update is logged but details still return), and source='session_summary' returns exact safe session-summary rows without confusing their IDs with observation IDs. Unsupported sources, any missing requested ID, detail-read failures, or memory access-update failures return a tool error."
     )]
     pub(super) fn get_observations(
         &self,
@@ -311,10 +311,33 @@ impl MemoryServer {
                     })?;
                     details
                 }
+                "session_summary" => {
+                    let summaries = db::get_summaries_by_ids(
+                        conn,
+                        &params.ids,
+                        params.project.as_deref(),
+                    )
+                    .map_err(|e| {
+                        crate::log::warn(
+                            "mcp",
+                            &format!("get_session_summaries failed: {e}"),
+                        );
+                        McpToolError::db_query(TOOL, e)
+                    })?;
+                    ensure_requested_ids_found(
+                        TOOL,
+                        source,
+                        &params.ids,
+                        summaries.iter().map(|summary| summary.id),
+                    )?;
+                    errors::to_json_value(TOOL, &summaries)?
+                }
                 other => {
                     return Err(McpToolError::unsupported_source(
                         TOOL,
-                        format!("unsupported source '{other}'; expected 'memory' or 'observation'"),
+                        format!(
+                            "unsupported source '{other}'; expected 'memory', 'observation', or 'session_summary'"
+                        ),
                     ));
                 }
             };

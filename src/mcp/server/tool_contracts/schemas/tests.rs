@@ -320,7 +320,7 @@ fn production_null_paths_are_valid_in_every_nullable_output_family() -> anyhow::
 }
 
 #[test]
-fn detail_items_are_a_typed_memory_or_observation_union() -> anyhow::Result<()> {
+fn detail_items_are_a_typed_memory_observation_or_session_summary_union() -> anyhow::Result<()> {
     let schema = schema_value(OutputSchema::GetObservations)?;
     let items = array_items(&schema, property(&schema, "details"))
         .expect("details must declare array items");
@@ -330,7 +330,7 @@ fn detail_items_are_a_typed_memory_or_observation_union() -> anyhow::Result<()> 
         .or_else(|| union.get("oneOf"))
         .and_then(Value::as_array)
         .expect("detail items must declare a union");
-    assert_eq!(alternatives.len(), 2);
+    assert_eq!(alternatives.len(), 3);
 
     assert!(alternatives.iter().any(|candidate| {
         has_property(&schema, candidate, "memory_type")
@@ -340,6 +340,12 @@ fn detail_items_are_a_typed_memory_or_observation_union() -> anyhow::Result<()> 
     assert!(alternatives.iter().any(|candidate| {
         has_property(&schema, candidate, "memory_session_id")
             && has_property(&schema, candidate, "compressed_sources")
+    }));
+    assert!(alternatives.iter().any(|candidate| {
+        has_property(&schema, candidate, "memory_session_id")
+            && has_property(&schema, candidate, "request")
+            && has_property(&schema, candidate, "next_steps")
+            && !has_property(&schema, candidate, "compressed_sources")
     }));
     Ok(())
 }

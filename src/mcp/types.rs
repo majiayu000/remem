@@ -157,7 +157,9 @@ pub(super) struct GetObservationsParams {
     pub ids: Vec<i64>,
     #[schemars(description = "Project name filter")]
     pub project: Option<String>,
-    #[schemars(description = "Source type: 'memory' or 'observation' (default: 'memory')")]
+    #[schemars(
+        description = "Source type: 'memory', 'observation', or 'session_summary' (default: 'memory')"
+    )]
     pub source: Option<String>,
     #[schemars(description = "Include policy-suppressed memories (default false)")]
     pub include_suppressed: Option<bool>,

@@ -66,7 +66,7 @@ interaction:
 | `recall_user_context` | Recall User Context | false | true | false | true | May quarantine an unsafe summary and may use remote embedding. |
 | `context_bundle` | Compile Context Bundle (Experimental) | false | true | false | false | Uses local-only retrieval, but poisoning checks may persist audit/drop records. |
 | `timeline` | Memory Timeline | true | false | true | true | Query-only; query mode may use remote embedding. |
-| `get_observations` | Get Observation Details | false | true | false | false | Overwrites last-accessed metadata and increments memory access counts. |
+| `get_observations` | Get Observation Details | false | true | false | false | Memory and observation reads update access metadata; session-summary reads may quarantine unsafe generated text. |
 | `lookup_commit` | Lookup Commit | false | true | false | false | Its safety gate may quarantine the newest eligible linked summary. |
 | `commits_for_session` | List Session Commits | false | true | false | false | Its safety gate may quarantine the newest eligible linked summary. |
 | `save_memory` | Save Memory | false | true | false | true | Inserts or overwrites durable records/local copies and may embed remotely. |
@@ -101,8 +101,10 @@ They additionally return object-rooted structured content:
 - Error results retain the existing structured-error JSON text contract and
   do not claim successful `structuredContent`.
 
-No public tool name, input schema, text serialization, ordering, whitespace,
-or error payload changes as part of #981.
+The detail union accepts `source=memory`, `source=observation`, and the exact-ID
+`source=session_summary` branch used by prompt-time continuity anchors. No
+public tool name, text serialization, ordering, whitespace, or error payload
+changes as part of #981.
 
 ## Non-Goals
 
@@ -126,7 +128,7 @@ or error payload changes as part of #981.
   published 2020-12 schemas.
 - Real non-empty served-wire successes from all fourteen JSON tools prove
   legacy text preservation and schema-conforming structured content, including
-  both detail union branches and nested/nullable values; errors never
+  all three detail union branches and nested/nullable values; errors never
   masquerade as success.
 - Focused MCP tests, formatting, `cargo check`, and the repository preflight
   pass from the submitted commit.

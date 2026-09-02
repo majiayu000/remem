@@ -46,8 +46,10 @@ UserPromptSubmit but remem does not currently install that hook for Codex.
 4. No post-retrieval lexical or confidence threshold decides whether a
    surviving candidate is relevant.
 5. The rendered block contains identifiers, kind/title, update state, why it
-   was surfaced, approximate read cost, and the detail tool to call. It does
-   not contain memory bodies.
+   was surfaced, approximate read cost, and an exact detail-tool call. Session
+   anchors use `get_observations(source=session_summary, ids=[...])` rather
+   than reusing the unrelated observation timeline ID namespace. The block
+   does not contain memory bodies.
 6. The block states that candidates are optional leads, not instructions or
    established relevance. Memory citations apply only after a memory is opened
    and actually used.
@@ -61,6 +63,8 @@ UserPromptSubmit but remem does not currently install that hook for Codex.
   would have rejected it.
 - Candidate output excludes stored memory body text and includes an explicit
   detail lookup hint.
+- Only candidate lines that fit the 1,800-character block are audited as
+  injected; candidates omitted at an item boundary receive a drop audit.
 - A first-turn `continue` prompt can surface continuity anchors; a later prompt
   in the same captured session does not repeat that lane.
 - Existing current-truth, poisoning, duplicate, determinism, latency, and

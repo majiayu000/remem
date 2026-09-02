@@ -23,6 +23,9 @@ const PROMPT_SUBMIT_LATENCY_BUDGET_MS: u128 = 250;
 mod candidates;
 use candidates::{prompt_submit_staleness_labels, render_prompt_submit_context};
 
+#[cfg(test)]
+mod regression_tests;
+
 pub(crate) fn prompt_submit_additional_context(
     conn: &rusqlite::Connection,
     cwd: &str,
@@ -135,22 +138,14 @@ pub(crate) fn prompt_submit_additional_context(
 
     let render_reference_epoch = chrono::Utc::now().timestamp();
     let staleness_labels = prompt_submit_staleness_labels(conn, &rendered, render_reference_epoch);
-    let memory_render_offset = continuity.rendered_len() as i64;
-    audit_items.extend(rendered.iter().enumerate().map(|(index, memory)| {
-        ContextAuditItem::injected_memory_with_labels(
-            memory,
-            "prompt_submit",
-            memory_render_offset + index as i64 + 1,
-            &staleness_labels,
-        )
-    }));
-    let output = render_prompt_submit_context(
+    let rendered_context = render_prompt_submit_context(
         &continuity,
         &rendered,
         &staleness_labels,
         render_reference_epoch,
     );
-    let decision = prompt_submit_decision(output);
+    audit_items.extend(rendered_context.audit_items);
+    let decision = prompt_submit_decision(rendered_context.output);
     record_context_injection_items(conn, &invocation, &decision, &audit_items)?;
     Ok(Some(decision.output))
 }
@@ -647,19 +642,22 @@ mod tests {
             std::slice::from_ref(&memory),
             &staleness_labels,
             memory.updated_at_epoch,
-        );
+        )
+        .output;
         let fresh_again = render_prompt_submit_context(
             &candidates::PromptContinuity::default(),
             std::slice::from_ref(&memory),
             &staleness_labels,
             memory.updated_at_epoch,
-        );
+        )
+        .output;
         let old = render_prompt_submit_context(
             &candidates::PromptContinuity::default(),
             &[memory],
             &staleness_labels,
             1_500_000_000 + 91 * 86_400,
-        );
+        )
+        .output;
 
         assert_eq!(fresh, fresh_again);
         assert!(fresh.contains("staleness=fresh"), "{fresh}");

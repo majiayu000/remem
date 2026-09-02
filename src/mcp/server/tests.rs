@@ -523,6 +523,41 @@ fn get_observations_attaches_topic_trace_for_memory_topic_key() {
 }
 
 #[test]
+fn get_observations_fetches_exact_session_summary_id() {
+    let _dir = ScopedTestDataDir::new("mcp-session-summary-detail");
+    let conn = crate::db::open_db().expect("db opens");
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, request, completed, decisions, learned,
+          next_steps, preferences, created_at, created_at_epoch)
+         VALUES ('mem-session-detail', '/repo', 'Resume prompt-time recall',
+                 'Implemented exact lookup', 'Keep one detail surface',
+                 'Summary IDs have a separate namespace', 'Run focused tests',
+                 'Keep output compact', '2026-09-02 00:00:00', 1700000000)",
+        [],
+    )
+    .expect("summary inserts");
+    let summary_id = conn.last_insert_rowid();
+    drop(conn);
+
+    let server = MemoryServer::new().expect("memory server should initialize");
+    let expanded = server
+        .get_observations(Parameters(GetObservationsParams {
+            ids: vec![summary_id],
+            project: Some("/repo".to_string()),
+            source: Some("session_summary".to_string()),
+            include_suppressed: None,
+        }))
+        .expect("exact summary expansion succeeds");
+    let json: Value = serde_json::from_str(&expanded).expect("expanded json");
+
+    assert_eq!(json[0]["id"], summary_id);
+    assert_eq!(json[0]["memory_session_id"], "mem-session-detail");
+    assert_eq!(json[0]["next_steps"], "Run focused tests");
+    assert_eq!(json[0]["project"], "/repo");
+}
+
+#[test]
 fn get_observations_marks_memory_accessed() {
     let _dir = ScopedTestDataDir::new("mcp-memory-usage");
     let conn = crate::db::open_db().expect("db opens");
@@ -635,9 +670,9 @@ fn get_observations_rejects_unknown_source() {
         "get_observations",
         false,
     );
-    assert!(json["error"]["message"]
-        .as_str()
-        .is_some_and(|message| message.contains("expected 'memory' or 'observation'")));
+    assert!(json["error"]["message"].as_str().is_some_and(
+        |message| message.contains("expected 'memory', 'observation', or 'session_summary'")
+    ));
 }
 
 #[test]

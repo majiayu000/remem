@@ -47,7 +47,8 @@ Memory candidates contain:
 Continuity candidates contain the stable workstream or session-summary id,
 compact title/request, state or next action, stable updated date,
 `surfaced_by=first_turn_continuity`, approximate detail read cost, and a
-`workstreams` or `timeline` lookup hint.
+`workstreams` lookup hint or exact
+`get_observations(source=session_summary, ids=[...])` call.
 
 All free text is normalized to one line and truncated at an item boundary. The
 renderer remains an additive prompt block and never rewrites SessionStart.
@@ -57,12 +58,15 @@ renderer remains an additive prompt block and never rewrites SessionStart.
 - Memory candidates retain current G2/current-truth, owner/scope, lifecycle,
   suppression, source-anchor, and poisoning checks.
 - Workstream and session anchors use the existing owner-aware and poisoning
-  filters before their text can enter the prompt.
+  filters before their text can enter the prompt. Session `next_steps` is
+  included in the final pre-injection summary scan.
 - Already injected memories remain excluded for the same host/project/session.
 - RRF rank is a candidate ordering signal only. There is no final relevance
   threshold.
-- Surfaced anchors and memories are `injected` audit items; rejected rows keep
-  a stable drop reason; an empty result records an abstention.
+- Only anchors and memories whose complete lines fit the 1,800-character
+  prompt block are `injected` audit items. Item-boundary omissions keep a
+  stable character-limit drop reason; other rejected rows keep their existing
+  reasons, and an empty result records an abstention.
 
 ## Files
 
@@ -70,6 +74,9 @@ renderer remains an additive prompt block and never rewrites SessionStart.
 - `src/context/host.rs`
 - `src/context/prompt_submit.rs`
 - `src/context/poisoning.rs`
+- `src/db/query/summaries.rs`
+- `src/mcp/types.rs`, `src/mcp/server/context_tools.rs`, and the existing
+  `get_observations` output contract
 - `src/observe/session_init.rs`
 - README, architecture, plugin activation docs, changelog, and synchronized
   package versions

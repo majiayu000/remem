@@ -103,6 +103,16 @@ async fn every_schema_bearing_served_route_validates_a_real_non_empty_success() 
             "details",
         ),
         WireCall::array(
+            "get_observations_session_summary",
+            "get_observations",
+            json!({
+                "ids": [fixture.summary_id],
+                "project": "/repo",
+                "source": "session_summary"
+            }),
+            "details",
+        ),
+        WireCall::array(
             "lookup_commit",
             "lookup_commit",
             json!({ "sha": "abcdef1", "project": "/repo" }),
@@ -218,6 +228,10 @@ async fn every_schema_bearing_served_route_validates_a_real_non_empty_success() 
         results["get_observations_memory"]["details"][0]["memory_type"],
         "decision"
     );
+    assert_eq!(
+        results["get_observations_session_summary"]["details"][0]["id"],
+        fixture.summary_id
+    );
     assert!(results["govern_memory"]["reason"].is_null());
     assert!(results["workstreams"]["workstreams"][0]["description"].is_null());
     assert_eq!(results["update_workstream"]["updated"], true);
@@ -284,6 +298,7 @@ fn assert_non_empty(call: &WireCall, structured: &Value) {
 
 struct WireFixture {
     memory_id: i64,
+    summary_id: i64,
     source_observation_id: i64,
     compressed_observation_id: i64,
     workstream_id: i64,
@@ -435,9 +450,20 @@ fn seed_wire_fixture() -> anyhow::Result<WireFixture> {
         [],
     )?;
     let workstream_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, request, completed, next_steps, created_at,
+          created_at_epoch)
+         VALUES ('mem-session-summary-wire', '/repo', 'Resume wire contract',
+                 'Verified summary detail', 'Finish served-wire coverage',
+                 '2026-09-02 00:00:00', 1700000000)",
+        [],
+    )?;
+    let summary_id = conn.last_insert_rowid();
 
     Ok(WireFixture {
         memory_id,
+        summary_id,
         source_observation_id,
         compressed_observation_id,
         workstream_id,
