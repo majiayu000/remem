@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check stable command and navigation contracts in current documentation."""
+"""Check stable commands, bilingual facts, and local links in current docs."""
 
 from __future__ import annotations
 
@@ -8,12 +8,24 @@ import shlex
 import sys
 import unicodedata
 from dataclasses import dataclass
-from pathlib import Path
-from urllib.parse import unquote
+from html.parser import HTMLParser
+from pathlib import Path, PurePosixPath
+from urllib.parse import unquote, urlsplit
+
+try:
+    from markdown_it import MarkdownIt
+except ModuleNotFoundError as exc:
+    raise SystemExit(
+        "missing CI dependency markdown-it-py; run "
+        "python3 -m pip install --requirement scripts/ci/requirements.txt"
+    ) from exc
 
 
 ROOT = Path(__file__).resolve().parents[2]
 README_PATHS = (Path("README.md"), Path("README.zh-CN.md"))
+LOCAL_LINK_SOURCES = (*README_PATHS, Path("docs/README.md"))
+MARKDOWN_SUFFIXES = {".md", ".markdown"}
+NON_RENDERED_HTML_TAGS = {"script", "style", "template"}
 HOMEBREW_DOCS = (*README_PATHS, Path("docs/installation.md"))
 CURRENT_EXPORT_DOCS = (*README_PATHS, Path("docs/specs/project-memory-pack/PRODUCT.md"))
 SESSIONSTART_SMOKE_SCRIPT = Path("scripts/ci/smoke_sessionstart_context_gate.sh")
@@ -24,11 +36,12 @@ SESSIONSTART_SMOKE_ROUTES = {
     Path("docs/README.md"): "../scripts/ci/smoke_sessionstart_context_gate.sh",
     SESSIONSTART_SMOKE_GUIDE: "scripts/ci/smoke_sessionstart_context_gate.sh",
 }
-LINK_PATTERN = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
-HEADING_PATTERN = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
 SHELL_FENCE_PATTERN = re.compile(
     r"^[ \t]*```(?:bash|sh|shell)\s*\n(.*?)^[ \t]*```\s*$",
     re.MULTILINE | re.DOTALL,
+)
+MARKDOWN = MarkdownIt("commonmark", {"html": True}).enable(
+    ["table", "strikethrough"]
 )
 
 
@@ -39,27 +52,204 @@ class ShellCommand:
     argv: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class BilingualInvariant:
+    name: str
+    tokens: tuple[str, ...] = ()
+    affirmative_clauses: tuple[str, str] | None = None
+    local_routes: tuple[str, ...] = ()
+
+
+class LinkAttributeParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.targets: list[str] = []
+        self.anchors: set[str] = set()
+        self.visible_text: list[str] = []
+        self.hidden_depth = 0
+
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        tag = tag.lower()
+        if tag in NON_RENDERED_HTML_TAGS:
+            self.hidden_depth += 1
+            return
+        if self.hidden_depth:
+            return
+        attributes = {name.lower(): value for name, value in attrs if value}
+        if tag == "a" and "href" in attributes:
+            self.targets.append(attributes["href"])
+        if tag == "img" and "src" in attributes:
+            self.targets.append(attributes["src"])
+        if tag == "a":
+            self.anchors.update(
+                attributes[name] for name in ("id", "name") if name in attributes
+            )
+
+    def handle_data(self, data: str) -> None:
+        if self.hidden_depth == 0:
+            self.visible_text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in NON_RENDERED_HTML_TAGS and self.hidden_depth:
+            self.hidden_depth -= 1
+
+
+BILINGUAL_README_INVARIANTS = (
+    BilingualInvariant(
+        "supported install channels",
+        (
+            "brew install majiayu000/tap/remem",
+            "curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh",
+            "npm install -g @remem-ai/remem",
+            "cargo install remem-ai --bin remem",
+        ),
+    ),
+    BilingualInvariant(
+        "first-run verification commands",
+        ('remem doctor', 'remem status', 'remem search "last decision"'),
+    ),
+    BilingualInvariant("documentation jump page", local_routes=("docs/README.md",)),
+    BilingualInvariant("security policy", local_routes=("SECURITY.md",)),
+    BilingualInvariant(
+        "current API contract", local_routes=("docs/specs/SPEC-web-api.md",)
+    ),
+    BilingualInvariant("current spec index", local_routes=("docs/specs/README.md",)),
+    BilingualInvariant("changelog", local_routes=("CHANGELOG.md",)),
+    BilingualInvariant("contribution guide", local_routes=("CONTRIBUTING.md",)),
+    BilingualInvariant(
+        "Cursor v1 limitation",
+        ("remem install --target cursor",),
+        (
+            "not install automatic capture hooks",
+            "不会安装自动捕获 hook",
+        ),
+    ),
+    BilingualInvariant(
+        "localhost bearer-token API",
+        ("127.0.0.1", "Authorization: Bearer"),
+        (
+            "The REST API binds to 127.0.0.1 and requires a bearer token.",
+            "REST API 只绑定 127.0.0.1，并要求 bearer token。",
+        ),
+    ),
+    BilingualInvariant(
+        "safe uninstall and data retention",
+        ("remem uninstall --dry-run", "REMEM_DATA_DIR"),
+        (
+            "The encrypted database remains in the configured REMEM_DATA_DIR.",
+            "加密数据库会保留在配置的 REMEM_DATA_DIR。",
+        ),
+    ),
+    BilingualInvariant(
+        "public benchmark claim boundary",
+        ("directional_only_no_public_claim",),
+        (
+            "does not support public benchmark claims",
+            "不能用于对外 benchmark 声明",
+        ),
+    ),
+    BilingualInvariant(
+        "shared demo asset", local_routes=("assets/remem-recall-demo.gif",)
+    ),
+)
+
+
 def read(root: Path, relative: Path) -> str:
     return (root / relative).read_text(encoding="utf-8")
 
 
+def slug_from_visible_text(visible: str) -> str:
+    slug: list[str] = []
+    for character in visible.strip().lower():
+        if character == " ":
+            slug.append("-")
+        elif (
+            character in {"-", "_"}
+            or character.isalnum()
+            or unicodedata.category(character).startswith("M")
+        ):
+            slug.append(character)
+        elif character.isspace():
+            continue
+    return "".join(slug)
+
+
+def inline_visible_text(
+    token,
+    include_struck: bool = True,
+    html: LinkAttributeParser | None = None,
+) -> str:
+    visible: list[str] = []
+    owns_html = html is None
+    html = html or LinkAttributeParser()
+    struck_depth = 0
+    for child in token.children or ():
+        if child.type == "html_inline":
+            html.feed(child.content)
+            continue
+        if child.type == "s_open":
+            struck_depth += 1
+            continue
+        if child.type == "s_close":
+            struck_depth = max(0, struck_depth - 1)
+            continue
+        if html.hidden_depth or (struck_depth and not include_struck):
+            continue
+        if child.type in {"text", "code_inline", "image"}:
+            visible.append(child.content)
+        elif child.type in {"softbreak", "hardbreak"}:
+            visible.append(" ")
+    if owns_html:
+        html.close()
+    return "".join(visible)
+
+
 def github_slug(heading: str) -> str:
-    """Return the stable subset of GitHub's Markdown heading slug algorithm."""
-    normalized = unicodedata.normalize("NFKC", heading).strip().lower()
-    normalized = re.sub(r"<[^>]+>", "", normalized)
-    normalized = normalized.replace("`", "")
-    normalized = re.sub(r"[^\w\s-]", "", normalized, flags=re.UNICODE)
-    return re.sub(r"[\s-]+", "-", normalized).strip("-")
+    """Return GitHub's heading anchor form from rendered inline text."""
+    inline = MARKDOWN.parseInline(heading)[0]
+    return slug_from_visible_text(inline_visible_text(inline))
+
+
+def without_front_matter(text: str) -> str:
+    lines = text.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        return text
+    for index, line in enumerate(lines[1:], start=1):
+        if line.strip() != "---":
+            continue
+        return "".join(lines[index + 1 :])
+    return text
 
 
 def heading_anchors(text: str) -> set[str]:
-    counts: dict[str, int] = {}
     anchors: set[str] = set()
-    for heading in HEADING_PATTERN.findall(text):
-        base = github_slug(heading)
-        count = counts.get(base, 0)
-        counts[base] = count + 1
-        anchors.add(base if count == 0 else f"{base}-{count}")
+    generated: set[str] = set()
+    tokens = MARKDOWN.parse(without_front_matter(text))
+    html = LinkAttributeParser()
+    for index, token in enumerate(tokens):
+        if token.type == "html_block":
+            html.feed(token.content)
+            anchors.update(html.anchors)
+            continue
+        if token.type != "inline":
+            continue
+        visible = inline_visible_text(token, html=html)
+        anchors.update(html.anchors)
+        if index == 0 or tokens[index - 1].type != "heading_open":
+            continue
+        if not visible.strip():
+            continue
+        base = slug_from_visible_text(visible)
+        candidate = base
+        suffix = 1
+        while candidate in generated:
+            candidate = f"{base}-{suffix}"
+            suffix += 1
+        generated.add(candidate)
+        anchors.add(candidate)
+    html.close()
     return anchors
 
 
@@ -196,26 +386,131 @@ def check_channel_switch(root: Path, violations: list[str]) -> None:
         )
 
 
-def check_hub_links(root: Path, violations: list[str]) -> None:
-    source = root / "docs/README.md"
-    for raw_target in LINK_PATTERN.findall(source.read_text(encoding="utf-8")):
-        target = raw_target.strip().split(maxsplit=1)[0].strip("<>")
-        if target.startswith(("http://", "https://", "mailto:")):
-            continue
-        path_text, separator, fragment = target.partition("#")
-        destination = source if not path_text else (source.parent / unquote(path_text)).resolve()
-        if not destination.exists():
-            violations.append(f"docs/README.md: missing local Markdown target {target}")
-            continue
-        if not separator or not fragment or destination.suffix.lower() != ".md":
-            continue
-        anchors = heading_anchors(destination.read_text(encoding="utf-8"))
-        decoded_fragment = unquote(fragment).lower()
-        if decoded_fragment not in anchors:
-            violations.append(
-                f"docs/README.md: missing Markdown anchor {decoded_fragment} in "
-                f"{destination.relative_to(root.resolve())}"
+def markdown_destinations(text: str):
+    html = LinkAttributeParser()
+    for token in MARKDOWN.parse(text):
+        line_number = token.map[0] + 1 if token.map is not None else 1
+        if token.type == "html_block":
+            target_count = len(html.targets)
+            html.feed(token.content)
+            yield from (
+                (line_number, target) for target in html.targets[target_count:]
             )
+        if token.type != "inline":
+            continue
+        for child in token.children or ():
+            if child.type == "html_inline":
+                target_count = len(html.targets)
+                html.feed(child.content)
+                yield from (
+                    (line_number, target) for target in html.targets[target_count:]
+                )
+                continue
+            if html.hidden_depth:
+                continue
+            attribute = "href" if child.type == "link_open" else "src"
+            if child.type not in {"link_open", "image"}:
+                continue
+            target = child.attrGet(attribute)
+            if target:
+                yield line_number, target
+    html.close()
+
+
+def local_markdown_routes(text: str) -> set[str]:
+    routes: set[str] = set()
+    for _, target in markdown_destinations(text):
+        parsed = urlsplit(target)
+        if parsed.scheme or parsed.netloc or target.startswith(("//", "/")):
+            continue
+        if parsed.path:
+            routes.add(PurePosixPath(unquote(parsed.path)).as_posix())
+    return routes
+
+
+def markdown_contract_text(text: str) -> str:
+    visible: list[str] = []
+    html = LinkAttributeParser()
+    for token in MARKDOWN.parse(text):
+        if token.type == "inline":
+            visible.append(
+                inline_visible_text(token, include_struck=False, html=html)
+            )
+        elif token.type in {"fence", "code_block"} and not html.hidden_depth:
+            visible.append(token.content)
+        elif token.type == "html_block":
+            text_count = len(html.visible_text)
+            html.feed(token.content)
+            visible.extend(html.visible_text[text_count:])
+    html.close()
+    visible.extend(target for _, target in markdown_destinations(text))
+    return "\n".join(visible)
+
+
+def check_local_markdown_links(root: Path, violations: list[str]) -> None:
+    repository = root.resolve()
+    anchor_cache: dict[Path, set[str]] = {}
+    for relative_source in LOCAL_LINK_SOURCES:
+        source = root / relative_source
+        for line_number, target in markdown_destinations(read(root, relative_source)):
+            parsed = urlsplit(target)
+            target_label = unquote(target)
+            if parsed.scheme or parsed.netloc or target.startswith(("//", "/")):
+                continue
+            path_text = unquote(parsed.path)
+            destination = source if not path_text else source.parent / path_text
+            destination = destination.resolve()
+            try:
+                destination.relative_to(repository)
+            except ValueError:
+                violations.append(
+                    f"{relative_source}:{line_number}: {target_label}: local Markdown target "
+                    "escapes the repository"
+                )
+                continue
+            if not destination.exists():
+                violations.append(
+                    f"{relative_source}:{line_number}: {target_label}: "
+                    "missing local Markdown target"
+                )
+                continue
+            if not parsed.fragment or destination.suffix.lower() not in MARKDOWN_SUFFIXES:
+                continue
+            anchors = anchor_cache.get(destination)
+            if anchors is None:
+                anchors = heading_anchors(destination.read_text(encoding="utf-8"))
+                anchor_cache[destination] = anchors
+            fragment = unquote(parsed.fragment)
+            if fragment not in anchors:
+                destination_label = destination.relative_to(repository)
+                violations.append(
+                    f"{relative_source}:{line_number}: {target_label}: missing Markdown anchor "
+                    f"{fragment} in {destination_label}"
+                )
+
+
+def check_bilingual_readme_invariants(root: Path, violations: list[str]) -> None:
+    for path_index, path in enumerate(README_PATHS):
+        markdown = read(root, path)
+        text = markdown_contract_text(markdown)
+        local_routes = local_markdown_routes(markdown)
+        for invariant in BILINGUAL_README_INVARIANTS:
+            missing = [token for token in invariant.tokens if token not in text]
+            missing.extend(
+                f"local route {route}"
+                for route in invariant.local_routes
+                if route not in local_routes
+            )
+            if (
+                invariant.affirmative_clauses is not None
+                and invariant.affirmative_clauses[path_index] not in text
+            ):
+                missing.append("affirmative contract clause")
+            if missing:
+                violations.append(
+                    f"{path}: missing bilingual invariant {invariant.name}: "
+                    + ", ".join(missing)
+                )
 
 
 def check_sessionstart_smoke(root: Path, violations: list[str]) -> None:
@@ -281,7 +576,8 @@ def check(root: Path = ROOT) -> list[str]:
     check_homebrew_commands(root, violations)
     check_exports(root, violations)
     check_channel_switch(root, violations)
-    check_hub_links(root, violations)
+    check_local_markdown_links(root, violations)
+    check_bilingual_readme_invariants(root, violations)
     check_sessionstart_smoke(root, violations)
     check_fts_semantics(root, violations)
     return violations

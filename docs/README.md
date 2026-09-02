@@ -99,7 +99,7 @@ assuming an older tool count or schema.
 - [Current architecture overview and module map](ARCHITECTURE.md)
 - [Current graph implementation guide](graph-contract.md)
 - [Current memory ownership and visibility](ARCHITECTURE.md#memory-scope-project-vs-global) and [legacy-unverified quarantine contract](specs/legacy-unverified-context/PRODUCT.md)
-- [Current SessionStart compiler architecture](ARCHITECTURE.md#4-context-injection-sessionstart-context) and [Context Bundle contract](specs/GH932/PRODUCT.md)
+- [Current SessionStart compiler architecture](ARCHITECTURE.md#4-context-injection-sessionstart--context) and [Context Bundle contract](specs/GH932/PRODUCT.md)
 - [Current workstream operations](memory-usage-guide.md#workstreams), [architecture](ARCHITECTURE.md), and [identity-continuity contract](specs/workstream-identity-continuity/PRODUCT.md)
 - [Current spec index and lifecycle status](specs/README.md)
 

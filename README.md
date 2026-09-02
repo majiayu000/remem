@@ -292,7 +292,8 @@ Public adversarial SQLite snapshots are capped at 64 MiB and must be canonical
 `VACUUM` images; verifier-consumed artifact targets must also resolve inside the
 declared public root.
 
-The current public report is deliberately labeled
+The current public report does not support public benchmark claims and is
+deliberately labeled
 `directional_only_no_public_claim`. The historical isolated coding baseline is
 useful engineering evidence, but its preloaded-memory condition is not
 comparable with the current SessionStart retrieval path.

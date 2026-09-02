@@ -7,16 +7,34 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import check_documentation_contracts
+from documentation_contract_markdown_edge_tests import MarkdownEdgeContractTests
 
 
-EXPECTED_WORKFLOW_SMOKE_COMMAND = (
-    "python3 scripts/ci/run_sessionstart_context_gate_smoke.py"
-)
-EXPECTED_WORKFLOW_RUNNER_TEST_COMMAND = (
-    "python3 scripts/ci/test_run_sessionstart_context_gate_smoke.py"
-)
+EXPECTED_WORKFLOW_SMOKE_COMMAND = "python3 scripts/ci/run_sessionstart_context_gate_smoke.py"
+EXPECTED_WORKFLOW_RUNNER_TEST_COMMAND = "python3 scripts/ci/test_run_sessionstart_context_gate_smoke.py"
 SAFE_SHELLS = {"", "bash"}
 SAFE_WORKING_DIRECTORIES = {"", ".", "${{ github.workspace }}"}
+VALID_BILINGUAL_SURFACE = """
+brew install majiayu000/tap/remem
+curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh
+npm install -g @remem-ai/remem
+cargo install remem-ai --bin remem
+remem doctor
+remem status
+remem search "last decision"
+[Documentation](docs/README.md) [Security](SECURITY.md)
+[API contract](docs/specs/SPEC-web-api.md) [Spec index](docs/specs/README.md)
+[Changelog](CHANGELOG.md) [Contributing](CONTRIBUTING.md)
+remem install --target cursor not install automatic capture hooks 不会安装自动捕获 hook
+127.0.0.1
+Authorization: Bearer
+The REST API binds to `127.0.0.1` and requires a bearer token.
+remem uninstall --dry-run
+REMEM_DATA_DIR
+The encrypted database remains in the configured `REMEM_DATA_DIR`.
+directional_only_no_public_claim does not support public benchmark claims 不能用于对外 benchmark 声明
+![Recall demo](assets/remem-recall-demo.gif)
+"""
 
 
 @dataclass
@@ -157,7 +175,7 @@ class DocumentationContractTests(unittest.TestCase):
         (self.root / "docs/specs/project-memory-pack").mkdir(parents=True)
         (self.root / "scripts/ci").mkdir(parents=True)
         (self.root / "README.md").write_text(
-            """# remem
+            f"""# remem
 
 <!-- remem-doc-contract:current-project-export:start -->
 ```bash
@@ -171,11 +189,22 @@ remem export --pack .remem-pack
 ```
 
 [SessionStart smoke](scripts/ci/smoke_sessionstart_context_gate.sh)
+
+{VALID_BILINGUAL_SURFACE}
 """,
             encoding="utf-8",
         )
         (self.root / "README.zh-CN.md").write_text(
-            (self.root / "README.md").read_text(encoding="utf-8"),
+            (self.root / "README.md")
+            .read_text(encoding="utf-8")
+            .replace(
+                "The encrypted database remains in the configured `REMEM_DATA_DIR`.",
+                "加密数据库会保留在配置的 `REMEM_DATA_DIR`。",
+            )
+            .replace(
+                "The REST API binds to `127.0.0.1` and requires a bearer token.",
+                "REST API 只绑定 `127.0.0.1`，并要求 bearer token。",
+            ),
             encoding="utf-8",
         )
         (self.root / "docs/installation.md").write_text(
@@ -253,9 +282,38 @@ remem export --pack .remem-pack/
 """,
             encoding="utf-8",
         )
+        for relative in (
+            "SECURITY.md docs/specs/SPEC-web-api.md docs/specs/README.md "
+            "CHANGELOG.md CONTRIBUTING.md assets/remem-recall-demo.gif"
+        ).split():
+            target = self.root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("fixture\n", encoding="utf-8")
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
+
+    def local_link_violations(self, addition: str, path: str = "README.md") -> list[str]:
+        source = self.root / path
+        source.write_text(
+            source.read_text(encoding="utf-8") + addition, encoding="utf-8"
+        )
+        violations: list[str] = []
+        check_documentation_contracts.check_local_markdown_links(
+            self.root, violations
+        )
+        return violations
+
+    def bilingual_violations_after_replace(self, path: str, old: str, new: str) -> list[str]:
+        readme = self.root / path
+        readme.write_text(
+            readme.read_text(encoding="utf-8").replace(old, new), encoding="utf-8"
+        )
+        violations: list[str] = []
+        check_documentation_contracts.check_bilingual_readme_invariants(
+            self.root, violations
+        )
+        return violations
 
     def test_valid_contract_has_no_violations(self) -> None:
         self.assertEqual(check_documentation_contracts.check(self.root), [])
@@ -315,6 +373,204 @@ remem export --pack .remem-pack/
         violations = check_documentation_contracts.check(self.root)
 
         self.assertTrue(any("missing Markdown anchor" in item for item in violations))
+
+    def test_local_links_accept_spaces_unicode_duplicates_and_ignored_targets(self) -> None:
+        guide = self.root / "docs/Guide With Space.md"
+        guide.write_text(
+            """# Guide
+
+## Пример Θ 中文
+
+## Repeat
+
+## Repeat
+""",
+            encoding="utf-8",
+        )
+        readme = self.root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8")
+            + """
+[Unicode](<docs/Guide With Space.md#пример-θ-中文>)
+[Duplicate](docs/Guide%20With%20Space.md#repeat-1 "title")
+[External](https://example.com/missing.md)
+[Mail](mailto:docs@example.com)
+[Custom](app://documentation)
+
+```markdown
+[Fenced false positive](docs/missing.md#not-real)
+```
+""",
+            encoding="utf-8",
+        )
+
+        violations: list[str] = []
+        check_documentation_contracts.check_local_markdown_links(
+            self.root, violations
+        )
+
+        self.assertEqual(violations, [])
+
+    def test_local_links_report_source_line_target_and_missing_file(self) -> None:
+        violations = self.local_link_violations("\n[Broken](docs/missing.md)\n")
+        self.assertTrue(
+            any(
+                item.startswith("README.md:")
+                and ": docs/missing.md:" in item
+                and "missing local Markdown target" in item
+                for item in violations
+            )
+        )
+
+    def test_local_links_validate_outer_destination_of_wrapped_image(self) -> None:
+        violations = self.local_link_violations(
+            "\n[![Build](https://example.com/badge.svg)](docs/missing-wrapper.md)\n"
+        )
+        self.assertTrue(
+            any(
+                item.startswith("README.md:")
+                and ": docs/missing-wrapper.md:" in item
+                and "missing local Markdown target" in item
+                for item in violations
+            )
+        )
+
+    def test_local_links_keep_same_length_fence_with_info_string_open(self) -> None:
+        violations = self.local_link_violations(
+            """
+```markdown
+```python
+[Still fenced](docs/missing-inside-fence.md)
+```
+"""
+        )
+        self.assertFalse(
+            any("docs/missing-inside-fence.md" in item for item in violations)
+        )
+
+    def test_local_links_do_not_treat_four_space_indent_as_fence(self) -> None:
+        violations = self.local_link_violations(
+            """
+    ```markdown
+[Live link](docs/missing-after-indented-code.md)
+"""
+        )
+        self.assertTrue(any("missing-after-indented-code.md" in item for item in violations))
+
+    def test_local_links_support_balanced_parentheses_in_destinations(self) -> None:
+        (self.root / "docs/guide(v2).md").write_text("# Guide\n", encoding="utf-8")
+        violations = self.local_link_violations("\n[Guide](docs/guide(v2).md)\n")
+        self.assertFalse(any("guide(v2" in item for item in violations))
+
+    def test_local_links_support_setext_heading_anchors(self) -> None:
+        (self.root / "docs/setext.md").write_text(
+            "Installation\n------------\n", encoding="utf-8"
+        )
+        violations = self.local_link_violations(
+            "\n[Install](docs/setext.md#installation)\n"
+        )
+        self.assertFalse(any("docs/setext.md#installation" in item for item in violations))
+
+    def test_local_links_validate_wrapped_reference_destinations(self) -> None:
+        violations = self.local_link_violations(
+            """
+[guide]:
+  docs/missing-wrapped-reference.md
+
+[Guide][guide]
+"""
+        )
+        self.assertTrue(any("missing-wrapped-reference.md" in item for item in violations))
+
+    def test_local_link_fragments_are_case_sensitive(self) -> None:
+        violations = self.local_link_violations("\n[Wrong case](#Remem)\n")
+        self.assertTrue(
+            any(
+                "#Remem: missing Markdown anchor Remem in README.md" in item
+                for item in violations
+            )
+        )
+
+    def test_local_links_check_chinese_readme_fragments(self) -> None:
+        violations = self.local_link_violations(
+            "\n[坏锚点](#不存在)\n", "README.zh-CN.md"
+        )
+        self.assertTrue(
+            any(
+                item.startswith("README.zh-CN.md:")
+                and ": #不存在:" in item
+                and "missing Markdown anchor" in item
+                for item in violations
+            )
+        )
+
+    def test_github_slug_preserves_hyphen_runs_and_removes_other_whitespace(self) -> None:
+        self.assertEqual(
+            check_documentation_contracts.github_slug("Foo --- Bar\tΘ 中文"),
+            "foo-----barθ-中文",
+        )
+
+    def test_github_slug_preserves_underscores(self) -> None:
+        slug = check_documentation_contracts.github_slug("`captured_events`")
+        self.assertEqual(slug, "captured_events")
+
+    def test_github_slug_uses_rendered_inline_heading_text(self) -> None:
+        self.assertEqual(check_documentation_contracts.github_slug("_remem_"), "remem")
+        self.assertEqual(check_documentation_contracts.github_slug("&lt;name&gt;"), "name")
+
+    def test_bilingual_invariants_report_missing_english_fact(self) -> None:
+        violations = self.bilingual_violations_after_replace(
+            "README.md", "directional_only_no_public_claim", "directional_only"
+        )
+        self.assertTrue(
+            any(
+                item.startswith("README.md:")
+                and "public benchmark claim boundary" in item
+                for item in violations
+            )
+        )
+
+    def test_bilingual_invariants_report_missing_chinese_fact(self) -> None:
+        violations = self.bilingual_violations_after_replace(
+            "README.zh-CN.md",
+            "docs/specs/SPEC-web-api.md",
+            "docs/specs/old-api.md",
+        )
+        self.assertTrue(
+            any(
+                item.startswith("README.zh-CN.md:")
+                and "current API contract" in item
+                for item in violations
+            )
+        )
+
+    def test_bilingual_invariants_require_affirmative_data_retention(self) -> None:
+        violations = self.bilingual_violations_after_replace(
+            "README.md",
+            "The encrypted database remains in the configured `REMEM_DATA_DIR`.",
+            "The encrypted database is deleted from `REMEM_DATA_DIR`.",
+        )
+        self.assertTrue(
+            any(
+                item.startswith("README.md:")
+                and "safe uninstall and data retention" in item
+                for item in violations
+            )
+        )
+
+    def test_bilingual_invariants_require_affirmative_api_authentication(self) -> None:
+        violations = self.bilingual_violations_after_replace(
+            "README.md",
+            "The REST API binds to `127.0.0.1` and requires a bearer token.",
+            "The REST API binds to `127.0.0.1` and does not require a bearer token.",
+        )
+        self.assertTrue(
+            any(
+                item.startswith("README.md:")
+                and "localhost bearer-token API" in item
+                for item in violations
+            )
+        )
 
     def test_rejects_missing_executable_smoke_fixture(self) -> None:
         (self.root / "scripts/ci/smoke_sessionstart_context_gate.sh").unlink()
