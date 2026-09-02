@@ -126,6 +126,38 @@ class MarkdownEdgeContractTests(unittest.TestCase):
         )
         self.assertTrue(any("public benchmark claim boundary" in item for item in violations))
 
+    def test_bilingual_invariants_ignore_html_comments(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8").replace(
+                "The current public report does not support public benchmark claims.",
+                "<!-- The current public report does not support public benchmark claims. -->",
+            ),
+            encoding="utf-8",
+        )
+        violations: list[str] = []
+        check_documentation_contracts.check_bilingual_readme_invariants(
+            self.root, violations
+        )
+        self.assertTrue(any("public benchmark claim boundary" in item for item in violations))
+
+    def test_local_links_support_explicit_html_anchors(self) -> None:
+        (self.root / "docs/anchor.md").write_text(
+            '<a name="configuration"></a>\n', encoding="utf-8"
+        )
+        violations = self.local_link_violations(
+            "\n[Configuration](docs/anchor.md#configuration)\n"
+        )
+        self.assertFalse(any("docs/anchor.md" in item for item in violations))
+
+    def test_local_links_ignore_non_link_html_attributes(self) -> None:
+        violations = self.local_link_violations(
+            '\n<script src="docs/not-rendered.js"></script>\n'
+            '<div href="docs/not-a-link.md">Example</div>\n'
+        )
+        self.assertFalse(any("not-rendered.js" in item for item in violations))
+        self.assertFalse(any("not-a-link.md" in item for item in violations))
+
 
 if __name__ == "__main__":
     unittest.main()

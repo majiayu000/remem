@@ -61,16 +61,32 @@ class LinkAttributeParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.targets: list[str] = []
+        self.anchors: set[str] = set()
+        self.visible_text: list[str] = []
 
     def handle_starttag(
         self, tag: str, attrs: list[tuple[str, str | None]]
     ) -> None:
-        del tag
-        self.targets.extend(
-            value
-            for name, value in attrs
-            if name.lower() in {"href", "src"} and value
-        )
+        tag = tag.lower()
+        attributes = {name.lower(): value for name, value in attrs if value}
+        if tag == "a" and "href" in attributes:
+            self.targets.append(attributes["href"])
+        if tag == "img" and "src" in attributes:
+            self.targets.append(attributes["src"])
+        if tag == "a":
+            self.anchors.update(
+                attributes[name] for name in ("id", "name") if name in attributes
+            )
+
+    def handle_data(self, data: str) -> None:
+        self.visible_text.append(data)
+
+
+def parse_html(fragment: str) -> LinkAttributeParser:
+    parser = LinkAttributeParser()
+    parser.feed(fragment)
+    parser.close()
+    return parser
 
 
 BILINGUAL_README_INVARIANTS = (
@@ -105,16 +121,16 @@ BILINGUAL_README_INVARIANTS = (
         "localhost bearer-token API",
         ("127.0.0.1", "Authorization: Bearer"),
         (
-            "The REST API binds to `127.0.0.1` and requires a bearer token.",
-            "REST API 只绑定 `127.0.0.1`，并要求 bearer token。",
+            "The REST API binds to 127.0.0.1 and requires a bearer token.",
+            "REST API 只绑定 127.0.0.1，并要求 bearer token。",
         ),
     ),
     BilingualInvariant(
         "safe uninstall and data retention",
         ("remem uninstall --dry-run", "REMEM_DATA_DIR"),
         (
-            "The encrypted database remains in the configured `REMEM_DATA_DIR`.",
-            "加密数据库会保留在配置的 `REMEM_DATA_DIR`。",
+            "The encrypted database remains in the configured REMEM_DATA_DIR.",
+            "加密数据库会保留在配置的 REMEM_DATA_DIR。",
         ),
     ),
     BilingualInvariant(
@@ -174,6 +190,13 @@ def heading_anchors(text: str) -> set[str]:
             candidate = f"{base}-{suffix}"
             suffix += 1
         anchors.add(candidate)
+    for token in tokens:
+        if token.type == "html_block":
+            anchors.update(parse_html(token.content).anchors)
+        if token.type == "inline":
+            for child in token.children or ():
+                if child.type == "html_inline":
+                    anchors.update(parse_html(child.content).anchors)
     return anchors
 
 
@@ -314,15 +337,13 @@ def markdown_destinations(text: str):
     for token in MARKDOWN.parse(text):
         line_number = token.map[0] + 1 if token.map is not None else 1
         if token.type == "html_block":
-            parser = LinkAttributeParser()
-            parser.feed(token.content)
+            parser = parse_html(token.content)
             yield from ((line_number, target) for target in parser.targets)
         if token.type != "inline":
             continue
         for child in token.children or ():
             if child.type == "html_inline":
-                parser = LinkAttributeParser()
-                parser.feed(child.content)
+                parser = parse_html(child.content)
                 yield from ((line_number, target) for target in parser.targets)
                 continue
             attribute = "href" if child.type == "link_open" else "src"
@@ -331,6 +352,19 @@ def markdown_destinations(text: str):
             target = child.attrGet(attribute)
             if target:
                 yield line_number, target
+
+
+def markdown_contract_text(text: str) -> str:
+    visible: list[str] = []
+    for token in MARKDOWN.parse(text):
+        if token.type == "inline":
+            visible.append(inline_visible_text(token))
+        elif token.type in {"fence", "code_block"}:
+            visible.append(token.content)
+        elif token.type == "html_block":
+            visible.extend(parse_html(token.content).visible_text)
+    visible.extend(target for _, target in markdown_destinations(text))
+    return "\n".join(visible)
 
 
 def check_local_markdown_links(root: Path, violations: list[str]) -> None:
@@ -377,7 +411,7 @@ def check_local_markdown_links(root: Path, violations: list[str]) -> None:
 
 def check_bilingual_readme_invariants(root: Path, violations: list[str]) -> None:
     for path_index, path in enumerate(README_PATHS):
-        text = read(root, path)
+        text = markdown_contract_text(read(root, path))
         for invariant in BILINGUAL_README_INVARIANTS:
             missing = [token for token in invariant.tokens if token not in text]
             if (
