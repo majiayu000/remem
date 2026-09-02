@@ -255,7 +255,8 @@ coding-agent outcome evidence。可以运行下面的验证命令。
 cargo run -- bench verify --root eval/public --json-out /tmp/remem-bench-verify.json
 ```
 
-当前 public report 明确标记为 `directional_only_no_public_claim`。历史隔离
+当前 public report 不能用于对外 benchmark 声明，并明确标记为
+`directional_only_no_public_claim`。历史隔离
 coding baseline 可以用于工程分析，但其中的预载 memory condition 不能和当前
 SessionStart 检索路径直接比较。
 

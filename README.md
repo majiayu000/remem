@@ -280,10 +280,10 @@ coding-agent outcome evidence. Verify it locally with:
 cargo run -- bench verify --root eval/public --json-out /tmp/remem-bench-verify.json
 ```
 
-The current public report is deliberately labeled
-`directional_only_no_public_claim`. The historical isolated coding baseline is
-useful engineering evidence, but its preloaded-memory condition is not
-comparable with the current SessionStart retrieval path.
+The current public report does not support public benchmark claims and is
+deliberately labeled `directional_only_no_public_claim`. The historical isolated
+coding baseline is useful engineering evidence, but its preloaded-memory
+condition is not comparable with the current SessionStart retrieval path.
 
 Reproduction commands, artifact schemas, claim boundaries, and current gates
 live in:

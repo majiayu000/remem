@@ -39,7 +39,7 @@ The REST API binds to `127.0.0.1` and requires a bearer token.
 remem uninstall --dry-run
 REMEM_DATA_DIR
 The encrypted database remains in the configured `REMEM_DATA_DIR`.
-directional_only_no_public_claim
+directional_only_no_public_claim does not support public benchmark claims 不能用于对外 benchmark 声明
 assets/remem-recall-demo.gif
 """
 

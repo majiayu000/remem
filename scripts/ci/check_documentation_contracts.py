@@ -7,6 +7,7 @@ import re
 import shlex
 import sys
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -22,6 +23,7 @@ except ModuleNotFoundError as exc:
 ROOT = Path(__file__).resolve().parents[2]
 README_PATHS = (Path("README.md"), Path("README.zh-CN.md"))
 LOCAL_LINK_SOURCES = (*README_PATHS, Path("docs/README.md"))
+MARKDOWN_SUFFIXES = {".md", ".markdown"}
 HOMEBREW_DOCS = (*README_PATHS, Path("docs/installation.md"))
 CURRENT_EXPORT_DOCS = (*README_PATHS, Path("docs/specs/project-memory-pack/PRODUCT.md"))
 SESSIONSTART_SMOKE_SCRIPT = Path("scripts/ci/smoke_sessionstart_context_gate.sh")
@@ -53,6 +55,22 @@ class BilingualInvariant:
     name: str
     tokens: tuple[str, ...]
     affirmative_clauses: tuple[str, str] | None = None
+
+
+class LinkAttributeParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.targets: list[str] = []
+
+    def handle_starttag(
+        self, tag: str, attrs: list[tuple[str, str | None]]
+    ) -> None:
+        del tag
+        self.targets.extend(
+            value
+            for name, value in attrs
+            if name.lower() in {"href", "src"} and value
+        )
 
 
 BILINGUAL_README_INVARIANTS = (
@@ -100,7 +118,12 @@ BILINGUAL_README_INVARIANTS = (
         ),
     ),
     BilingualInvariant(
-        "public benchmark claim boundary", ("directional_only_no_public_claim",)
+        "public benchmark claim boundary",
+        ("directional_only_no_public_claim",),
+        (
+            "does not support public benchmark claims",
+            "不能用于对外 benchmark 声明",
+        ),
     ),
     BilingualInvariant("shared demo asset", ("assets/remem-recall-demo.gif",)),
 )
@@ -289,10 +312,19 @@ def check_channel_switch(root: Path, violations: list[str]) -> None:
 
 def markdown_destinations(text: str):
     for token in MARKDOWN.parse(text):
+        line_number = token.map[0] + 1 if token.map is not None else 1
+        if token.type == "html_block":
+            parser = LinkAttributeParser()
+            parser.feed(token.content)
+            yield from ((line_number, target) for target in parser.targets)
         if token.type != "inline":
             continue
-        line_number = token.map[0] + 1 if token.map is not None else 1
         for child in token.children or ():
+            if child.type == "html_inline":
+                parser = LinkAttributeParser()
+                parser.feed(child.content)
+                yield from ((line_number, target) for target in parser.targets)
+                continue
             attribute = "href" if child.type == "link_open" else "src"
             if child.type not in {"link_open", "image"}:
                 continue
@@ -328,7 +360,7 @@ def check_local_markdown_links(root: Path, violations: list[str]) -> None:
                     "missing local Markdown target"
                 )
                 continue
-            if not parsed.fragment or destination.suffix.lower() != ".md":
+            if not parsed.fragment or destination.suffix.lower() not in MARKDOWN_SUFFIXES:
                 continue
             anchors = anchor_cache.get(destination)
             if anchors is None:

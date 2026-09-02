@@ -8,10 +8,14 @@ import check_documentation_contracts
 ENGLISH_CURSOR_LIMIT = """Cursor's v1 installer registers MCP only. The verified `observe` and
 `summarize` runtime commands exist, but `remem install --target cursor` does
 not install automatic capture hooks or SessionStart injection.
+The current public report does not support public benchmark claims.
+directional_only_no_public_claim
 """
 CHINESE_CURSOR_LIMIT = """Cursor v1 安装器只注册 MCP。已经验证的 `observe` 和 `summarize` runtime
 命令可以使用，但 `remem install --target cursor` 不会安装自动捕获 hook，也没有
 SessionStart 注入。
+当前 public report 不能用于对外 benchmark 声明。
+directional_only_no_public_claim
 """
 
 
@@ -91,6 +95,36 @@ class MarkdownEdgeContractTests(unittest.TestCase):
             "\n[label\\\\](docs/missing-after-backslash.md)\n"
         )
         self.assertTrue(any("docs/missing-after-backslash.md" in item for item in violations))
+
+    def test_local_links_validate_rendered_html_attributes(self) -> None:
+        violations = self.local_link_violations(
+            '\n<a href="docs/missing-html.md">Guide</a>\n'
+            '<img src="assets/missing-html.png" alt="missing">\n'
+        )
+        self.assertTrue(any("docs/missing-html.md" in item for item in violations))
+        self.assertTrue(any("assets/missing-html.png" in item for item in violations))
+
+    def test_local_links_validate_markdown_extension_fragments(self) -> None:
+        (self.root / "docs/guide.markdown").write_text("# Existing\n", encoding="utf-8")
+        violations = self.local_link_violations(
+            "\n[Missing](docs/guide.markdown#missing)\n"
+        )
+        self.assertTrue(any("missing Markdown anchor" in item for item in violations))
+
+    def test_bilingual_invariants_require_affirmative_public_claim_boundary(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8").replace(
+                "does not support public benchmark claims",
+                "supports public benchmark claims",
+            ),
+            encoding="utf-8",
+        )
+        violations: list[str] = []
+        check_documentation_contracts.check_bilingual_readme_invariants(
+            self.root, violations
+        )
+        self.assertTrue(any("public benchmark claim boundary" in item for item in violations))
 
 
 if __name__ == "__main__":
