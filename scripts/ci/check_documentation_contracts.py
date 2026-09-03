@@ -600,8 +600,12 @@ def check_current_spec_handoffs(root: Path, violations: list[str]) -> None:
             rf"^\|\s*`{re.escape(name)}/`\s*\|.*$", index, flags=re.MULTILINE
         )
         historical_route = f"`specs/{name}/`"
-        affirmative_handoff = f"historical planning packet: {historical_route}".lower()
-        if row is None or affirmative_handoff not in row.group(0).lower():
+        affirmative_handoff = re.compile(
+            rf"(?:\|\s+|\.\s+)Historical planning packet: "
+            rf"{re.escape(historical_route)}\.\s*\|\s*$",
+            re.IGNORECASE,
+        )
+        if row is None or affirmative_handoff.search(row.group(0)) is None:
             violations.append(
                 f"{SPEC_INDEX}: current {name}/ must link {historical_route} and label it "
                 "historical; docs/specs remains canonical"
