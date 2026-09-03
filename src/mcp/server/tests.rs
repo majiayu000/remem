@@ -559,6 +559,75 @@ fn get_observations_fetches_exact_session_summary_id() {
 }
 
 #[test]
+fn get_observations_reads_historical_alias_session_summary() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("mcp-session-summary-alias-detail");
+    let conn = crate::db::open_db()?;
+    let canonical = "/repo/canonical";
+    let alias = "/repo/historical-alias";
+    conn.execute(
+        "INSERT INTO workspaces(
+            root_path, git_remote, git_branch, created_at_epoch, updated_at_epoch
+         ) VALUES(?1, 'https://github.com/example/remem.git', 'main', 1, 1)",
+        [canonical],
+    )?;
+    let workspace_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO projects(
+            workspace_id, project_path, project_key, created_at_epoch, updated_at_epoch
+         ) VALUES(?1, ?2, ?2, 1, 1)",
+        rusqlite::params![workspace_id, canonical],
+    )?;
+    let proof_payload = serde_json::json!({
+        "from_path": alias,
+        "to_path": canonical,
+        "target_remote": "github.com/example/remem",
+        "shared_commit_count": 1
+    });
+    let entries = [crate::project_alias::ProjectAliasPlanEntry {
+        alias_path: alias.to_string(),
+        canonical_path: canonical.to_string(),
+        proof_kind: crate::project_alias::ProjectAliasProofKind::GitCommitMembership,
+        proof_sha256: crate::project_alias::proof_sha256(&proof_payload)?,
+        proof_payload,
+    }];
+    crate::project_alias::apply_project_alias_plan(
+        &conn,
+        &crate::project_alias::ProjectAliasApplyRequest {
+            source_inventory_sha256:
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            actor: "test",
+            reason: "session summary detail alias regression",
+            now_epoch: 10,
+            entries: &entries,
+        },
+    )?;
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, request, completed, next_steps, created_at_epoch)
+         VALUES ('historical-alias-detail', ?1, 'Historical alias summary',
+                 'Partial', 'Read through canonical scope', 1700000000)",
+        [alias],
+    )?;
+    let summary_id = conn.last_insert_rowid();
+    drop(conn);
+
+    let server = MemoryServer::new()?;
+    let expanded = server
+        .get_observations(Parameters(GetObservationsParams {
+            ids: vec![summary_id],
+            project: Some(canonical.to_string()),
+            source: Some("session_summary".to_string()),
+            include_suppressed: None,
+        }))
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let json: Value = serde_json::from_str(&expanded)?;
+
+    assert_eq!(json[0]["id"], summary_id);
+    assert_eq!(json[0]["project"], alias);
+    Ok(())
+}
+
+#[test]
 fn get_observations_marks_memory_accessed() {
     let _dir = ScopedTestDataDir::new("mcp-memory-usage");
     let conn = crate::db::open_db().expect("db opens");

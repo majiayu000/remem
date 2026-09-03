@@ -15,7 +15,8 @@ use super::super::types::{ContextPreselectionItem, SessionSummaryBrief};
 
 const PROMPT_SUBMIT_CHAR_LIMIT: usize = 1_800;
 const CONTINUITY_LIMIT: usize = 2;
-const CONTINUITY_SCAN_LIMIT: usize = 10;
+const CONTINUITY_SCAN_BATCH_SIZE: usize = 10;
+const CONTINUITY_MAX_SCAN: usize = 200;
 const TITLE_LIMIT: usize = 120;
 const NEXT_ACTION_LIMIT: usize = 140;
 
@@ -67,37 +68,25 @@ pub(super) fn load_first_turn_continuity(
         return Ok(PromptContinuity::default());
     }
 
-    let workstreams =
-        crate::workstream::query_active_workstreams_limited(conn, project, CONTINUITY_SCAN_LIMIT)?;
-    let (mut safe_workstreams, poisoned_workstreams) =
-        super::super::poisoning::partition_workstreams(workstreams);
-    let mut audit_items = poisoned_workstreams
-        .iter()
-        .map(|workstream| {
-            ContextAuditItem::dropped_prompt_continuity_workstream(
-                workstream.id,
-                &workstream.title,
-                workstream.updated_at_epoch,
-                "prompt_submit_poisoning_gate",
-            )
-        })
-        .collect::<Vec<_>>();
-
     let summary_selection =
         super::super::summary_query::query_recent_unfinished_summaries_with_drops(
             conn,
             project,
-            CONTINUITY_SCAN_LIMIT,
+            CONTINUITY_SCAN_BATCH_SIZE,
         )?;
-    audit_items.extend(summary_selection.poisoning_drops.iter().map(|summary| {
-        summary_audit_item(
-            summary,
-            "dropped",
-            Some("prompt_submit_poisoning_gate"),
-            None,
-        )
-    }));
-    audit_items.extend(
+    let mut summary_audit_items = summary_selection
+        .poisoning_drops
+        .iter()
+        .map(|summary| {
+            summary_audit_item(
+                summary,
+                "dropped",
+                Some("prompt_submit_poisoning_gate"),
+                None,
+            )
+        })
+        .collect::<Vec<_>>();
+    summary_audit_items.extend(
         summary_selection
             .preselection_drops
             .iter()
@@ -127,7 +116,7 @@ pub(super) fn load_first_turn_continuity(
                 next_steps,
             });
         } else {
-            audit_items.push(summary_audit_item(
+            summary_audit_items.push(summary_audit_item(
                 &summary,
                 "dropped",
                 Some("prompt_submit_no_next_steps"),
@@ -135,6 +124,22 @@ pub(super) fn load_first_turn_continuity(
             ));
         }
     }
+
+    let workstream_target = CONTINUITY_LIMIT - usize::from(!unfinished_sessions.is_empty());
+    let (mut safe_workstreams, poisoned_workstreams) =
+        load_safe_workstreams(conn, project, workstream_target)?;
+    let mut audit_items = poisoned_workstreams
+        .iter()
+        .map(|workstream| {
+            ContextAuditItem::dropped_prompt_continuity_workstream(
+                workstream.id,
+                &workstream.title,
+                workstream.updated_at_epoch,
+                "prompt_submit_poisoning_gate",
+            )
+        })
+        .collect::<Vec<_>>();
+    audit_items.extend(summary_audit_items);
 
     let selected_workstream = if safe_workstreams.is_empty() {
         None
@@ -175,6 +180,44 @@ pub(super) fn load_first_turn_continuity(
         session: selected_session,
         audit_items,
     })
+}
+
+fn load_safe_workstreams(
+    conn: &rusqlite::Connection,
+    project: &str,
+    target: usize,
+) -> Result<(Vec<WorkStream>, Vec<WorkStream>)> {
+    let mut safe = Vec::new();
+    let mut poisoned = Vec::new();
+    let mut offset = 0usize;
+    let mut reached_end = false;
+
+    while safe.len() < target && offset < CONTINUITY_MAX_SCAN {
+        let fetch_limit = CONTINUITY_SCAN_BATCH_SIZE.min(CONTINUITY_MAX_SCAN - offset);
+        let page =
+            crate::workstream::query_active_workstreams_page(conn, project, fetch_limit, offset)?;
+        let fetched = page.len();
+        if fetched == 0 {
+            reached_end = true;
+            break;
+        }
+        let (page_safe, page_poisoned) = super::super::poisoning::partition_workstreams(page);
+        safe.extend(page_safe);
+        poisoned.extend(page_poisoned);
+        offset += fetched;
+        if fetched < fetch_limit {
+            reached_end = true;
+            break;
+        }
+    }
+
+    if safe.len() < target && !reached_end && offset >= CONTINUITY_MAX_SCAN {
+        anyhow::bail!(
+            "prompt-submit workstream continuity scan budget exhausted after {} rows before finding {target} safe anchors",
+            CONTINUITY_MAX_SCAN
+        );
+    }
+    Ok((safe, poisoned))
 }
 
 pub(super) fn render_prompt_submit_context(

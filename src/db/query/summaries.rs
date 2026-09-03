@@ -119,8 +119,13 @@ pub fn get_summaries_by_ids(
         NOT_QUARANTINED_SQL.to_string(),
     ];
     if let Some(project) = project {
-        let (project_filter, _) =
-            push_project_filter("project", project, ids.len() + 1, &mut parameters);
+        let (project_filter, _) = crate::project_alias::push_project_value_filter(
+            conn,
+            "project",
+            project,
+            ids.len() + 1,
+            &mut parameters,
+        )?;
         conditions.push(project_filter);
     }
 

@@ -30,10 +30,13 @@ UserPromptSubmit
 
 The captured-event count is session state, not an intent heuristic. Codex uses
 its native `turn_id` to make a retry of the same UserPromptSubmit event
-idempotent. Claude does not provide a turn id, so each hook occurrence receives
-a unique capture event id; repeated identical prompt text therefore still
-advances the session prompt count. The continuity lane is omitted once the
-session contains more than one distinct prompt event.
+idempotent. The prompt event id also scopes the existing injection audit key:
+same-turn retries exclude their own prior audit rows and deterministically
+replay the same candidates, while later turns retain session-level de-duplication.
+Claude does not provide a turn id, so each hook occurrence receives a unique
+capture event id; repeated identical prompt text therefore still advances the
+session prompt count. The continuity lane is omitted once the session contains
+more than one distinct prompt event.
 
 ## Candidate Rendering
 
@@ -58,12 +61,17 @@ renderer remains an additive prompt block and never rewrites SessionStart.
 ## Filtering And Audit
 
 - Memory candidates retain current G2/current-truth, owner/scope, lifecycle,
-  suppression, source-anchor, and poisoning checks.
-- Workstream and session anchors use the existing owner-aware and poisoning
-  filters before their text can enter the prompt. Session `next_steps` is
-  included in the final pre-injection summary scan.
+  suppression, source-anchor, and poisoning checks. Temporal fact annotation
+  runs once per bounded retrieval batch, and poisoning scans every rendered
+  field, including `memory_type`, before admission.
+- Workstream and session anchors use owner-aware filters and bounded backfill
+  after poisoning admission. Workstream scans fail explicitly if their bounded
+  budget cannot find enough safe anchors. Session anchors scan `request`,
+  `completed`, `decisions`, `learned`, `next_steps`, and `preferences`, matching
+  their exact detail reader before any summary text enters the prompt.
 - Already injected memories remain excluded for the same host/project/session.
-- Canonical project summary reads include active historical aliases.
+- Canonical project summary selection and exact detail reads include active
+  historical aliases.
 - The four-item memory limit is applied only after G2, already-injected, and
   poisoning admission, with a bounded ranked scan to backfill safe candidates.
 - RRF rank is a candidate ordering signal only. There is no final relevance

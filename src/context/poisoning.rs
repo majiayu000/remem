@@ -163,7 +163,7 @@ pub(super) fn should_inject_memory(
 }
 
 fn memory_haystack(memory: &Memory) -> String {
-    format!("{}\n{}", memory.title, memory.text)
+    format!("{}\n{}\n{}", memory.memory_type, memory.title, memory.text)
 }
 
 fn load_memory_poisoning_state(conn: &Connection, memory_id: i64) -> Result<MemoryPoisoningState> {

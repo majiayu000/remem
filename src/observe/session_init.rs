@@ -39,7 +39,7 @@ async fn session_init_input(input: &str, host: Option<&str>) -> Result<Option<St
     let conn = db::open_db_for_hook()?;
     db::upsert_session(&conn, &event.session_id, &event.project, None)?;
     let user_prompt = user_prompt_submit_prompt(input);
-    if let Some(prompt) = user_prompt.as_deref() {
+    let prompt_event_id = if let Some(prompt) = user_prompt.as_deref() {
         let turn_id = user_prompt_submit_turn_id(input);
         let event_id = user_prompt_submit_event_id(turn_id.as_deref(), prompt);
         db::record_captured_event_with_id_and_turn_id(
@@ -58,16 +58,20 @@ async fn session_init_input(input: &str, host: Option<&str>) -> Result<Option<St
             Some(&event_id),
             turn_id.as_deref(),
         )?;
-    }
+        Some(event_id)
+    } else {
+        None
+    };
     let output = if let Some(prompt) = user_prompt {
         let cwd = event.cwd.as_deref().unwrap_or(&event.project);
-        crate::context::prompt_submit_additional_context(
+        crate::context::prompt_submit_additional_context_for_event(
             &conn,
             cwd,
             &event.project,
             &event.session_id,
             &prompt,
             host,
+            prompt_event_id.as_deref(),
         )?
         .map(|context| user_prompt_submit_output(&context))
         .transpose()?
@@ -275,6 +279,64 @@ mod tests {
                 row.get(0)
             })?;
         assert_eq!(task_kind, "session_rollup");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn codex_same_turn_retry_replays_the_same_candidates() -> anyhow::Result<()> {
+        let test_dir = ScopedTestDataDir::new("session-init-codex-turn-retry");
+        std::fs::create_dir_all(&test_dir.path)?;
+        let conn = rusqlite::Connection::open(test_dir.db_path())?;
+        crate::migrate::run_migrations(&conn)?;
+        let project = "/tmp/remem-codex-turn-retry";
+        let memory_id = crate::memory::insert_memory(
+            &conn,
+            Some("seed-session"),
+            project,
+            None,
+            "SQLCipher storage decision",
+            "Persist private data with SQLCipher encryption at rest.",
+            "decision",
+            None,
+        )?;
+        conn.execute(
+            "UPDATE memories SET source_trust_class = 'user_prompt' WHERE id = ?1",
+            [memory_id],
+        )?;
+        drop(conn);
+        let input = serde_json::json!({
+            "session_id": "sess-codex-turn-retry",
+            "turn_id": "turn-retry-1",
+            "cwd": project,
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "How should SQLCipher protect private persisted data?"
+        })
+        .to_string();
+
+        let first = session_init_input(&input, Some("codex-cli"))
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("first delivery should inject a candidate"))?;
+        let retry = session_init_input(&input, Some("codex-cli"))
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("same-turn retry should replay the candidate"))?;
+
+        assert_eq!(first, retry);
+        let later_turn = input.replace("turn-retry-1", "turn-retry-2");
+        assert!(
+            session_init_input(&later_turn, Some("codex-cli"))
+                .await?
+                .is_none(),
+            "a later turn must retain session-level candidate de-duplication"
+        );
+        let conn = crate::db::open_db()?;
+        let distinct_keys: i64 = conn.query_row(
+            "SELECT COUNT(DISTINCT injection_key) FROM context_injection_items
+             WHERE session_id = 'sess-codex-turn-retry' AND memory_id = ?1
+               AND status = 'injected'",
+            [memory_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(distinct_keys, 1);
         Ok(())
     }
 

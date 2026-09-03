@@ -54,19 +54,22 @@ pub fn query_active_workstreams(conn: &Connection, project: &str) -> Result<Vec<
     crate::db::query::collect_rows(rows)
 }
 
-pub(crate) fn query_active_workstreams_limited(
+pub(crate) fn query_active_workstreams_page(
     conn: &Connection,
     project: &str,
     limit: usize,
+    offset: usize,
 ) -> Result<Vec<WorkStream>> {
     let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let (owner_filter, idx) = workstream_owner_filter(conn, project, 1, &mut params_vec)?;
     params_vec.push(Box::new(limit as i64));
+    let offset_idx = idx + 1;
+    params_vec.push(Box::new(offset as i64));
     let sql = format!(
         "{SELECT_FIELDS} WHERE status = 'active'
               AND merged_into_workstream_id IS NULL
               AND {owner_filter}
-              ORDER BY updated_at_epoch DESC, id ASC LIMIT ?{idx}"
+              ORDER BY updated_at_epoch DESC, id ASC LIMIT ?{idx} OFFSET ?{offset_idx}"
     );
     let mut stmt = conn.prepare(&sql)?;
     let refs = crate::db::to_sql_refs(&params_vec);

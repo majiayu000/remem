@@ -9,7 +9,6 @@ use super::memory_selection::{
 use super::memory_traits::is_self_diagnostic_text;
 use super::types::{ContextPreselectionDrop, ContextPreselectionItem, SessionSummaryBrief};
 
-const SUMMARY_FETCH_BATCH_SIZE: usize = 25;
 const SUMMARY_MAX_SCAN: usize = 200;
 const STALE_DESIGN_SUMMARY_DAYS: i64 = 7;
 
@@ -66,79 +65,74 @@ fn query_recent_summaries_with_drops_matching(
     let mut preselection_drops = Vec::new();
     let mut seen_clusters = HashSet::new();
     let mut seen_session_keys = HashSet::new();
-    let mut offset = 0usize;
-
-    while selected.len() < limit && offset < scan_limit {
-        let fetch_limit = SUMMARY_FETCH_BATCH_SIZE.min(scan_limit - offset);
-        let batch = query_summary_batch(conn, project, fetch_limit, offset, require_next_steps)?;
-        if batch.is_empty() {
+    let candidates = query_summary_batch(conn, project, scan_limit, require_next_steps)?;
+    for row in candidates {
+        if selected.len() >= limit {
             break;
         }
-
-        for row in batch {
-            let injectable = if require_next_steps {
-                crate::db::summary_poisoning::summary_injectable(
-                    conn,
-                    row.summary.id,
-                    &[
-                        ("request", Some(row.summary.request.as_str())),
-                        ("completed", row.summary.completed.as_deref()),
-                        ("next_steps", row.next_steps.as_deref()),
-                    ],
-                    "prompt_submit_continuity",
-                )
-            } else {
-                crate::db::summary_poisoning::summary_injectable(
-                    conn,
-                    row.summary.id,
-                    &[
-                        ("request", Some(row.summary.request.as_str())),
-                        ("completed", row.summary.completed.as_deref()),
-                    ],
-                    "context_recent_sessions",
-                )
-            };
-            let summary = row.summary;
-            if !injectable {
-                poisoning_drops.push(summary);
-                continue;
-            }
-            if is_session_summary_self_diagnostic(&summary) {
-                preselection_drops.push(summary_drop(summary, "summary_self_diagnostic"));
-                continue;
-            }
-
-            let cluster_key = summary_cluster_key(&summary);
-            if seen_clusters.contains(&cluster_key) {
-                preselection_drops.push(summary_drop(summary, "summary_cluster_dedup"));
-                continue;
-            }
-            if row
-                .session_key
-                .as_ref()
-                .is_some_and(|session_key| seen_session_keys.contains(session_key))
-            {
-                preselection_drops.push(summary_drop(summary, "summary_session_dedup"));
-                continue;
-            }
-
-            if is_stale_design_prototype_summary(&summary, now_epoch) {
-                low_signal_fallback.push((cluster_key, row.session_key, summary));
-                continue;
-            }
-            if selected.len() >= limit {
-                preselection_drops.push(summary_drop(summary, "summary_item_limit"));
-                continue;
-            }
-
-            seen_clusters.insert(cluster_key);
-            if let Some(session_key) = row.session_key {
-                seen_session_keys.insert(session_key);
-            }
-            selected.push(summary);
+        let injectable = if require_next_steps {
+            crate::db::summary_poisoning::summary_injectable(
+                conn,
+                row.summary.id,
+                &[
+                    ("request", Some(row.source_request.as_str())),
+                    ("completed", row.summary.completed.as_deref()),
+                    ("decisions", row.decisions.as_deref()),
+                    ("learned", row.learned.as_deref()),
+                    ("next_steps", row.next_steps.as_deref()),
+                    ("preferences", row.preferences.as_deref()),
+                ],
+                "prompt_submit_continuity",
+            )
+        } else {
+            crate::db::summary_poisoning::summary_injectable(
+                conn,
+                row.summary.id,
+                &[
+                    ("request", Some(row.summary.request.as_str())),
+                    ("completed", row.summary.completed.as_deref()),
+                ],
+                "context_recent_sessions",
+            )
+        };
+        let summary = row.summary;
+        if !injectable {
+            poisoning_drops.push(summary);
+            continue;
+        }
+        if is_session_summary_self_diagnostic(&summary) {
+            preselection_drops.push(summary_drop(summary, "summary_self_diagnostic"));
+            continue;
         }
 
-        offset += fetch_limit;
+        let cluster_key = summary_cluster_key(&summary);
+        if seen_clusters.contains(&cluster_key) {
+            preselection_drops.push(summary_drop(summary, "summary_cluster_dedup"));
+            continue;
+        }
+        if row
+            .session_key
+            .as_ref()
+            .is_some_and(|session_key| seen_session_keys.contains(session_key))
+        {
+            preselection_drops.push(summary_drop(summary, "summary_session_dedup"));
+            continue;
+        }
+
+        if is_stale_design_prototype_summary(&summary, now_epoch) {
+            low_signal_fallback.push((cluster_key, row.session_key, summary));
+            continue;
+        }
+        if selected.len() >= limit {
+            preselection_drops.push(summary_drop(summary, "summary_item_limit"));
+            continue;
+        }
+
+        seen_clusters.insert(cluster_key);
+        if let Some(session_key) = row.session_key {
+            seen_session_keys.insert(session_key);
+        }
+        selected.push(summary);
     }
 
     if selected.is_empty() {
@@ -189,14 +183,17 @@ fn summary_drop(summary: SessionSummaryBrief, reason: &'static str) -> ContextPr
 struct SessionSummaryQueryRow {
     summary: SessionSummaryBrief,
     session_key: Option<String>,
+    source_request: String,
+    decisions: Option<String>,
+    learned: Option<String>,
     next_steps: Option<String>,
+    preferences: Option<String>,
 }
 
 fn query_summary_batch(
     conn: &Connection,
     project: &str,
     limit: usize,
-    offset: usize,
     require_next_steps: bool,
 ) -> Result<Vec<SessionSummaryQueryRow>> {
     let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -223,9 +220,7 @@ fn query_summary_batch(
     )?;
     let limit_idx = idx;
     params_vec.push(Box::new(limit as i64));
-    let offset_idx = limit_idx + 1;
-    params_vec.push(Box::new(offset as i64));
-    let next_steps_idx = offset_idx + 1;
+    let next_steps_idx = limit_idx + 1;
     params_vec.push(Box::new(i64::from(require_next_steps)));
     let sql = format!(
         "SELECT ss.id, \
@@ -243,7 +238,11 @@ fn query_summary_batch(
                  'mem-' || substr(s.session_id, 1, 8) \
                ELSE ss.memory_session_id \
              END AS session_key, \
-             ss.next_steps \
+             ss.request, \
+             ss.decisions, \
+             ss.learned, \
+             ss.next_steps, \
+             ss.preferences \
          FROM session_summaries ss \
          LEFT JOIN sessions s ON s.id = ss.session_row_id \
          WHERE ss.request IS NOT NULL AND ss.request != '' \
@@ -259,7 +258,7 @@ fn query_summary_batch(
                 OR (ss.owner_scope IS NULL AND {legacy_clause})) \
            AND (?{next_steps_idx} = 0 OR NULLIF(TRIM(ss.next_steps), '') IS NOT NULL) \
          ORDER BY ss.created_at_epoch DESC, display_request ASC, ss.completed ASC \
-         LIMIT ?{limit_idx} OFFSET ?{offset_idx}",
+         LIMIT ?{limit_idx}",
     );
     let mut stmt = conn.prepare_cached(&sql)?;
     let refs = crate::db::to_sql_refs(&params_vec);
@@ -272,7 +271,11 @@ fn query_summary_batch(
                 created_at_epoch: row.get(3)?,
             },
             session_key: row.get(4)?,
-            next_steps: row.get(5)?,
+            source_request: row.get(5)?,
+            decisions: row.get(6)?,
+            learned: row.get(7)?,
+            next_steps: row.get(8)?,
+            preferences: row.get(9)?,
         })
     })?;
     crate::db::query::collect_rows(rows)

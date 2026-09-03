@@ -1,9 +1,8 @@
-use std::collections::HashSet;
-
 #[cfg(test)]
 use std::collections::HashMap;
 
 use anyhow::Result;
+#[cfg(test)]
 use rusqlite::params;
 
 #[cfg(test)]
@@ -11,7 +10,9 @@ use crate::memory::Memory;
 
 use super::audit::{record_context_injection_items, ContextAuditItem};
 use super::host::resolve_host_kind;
-use super::injection_gate::{injection_key_for_audit, ContextGateAction, ContextGateDecision};
+#[cfg(test)]
+use super::injection_gate::injection_key_for_audit;
+use super::injection_gate::{ContextGateAction, ContextGateDecision};
 use super::invocation::ContextInvocation;
 use super::policy::{ContextLimits, ContextPolicy, SectionKind};
 
@@ -21,6 +22,7 @@ const PROMPT_SUBMIT_LATENCY_BUDGET_MS: u128 = 250;
 
 mod candidates;
 use candidates::{prompt_submit_staleness_labels, render_prompt_submit_context};
+mod audit_identity;
 
 #[cfg(test)]
 mod regression_tests;
@@ -32,6 +34,20 @@ pub(crate) fn prompt_submit_additional_context(
     session_id: &str,
     prompt: &str,
     host_arg: Option<&str>,
+) -> Result<Option<String>> {
+    prompt_submit_additional_context_for_event(
+        conn, cwd, project, session_id, prompt, host_arg, None,
+    )
+}
+
+pub(crate) fn prompt_submit_additional_context_for_event(
+    conn: &rusqlite::Connection,
+    cwd: &str,
+    project: &str,
+    session_id: &str,
+    prompt: &str,
+    host_arg: Option<&str>,
+    prompt_event_id: Option<&str>,
 ) -> Result<Option<String>> {
     let prompt = prompt.trim();
     if prompt.is_empty() {
@@ -58,7 +74,12 @@ pub(crate) fn prompt_submit_additional_context(
         .unwrap_or(&[]);
     let current_branch = crate::db::detect_git_branch(cwd);
     let as_of_epoch = chrono::Utc::now().timestamp();
-    let already_injected = query_previously_injected_memory_ids(conn, &invocation)?;
+    let prompt_injection_key = audit_identity::prompt_injection_key(&invocation, prompt_event_id);
+    let already_injected = audit_identity::previously_injected_memory_ids(
+        conn,
+        &invocation,
+        prompt_injection_key.as_deref(),
+    )?;
     let (mut retrieved, poisoning_safe_ids) = super::prompt_submit_retrieval::retrieve(
         conn,
         project,
@@ -123,7 +144,7 @@ pub(crate) fn prompt_submit_additional_context(
         audit_items.push(prompt_submit_abstained_item(
             "prompt_submit_no_relevant_context",
         ));
-        let decision = empty_prompt_submit_decision();
+        let decision = empty_prompt_submit_decision(prompt_injection_key);
         record_context_injection_items(conn, &invocation, &decision, &audit_items)?;
         return Ok(None);
     }
@@ -137,47 +158,17 @@ pub(crate) fn prompt_submit_additional_context(
         render_reference_epoch,
     );
     audit_items.extend(rendered_context.audit_items);
-    let decision = prompt_submit_decision(rendered_context.output);
+    let decision = prompt_submit_decision(rendered_context.output, prompt_injection_key);
     record_context_injection_items(conn, &invocation, &decision, &audit_items)?;
     Ok(Some(decision.output))
 }
 
-fn query_previously_injected_memory_ids(
-    conn: &rusqlite::Connection,
-    invocation: &ContextInvocation,
-) -> Result<HashSet<i64>> {
-    let key = injection_key_for_audit(invocation);
-    let Some(session_id) = invocation.session_id.as_deref() else {
-        return Ok(HashSet::new());
-    };
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT memory_id
-         FROM context_injection_items
-         WHERE host = ?1
-           AND project = ?2
-           AND session_id = ?3
-           AND injection_key = ?4
-           AND status = 'injected'
-           AND memory_id IS NOT NULL",
-    )?;
-    let rows = stmt.query_map(
-        params![
-            invocation.host.as_env_value(),
-            invocation.project,
-            session_id,
-            key
-        ],
-        |row| row.get::<_, i64>(0),
-    )?;
-    Ok(crate::db::query::collect_rows(rows)?.into_iter().collect())
-}
-
-fn empty_prompt_submit_decision() -> ContextGateDecision {
+fn empty_prompt_submit_decision(key: Option<String>) -> ContextGateDecision {
     ContextGateDecision {
         output: String::new(),
         action: ContextGateAction::Bypassed,
         reason: "prompt_submit_empty",
-        key: None,
+        key,
         context_hash: None,
         output_mode: Some("prompt_submit"),
         retained_context_chars: None,
@@ -185,12 +176,12 @@ fn empty_prompt_submit_decision() -> ContextGateDecision {
     }
 }
 
-fn prompt_submit_decision(output: String) -> ContextGateDecision {
+fn prompt_submit_decision(output: String, key: Option<String>) -> ContextGateDecision {
     ContextGateDecision {
         output,
         action: ContextGateAction::Bypassed,
         reason: "prompt_submit",
-        key: None,
+        key,
         context_hash: None,
         output_mode: Some("prompt_submit"),
         retained_context_chars: None,
