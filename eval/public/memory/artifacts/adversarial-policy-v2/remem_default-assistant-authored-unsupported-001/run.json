@@ -17,13 +17,13 @@
   "environment": {
     "os": "macos",
     "arch": "aarch64",
-    "remem_commit": "3f7f1f2e5f4670698a65f408baedb9727cb6aafb",
+    "remem_commit": "9091d213074f597969ac452f816725076fe50fb8",
     "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/assistant-authored-unsupported-001",
     "docker_image_digest": "local-fixture-no-docker",
     "fixture_revision": "adversarial-policy-v2",
     "repo_base_commit": null,
     "source_dirty": false,
-    "production_input_tree_sha256": "76860cd7036e2cefae33ebabe29ead72ac94459a8cee8cb69cdfc89f0446529c"
+    "production_input_tree_sha256": "b9187b9c911895a0f7435f2ee3b745b210a3d783f9bd56af741d3513d7aeede6"
   },
   "answer": {
     "abstained": true,
@@ -97,7 +97,7 @@
     "answer": "4500d697f29f9e0cc3aae5f88cfab1ffb36a45f3eb99893dd279c71f42c8b6ed",
     "diagnosis": "981b19d44b52b90f4bc47b4c2f05dcfa2a70186567790a2dfa54b8cbfb291d37",
     "reader_input": "fd67d21072c08bbe04d47586fc9c7f0e4e8b938ff744327eef3c99fc9b0ce77f",
-    "remem_db_snapshot": "c234f6fe3ef5bd66a5428bbbc352a36382ff185eeed4cc82b92c6ff284cb9787",
+    "remem_db_snapshot": "911a8a594558aa78031e5c738f508936cd6c6678362c0b4355ccd33fcf86b364",
     "retrieved_evidence": "2217acd722974d4269ba37e1c73676f6eada0dee2a7c2c4f741fc4d206cbde76",
     "score": "9104fa05eb1c5d505b05892d47133caa21b33deba83a24a136a3fcc88446bf64"
   },
