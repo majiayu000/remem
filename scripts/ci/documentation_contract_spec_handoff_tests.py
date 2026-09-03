@@ -5,6 +5,15 @@ from pathlib import Path
 import check_documentation_contracts
 
 
+def handoff_index(row: str) -> str:
+    return (
+        "### Current/Historical GH Packet Handoffs\n\n"
+        "| Contract | Canonical current packet | Historical packet |\n"
+        "|---|---|---|\n"
+        f"{row}\n"
+    )
+
+
 class CurrentSpecHandoffContractTests(unittest.TestCase):
     def fixture_root(
         self, *, include_current: bool = True, include_historical: bool = True
@@ -22,8 +31,9 @@ class CurrentSpecHandoffContractTests(unittest.TestCase):
     def test_accepts_explicit_historical_packet(self) -> None:
         root = self.fixture_root()
         (root / "docs/specs/README.md").write_text(
-            "| `GH931/` | Current contract | Canonical contract. Historical "
-            "planning packet: `specs/GH931/`. |\n",
+            handoff_index(
+                "| `GH931` | `docs/specs/GH931/` | `specs/GH931/` |"
+            ),
             encoding="utf-8",
         )
 
@@ -37,7 +47,7 @@ class CurrentSpecHandoffContractTests(unittest.TestCase):
     def test_rejects_unlabelled_duplicate_tree(self) -> None:
         root = self.fixture_root()
         (root / "docs/specs/README.md").write_text(
-            "| `GH931/` | Current contract | Refs #931. |\n",
+            handoff_index(""),
             encoding="utf-8",
         )
 
@@ -48,16 +58,17 @@ class CurrentSpecHandoffContractTests(unittest.TestCase):
 
         self.assertTrue(
             any(
-                "current GH931/ must link `specs/GH931/` and label it historical"
-                in item
+                "overlapping GH931 packets require a structured handoff row" in item
                 for item in violations
             )
         )
 
-    def test_rejects_negated_historical_classification(self) -> None:
+    def test_rejects_mismatched_current_path(self) -> None:
         root = self.fixture_root()
         (root / "docs/specs/README.md").write_text(
-            "| `GH931/` | Current contract | `specs/GH931/` is not historical. |\n",
+            handoff_index(
+                "| `GH931` | `docs/specs/GH932/` | `specs/GH931/` |"
+            ),
             encoding="utf-8",
         )
 
@@ -66,13 +77,14 @@ class CurrentSpecHandoffContractTests(unittest.TestCase):
             root, violations
         )
 
-        self.assertTrue(any("docs/specs remains canonical" in item for item in violations))
+        self.assertTrue(any("must declare exact" in item for item in violations))
 
-    def test_rejects_canonical_qualifier_after_handoff(self) -> None:
+    def test_rejects_extra_handoff_column(self) -> None:
         root = self.fixture_root()
         (root / "docs/specs/README.md").write_text(
-            "| `GH931/` | Current contract | Historical planning packet: "
-            "`specs/GH931/`. The root packet remains canonical. |\n",
+            handoff_index(
+                "| `GH931` | `docs/specs/GH931/` | `specs/GH931/` | canonical |"
+            ),
             encoding="utf-8",
         )
 
@@ -81,13 +93,14 @@ class CurrentSpecHandoffContractTests(unittest.TestCase):
             root, violations
         )
 
-        self.assertTrue(any("docs/specs remains canonical" in item for item in violations))
+        self.assertTrue(any("must declare exact" in item for item in violations))
 
     def test_rejects_declared_missing_historical_packet(self) -> None:
         root = self.fixture_root(include_historical=False)
         (root / "docs/specs/README.md").write_text(
-            "| `GH931/` | Current contract | Historical planning packet: "
-            "`specs/GH931/`. |\n",
+            handoff_index(
+                "| `GH931` | `docs/specs/GH931/` | `specs/GH931/` |"
+            ),
             encoding="utf-8",
         )
 
@@ -104,8 +117,9 @@ class CurrentSpecHandoffContractTests(unittest.TestCase):
     def test_rejects_declared_missing_current_packet(self) -> None:
         root = self.fixture_root(include_current=False)
         (root / "docs/specs/README.md").write_text(
-            "| `GH931/` | Current contract | Historical planning packet: "
-            "`specs/GH931/`. |\n",
+            handoff_index(
+                "| `GH931` | `docs/specs/GH931/` | `specs/GH931/` |"
+            ),
             encoding="utf-8",
         )
 

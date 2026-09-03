@@ -596,31 +596,34 @@ def check_current_spec_handoffs(root: Path, violations: list[str]) -> None:
         else set()
     )
     index = read(root, SPEC_INDEX)
-    current_rows = {
-        match.group("name"): match.group(0)
-        for match in re.finditer(
-            r"^\|\s*`(?P<name>GH\d+)/`\s*\|.*$", index, flags=re.MULTILINE
+    section_match = re.search(
+        r"^### Current/Historical GH Packet Handoffs\s*$"
+        r"(?P<body>.*?)(?=^#{2,3}\s|\Z)",
+        index,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    section = section_match.group("body") if section_match else ""
+    declared_handoffs: set[str] = set()
+    for match in re.finditer(
+        r"^\|\s*`(?P<name>GH\d+)`\s*\|.*$", section, flags=re.MULTILINE
+    ):
+        name = match.group("name")
+        declared_handoffs.add(name)
+        expected = re.compile(
+            rf"^\|\s*`{name}`\s*\|\s*`docs/specs/{name}/`\s*"
+            rf"\|\s*`specs/{name}/`\s*\|\s*$"
         )
-    }
-    declared_handoffs = {
-        name
-        for name, row in current_rows.items()
-        if f"`specs/{name}/`" in row
-    }
-
-    for name in sorted((current & historical) | declared_handoffs):
-        row = current_rows.get(name)
-        historical_route = f"`specs/{name}/`"
-        affirmative_handoff = re.compile(
-            rf"(?:\|\s+|\.\s+)Historical planning packet: "
-            rf"{re.escape(historical_route)}\.\s*\|\s*$",
-            re.IGNORECASE,
-        )
-        if row is None or affirmative_handoff.search(row) is None:
+        if expected.fullmatch(match.group(0)) is None:
             violations.append(
-                f"{SPEC_INDEX}: current {name}/ must link {historical_route} and label it "
-                "historical; docs/specs remains canonical"
+                f"{SPEC_INDEX}: {name} handoff must declare exact current and historical paths"
             )
+
+    for name in sorted((current & historical) - declared_handoffs):
+        violations.append(
+            f"{SPEC_INDEX}: overlapping {name} packets require a structured handoff row"
+        )
+
+    for name in sorted(declared_handoffs):
         if not (current_root / name).is_dir():
             violations.append(
                 f"{SPEC_INDEX}: declared current packet `docs/specs/{name}/` is missing"

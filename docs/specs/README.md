@@ -25,9 +25,19 @@ Root-level `specs/GH<issue-number>/` packets are retained as historical product,
 technical, and task-planning evidence. They are not an active workflow or an
 execution prerequisite. Current Remem contracts live in this `docs/specs/`
 directory and must be updated when the behavior they govern changes.
-When the same `GH<number>/` exists in both trees, the matching row below must
-link the root packet and label it historical. The documentation contract check
-enforces that handoff; the `docs/specs/` copy remains canonical.
+When the same `GH<number>/` exists in both trees, the structured handoff table
+below is the machine-readable authority. The documentation contract check
+requires exact current and historical paths and verifies that both endpoints
+exist; the `docs/specs/` copy remains canonical.
+
+### Current/Historical GH Packet Handoffs
+
+| Contract | Canonical current packet | Historical packet |
+|---|---|---|
+| `GH931` | `docs/specs/GH931/` | `specs/GH931/` |
+| `GH932` | `docs/specs/GH932/` | `specs/GH932/` |
+| `GH933` | `docs/specs/GH933/` | `specs/GH933/` |
+| `GH934` | `docs/specs/GH934/` | `specs/GH934/` |
 
 Use this handoff for substantial behavior, API, DB, hook, plugin, or
 cross-module architecture work:

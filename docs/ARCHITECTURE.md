@@ -76,10 +76,13 @@ aggregate budget.
 ## Runtime And Surface Lifecycle
 
 The supported production memory paths converge on one activation boundary.
-Automatic capture and LLM extraction are the primary path; explicit MCP/REST
-`save_memory` requests are a supplemental path. Only `memory::activation` can
-make curated memory active. CurrentTruth v1 then governs the Core projection
-consumed by the default Context Bundle and SessionStart renderer.
+The diagram below is limited to the two normal user-facing acquisition paths:
+automatic capture plus explicit MCP/REST `save_memory`. Administrative import,
+restore, cleanup, recovery, and Dream consolidation routes are inventoried in
+the GH969 Technical contract's Route Rules rather than duplicated here. Only
+`memory::activation` can make curated memory active. CurrentTruth v1 then
+governs the Core projection consumed by the default Context Bundle and
+SessionStart renderer.
 
 ```text
 automatic: Claude/Codex capture
@@ -90,7 +93,7 @@ automatic: Claude/Codex capture
 supplemental: explicit MCP/REST save_memory
   -> execute_supplemental_save
 
-both -> memory::activation + immutable activation receipt
+these acquisition paths -> memory::activation + immutable activation receipt
   -> curated memory / relations
   -> CurrentTruth v1
   -> default Context Bundle -> SessionStart + durable audit
