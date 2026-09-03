@@ -43,7 +43,7 @@ Two groups of old checklist wording are explicitly amended:
 | G3 | Ship matrix, PR #1052, `257fc4a0` | `eval-gates`, authority verdict, matrix/scorecard tests |
 | G4 | Documentation guard, PR #1057, `286326e0` | local-link/bilingual documentation checks |
 | G5 | Exact-main native evidence, PR #1062, `36f06d7a` | four-platform security artifacts and successful main CI |
-| G6 | Architecture/current-spec reconciliation, #1050, `b800af4f`; review hardening `5a9a98d1`, `0665d52b` | architecture lifecycle map, terminal affirmative canonical-spec handoff check/tests |
+| G6 | Architecture/current-spec reconciliation, #1050, `b800af4f`; review hardening `5a9a98d1`, `0665d52b`, `f59baa34`, `63f37a50` | architecture lifecycle map, supplemental activation branch, authoritative handoff declarations, and two-endpoint checks |
 
 The lifecycle/date and rollback columns below point to the canonical surface
 inventory and the Product contract's migration rules. “Independent” means the
@@ -120,9 +120,9 @@ work and is not counted as completion evidence for #969.
 | ID | Original criterion | Verdict | Implementation / exact SHA | Contract and regression evidence | Lifecycle, rollback, dependency |
 |---|---|---|---|---|---|
 | G1 | Remove/generated volatile architecture tables | Satisfied | C0 `886e6eda` | architecture contains ownership map, not hand-maintained LOC counts | Current documentation contract |
-| G2 | Document production flow, hosts, experiments, recovery | Satisfied | G6 `b800af4f` | Architecture “Runtime And Surface Lifecycle” | Links canonical manifest; no independent state |
-| G3 | Canonicalize `docs/specs` vs root packets | Satisfied | G6 `b800af4f`, `5a9a98d1`, `0665d52b` | index uses a terminal affirmative historical marker and rejects missing packets or trailing contradictions; 70 checker tests | `docs/specs/` is canonical; root packets retained as evidence |
-| G4 | Check declarations, not only file presence | Satisfied | G1 `5b98e80d`; G4 `286326e0`; G6 `b800af4f` | surface lifecycle plus documentation contract checks | CI/preflight enforced |
+| G2 | Document production flow, hosts, experiments, recovery | Satisfied | G6 `b800af4f`, `63f37a50` | Architecture “Runtime And Surface Lifecycle” includes automatic and supplemental activation paths | Links canonical manifest; no independent state |
+| G3 | Canonicalize `docs/specs` vs root packets | Satisfied | G6 `b800af4f`, `5a9a98d1`, `0665d52b`, `f59baa34` | index is authoritative, uses a terminal affirmative marker, and rejects either missing endpoint or trailing contradictions; 71 checker tests | `docs/specs/` is canonical; root packets retained as evidence |
+| G4 | Check declarations, not only file presence | Satisfied | G1 `5b98e80d`; G4 `286326e0`; G6 `f59baa34` | surface lifecycle plus documentation contract checks | CI/preflight enforced |
 
 ### Existing issues included by reference
 
@@ -149,7 +149,7 @@ work and is not counted as completion evidence for #969.
 | I6 | Surface inventory and gates | Satisfied | G1 `5b98e80d` | manifest/guard | Continuous/date-bound |
 | I7 | Dependency-direction guard | Satisfied | G2 `36f3d38c` | current and synthetic checks | No-expansion; shrink-only baseline |
 | I8 | Ship matrix and scorecard | Satisfied | G3 `257fc4a0`; G5 `36f06d7a` | runtime authority and native evidence | Exact-head fail-closed |
-| I9 | Architecture/spec synchronization | Satisfied | G6 `b800af4f` | architecture/index/checker tests | Current documentation contract |
+| I9 | Architecture/spec synchronization | Satisfied | G6 `b800af4f`, `f59baa34`, `63f37a50` | architecture/index/checker tests | Current documentation contract |
 
 ### Done When
 
@@ -164,7 +164,7 @@ work and is not counted as completion evidence for #969.
 | Z7 | No partial surface silently appears production | Satisfied | G1 `5b98e80d`; G3 `257fc4a0` | caller/default classification and ship matrix | Fail closed |
 | Z8 | Direction guard active and top cycle reduced | Amended and measured | G2 `36f3d38c`; audit base `36f06d7a` | active guard; baseline = current = 37 | No reduction claim; future work may only shrink |
 | Z9 | Advanced defaults have ablation/stop-loss evidence | Satisfied as admission gate | G1 `5b98e80d`; G3 `257fc4a0` | existing production evidence retained; incomplete surfaces stay non-default | #933/#935 parked; GH934 capability-specific |
-| Z10 | Architecture/spec truth and no protected regression | Satisfied | G5 `36f06d7a`; G6 `b800af4f` | exact-main CI/native evidence plus docs/surface/dependency checks | Release/default/public claims remain separate gates |
+| Z10 | Architecture/spec truth and no protected regression | Satisfied | G5 `36f06d7a`; G6 `f59baa34`, `63f37a50` | exact-main CI/native evidence plus docs/surface/dependency checks | Release/default/public claims remain separate gates |
 
 ## Fresh Close-Audit Verification
 
