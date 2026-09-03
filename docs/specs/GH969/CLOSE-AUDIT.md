@@ -43,7 +43,7 @@ Two groups of old checklist wording are explicitly amended:
 | G3 | Ship matrix, PR #1052, `257fc4a0` | `eval-gates`, authority verdict, matrix/scorecard tests |
 | G4 | Documentation guard, PR #1057, `286326e0` | local-link/bilingual documentation checks |
 | G5 | Exact-main native evidence, PR #1062, `36f06d7a` | four-platform security artifacts and successful main CI |
-| G6 | Architecture/current-spec reconciliation, #1050, `b800af4f`; review hardening `5a9a98d1` | architecture lifecycle map, affirmative canonical-spec handoff check/tests |
+| G6 | Architecture/current-spec reconciliation, #1050, `b800af4f`; review hardening `5a9a98d1`, `0665d52b` | architecture lifecycle map, terminal affirmative canonical-spec handoff check/tests |
 
 The lifecycle/date and rollback columns below point to the canonical surface
 inventory and the Product contract's migration rules. “Independent” means the
@@ -121,7 +121,7 @@ work and is not counted as completion evidence for #969.
 |---|---|---|---|---|---|
 | G1 | Remove/generated volatile architecture tables | Satisfied | C0 `886e6eda` | architecture contains ownership map, not hand-maintained LOC counts | Current documentation contract |
 | G2 | Document production flow, hosts, experiments, recovery | Satisfied | G6 `b800af4f` | Architecture “Runtime And Surface Lifecycle” | Links canonical manifest; no independent state |
-| G3 | Canonicalize `docs/specs` vs root packets | Satisfied | G6 `b800af4f`, `5a9a98d1` | index affirmatively links every overlap as historical and rejects missing packets; 69 checker tests | `docs/specs/` is canonical; root packets retained as evidence |
+| G3 | Canonicalize `docs/specs` vs root packets | Satisfied | G6 `b800af4f`, `5a9a98d1`, `0665d52b` | index uses a terminal affirmative historical marker and rejects missing packets or trailing contradictions; 70 checker tests | `docs/specs/` is canonical; root packets retained as evidence |
 | G4 | Check declarations, not only file presence | Satisfied | G1 `5b98e80d`; G4 `286326e0`; G6 `b800af4f` | surface lifecycle plus documentation contract checks | CI/preflight enforced |
 
 ### Existing issues included by reference
