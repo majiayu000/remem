@@ -33,6 +33,9 @@ its native `turn_id` to make a retry of the same UserPromptSubmit event
 idempotent. The prompt event id also scopes the existing injection audit key:
 same-turn retries exclude their own prior audit rows and deterministically
 replay the same candidates, while later turns retain session-level de-duplication.
+Codex Stop transcript materialization skips only a user-message mirror whose
+native turn event id and redacted content hash were already captured; different
+turns or different content remain distinct events.
 Claude does not provide a turn id, so each hook occurrence receives a unique
 capture event id; repeated identical prompt text therefore still advances the
 session prompt count. The continuity lane is omitted once the session contains
