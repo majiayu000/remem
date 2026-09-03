@@ -75,17 +75,22 @@ aggregate budget.
 
 ## Runtime And Surface Lifecycle
 
-The supported production memory path is one chain. Capture and LLM extraction
-produce evidence and candidates; only `memory::activation` can make curated
-memory active. CurrentTruth v1 then governs the Core projection consumed by the
-default Context Bundle and SessionStart renderer.
+The supported production memory paths converge on one activation boundary.
+Automatic capture and LLM extraction are the primary path; explicit MCP/REST
+`save_memory` requests are a supplemental path. Only `memory::activation` can
+make curated memory active. CurrentTruth v1 then governs the Core projection
+consumed by the default Context Bundle and SessionStart renderer.
 
 ```text
-Claude/Codex capture
+automatic: Claude/Codex capture
   -> captured_events + extraction_tasks
   -> observation/session rollup (LLM-derived, source trust retained)
   -> governed candidate review or bounded auto-promotion
-  -> memory::activation + immutable activation receipt
+
+supplemental: explicit MCP/REST save_memory
+  -> execute_supplemental_save
+
+both -> memory::activation + immutable activation receipt
   -> curated memory / relations
   -> CurrentTruth v1
   -> default Context Bundle -> SessionStart + durable audit
