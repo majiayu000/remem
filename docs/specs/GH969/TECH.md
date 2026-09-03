@@ -2,7 +2,7 @@
 
 Status: Current contract; repository-local stabilization and close audit complete; #931, #933, and #935 remain independent parked contracts; Issue: #969
 
-Last reconciled against `origin/main`: 2026-09-03 (`36f06d7a`, v0.6.86)
+Last reconciled against `origin/main`: 2026-09-03 (`d2072f1e`, post-v0.6.86 main)
 
 ## Contract Boundaries
 
@@ -699,6 +699,11 @@ Binary-impacting implementation PRs also satisfy the version-bump guard.
 Passing historical output from another SHA is not completion evidence.
 
 ## Rollout And Close Audit
+
+The completed repository-local audit is maintained in
+[`CLOSE-AUDIT.md`](CLOSE-AUDIT.md). It maps every original #969 checkbox to an
+implementation SHA, current contract section, regression or artifact,
+lifecycle/decision date, rollback owner, and unresolved independent dependency.
 
 The epic close audit must produce one table mapping every #969 checkbox to:
 

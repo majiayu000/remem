@@ -2,7 +2,7 @@
 
 Status: Current contract; repository-local stabilization and close audit complete; #931, #933, and #935 remain independent parked contracts; Issue: #969
 
-Last reconciled against `origin/main`: 2026-09-03 (`36f06d7a`, v0.6.86)
+Last reconciled against `origin/main`: 2026-09-03 (`d2072f1e`, post-v0.6.86 main)
 
 ## Purpose
 
@@ -302,6 +302,10 @@ cross-module refactor into the close-audit slice would conflict with the epic's
 own no-opportunistic-refactor and no-premature-crate-split boundaries. A future
 dependency cleanup may shrink the baseline; regeneration still rejects growth
 or silent acceptance of new debt.
+
+The checkbox-by-checkbox evidence, amendments, rollback ownership, and
+independent dependencies are recorded in the
+[repository-local close audit](CLOSE-AUDIT.md).
 
 ## PR #1052 authority-verdict convergence
 
