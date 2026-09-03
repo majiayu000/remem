@@ -1,3 +1,5 @@
+#![cfg(feature = "eval")]
+
 use std::process::Command;
 
 #[test]

@@ -77,7 +77,7 @@ cargo check
 Before submission or when touching shared runtime behavior:
 
 ```bash
-cargo test
+cargo test --no-default-features --features local-onnx
 ```
 
 CI also runs:
@@ -89,6 +89,7 @@ node --test plugins/remem/scripts/remem-runtime.test.js plugins/remem/apps/remem
 python3 scripts/ci/check_version_bump.py <base-sha> HEAD
 cargo run -- eval-extraction --json --check-baseline
 cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json
+cargo test --features eval --lib eval --test e2e_eval
 cargo check --no-default-features --bin remem-hook
 cargo clippy --all-targets -- -D warnings
 ```

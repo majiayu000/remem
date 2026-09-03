@@ -65,12 +65,36 @@ class PreflightCargoTestThreadsTests(unittest.TestCase):
     def test_default_command_caps_rust_test_harness_at_four_threads(self) -> None:
         commands = self.run_main()
 
-        self.assertEqual(commands[-1], ["cargo", "test", "--", "--test-threads", "4"])
+        self.assertEqual(
+            commands[-1],
+            [
+                "cargo",
+                "test",
+                "--no-default-features",
+                "--features",
+                "local-onnx",
+                "--",
+                "--test-threads",
+                "4",
+            ],
+        )
 
     def test_override_changes_rust_test_harness_thread_count(self) -> None:
         commands = self.run_main("--cargo-test-threads", "8")
 
-        self.assertEqual(commands[-1], ["cargo", "test", "--", "--test-threads", "8"])
+        self.assertEqual(
+            commands[-1],
+            [
+                "cargo",
+                "test",
+                "--no-default-features",
+                "--features",
+                "local-onnx",
+                "--",
+                "--test-threads",
+                "8",
+            ],
+        )
 
     def test_zero_and_negative_thread_counts_are_rejected_before_gates(self) -> None:
         for value in ("0", "-1"):
@@ -98,6 +122,22 @@ class PreflightCargoTestThreadsTests(unittest.TestCase):
         commands = self.run_main("--fast")
 
         self.assertFalse(any(command[:2] == ["cargo", "test"] for command in commands))
+
+    def test_eval_e2e_target_requires_eval_feature(self) -> None:
+        source = (check_pr_preflight.ROOT / "tests/e2e_eval.rs").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('#![cfg(feature = "eval")]', source)
+
+    def test_ci_eval_phase_runs_eval_e2e_target(self) -> None:
+        workflow = (check_pr_preflight.ROOT / ".github/workflows/ci.yml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "cargo test --features eval --lib eval --test e2e_eval", workflow
+        )
 
     def test_fast_mode_runs_surface_lifecycle_check_and_self_test(self) -> None:
         commands = self.run_main("--fast")

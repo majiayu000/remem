@@ -113,7 +113,10 @@ jobs:
             /tmp/remem-eval-gates-regression.log
             /tmp/remem-eval-gates-capacity-regression.json
             /tmp/remem-eval-gates-capacity-regression.log
-      - run: cargo test
+      - name: Run production tests without eval
+        run: cargo test --no-default-features --features local-onnx
+      - name: Run eval tests
+        run: cargo test --features eval --lib eval --test e2e_eval
 
   windows_local_embedding_security:
     runs-on: windows-latest
