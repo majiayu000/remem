@@ -30,6 +30,9 @@ HOMEBREW_DOCS = (*README_PATHS, Path("docs/installation.md"))
 CURRENT_EXPORT_DOCS = (*README_PATHS, Path("docs/specs/project-memory-pack/PRODUCT.md"))
 SESSIONSTART_SMOKE_SCRIPT = Path("scripts/ci/smoke_sessionstart_context_gate.sh")
 SESSIONSTART_SMOKE_GUIDE = Path("docs/sessionstart-context-smoke.md")
+CURRENT_SPEC_ROOT = Path("docs/specs")
+HISTORICAL_SPEC_ROOT = Path("specs")
+SPEC_INDEX = CURRENT_SPEC_ROOT / "README.md"
 SESSIONSTART_SMOKE_ROUTES = {
     Path("README.md"): "scripts/ci/smoke_sessionstart_context_gate.sh",
     Path("README.zh-CN.md"): "scripts/ci/smoke_sessionstart_context_gate.sh",
@@ -571,6 +574,35 @@ def check_fts_semantics(root: Path, violations: list[str]) -> None:
         )
 
 
+def check_current_spec_handoffs(root: Path, violations: list[str]) -> None:
+    current_root = root / CURRENT_SPEC_ROOT
+    historical_root = root / HISTORICAL_SPEC_ROOT
+    if not current_root.is_dir() or not historical_root.is_dir():
+        return
+
+    current = {
+        path.name
+        for path in current_root.iterdir()
+        if path.is_dir() and re.fullmatch(r"GH\d+", path.name)
+    }
+    historical = {
+        path.name
+        for path in historical_root.iterdir()
+        if path.is_dir() and re.fullmatch(r"GH\d+", path.name)
+    }
+    index = read(root, SPEC_INDEX)
+    for name in sorted(current & historical):
+        row = re.search(
+            rf"^\|\s*`{re.escape(name)}/`\s*\|.*$", index, flags=re.MULTILINE
+        )
+        historical_route = f"`specs/{name}/`"
+        if row is None or historical_route not in row.group(0) or "historical" not in row.group(0).lower():
+            violations.append(
+                f"{SPEC_INDEX}: current {name}/ must link {historical_route} and label it "
+                "historical; docs/specs remains canonical"
+            )
+
+
 def check(root: Path = ROOT) -> list[str]:
     violations: list[str] = []
     check_homebrew_commands(root, violations)
@@ -580,6 +612,7 @@ def check(root: Path = ROOT) -> list[str]:
     check_bilingual_readme_invariants(root, violations)
     check_sessionstart_smoke(root, violations)
     check_fts_semantics(root, violations)
+    check_current_spec_handoffs(root, violations)
     return violations
 
 

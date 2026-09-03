@@ -1,8 +1,8 @@
 # GH969 Technical Contract — Stabilization And Surface Governance
 
-Status: Current contract; activation, surface lifecycle, dependency-direction, and executable ship-matrix slices implemented; PR #1052 authority-verdict convergence in progress; final reconciliation pending; Issue: #969
+Status: Current contract; repository-local stabilization and close audit complete; #931, #933, and #935 remain independent parked contracts; Issue: #969
 
-Last reconciled against `origin/main`: 2026-08-26 (`36f3d38c`)
+Last reconciled against `origin/main`: 2026-09-03 (`36f06d7a`, v0.6.86)
 
 ## Contract Boundaries
 
@@ -219,6 +219,16 @@ decision date; normal regeneration has no accept-current-output mode. The
 guard prints every currently accepted reverse edge with live source lines and
 runs both its current-tree check and synthetic negative suite in preflight and
 CI.
+
+### Cyclic-component close criterion
+
+The bootstrap baseline and the fresh v0.6.86 measurement both contain a
+largest cyclic component of 37 roots. The #969 close audit therefore records
+no reduction. The original close criterion is amended to require the active
+no-expansion guard, exact visibility of accepted reverse edges, and monotonic
+shrink-only baseline updates. Actual dependency cleanup remains valid future
+work, but is not forced into the documentation reconciliation slice and cannot
+be claimed until the measured component is below 37.
 
 ## Active-Memory Activation API
 
@@ -584,12 +594,13 @@ untested reverse migration over user data.
 
 ## Implementation Slices
 
-### PR #1052 authority boundary (convergence in progress)
+### PR #1052 authority boundary (complete)
 
-This slice is not complete yet. Its target is for
-`bench_artifact::verify_benchmark_artifacts` to be the only runtime authority
-entry point: it must read each typed source and referenced byte stream once,
-retain its SHA-256 in the verified snapshot, and emit a runtime-only
+This slice completed in PR #1052 (`257fc4a0`), with exact-main evidence
+restored by PR #1062 (`36f06d7a`).
+`bench_artifact::verify_benchmark_artifacts` is the only runtime authority
+entry point: it reads each typed source and referenced byte stream once,
+retains its SHA-256 in the verified snapshot, and emits a runtime-only
 `AuthorityVerdict`. The verdict is never checked in. Baseline generation and
 ship-matrix construction must receive that verified snapshot rather than call
 a second verifier or reopen evidence.
@@ -619,23 +630,24 @@ After this spec is accepted, create focused implementation issues rather than
 one cross-repository PR:
 
 1. **Active-memory activation boundary and bypass guard**
-   - Status: implemented by #1040 for the v0.6.82 release line.
+   - Status: implemented for #1040 by PR #1041 in v0.6.82.
    - Primary scope: `src/memory/`, candidate promotion callers, direct-save
      callers, and a dedicated CI check.
    - Acceptance: every production activation route is classified; bypass
      self-tests and route regressions pass.
 2. **Surface manifest and lifecycle consistency guard**
+   - Status: implemented for #1042 by PR #1043.
    - Primary scope: manifest, served surface inventory, specs-index/README
      consistency check.
    - Acceptance: every PRODUCT inventory row is represented; stale/overdue or
      contradictory declarations fail CI.
 3. **Module dependency-direction baseline and no-expansion guard**
-   - Status: implemented by #1044 against the post-#1043 main baseline.
+   - Status: implemented for #1044 by PR #1045 against the post-#1043 main baseline.
    - Primary scope: module scanner, reviewed baseline, CI/preflight wiring.
    - Acceptance: self-tests pass; current violations are visible; synthetic new
      reverse edges and cycle growth fail.
 4. **Executable ship matrix and outcome scorecard**
-   - Status: implemented by #1049 in the v0.6.83 release line by extending
+   - Status: implemented for #1049 by PR #1052 in the v0.6.85 release line by extending
      `remem eval-gates` with top-level `ship_matrix` and `outcome_scorecard`
      artifacts.
    - Primary scope: existing eval gate/report aggregation.
@@ -645,6 +657,7 @@ one cross-repository PR:
      clean release identity, and capability-specific default decisions fail
      closed.
 5. **Architecture/current-spec synchronization**
+   - Status: implemented by the #1050 close-audit slice against v0.6.86.
    - Primary scope: `docs/ARCHITECTURE.md`, specs index, manifest-linked drift
      checks.
    - Acceptance: production CurrentTruth/Context Bundle flow and all lifecycle
