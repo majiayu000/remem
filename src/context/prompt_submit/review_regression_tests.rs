@@ -362,7 +362,7 @@ fn open_hints_report_the_payload_their_readers_return() -> Result<()> {
     )));
 
     let memories = crate::memory::get_memories_by_ids(&conn, &[memory_id], None)?;
-    let memory_details = crate::mcp::memory_details_with_topic_traces(&conn, &memories, None)?;
+    let memory_details = crate::memory::memory_details_with_topic_traces(&conn, &memories, None)?;
     assert_eq!(
         memory_details[0]["topic_trace"][0]["title"],
         "Exact detail trace"

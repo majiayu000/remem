@@ -257,7 +257,7 @@ pub(super) fn memory_detail_read_tokens(
             memories.len()
         );
     }
-    let details = crate::mcp::memory_details_with_topic_traces(conn, &canonical, None)?;
+    let details = crate::memory::memory_details_with_topic_traces(conn, &canonical, None)?;
     let items = details
         .as_array()
         .ok_or_else(|| anyhow::anyhow!("memory detail builder did not return an array"))?;
