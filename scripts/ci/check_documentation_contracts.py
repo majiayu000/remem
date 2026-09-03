@@ -577,14 +577,15 @@ def check_fts_semantics(root: Path, violations: list[str]) -> None:
 def check_current_spec_handoffs(root: Path, violations: list[str]) -> None:
     current_root = root / CURRENT_SPEC_ROOT
     historical_root = root / HISTORICAL_SPEC_ROOT
-    if not current_root.is_dir():
-        return
-
-    current = {
-        path.name
-        for path in current_root.iterdir()
-        if path.is_dir() and re.fullmatch(r"GH\d+", path.name)
-    }
+    current = (
+        {
+            path.name
+            for path in current_root.iterdir()
+            if path.is_dir() and re.fullmatch(r"GH\d+", path.name)
+        }
+        if current_root.is_dir()
+        else set()
+    )
     historical = (
         {
             path.name
@@ -595,24 +596,35 @@ def check_current_spec_handoffs(root: Path, violations: list[str]) -> None:
         else set()
     )
     index = read(root, SPEC_INDEX)
-    for name in sorted(current & historical):
-        row = re.search(
-            rf"^\|\s*`{re.escape(name)}/`\s*\|.*$", index, flags=re.MULTILINE
+    current_rows = {
+        match.group("name"): match.group(0)
+        for match in re.finditer(
+            r"^\|\s*`(?P<name>GH\d+)/`\s*\|.*$", index, flags=re.MULTILINE
         )
+    }
+    declared_handoffs = {
+        name
+        for name, row in current_rows.items()
+        if f"`specs/{name}/`" in row
+    }
+
+    for name in sorted((current & historical) | declared_handoffs):
+        row = current_rows.get(name)
         historical_route = f"`specs/{name}/`"
         affirmative_handoff = re.compile(
             rf"(?:\|\s+|\.\s+)Historical planning packet: "
             rf"{re.escape(historical_route)}\.\s*\|\s*$",
             re.IGNORECASE,
         )
-        if row is None or affirmative_handoff.search(row.group(0)) is None:
+        if row is None or affirmative_handoff.search(row) is None:
             violations.append(
                 f"{SPEC_INDEX}: current {name}/ must link {historical_route} and label it "
                 "historical; docs/specs remains canonical"
             )
-
-    declared_handoffs = set(re.findall(r"`specs/(GH\d+)/`", index))
-    for name in sorted(declared_handoffs):
+        if not (current_root / name).is_dir():
+            violations.append(
+                f"{SPEC_INDEX}: declared current packet `docs/specs/{name}/` is missing"
+            )
         if not (historical_root / name).is_dir():
             violations.append(
                 f"{SPEC_INDEX}: declared historical packet `specs/{name}/` is missing"

@@ -6,11 +6,15 @@ import check_documentation_contracts
 
 
 class CurrentSpecHandoffContractTests(unittest.TestCase):
-    def fixture_root(self, *, include_historical: bool = True) -> Path:
+    def fixture_root(
+        self, *, include_current: bool = True, include_historical: bool = True
+    ) -> Path:
         temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(temp_dir.cleanup)
         root = Path(temp_dir.name)
-        (root / "docs/specs/GH931").mkdir(parents=True)
+        (root / "docs/specs").mkdir(parents=True)
+        if include_current:
+            (root / "docs/specs/GH931").mkdir()
         if include_historical:
             (root / "specs/GH931").mkdir(parents=True)
         return root
@@ -94,5 +98,23 @@ class CurrentSpecHandoffContractTests(unittest.TestCase):
 
         self.assertIn(
             "docs/specs/README.md: declared historical packet `specs/GH931/` is missing",
+            violations,
+        )
+
+    def test_rejects_declared_missing_current_packet(self) -> None:
+        root = self.fixture_root(include_current=False)
+        (root / "docs/specs/README.md").write_text(
+            "| `GH931/` | Current contract | Historical planning packet: "
+            "`specs/GH931/`. |\n",
+            encoding="utf-8",
+        )
+
+        violations: list[str] = []
+        check_documentation_contracts.check_current_spec_handoffs(
+            root, violations
+        )
+
+        self.assertIn(
+            "docs/specs/README.md: declared current packet `docs/specs/GH931/` is missing",
             violations,
         )
