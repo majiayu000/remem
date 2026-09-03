@@ -243,12 +243,49 @@ fn load_safe_workstreams(
     Ok((safe, poisoned))
 }
 
+pub(super) fn memory_detail_read_tokens(
+    conn: &rusqlite::Connection,
+    memories: &[Memory],
+) -> Result<HashMap<i64, usize>> {
+    let ids = memories.iter().map(|memory| memory.id).collect::<Vec<_>>();
+    let canonical =
+        crate::memory::get_memories_by_ids_with_suppressed_policy(conn, &ids, None, false)?;
+    if canonical.len() != memories.len() {
+        anyhow::bail!(
+            "exact memory detail reader found {} rows for {} prompt candidates",
+            canonical.len(),
+            memories.len()
+        );
+    }
+    let details = crate::mcp::memory_details_with_topic_traces(conn, &canonical, None)?;
+    let items = details
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("memory detail builder did not return an array"))?;
+    if items.len() != memories.len() {
+        anyhow::bail!(
+            "memory detail builder returned {} rows for {} prompt candidates",
+            items.len(),
+            memories.len()
+        );
+    }
+    canonical
+        .iter()
+        .zip(items)
+        .map(|(memory, detail)| {
+            let payload =
+                serde_json::to_string_pretty(&serde_json::Value::Array(vec![detail.clone()]))?;
+            Ok((memory.id, approximate_read_tokens(&payload)))
+        })
+        .collect()
+}
+
 pub(super) fn render_prompt_submit_context(
     continuity: &PromptContinuity,
     memories: &[Memory],
+    memory_read_tokens: &HashMap<i64, usize>,
     staleness_labels: &HashMap<i64, crate::memory::MemoryStalenessLabel>,
     render_reference_epoch: i64,
-) -> RenderedPromptContext {
+) -> Result<RenderedPromptContext> {
     let mut output = String::from("# remem prompt candidate index\n");
     let mut audit_items = Vec::new();
     let mut render_order = 0_i64;
@@ -301,6 +338,12 @@ pub(super) fn render_prompt_submit_context(
     if !memories.is_empty() {
         output.push_str("\n## Task memory candidates\n");
         for memory in memories {
+            let read_tokens = memory_read_tokens.get(&memory.id).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "missing exact detail read estimate for memory {}",
+                    memory.id
+                )
+            })?;
             let line = format!(
                 "- memory:#{} | type={} | title={} | updated={} | {} | surfaced_by=hybrid_rrf | read~{}t | open=get_observations source=memory ids=[{}]\n",
                 memory.id,
@@ -312,7 +355,7 @@ pub(super) fn render_prompt_submit_context(
                     render_reference_epoch,
                     staleness_labels
                 ),
-                approximate_read_tokens(&memory.text),
+                read_tokens,
                 memory.id,
             );
             if push_bounded_line(&mut output, &line) {
@@ -332,11 +375,11 @@ pub(super) fn render_prompt_submit_context(
             }
         }
     }
-    RenderedPromptContext {
+    Ok(RenderedPromptContext {
         output,
         audit_items,
         has_candidates: render_order > 0,
-    }
+    })
 }
 
 fn workstream_line(workstream: &WorkStream, project: &str, read_tokens: usize) -> String {

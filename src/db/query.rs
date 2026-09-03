@@ -15,6 +15,7 @@ pub use observability::*;
 pub use poisoning_stats::*;
 pub use queries::*;
 pub use search::*;
+pub(crate) use shared::EPOCH_SECS_ONLY;
 pub use shared::{collect_rows, push_project_filter};
 pub use stats::*;
 pub use status_spend::*;

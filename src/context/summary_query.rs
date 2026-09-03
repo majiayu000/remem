@@ -204,6 +204,7 @@ fn query_summary_batch(
     limit: usize,
     require_next_steps: bool,
 ) -> Result<Vec<SessionSummaryQueryRow>> {
+    let epoch_secs_only = crate::db::query::EPOCH_SECS_ONLY;
     let mut params_vec: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let (owner_clause, idx) = crate::project_alias::push_project_value_filter(
         conn,
@@ -256,7 +257,8 @@ fn query_summary_batch(
              ss.preferences \
          FROM session_summaries ss \
          LEFT JOIN sessions s ON s.id = ss.session_row_id \
-         WHERE ((?{next_steps_idx} = 0 AND NULLIF(TRIM(ss.request), '') IS NOT NULL) \
+         WHERE ss.{epoch_secs_only} \
+           AND ((?{next_steps_idx} = 0 AND NULLIF(TRIM(ss.request), '') IS NOT NULL) \
                 OR (?{next_steps_idx} = 1 AND NULLIF(TRIM(ss.next_steps), '') IS NOT NULL)) \
            AND COALESCE(ss.poisoning_status, 'legacy_unscanned') != 'quarantined' \
            AND (ss.session_row_id IS NULL \

@@ -20,13 +20,16 @@ fn bounds_memory_type_and_advertises_an_exact_memory_read() {
         "Bounded memory type",
     );
     memory.text = "Full detail body".to_string();
+    let read_tokens = HashMap::from([(memory.id, 1)]);
 
     let rendered = render_prompt_submit_context(
         &PromptContinuity::default(),
         &[memory.clone()],
+        &read_tokens,
         &HashMap::new(),
         memory.updated_at_epoch,
-    );
+    )
+    .expect("complete estimate map should render");
 
     assert!(rendered.has_candidates);
     assert!(rendered.output.chars().count() <= 1_800);
@@ -35,6 +38,32 @@ fn bounds_memory_type_and_advertises_an_exact_memory_read() {
     assert!(rendered
         .output
         .contains("open=get_observations source=memory ids=[17]"));
+}
+
+#[test]
+fn renderer_uses_supplied_reference_epoch() {
+    let memory = crate::context::tests::sample_memory(1, "decision", "Older memory");
+    let staleness_labels = HashMap::new();
+    let read_tokens = HashMap::from([(memory.id, 1)]);
+    let render = |reference_epoch| {
+        render_prompt_submit_context(
+            &PromptContinuity::default(),
+            std::slice::from_ref(&memory),
+            &read_tokens,
+            &staleness_labels,
+            reference_epoch,
+        )
+        .expect("complete estimate map should render")
+        .output
+    };
+
+    let fresh = render(memory.updated_at_epoch);
+    let fresh_again = render(memory.updated_at_epoch);
+    let old = render(memory.updated_at_epoch + 91 * 86_400);
+
+    assert_eq!(fresh, fresh_again);
+    assert!(fresh.contains("staleness=fresh"), "{fresh}");
+    assert!(old.contains("staleness=old"), "{old}");
 }
 
 #[test]
@@ -187,6 +216,42 @@ fn unfinished_summary_without_request_uses_next_steps_as_title() -> Result<()> {
 }
 
 #[test]
+fn summary_selection_excludes_millisecond_epoch_rows_before_exact_read() -> Result<()> {
+    let conn = setup_review_conn()?;
+    let project = "/tmp/remem-summary-seconds-only";
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, request, completed, next_steps, created_at_epoch)
+         VALUES ('milliseconds', ?1, 'Millisecond summary', 'Partial', 'Wrong epoch',
+                 1700000000000)",
+        [project],
+    )?;
+    let millisecond_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, request, completed, next_steps, created_at_epoch)
+         VALUES ('seconds', ?1, 'Second epoch summary', 'Partial', 'Resume safe work',
+                 1700000000)",
+        [project],
+    )?;
+    let second_id = conn.last_insert_rowid();
+
+    let output = prompt_submit_additional_context(
+        &conn,
+        project,
+        project,
+        "sess-summary-seconds-only",
+        "continue",
+        Some("codex-cli"),
+    )?
+    .ok_or_else(|| anyhow::anyhow!("second-epoch summary should render"))?;
+
+    assert!(output.contains(&format!("session_summary:#{second_id}")));
+    assert!(!output.contains(&format!("session_summary:#{millisecond_id}")));
+    Ok(())
+}
+
+#[test]
 fn open_hints_report_the_payload_their_readers_return() -> Result<()> {
     let conn = setup_review_conn()?;
     let project = "/tmp/remem-prompt-read-estimates";
@@ -218,16 +283,69 @@ fn open_hints_report_the_payload_their_readers_return() -> Result<()> {
         ],
     )?;
     let summary_id = conn.last_insert_rowid();
+    let memory_id = crate::memory::insert_memory(
+        &conn,
+        Some("detail-estimate-session"),
+        project,
+        None,
+        "SQLCipher exact detail estimate",
+        "Use SQLCipher for the exact detail payload.",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories
+         SET source_trust_class = 'user_prompt', topic_key = 'detail-estimate-topic'
+         WHERE id = ?1",
+        [memory_id],
+    )?;
+    conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
+    crate::db::insert_topic_segment(
+        &conn,
+        &crate::db::TopicSegmentInput {
+            host_id: 1,
+            project_id: 1,
+            session_row_id: 1,
+            project,
+            topic_key: "detail-estimate-topic",
+            title: "Exact detail trace",
+            summary: "Trace included by the advertised reader.",
+            status: "resolved",
+            segment_index: 0,
+            covered_from_event_id: 10,
+            covered_to_event_id: 12,
+            evidence_event_ids: "[10,12]",
+            files: None,
+            confidence: 0.9,
+        },
+    )?;
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO memory_facts
+         (project, subject, predicate, object, valid_from_epoch, valid_to_epoch,
+          learned_at_epoch, source_memory_id, source_observation_id, source_event_ids,
+          confidence, supersedes_fact_id, status, invalidated_at_epoch,
+          created_at_epoch, updated_at_epoch)
+         VALUES (?1, 'remem', 'verified_by', 'SQLCipher', ?2, NULL, ?2, ?3,
+                 NULL, '[]', 0.95, NULL, 'active', NULL, ?2, ?2)",
+        params![project, now - 1, memory_id],
+    )?;
 
     let output = prompt_submit_additional_context(
         &conn,
         project,
         project,
         "sess-read-estimates",
-        "continue",
+        "How should the SQLCipher exact detail payload work?",
         Some("codex-cli"),
     )?
     .ok_or_else(|| anyhow::anyhow!("continuity should render"))?;
+    let access_count: i64 = conn.query_row(
+        "SELECT COALESCE(access_count, 0) FROM memories WHERE id = ?1",
+        [memory_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(access_count, 0, "estimating read cost must not mark access");
 
     let active_workstreams = crate::workstream::query_workstreams(&conn, project, Some("active"))?;
     let workstream_payload = serde_json::to_string_pretty(&active_workstreams)?;
@@ -242,5 +360,24 @@ fn open_hints_report_the_payload_their_readers_return() -> Result<()> {
     assert!(output.contains(&format!(
         "read~{summary_tokens}t | open=get_observations source=session_summary ids=[{summary_id}]"
     )));
+
+    let memories = crate::memory::get_memories_by_ids(&conn, &[memory_id], None)?;
+    let memory_details = crate::mcp::memory_details_with_topic_traces(&conn, &memories, None)?;
+    assert_eq!(
+        memory_details[0]["topic_trace"][0]["title"],
+        "Exact detail trace"
+    );
+    assert_eq!(
+        memory_details[0]["temporal_facts"][0]["object"],
+        "SQLCipher"
+    );
+    let memory_payload = serde_json::to_string_pretty(&memory_details)?;
+    let memory_tokens = memory_payload.chars().count().div_ceil(4).max(1);
+    assert!(
+        output.contains(&format!(
+            "read~{memory_tokens}t | open=get_observations source=memory ids=[{memory_id}]"
+        )),
+        "expected memory read~{memory_tokens}t for id={memory_id}\n{output}"
+    );
     Ok(())
 }

@@ -470,7 +470,7 @@ fn observation_details_with_compressed_sources(
     Ok(value)
 }
 
-fn memory_details_with_topic_traces(
+pub(crate) fn memory_details_with_topic_traces(
     conn: &rusqlite::Connection,
     memories: &[memory::Memory],
     requested_project: Option<&str>,

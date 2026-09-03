@@ -1,5 +1,6 @@
 mod commit_tools;
 mod context_tools;
+pub(crate) use context_tools::memory_details_with_topic_traces;
 mod errors;
 mod raw_tools;
 mod runtime;

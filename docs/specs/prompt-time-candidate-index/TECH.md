@@ -46,7 +46,8 @@ Memory candidates contain:
 - memory type and title
 - stable updated date and staleness/source-anchor metadata
 - `surfaced_by=hybrid_rrf`
-- approximate detail read tokens derived from stored character count
+- approximate detail read tokens derived from the complete pretty JSON returned
+  by the advertised exact reader
 - exact `open=get_observations source=memory ids=[...]`
 
 Continuity candidates contain the stable workstream or session-summary id,
@@ -55,10 +56,13 @@ compact title/request, state or next action, stable updated date,
 project-scoped active `workstreams` lookup hint or exact
 `get_observations(source=session_summary, ids=[...])` call.
 
-Workstream read cost covers the complete active-list JSON returned by the
-advertised project/status lookup. Session-summary read cost covers the complete
+Each read cost matches its advertised reader: memory cost covers the complete
+exact-detail JSON, including classification metadata, temporal facts, and topic
+trace when present; workstream cost covers the complete active-list JSON for
+the advertised project/status lookup; session-summary cost covers the complete
 serialized exact-detail response, including all six summary text fields and
-its metadata.
+its metadata. Estimating memory detail reuses the reader's side-effect-free
+detail builder and does not mark the memory as accessed.
 
 All free text is normalized to one line and truncated at an item boundary. The
 renderer remains an additive prompt block and never rewrites SessionStart.
@@ -76,7 +80,8 @@ renderer remains an additive prompt block and never rewrites SessionStart.
   eligible rows remain. An unfinished row may derive its compact title from
   `next_steps` when `request` is absent. Session anchors scan `request`,
   `completed`, `decisions`, `learned`, `next_steps`, and `preferences`, matching
-  their exact detail reader before any summary text enters the prompt.
+  their exact detail reader before any summary text enters the prompt. Summary
+  selection applies the same seconds-only epoch filter as that exact reader.
 - Already injected memories remain excluded for the same host/project/session.
 - Canonical project summary selection and exact detail reads share the same
   repo `owner_key` / repo `target_project` / legacy `project` predicate and

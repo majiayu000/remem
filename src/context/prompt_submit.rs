@@ -1,12 +1,6 @@
-#[cfg(test)]
-use std::collections::HashMap;
-
 use anyhow::Result;
 #[cfg(test)]
 use rusqlite::params;
-
-#[cfg(test)]
-use crate::memory::Memory;
 
 use super::audit::{record_context_injection_items, ContextAuditItem};
 use super::host::resolve_host_kind;
@@ -21,7 +15,9 @@ const PROMPT_SUBMIT_MEMORY_LIMIT: i64 = 4;
 const PROMPT_SUBMIT_LATENCY_BUDGET_MS: u128 = 250;
 
 mod candidates;
-use candidates::{prompt_submit_staleness_labels, render_prompt_submit_context};
+use candidates::{
+    memory_detail_read_tokens, prompt_submit_staleness_labels, render_prompt_submit_context,
+};
 mod audit_identity;
 
 #[cfg(test)]
@@ -153,12 +149,14 @@ pub(crate) fn prompt_submit_additional_context_for_event(
 
     let render_reference_epoch = chrono::Utc::now().timestamp();
     let staleness_labels = prompt_submit_staleness_labels(conn, &rendered, render_reference_epoch);
+    let memory_read_tokens = memory_detail_read_tokens(conn, &rendered)?;
     let rendered_context = render_prompt_submit_context(
         &continuity,
         &rendered,
+        &memory_read_tokens,
         &staleness_labels,
         render_reference_epoch,
-    );
+    )?;
     audit_items.extend(rendered_context.audit_items);
     if !rendered_context.has_candidates {
         audit_items.push(prompt_submit_abstained_item(
@@ -609,52 +607,6 @@ mod tests {
         assert_eq!(first, second);
         assert!(first.contains("staleness=old"), "{first}");
         Ok(())
-    }
-
-    #[test]
-    fn prompt_submit_renderer_uses_supplied_reference_epoch() {
-        let memory = Memory {
-            id: 1,
-            session_id: None,
-            project: "/tmp/remem-prompt-submit-reference".to_string(),
-            topic_key: None,
-            title: "Older memory".to_string(),
-            text: "Body".to_string(),
-            memory_type: "decision".to_string(),
-            files: None,
-            created_at_epoch: 1_500_000_000,
-            updated_at_epoch: 1_500_000_000,
-            status: "active".to_string(),
-            branch: None,
-            scope: "project".to_string(),
-        };
-        let staleness_labels = HashMap::new();
-
-        let fresh = render_prompt_submit_context(
-            &candidates::PromptContinuity::default(),
-            std::slice::from_ref(&memory),
-            &staleness_labels,
-            memory.updated_at_epoch,
-        )
-        .output;
-        let fresh_again = render_prompt_submit_context(
-            &candidates::PromptContinuity::default(),
-            std::slice::from_ref(&memory),
-            &staleness_labels,
-            memory.updated_at_epoch,
-        )
-        .output;
-        let old = render_prompt_submit_context(
-            &candidates::PromptContinuity::default(),
-            &[memory],
-            &staleness_labels,
-            1_500_000_000 + 91 * 86_400,
-        )
-        .output;
-
-        assert_eq!(fresh, fresh_again);
-        assert!(fresh.contains("staleness=fresh"), "{fresh}");
-        assert!(old.contains("staleness=old"), "{old}");
     }
 
     #[test]
