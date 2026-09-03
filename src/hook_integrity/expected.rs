@@ -66,7 +66,7 @@ pub(super) const CODEX_EXPECTED: &[ExpectedHookSpec] = &[
         nested_subcommand: None,
         host: "codex-cli",
         matcher: None,
-        timeout_seconds: None,
+        timeout_seconds: Some(15),
     },
     ExpectedHookSpec {
         event: "Stop",
