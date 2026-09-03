@@ -119,14 +119,32 @@ pub fn get_summaries_by_ids(
         NOT_QUARANTINED_SQL.to_string(),
     ];
     if let Some(project) = project {
-        let (project_filter, _) = crate::project_alias::push_project_value_filter(
+        let (owner_filter, next_idx) = crate::project_alias::push_project_value_filter(
             conn,
-            "project",
+            "owner_key",
             project,
             ids.len() + 1,
             &mut parameters,
         )?;
-        conditions.push(project_filter);
+        let (target_filter, next_idx) = crate::project_alias::push_project_value_filter(
+            conn,
+            "target_project",
+            project,
+            next_idx,
+            &mut parameters,
+        )?;
+        let (legacy_filter, _) = crate::project_alias::push_project_value_filter(
+            conn,
+            "project",
+            project,
+            next_idx,
+            &mut parameters,
+        )?;
+        conditions.push(format!(
+            "((owner_scope = 'repo' AND {owner_filter})
+               OR (owner_scope = 'repo' AND {target_filter})
+               OR (owner_scope IS NULL AND {legacy_filter}))"
+        ));
     }
 
     let mut stmt = conn.prepare(&format!(

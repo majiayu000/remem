@@ -26,6 +26,8 @@ mod audit_identity;
 
 #[cfg(test)]
 mod regression_tests;
+#[cfg(test)]
+mod review_regression_tests;
 
 pub(crate) fn prompt_submit_additional_context(
     conn: &rusqlite::Connection,
@@ -158,6 +160,14 @@ pub(crate) fn prompt_submit_additional_context_for_event(
         render_reference_epoch,
     );
     audit_items.extend(rendered_context.audit_items);
+    if !rendered_context.has_candidates {
+        audit_items.push(prompt_submit_abstained_item(
+            "prompt_submit_no_rendered_candidates",
+        ));
+        let decision = empty_prompt_submit_decision(prompt_injection_key);
+        record_context_injection_items(conn, &invocation, &decision, &audit_items)?;
+        return Ok(None);
+    }
     let decision = prompt_submit_decision(rendered_context.output, prompt_injection_key);
     record_context_injection_items(conn, &invocation, &decision, &audit_items)?;
     Ok(Some(decision.output))

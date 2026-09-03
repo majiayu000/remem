@@ -19,16 +19,20 @@ const CONTINUITY_SCAN_BATCH_SIZE: usize = 10;
 const CONTINUITY_MAX_SCAN: usize = 200;
 const TITLE_LIMIT: usize = 120;
 const NEXT_ACTION_LIMIT: usize = 140;
+const MEMORY_TYPE_LIMIT: usize = 32;
 
 #[derive(Debug)]
 struct SessionAnchor {
     summary: SessionSummaryBrief,
     next_steps: String,
+    detail_read_tokens: usize,
 }
 
 #[derive(Debug, Default)]
 pub(super) struct PromptContinuity {
     workstreams: Vec<WorkStream>,
+    workstream_project: String,
+    workstream_read_tokens: usize,
     session: Option<SessionAnchor>,
     audit_items: Vec<ContextAuditItem>,
 }
@@ -36,6 +40,7 @@ pub(super) struct PromptContinuity {
 pub(super) struct RenderedPromptContext {
     pub(super) output: String,
     pub(super) audit_items: Vec<ContextAuditItem>,
+    pub(super) has_candidates: bool,
 }
 
 impl PromptContinuity {
@@ -70,9 +75,7 @@ pub(super) fn load_first_turn_continuity(
 
     let summary_selection =
         super::super::summary_query::query_recent_unfinished_summaries_with_drops(
-            conn,
-            project,
-            CONTINUITY_SCAN_BATCH_SIZE,
+            conn, project, 1,
         )?;
     let mut summary_audit_items = summary_selection
         .poisoning_drops
@@ -105,15 +108,23 @@ pub(super) fn load_first_turn_continuity(
 
     let mut unfinished_sessions = Vec::new();
     for summary in summary_selection.selected {
-        let next_steps: Option<String> = conn.query_row(
-            "SELECT NULLIF(TRIM(next_steps), '') FROM session_summaries WHERE id = ?1",
-            [summary.id],
-            |row| row.get(0),
-        )?;
-        if let Some(next_steps) = next_steps {
+        let details = crate::db::get_summaries_by_ids(conn, &[summary.id], Some(project))?;
+        let detail = details.first().ok_or_else(|| {
+            anyhow::anyhow!(
+                "selected prompt-submit summary {} was unavailable from its exact detail reader",
+                summary.id
+            )
+        })?;
+        if let Some(next_steps) = detail
+            .next_steps
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            let detail_payload = serde_json::to_string_pretty(&details)?;
             unfinished_sessions.push(SessionAnchor {
                 summary,
-                next_steps,
+                next_steps: next_steps.to_string(),
+                detail_read_tokens: approximate_read_tokens(&detail_payload),
             });
         } else {
             summary_audit_items.push(summary_audit_item(
@@ -158,6 +169,16 @@ pub(super) fn load_first_turn_continuity(
     {
         selected_workstreams.push(safe_workstreams.remove(0));
     }
+    let workstream_read_tokens = if selected_workstreams.is_empty() {
+        0
+    } else {
+        let payload = serde_json::to_string_pretty(&crate::workstream::query_workstreams(
+            conn,
+            project,
+            Some("active"),
+        )?)?;
+        approximate_read_tokens(&payload)
+    };
 
     for workstream in &safe_workstreams {
         audit_items.push(ContextAuditItem::dropped_prompt_continuity_workstream(
@@ -177,6 +198,8 @@ pub(super) fn load_first_turn_continuity(
     }
     Ok(PromptContinuity {
         workstreams: selected_workstreams,
+        workstream_project: project.to_string(),
+        workstream_read_tokens,
         session: selected_session,
         audit_items,
     })
@@ -236,7 +259,14 @@ pub(super) fn render_prompt_submit_context(
     if !continuity.is_empty() {
         output.push_str("\n## Continuity anchors\n");
         for workstream in &continuity.workstreams {
-            if push_bounded_line(&mut output, &workstream_line(workstream)) {
+            if push_bounded_line(
+                &mut output,
+                &workstream_line(
+                    workstream,
+                    &continuity.workstream_project,
+                    continuity.workstream_read_tokens,
+                ),
+            ) {
                 render_order += 1;
                 audit_items.push(workstream_audit_item(workstream, render_order));
             } else {
@@ -272,9 +302,9 @@ pub(super) fn render_prompt_submit_context(
         output.push_str("\n## Task memory candidates\n");
         for memory in memories {
             let line = format!(
-                "- memory:#{} | type={} | title={} | updated={} | {} | surfaced_by=hybrid_rrf | read~{}t | open=get_observations\n",
+                "- memory:#{} | type={} | title={} | updated={} | {} | surfaced_by=hybrid_rrf | read~{}t | open=get_observations source=memory ids=[{}]\n",
                 memory.id,
-                memory.memory_type,
+                compact_text(&memory.memory_type, MEMORY_TYPE_LIMIT),
                 compact_text(&memory.title, TITLE_LIMIT),
                 format_epoch_short(memory.updated_at_epoch),
                 memory_render_metadata_with_labels(
@@ -283,6 +313,7 @@ pub(super) fn render_prompt_submit_context(
                     staleness_labels
                 ),
                 approximate_read_tokens(&memory.text),
+                memory.id,
             );
             if push_bounded_line(&mut output, &line) {
                 render_order += 1;
@@ -304,51 +335,36 @@ pub(super) fn render_prompt_submit_context(
     RenderedPromptContext {
         output,
         audit_items,
+        has_candidates: render_order > 0,
     }
 }
 
-fn workstream_line(workstream: &WorkStream) -> String {
+fn workstream_line(workstream: &WorkStream, project: &str, read_tokens: usize) -> String {
     let next = workstream
         .next_action
         .as_deref()
         .map(|value| compact_text(value, NEXT_ACTION_LIMIT))
         .unwrap_or_else(|| "none".to_string());
-    let detail_text = [
-        Some(workstream.title.as_str()),
-        workstream.description.as_deref(),
-        workstream.progress.as_deref(),
-        workstream.next_action.as_deref(),
-        workstream.blockers.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(" ");
     format!(
-        "- workstream:#{} | status={} | title={} | updated={} | next={} | surfaced_by=first_turn_continuity | read~{}t | open=workstreams\n",
+        "- workstream:#{} | status={} | title={} | updated={} | next={} | surfaced_by=first_turn_continuity | read~{}t | open=workstreams project={} status=active\n",
         workstream.id,
         workstream.status.as_str(),
         compact_text(&workstream.title, TITLE_LIMIT),
         format_epoch_short(workstream.updated_at_epoch),
         next,
-        approximate_read_tokens(&detail_text),
+        read_tokens,
+        format_args!("{project:?}"),
     )
 }
 
 fn session_line(session: &SessionAnchor) -> String {
-    let detail_text = format!(
-        "{} {} {}",
-        session.summary.request,
-        session.summary.completed.as_deref().unwrap_or_default(),
-        session.next_steps,
-    );
     format!(
         "- session_summary:#{} | title={} | updated={} | next={} | surfaced_by=first_turn_continuity | read~{}t | open=get_observations source=session_summary ids=[{}]\n",
         session.summary.id,
         compact_text(&session.summary.request, TITLE_LIMIT),
         format_epoch_short(session.summary.created_at_epoch),
         compact_text(&session.next_steps, NEXT_ACTION_LIMIT),
-        approximate_read_tokens(&detail_text),
+        session.detail_read_tokens,
         session.summary.id,
     )
 }

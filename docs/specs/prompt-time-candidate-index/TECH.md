@@ -47,13 +47,18 @@ Memory candidates contain:
 - stable updated date and staleness/source-anchor metadata
 - `surfaced_by=hybrid_rrf`
 - approximate detail read tokens derived from stored character count
-- `open=get_observations`
+- exact `open=get_observations source=memory ids=[...]`
 
 Continuity candidates contain the stable workstream or session-summary id,
 compact title/request, state or next action, stable updated date,
 `surfaced_by=first_turn_continuity`, approximate detail read cost, and a
-`workstreams` lookup hint or exact
+project-scoped active `workstreams` lookup hint or exact
 `get_observations(source=session_summary, ids=[...])` call.
+
+Workstream read cost covers the complete active-list JSON returned by the
+advertised project/status lookup. Session-summary read cost covers the complete
+serialized exact-detail response, including all six summary text fields and
+its metadata.
 
 All free text is normalized to one line and truncated at an item boundary. The
 renderer remains an additive prompt block and never rewrites SessionStart.
@@ -66,20 +71,26 @@ renderer remains an additive prompt block and never rewrites SessionStart.
   field, including `memory_type`, before admission.
 - Workstream and session anchors use owner-aware filters and bounded backfill
   after poisoning admission. Workstream scans fail explicitly if their bounded
-  budget cannot find enough safe anchors. Session anchors scan `request`,
+  budget cannot find enough safe anchors. The single session-anchor scan reads
+  at most 200 rows plus one lookahead row and reports exhaustion only when more
+  eligible rows remain. An unfinished row may derive its compact title from
+  `next_steps` when `request` is absent. Session anchors scan `request`,
   `completed`, `decisions`, `learned`, `next_steps`, and `preferences`, matching
   their exact detail reader before any summary text enters the prompt.
 - Already injected memories remain excluded for the same host/project/session.
-- Canonical project summary selection and exact detail reads include active
-  historical aliases.
+- Canonical project summary selection and exact detail reads share the same
+  repo `owner_key` / repo `target_project` / legacy `project` predicate and
+  include active historical aliases.
 - The four-item memory limit is applied only after G2, already-injected, and
   poisoning admission, with a bounded ranked scan to backfill safe candidates.
 - RRF rank is a candidate ordering signal only. There is no final relevance
   threshold.
 - Only anchors and memories whose complete lines fit the 1,800-character
   prompt block are `injected` audit items. Item-boundary omissions keep a
-  stable character-limit drop reason; other rejected rows keep their existing
-  reasons, and an empty result records an abstention.
+  stable character-limit drop reason; rendered memory types are bounded. Other
+  rejected rows keep their existing reasons, and an empty result after actual
+  line rendering records an abstention instead of returning a header-only
+  block.
 
 ## Files
 

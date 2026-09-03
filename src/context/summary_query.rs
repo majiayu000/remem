@@ -65,7 +65,9 @@ fn query_recent_summaries_with_drops_matching(
     let mut preselection_drops = Vec::new();
     let mut seen_clusters = HashSet::new();
     let mut seen_session_keys = HashSet::new();
-    let candidates = query_summary_batch(conn, project, scan_limit, require_next_steps)?;
+    let mut candidates = query_summary_batch(conn, project, scan_limit + 1, require_next_steps)?;
+    let has_more = candidates.len() > scan_limit;
+    candidates.truncate(scan_limit);
     for row in candidates {
         if selected.len() >= limit {
             break;
@@ -75,7 +77,7 @@ fn query_recent_summaries_with_drops_matching(
                 conn,
                 row.summary.id,
                 &[
-                    ("request", Some(row.source_request.as_str())),
+                    ("request", row.source_request.as_deref()),
                     ("completed", row.summary.completed.as_deref()),
                     ("decisions", row.decisions.as_deref()),
                     ("learned", row.learned.as_deref()),
@@ -166,6 +168,12 @@ fn query_recent_summaries_with_drops_matching(
         );
     }
 
+    if selected.len() < limit && has_more {
+        anyhow::bail!(
+            "summary continuity scan budget exhausted after {scan_limit} rows before finding {limit} safe anchors"
+        );
+    }
+
     Ok(SummarySelection {
         selected,
         poisoning_drops,
@@ -183,7 +191,7 @@ fn summary_drop(summary: SessionSummaryBrief, reason: &'static str) -> ContextPr
 struct SessionSummaryQueryRow {
     summary: SessionSummaryBrief,
     session_key: Option<String>,
-    source_request: String,
+    source_request: Option<String>,
     decisions: Option<String>,
     learned: Option<String>,
     next_steps: Option<String>,
@@ -226,10 +234,13 @@ fn query_summary_batch(
         "SELECT ss.id, \
              CASE \
                WHEN ss.request LIKE 'Captured event range %..%' THEN \
-                 COALESCE(NULLIF(ss.decisions, ''), NULLIF(ss.learned, ''), \
-                          NULLIF(ss.next_steps, ''), NULLIF(ss.preferences, ''), \
-                          NULLIF(ss.completed, ''), ss.request) \
-               ELSE ss.request \
+                 COALESCE(NULLIF(TRIM(ss.decisions), ''), NULLIF(TRIM(ss.learned), ''), \
+                          NULLIF(TRIM(ss.next_steps), ''), NULLIF(TRIM(ss.preferences), ''), \
+                          NULLIF(TRIM(ss.completed), ''), ss.request) \
+               ELSE COALESCE(NULLIF(TRIM(ss.request), ''), NULLIF(TRIM(ss.next_steps), ''), \
+                             NULLIF(TRIM(ss.completed), ''), NULLIF(TRIM(ss.decisions), ''), \
+                             NULLIF(TRIM(ss.learned), ''), NULLIF(TRIM(ss.preferences), ''), \
+                             'Session summary #' || ss.id) \
              END AS display_request, \
              ss.completed, \
              ss.created_at_epoch, \
@@ -245,7 +256,8 @@ fn query_summary_batch(
              ss.preferences \
          FROM session_summaries ss \
          LEFT JOIN sessions s ON s.id = ss.session_row_id \
-         WHERE ss.request IS NOT NULL AND ss.request != '' \
+         WHERE ((?{next_steps_idx} = 0 AND NULLIF(TRIM(ss.request), '') IS NOT NULL) \
+                OR (?{next_steps_idx} = 1 AND NULLIF(TRIM(ss.next_steps), '') IS NOT NULL)) \
            AND COALESCE(ss.poisoning_status, 'legacy_unscanned') != 'quarantined' \
            AND (ss.session_row_id IS NULL \
                 OR ss.request NOT LIKE 'Captured event range %..%' \
@@ -256,7 +268,6 @@ fn query_summary_batch(
            AND ((ss.owner_scope = 'repo' AND {owner_clause}) \
                 OR (ss.owner_scope = 'repo' AND {target_clause}) \
                 OR (ss.owner_scope IS NULL AND {legacy_clause})) \
-           AND (?{next_steps_idx} = 0 OR NULLIF(TRIM(ss.next_steps), '') IS NOT NULL) \
          ORDER BY ss.created_at_epoch DESC, display_request ASC, ss.completed ASC \
          LIMIT ?{limit_idx}",
     );
