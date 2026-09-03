@@ -31,8 +31,6 @@ struct SessionAnchor {
 #[derive(Debug, Default)]
 pub(super) struct PromptContinuity {
     workstreams: Vec<WorkStream>,
-    workstream_project: String,
-    workstream_read_tokens: usize,
     session: Option<SessionAnchor>,
     audit_items: Vec<ContextAuditItem>,
 }
@@ -169,17 +167,6 @@ pub(super) fn load_first_turn_continuity(
     {
         selected_workstreams.push(safe_workstreams.remove(0));
     }
-    let workstream_read_tokens = if selected_workstreams.is_empty() {
-        0
-    } else {
-        let payload = serde_json::to_string_pretty(&crate::workstream::query_workstreams(
-            conn,
-            project,
-            Some("active"),
-        )?)?;
-        approximate_read_tokens(&payload)
-    };
-
     for workstream in &safe_workstreams {
         audit_items.push(ContextAuditItem::dropped_prompt_continuity_workstream(
             workstream.id,
@@ -198,8 +185,6 @@ pub(super) fn load_first_turn_continuity(
     }
     Ok(PromptContinuity {
         workstreams: selected_workstreams,
-        workstream_project: project.to_string(),
-        workstream_read_tokens,
         session: selected_session,
         audit_items,
     })
@@ -243,42 +228,6 @@ fn load_safe_workstreams(
     Ok((safe, poisoned))
 }
 
-pub(super) fn memory_detail_read_tokens(
-    conn: &rusqlite::Connection,
-    memories: &[Memory],
-) -> Result<HashMap<i64, usize>> {
-    let ids = memories.iter().map(|memory| memory.id).collect::<Vec<_>>();
-    let canonical =
-        crate::memory::get_memories_by_ids_with_suppressed_policy(conn, &ids, None, false)?;
-    if canonical.len() != memories.len() {
-        anyhow::bail!(
-            "exact memory detail reader found {} rows for {} prompt candidates",
-            canonical.len(),
-            memories.len()
-        );
-    }
-    let details = crate::memory::memory_details_with_topic_traces(conn, &canonical, None)?;
-    let items = details
-        .as_array()
-        .ok_or_else(|| anyhow::anyhow!("memory detail builder did not return an array"))?;
-    if items.len() != memories.len() {
-        anyhow::bail!(
-            "memory detail builder returned {} rows for {} prompt candidates",
-            items.len(),
-            memories.len()
-        );
-    }
-    canonical
-        .iter()
-        .zip(items)
-        .map(|(memory, detail)| {
-            let payload =
-                serde_json::to_string_pretty(&serde_json::Value::Array(vec![detail.clone()]))?;
-            Ok((memory.id, approximate_read_tokens(&payload)))
-        })
-        .collect()
-}
-
 pub(super) fn render_prompt_submit_context(
     continuity: &PromptContinuity,
     memories: &[Memory],
@@ -296,14 +245,7 @@ pub(super) fn render_prompt_submit_context(
     if !continuity.is_empty() {
         output.push_str("\n## Continuity anchors\n");
         for workstream in &continuity.workstreams {
-            if push_bounded_line(
-                &mut output,
-                &workstream_line(
-                    workstream,
-                    &continuity.workstream_project,
-                    continuity.workstream_read_tokens,
-                ),
-            ) {
+            if push_bounded_line(&mut output, &workstream_line(workstream)) {
                 render_order += 1;
                 audit_items.push(workstream_audit_item(workstream, render_order));
             } else {
@@ -382,21 +324,19 @@ pub(super) fn render_prompt_submit_context(
     })
 }
 
-fn workstream_line(workstream: &WorkStream, project: &str, read_tokens: usize) -> String {
+fn workstream_line(workstream: &WorkStream) -> String {
     let next = workstream
         .next_action
         .as_deref()
         .map(|value| compact_text(value, NEXT_ACTION_LIMIT))
         .unwrap_or_else(|| "none".to_string());
     format!(
-        "- workstream:#{} | status={} | title={} | updated={} | next={} | surfaced_by=first_turn_continuity | read~{}t | open=workstreams project={} status=active\n",
+        "- workstream:#{} | status={} | title={} | updated={} | next={} | surfaced_by=first_turn_continuity\n",
         workstream.id,
         workstream.status.as_str(),
         compact_text(&workstream.title, TITLE_LIMIT),
         format_epoch_short(workstream.updated_at_epoch),
         next,
-        read_tokens,
-        format_args!("{project:?}"),
     )
 }
 

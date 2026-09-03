@@ -52,17 +52,20 @@ Memory candidates contain:
 
 Continuity candidates contain the stable workstream or session-summary id,
 compact title/request, state or next action, stable updated date,
-`surfaced_by=first_turn_continuity`, approximate detail read cost, and a
-project-scoped active `workstreams` lookup hint or exact
-`get_observations(source=session_summary, ids=[...])` call.
+`surfaced_by=first_turn_continuity`, and, for session summaries, approximate
+detail read cost plus an exact
+`get_observations(source=session_summary, ids=[...])` call. Workstream anchors
+are self-contained compact hints and advertise no detail read because the
+existing `workstreams` surface is an unbounded active-list lookup rather than
+an exact safe singleton reader.
 
 Each read cost matches its advertised reader: memory cost covers the complete
 exact-detail JSON, including classification metadata, temporal facts, and topic
-trace when present; workstream cost covers the complete active-list JSON for
-the advertised project/status lookup; session-summary cost covers the complete
+trace when present; session-summary cost covers the complete
 serialized exact-detail response, including all six summary text fields and
 its metadata. Estimating memory detail reuses the reader's side-effect-free
-detail builder and does not mark the memory as accessed.
+detail builder once per advertised singleton id and does not mark the memory as
+accessed.
 
 All free text is normalized to one line and truncated at an item boundary. The
 renderer remains an additive prompt block and never rewrites SessionStart.
@@ -83,11 +86,16 @@ renderer remains an additive prompt block and never rewrites SessionStart.
   their exact detail reader before any summary text enters the prompt. Summary
   selection applies the same seconds-only epoch filter as that exact reader.
 - Already injected memories remain excluded for the same host/project/session.
+- Prior injection audits are matched across the canonical project and its
+  active historical aliases while preserving same-turn retry replay.
 - Canonical project summary selection and exact detail reads share the same
   repo `owner_key` / repo `target_project` / legacy `project` predicate and
   include active historical aliases.
 - The four-item memory limit is applied only after G2, already-injected, and
-  poisoning admission, with a bounded ranked scan to backfill safe candidates.
+  poisoning admission, including the complete serialized exact-detail payload,
+  with a bounded ranked scan to backfill safe candidates. A detail-payload
+  rejection records a distinct drop reason; an empty result also records the
+  existing prompt abstention.
 - RRF rank is a candidate ordering signal only. There is no final relevance
   threshold.
 - Only anchors and memories whose complete lines fit the 1,800-character

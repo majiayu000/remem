@@ -135,7 +135,16 @@ pub(super) fn should_inject_memory(
     memory: &Memory,
     channel: &str,
 ) -> Result<bool> {
-    let Some(pattern_match) = scan_instruction_pattern(&memory_haystack(memory)) else {
+    should_inject_memory_payload(conn, memory, &memory_haystack(memory), channel)
+}
+
+pub(super) fn should_inject_memory_payload(
+    conn: &Connection,
+    memory: &Memory,
+    payload: &str,
+    channel: &str,
+) -> Result<bool> {
+    let Some(pattern_match) = scan_instruction_pattern(payload) else {
         return Ok(true);
     };
     let state = load_memory_poisoning_state(conn, memory.id)?;

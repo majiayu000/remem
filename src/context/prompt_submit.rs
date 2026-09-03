@@ -15,9 +15,7 @@ const PROMPT_SUBMIT_MEMORY_LIMIT: i64 = 4;
 const PROMPT_SUBMIT_LATENCY_BUDGET_MS: u128 = 250;
 
 mod candidates;
-use candidates::{
-    memory_detail_read_tokens, prompt_submit_staleness_labels, render_prompt_submit_context,
-};
+use candidates::{prompt_submit_staleness_labels, render_prompt_submit_context};
 mod audit_identity;
 
 #[cfg(test)]
@@ -78,7 +76,7 @@ pub(crate) fn prompt_submit_additional_context_for_event(
         &invocation,
         prompt_injection_key.as_deref(),
     )?;
-    let (mut retrieved, poisoning_safe_ids) = super::prompt_submit_retrieval::retrieve(
+    let retrieval = super::prompt_submit_retrieval::retrieve(
         conn,
         project,
         prompt,
@@ -88,6 +86,7 @@ pub(crate) fn prompt_submit_additional_context_for_event(
         as_of_epoch,
         &already_injected,
     )?;
+    let mut retrieved = retrieval.memories;
     let mut g2_drops = Vec::new();
     let mut g2_errors = Vec::new();
     super::query::exclude_non_current_context_memories(
@@ -118,7 +117,13 @@ pub(crate) fn prompt_submit_additional_context_for_event(
                 "prompt_submit",
                 "already_injected",
             ));
-        } else if !poisoning_safe_ids.contains(&memory.id) {
+        } else if retrieval.detail_poisoning_drops.contains(&memory.id) {
+            audit_items.push(ContextAuditItem::dropped_memory(
+                &memory,
+                "prompt_submit",
+                "prompt_submit_detail_poisoning_gate",
+            ));
+        } else if !retrieval.poisoning_safe_ids.contains(&memory.id) {
             audit_items.push(ContextAuditItem::dropped_memory(
                 &memory,
                 "prompt_submit",
@@ -149,11 +154,10 @@ pub(crate) fn prompt_submit_additional_context_for_event(
 
     let render_reference_epoch = chrono::Utc::now().timestamp();
     let staleness_labels = prompt_submit_staleness_labels(conn, &rendered, render_reference_epoch);
-    let memory_read_tokens = memory_detail_read_tokens(conn, &rendered)?;
     let rendered_context = render_prompt_submit_context(
         &continuity,
         &rendered,
-        &memory_read_tokens,
+        &retrieval.detail_read_tokens,
         &staleness_labels,
         render_reference_epoch,
     )?;

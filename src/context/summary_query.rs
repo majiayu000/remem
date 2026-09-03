@@ -97,15 +97,15 @@ fn query_recent_summaries_with_drops_matching(
                 "context_recent_sessions",
             )
         };
-        let summary = row.summary;
         if !injectable {
-            poisoning_drops.push(summary);
+            poisoning_drops.push(row.summary);
             continue;
         }
-        if is_session_summary_self_diagnostic(&summary) {
-            preselection_drops.push(summary_drop(summary, "summary_self_diagnostic"));
+        if is_session_summary_self_diagnostic(&row) {
+            preselection_drops.push(summary_drop(row.summary, "summary_self_diagnostic"));
             continue;
         }
+        let summary = row.summary;
 
         let cluster_key = summary_cluster_key(&summary);
         if seen_clusters.contains(&cluster_key) {
@@ -168,7 +168,7 @@ fn query_recent_summaries_with_drops_matching(
         );
     }
 
-    if selected.len() < limit && has_more {
+    if require_next_steps && selected.len() < limit && has_more {
         anyhow::bail!(
             "summary continuity scan budget exhausted after {scan_limit} rows before finding {limit} safe anchors"
         );
@@ -294,8 +294,8 @@ fn query_summary_batch(
     crate::db::query::collect_rows(rows)
 }
 
-fn is_session_summary_self_diagnostic(summary: &SessionSummaryBrief) -> bool {
-    is_self_diagnostic_text(&session_summary_haystack(summary))
+fn is_session_summary_self_diagnostic(row: &SessionSummaryQueryRow) -> bool {
+    is_self_diagnostic_text(&session_summary_full_haystack(row))
 }
 
 fn is_stale_design_prototype_summary(summary: &SessionSummaryBrief, now_epoch: i64) -> bool {
@@ -305,7 +305,7 @@ fn is_stale_design_prototype_summary(summary: &SessionSummaryBrief, now_epoch: i
     }
     ["landing page", "wireframe", "starfield"]
         .iter()
-        .any(|needle| session_summary_haystack(summary).contains(needle))
+        .any(|needle| session_summary_brief_haystack(summary).contains(needle))
 }
 
 fn summary_cluster_key(summary: &SessionSummaryBrief) -> String {
@@ -317,7 +317,23 @@ fn summary_cluster_key(summary: &SessionSummaryBrief) -> String {
     context_cluster_suffix(&request)
 }
 
-fn session_summary_haystack(summary: &SessionSummaryBrief) -> String {
+fn session_summary_full_haystack(row: &SessionSummaryQueryRow) -> String {
+    [
+        row.source_request.as_deref(),
+        row.summary.completed.as_deref(),
+        row.decisions.as_deref(),
+        row.learned.as_deref(),
+        row.next_steps.as_deref(),
+        row.preferences.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" ")
+    .to_ascii_lowercase()
+}
+
+fn session_summary_brief_haystack(summary: &SessionSummaryBrief) -> String {
     format!(
         "{} {}",
         summary.request,
