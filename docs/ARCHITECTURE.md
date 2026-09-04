@@ -105,6 +105,7 @@ The host boundary is capability-specific:
 |---|---|---|---|
 | MCP memory tools | Supported | Supported | Supported on macOS/Linux |
 | SessionStart context | Supported | Supported | Not installed by the v1 profile |
+| Prompt-time session-init | Installed `UserPromptSubmit` | Not installed by the current profile | Unsupported |
 | Automatic Stop memory | Supported | Supported | Not installed by the v1 profile |
 | Tool-event capture | Installed PostToolUse hooks | Legacy Bash observe is opt-in | Runtime exists; no hook is installed by the v1 profile |
 | Compiled Bash rules | Optional PreToolUse warn/block | Unsupported | Unsupported |

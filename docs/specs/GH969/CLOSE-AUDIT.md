@@ -5,7 +5,8 @@ and #935 remain independent parked contracts.
 
 Audit date: 2026-09-03
 
-Audit base: `d2072f1e` (post-v0.6.86 main)
+Audit base: `d2072f1e` (post-v0.6.86 main). G5 exact-main native
+evidence is `36f06d7a`, an ancestor of this audit base, not a competing head.
 
 Architecture/spec reconciliation implementation: #1050, `b800af4f`
 
@@ -51,6 +52,11 @@ item has an explicit owner and contract outside this epic; it is not hidden
 work and is not counted as completion evidence for #969.
 
 ## Original Checklist Mapping
+
+The original #969 issue body contains 66 checkboxes. The tables below map each
+checkbox 1:1. Two previously fused rows are split: target direction vs reverse
+dependency removal, and architecture/spec truth vs the protected-regression
+close criterion.
 
 ### A. Current PRODUCT/TECH stabilization contract
 
@@ -99,7 +105,8 @@ work and is not counted as completion evidence for #969.
 
 | ID | Original criterion | Verdict | Implementation / exact SHA | Contract and regression evidence | Lifecycle, rollback, dependency |
 |---|---|---|---|---|---|
-| E1 | Establish target direction and remove key reverse dependencies | Amended | G2 `36f3d38c` | Technical target direction; 42 visible accepted reverse edges | No reduction claimed; future cleanup may shrink baseline |
+| E1 | Establish target direction | Satisfied | G2 `36f3d38c` | Technical target direction: domain/types → storage → retrieval → application workflows → CLI/MCP/REST/hooks | Direction is documented; no crate split |
+| E1b | Eliminate key reverse dependencies | Amended | G2 `36f3d38c` | 42 visible accepted reverse edges remain | No reduction claimed; future cleanup may shrink baseline |
 | E2 | Replace broad facade wildcard exports | Amended | G2 `36f3d38c` | Guard prevents new direction/cycle debt; no facade rewrite in close slice | Future scoped cleanup; no public-API churn authorized here |
 | E3 | Reject new cycles/layer violations | Satisfied | G2 `36f3d38c` | scanner/self-tests; fresh largest component = 37 | Baseline is shrink-only and cannot silently grow |
 | E4 | Measure packaging economics before crate split | Satisfied as non-action | C0 `886e6eda`; G2 `36f3d38c` | Crate split remains a non-goal; no split decision was taken | Measurements required before any future split |
@@ -112,7 +119,7 @@ work and is not counted as completion evidence for #969.
 | F1 | Unified ship matrix explains all gate classes | Satisfied | G3 `257fc4a0` | executable merge/release/default/public-claim rows | Fails closed on missing or mismatched evidence |
 | F2 | Require baseline/enhanced ablation before advanced defaults | Satisfied as gate, research independent | G1 `5b98e80d`; G3 `257fc4a0` | default-on row requires same-head ablation; incomplete Router stays experimental | GH934 or future capability owner supplies evidence |
 | F3 | Preserve bounded graph evidence | Satisfied | G1 `5b98e80d`; G3 `257fc4a0` | graph inventory/report retained and authority-bound | Production graph remains bounded; rollback per inventory |
-| F4 | Add user-outcome metrics | Satisfied | G3 `257fc4a0` | outcome scorecard fields for help, harm, repetition, injection, completion | Unavailable evidence is explicit, never fabricated |
+| F4 | Add user-outcome metrics | Satisfied as gate | G3 `257fc4a0` | outcome scorecard fields for help, harm, repetition, injection, completion | Unavailable evidence is explicit, never fabricated; live user-outcome series remain independent |
 | F5 | Enforce stop-loss on advanced capabilities | Satisfied as gate | G1 `5b98e80d`; G3 `257fc4a0` | stop-loss/default rows and manifest rollback/date fields | Future two-round evidence drives gate/rollback/removal |
 
 ### G. Documentation and contributor orientation
@@ -120,7 +127,7 @@ work and is not counted as completion evidence for #969.
 | ID | Original criterion | Verdict | Implementation / exact SHA | Contract and regression evidence | Lifecycle, rollback, dependency |
 |---|---|---|---|---|---|
 | G1 | Remove/generated volatile architecture tables | Satisfied | C0 `886e6eda` | architecture contains ownership map, not hand-maintained LOC counts | Current documentation contract |
-| G2 | Document production flow, hosts, experiments, recovery | Satisfied | G6 `b800af4f`, `4b381c71` | Architecture scopes the user-facing acquisition diagram and links the complete activation route contract | Links canonical manifest; no independent state |
+| G2 | Document production flow, hosts, experiments, recovery | Satisfied | G6 `b800af4f`, `4b381c71` | Architecture scopes the user-facing acquisition diagram, lists Claude `UserPromptSubmit` → `session-init` on the host map, and links the complete activation route contract | Links canonical manifest; no independent state |
 | G3 | Canonicalize `docs/specs` vs root packets | Satisfied | G6 `b800af4f`, `4b381c71` | dedicated handoff table is authoritative and rejects malformed mappings, undeclared overlaps, or either missing endpoint; 71 checker tests | `docs/specs/` is canonical; root packets retained as evidence |
 | G4 | Check declarations, not only file presence | Satisfied | G1 `5b98e80d`; G4 `286326e0`; G6 `4b381c71` | surface lifecycle plus documentation contract checks | CI/preflight enforced |
 
@@ -164,7 +171,8 @@ work and is not counted as completion evidence for #969.
 | Z7 | No partial surface silently appears production | Satisfied | G1 `5b98e80d`; G3 `257fc4a0` | caller/default classification and ship matrix | Fail closed |
 | Z8 | Direction guard active and top cycle reduced | Amended and measured | G2 `36f3d38c`; audit base `36f06d7a` | active guard; baseline = current = 37 | No reduction claim; future work may only shrink |
 | Z9 | Advanced defaults have ablation/stop-loss evidence | Satisfied as admission gate | G1 `5b98e80d`; G3 `257fc4a0` | existing production evidence retained; incomplete surfaces stay non-default | #933/#935 parked; GH934 capability-specific |
-| Z10 | Architecture/spec truth and no protected regression | Satisfied | G5 `36f06d7a`; G6 `4b381c71` | exact-main CI/native evidence plus docs/surface/dependency checks | Release/default/public claims remain separate gates |
+| Z10 | Architecture/current-spec documentation matches implementation truth | Satisfied | G6 `b800af4f`, `4b381c71` | scoped acquisition map, Claude UserPromptSubmit host row, and structured handoff table with two-endpoint checks | Current documentation contract |
+| Z11 | No regression in automatic capture, LLM extraction, memory quality, host compatibility or user-visible error reporting | Satisfied | G5 `36f06d7a` | exact-main CI/native evidence plus docs/surface/dependency checks | Release/default/public claims remain separate gates |
 
 ## Fresh Close-Audit Verification
 
