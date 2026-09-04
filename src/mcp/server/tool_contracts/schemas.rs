@@ -439,6 +439,7 @@ struct GovernedMemoryOutput {
     title: String,
     previous_status: String,
     new_status: String,
+    version: i64,
 }
 
 #[derive(Deserialize, JsonSchema)]

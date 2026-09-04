@@ -57,9 +57,10 @@ Pass `host` when the calling host is known. An omitted host is recorded as
 ## Governance
 
 Call `govern_memory` with `dry_run=true` first. Its `expected_versions` object
-maps each affected memory ID to its current version. Pass that object back for
-a mutation, along with `confirm_destructive=true` and an explicit reason. If
-any version is stale, the whole batch fails without a partial mutation.
+maps each affected memory ID to the version loaded in that dry-run transaction.
+Pass that object back for a mutation, along with `confirm_destructive=true` and
+an explicit reason. If any version is stale, the whole batch fails without a
+partial mutation.
 
 ## MCP contract migration (#1061)
 

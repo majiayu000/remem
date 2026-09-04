@@ -212,6 +212,17 @@ remem govern --action stale --dry-run --json <id>
 写入型治理命令会按风险提供预览、明确确认或 review 边界。最新参数以
 `remem <command> --help` 为准，README 不再手工复制整份命令表。
 
+MCP 工具使用同一份本地存储，但有更严格的线契约。规范入口是
+[GH981](docs/specs/GH981/PRODUCT.md)，并包含 #1061 的变更与范围边界：
+
+- `save_memory`：已知调用 host 时传入 `host`。省略时记为 `unknown`，不会推断成
+  `codex-cli`。
+- `govern_memory`：先 `dry_run`，预览 ID 以及该治理事务里加载到的当前版本。
+  正式写入必须为每个 ID 提供 `expected_versions`，并带上
+  `confirm_destructive=true` 和明确 reason。
+- `recall_user_context`：必须提供 `project` 或 `cwd`。服务器不会用自身进程的
+  工作目录推断范围。
+
 ### 配置 Memory AI 与检索
 
 ```bash

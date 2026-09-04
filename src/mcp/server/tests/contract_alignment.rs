@@ -81,6 +81,7 @@ fn govern_memory_dry_run_reports_current_versions() {
         .expect("dry-run should succeed");
     let json: Value = serde_json::from_str(&response).expect("response should be json");
     assert_eq!(json["expected_versions"][memory_id.to_string()], version);
+    assert_eq!(json["affected"][0]["version"], version);
 
     let response = server
         .govern_memory(Parameters(GovernMemoryParams {
@@ -98,6 +99,62 @@ fn govern_memory_dry_run_reports_current_versions() {
     let json: Value = serde_json::from_str(&response).expect("response should be json");
     assert!(json.get("expected_versions").is_none());
     assert_eq!(json["affected"][0]["new_status"], "stale");
+    assert_eq!(json["affected"][0]["version"], version);
+}
+
+struct AfterGovernanceCommitGuard;
+
+impl AfterGovernanceCommitGuard {
+    fn set(hook: Option<fn(&rusqlite::Connection)>) -> Self {
+        crate::memory::governance::tests::set_after_governance_commit_hook(hook);
+        Self
+    }
+}
+
+impl Drop for AfterGovernanceCommitGuard {
+    fn drop(&mut self) {
+        crate::memory::governance::tests::set_after_governance_commit_hook(None);
+    }
+}
+
+fn bump_memory_versions(conn: &rusqlite::Connection) {
+    conn.execute("UPDATE memories SET version = version + 1 WHERE id > 0", [])
+        .expect("post-commit writer should bump versions");
+}
+
+#[test]
+fn govern_memory_dry_run_versions_equal_versions_loaded_in_that_transaction() {
+    let _dir = ScopedTestDataDir::new("mcp-govern-tx-bound-versions");
+    let _hook = AfterGovernanceCommitGuard::set(Some(bump_memory_versions));
+    let (memory_id, version) = insert_governance_fixture("tx-bound-version", "TX bound version");
+    let server = MemoryServer::new().expect("memory server should initialize");
+
+    let response = server
+        .govern_memory(Parameters(GovernMemoryParams {
+            ids: vec![memory_id],
+            project: Some("proj".to_string()),
+            action: "stale".to_string(),
+            acknowledge_pattern: None,
+            reason: None,
+            actor: None,
+            dry_run: Some(true),
+            confirm_destructive: None,
+            expected_versions: None,
+        }))
+        .expect("dry-run should succeed");
+    let json: Value = serde_json::from_str(&response).expect("response should be json");
+    assert_eq!(json["affected"][0]["version"], version);
+    assert_eq!(json["expected_versions"][memory_id.to_string()], version);
+
+    let db_version: i64 = crate::db::open_db()
+        .expect("database should reopen")
+        .query_row(
+            "SELECT version FROM memories WHERE id = ?1",
+            [memory_id],
+            |row| row.get(0),
+        )
+        .expect("version should load");
+    assert_eq!(db_version, version + 1);
 }
 
 #[test]

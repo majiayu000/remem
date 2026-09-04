@@ -80,25 +80,6 @@ fn validate_governance_request(
     Ok(())
 }
 
-fn governance_versions(
-    conn: &rusqlite::Connection,
-    project: &str,
-    affected: &[crate::memory::governance::GovernedMemory],
-) -> anyhow::Result<std::collections::BTreeMap<i64, i64>> {
-    affected
-        .iter()
-        .map(|memory| {
-            conn.query_row(
-                "SELECT version FROM memories WHERE id = ?1 AND project = ?2",
-                rusqlite::params![memory.id, project],
-                |row| row.get(0),
-            )
-            .map(|version| (memory.id, version))
-            .map_err(Into::into)
-        })
-        .collect()
-}
-
 #[derive(Serialize)]
 struct GovernMemoryMcpResponse {
     #[serde(flatten)]
@@ -292,10 +273,13 @@ impl MemoryServer {
                     McpToolError::db_query(TOOL, e)
                 }
             })?;
-            let expected_versions = dry_run
-                .then(|| governance_versions(conn, &project, &result.affected))
-                .transpose()
-                .map_err(|e| McpToolError::db_query(TOOL, e))?;
+            let expected_versions = dry_run.then(|| {
+                result
+                    .affected
+                    .iter()
+                    .map(|memory| (memory.id, memory.version))
+                    .collect()
+            });
             errors::to_json_string(
                 TOOL,
                 &GovernMemoryMcpResponse {

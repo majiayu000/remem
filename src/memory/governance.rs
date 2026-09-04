@@ -58,6 +58,7 @@ pub struct GovernedMemory {
     pub title: String,
     pub previous_status: String,
     pub new_status: String,
+    pub version: i64,
 }
 
 #[derive(Debug)]
@@ -540,6 +541,7 @@ fn govern_memories_inner(
             title: target.title.clone(),
             previous_status: target.status.clone(),
             new_status: new_status.to_string(),
+            version: target.version,
         });
         if req.dry_run {
             continue;
@@ -607,6 +609,8 @@ fn govern_memories_inner(
     }
     crate::memory::preference::compilation::enqueue_for_memory_ids(&tx, &rule_source_ids)?;
     tx.commit()?;
+    #[cfg(test)]
+    tests::run_after_governance_commit_hook(conn);
     Ok(GovernMemoryResult {
         dry_run: req.dry_run,
         action: req.action.as_str().to_string(),
@@ -786,6 +790,6 @@ fn insert_audit_event(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 #[cfg(test)]
 mod web_tests;

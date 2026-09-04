@@ -240,6 +240,18 @@ Mutating governance commands expose previews, explicit confirmations, or
 review boundaries according to their risk. Run `remem <command> --help` for
 the current contract instead of relying on a copied command inventory.
 
+MCP tools share that store with stricter wire contracts. The canonical MCP
+contract is [GH981](docs/specs/GH981/PRODUCT.md), including the #1061
+mutation and scope boundary:
+
+- `save_memory`: pass `host` when the calling host is known. An omitted host is
+  recorded as `unknown`, never inferred as `codex-cli`.
+- `govern_memory`: dry-run first to preview IDs and current versions from that
+  governance transaction. Non-dry-run mutations require `expected_versions`
+  for every ID, `confirm_destructive=true`, and an explicit reason.
+- `recall_user_context`: supply `project` or `cwd`. The server does not infer
+  this scope from its own process working directory.
+
 ### Configure memory AI and retrieval
 
 ```bash

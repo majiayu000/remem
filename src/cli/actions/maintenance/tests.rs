@@ -191,6 +191,7 @@ fn cli_governance_json_result_is_machine_parseable() -> std::result::Result<(), 
             title: "Old memory".to_string(),
             previous_status: "active".to_string(),
             new_status: "stale".to_string(),
+            version: 3,
         }],
     };
 
@@ -200,6 +201,7 @@ fn cli_governance_json_result_is_machine_parseable() -> std::result::Result<(), 
     assert_eq!(parsed["dry_run"], true);
     assert_eq!(parsed["action"], "stale");
     assert_eq!(parsed["affected"][0]["new_status"], "stale");
+    assert_eq!(parsed["affected"][0]["version"], 3);
     Ok(())
 }
 
