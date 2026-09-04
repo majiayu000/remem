@@ -22,7 +22,8 @@ valid Codex observations as `platform_unknown`.
 3. Let a bounded consumer skip unchanged sessions without fetching messages.
 4. Give every session a stable opaque reference while preserving the exact
    selector tuple used by the raw-message API.
-5. Fail explicitly when provenance is unavailable or ambiguous.
+5. Listing skips and reports unavailable or ambiguous provenance; exact
+   `raw messages` fail closed instead of inventing a host.
 
 ## Product Contract
 

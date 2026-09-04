@@ -121,6 +121,11 @@ fn list_sessions_skips_conflicting_modes_without_aborting_the_archive() {
     assert_eq!(listing[0].session_id, "healthy");
     assert_eq!(listing.excluded_legacy_sessions, 1);
     assert_listing_reports_session(&listing, "shared", Some("codex-cli"));
+    let error = query_raw_session_messages(&conn, &exact_messages_request("shared"))
+        .expect_err("conflicting session modes must stay fail-closed on exact reads");
+    assert!(error
+        .to_string()
+        .contains("provenance is missing or conflicted"));
 }
 
 #[test]
@@ -312,9 +317,12 @@ fn list_sessions_latest_returns_healthy_sessions_when_unresolved_rows_exist() {
     .expect("latest must ignore unresolved rows while selecting the newest healthy session");
     assert_eq!(latest.len(), 1);
     assert_eq!(latest[0].session_id, "new");
-    assert!(latest.excluded_legacy_rows >= 1);
+    assert_eq!(latest.excluded_legacy_rows, 3);
+    assert_eq!(latest.excluded_legacy_sessions, 3);
+    assert_eq!(latest.excluded_legacy_identities.len(), 3);
     assert_listing_reports_session(&latest, "missing-host", None);
     assert_listing_reports_session(&latest, "old-unresolved", None);
+    assert_listing_reports_session(&latest, "interleaved-unresolved", None);
 
     let error = query_raw_session_messages(&conn, &exact_messages_request("missing-host"))
         .expect_err("exact identity reads must stay fail-closed");
@@ -341,13 +349,24 @@ fn list_sessions_skips_a_mixed_session_when_any_row_is_globally_unresolved() {
         "codex-cli",
         "/tmp/.codex/sessions/healthy.jsonl",
     );
-    insert_unresolved_transcript(&conn, "mixed", "/repo", "unresolved sibling", 110);
+    insert_unresolved_transcript(&conn, "mixed", "/repo", "unresolved sibling", 350);
 
     let listing = list_sessions_with_exclusions(&conn, &RawSessionQuery::default())
         .expect("a mixed unresolved session must not hide unrelated healthy sessions");
     assert_eq!(listing.len(), 1);
     assert_eq!(listing[0].session_id, "healthy");
     assert_listing_reports_session(&listing, "mixed", None);
+    let latest = list_sessions_with_exclusions(
+        &conn,
+        &RawSessionQuery {
+            latest: Some(1),
+            ..RawSessionQuery::default()
+        },
+    )
+    .expect("latest must ignore mixed unresolved sessions even when they are newer");
+    assert_eq!(latest.len(), 1);
+    assert_eq!(latest[0].session_id, "healthy");
+    assert_listing_reports_session(&latest, "mixed", None);
     let error = query_raw_session_messages(&conn, &exact_messages_request("mixed"))
         .expect_err("mixed unresolved exact selector must stay fail-closed");
     assert!(error

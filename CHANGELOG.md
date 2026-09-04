@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.88` keeps exact `raw messages` fail-closed when
+  one host has conflicting session modes, while listing continues to skip and
+  report those sessions. `--latest N` still fills from healthy sessions only.
 - Staged source version `0.6.86` polishes CLI surface details: install and
   uninstall output is now English-only across the install flow, per-invocation
   `search-perf` diagnostics no longer mirror to stderr at default log level,
