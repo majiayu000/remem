@@ -1,4 +1,5 @@
 use super::*;
+use crate::memory::raw_query::{query_raw_session_messages, RawSessionMessagesRequest};
 use rusqlite::params;
 
 fn identify_raw_row(conn: &Connection, row_id: i64, host: &str, transcript: &str) {
@@ -44,8 +45,51 @@ fn identify_raw_row_with_mode(
     .unwrap();
 }
 
+fn insert_unresolved_transcript(
+    conn: &Connection,
+    session_id: &str,
+    project: &str,
+    content: &str,
+    epoch: i64,
+) -> i64 {
+    let row_id = insert_at_epoch(conn, session_id, project, ROLE_USER, content, epoch);
+    conn.execute(
+        "UPDATE raw_messages
+         SET source = 'transcript', event_time_source = 'transcript_event'
+         WHERE id = ?1",
+        [row_id],
+    )
+    .unwrap();
+    row_id
+}
+
+fn exact_messages_request(session_id: &str) -> RawSessionMessagesRequest {
+    RawSessionMessagesRequest {
+        host: "codex-cli".to_string(),
+        source_root: "local".to_string(),
+        project: "/repo".to_string(),
+        session_id: session_id.to_string(),
+        limit: 20,
+        cursor: None,
+    }
+}
+
+fn assert_listing_reports_session(
+    listing: &RawSessionListing,
+    session_id: &str,
+    host: Option<&str>,
+) {
+    assert!(
+        listing.excluded_legacy_identities.iter().any(|identity| {
+            identity.session_id == session_id && identity.host.as_deref() == host
+        }),
+        "expected skipped identity {session_id:?} host={host:?}, got {:?}",
+        listing.excluded_legacy_identities
+    );
+}
+
 #[test]
-fn list_sessions_rejects_conflicting_modes_across_contributing_identities() {
+fn list_sessions_skips_conflicting_modes_without_aborting_the_archive() {
     let conn = setup_conn();
     let first = insert_at_epoch(&conn, "shared", "/repo", ROLE_USER, "first", 100);
     let second = insert_at_epoch(&conn, "shared", "/repo", ROLE_ASSISTANT, "second", 200);
@@ -63,10 +107,20 @@ fn list_sessions_rejects_conflicting_modes_across_contributing_identities() {
         "unattended",
         "/tmp/.codex/sessions/second.jsonl",
     );
+    let healthy = insert_at_epoch(&conn, "healthy", "/repo", ROLE_USER, "healthy", 300);
+    identify_raw_row(
+        &conn,
+        healthy,
+        "codex-cli",
+        "/tmp/.codex/sessions/healthy.jsonl",
+    );
 
-    let error = list_sessions(&conn, &RawSessionQuery::default())
-        .expect_err("one raw session cannot merge conflicting trusted modes");
-    assert!(error.to_string().contains("mode provenance conflicts"));
+    let listing = list_sessions_with_exclusions(&conn, &RawSessionQuery::default())
+        .expect("mode conflicts must skip that session instead of aborting listing");
+    assert_eq!(listing.len(), 1);
+    assert_eq!(listing[0].session_id, "healthy");
+    assert_eq!(listing.excluded_legacy_sessions, 1);
+    assert_listing_reports_session(&listing, "shared", Some("codex-cli"));
 }
 
 #[test]
@@ -164,6 +218,7 @@ fn list_sessions_keeps_preidentity_legacy_rows_outside_the_transcript_contract()
     assert_eq!(sessions[0].session_id, "current");
     assert_eq!(sessions.excluded_legacy_rows, 1);
     assert_eq!(sessions.excluded_legacy_sessions, 1);
+    assert_listing_reports_session(&sessions, "legacy", None);
     let output = serde_json::to_value(build_session_listing_json(
         &RawSessionQuery::default(),
         sessions,
@@ -171,6 +226,11 @@ fn list_sessions_keeps_preidentity_legacy_rows_outside_the_transcript_contract()
     .unwrap();
     assert_eq!(output["excluded_legacy_rows"], 1);
     assert_eq!(output["excluded_legacy_sessions"], 1);
+    assert_eq!(
+        output["excluded_legacy_identities"][0]["session_id"],
+        "legacy"
+    );
+    assert!(output["excluded_legacy_identities"][0]["host"].is_null());
 }
 
 #[test]
@@ -213,33 +273,83 @@ fn list_sessions_hash_is_stable_and_changes_with_an_identified_occurrence() {
 }
 
 #[test]
-fn list_sessions_latest_is_bounded_and_missing_host_fails_closed() {
+fn list_sessions_latest_returns_healthy_sessions_when_unresolved_rows_exist() {
     let conn = setup_conn();
     insert_at_epoch(&conn, "old", "/repo", ROLE_USER, "old", 100);
     insert_at_epoch(&conn, "new", "/repo", ROLE_USER, "new", 200);
     identify_raw_sessions(&conn, "codex-cli");
-    let latest = list_sessions(
+    let older_unresolved =
+        insert_unresolved_transcript(&conn, "old-unresolved", "/repo", "older missing", 50);
+    let interleaved =
+        insert_unresolved_transcript(&conn, "interleaved-unresolved", "/repo", "interleaved", 150);
+    let newer_unresolved =
+        insert_unresolved_transcript(&conn, "missing-host", "/repo", "missing", 300);
+    assert!(older_unresolved > 0 && interleaved > 0 && newer_unresolved > 0);
+
+    let listing = list_sessions_with_exclusions(&conn, &RawSessionQuery::default())
+        .expect("unresolved rows must not abort the archive listing");
+    assert_eq!(
+        listing
+            .sessions
+            .iter()
+            .map(|session| session.session_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["old", "new"]
+    );
+    assert_eq!(listing.excluded_legacy_rows, 3);
+    assert_eq!(listing.excluded_legacy_sessions, 3);
+    assert_listing_reports_session(&listing, "old-unresolved", None);
+    assert_listing_reports_session(&listing, "interleaved-unresolved", None);
+    assert_listing_reports_session(&listing, "missing-host", None);
+
+    let latest = list_sessions_with_exclusions(
         &conn,
         &RawSessionQuery {
             latest: Some(1),
             ..RawSessionQuery::default()
         },
     )
-    .unwrap();
+    .expect("latest must ignore unresolved rows while selecting the newest healthy session");
     assert_eq!(latest.len(), 1);
     assert_eq!(latest[0].session_id, "new");
+    assert!(latest.excluded_legacy_rows >= 1);
+    assert_listing_reports_session(&latest, "missing-host", None);
+    assert_listing_reports_session(&latest, "old-unresolved", None);
 
-    let missing = insert_at_epoch(&conn, "missing-host", "/repo", ROLE_USER, "missing", 300);
-    assert!(missing > 0);
-    conn.execute(
-        "UPDATE raw_messages
-         SET source = 'transcript', event_time_source = 'transcript_event'
-         WHERE id = ?1",
-        [missing],
-    )
-    .unwrap();
-    let error = list_sessions(&conn, &RawSessionQuery::default())
-        .expect_err("unidentified raw provenance must not be guessed");
+    let error = query_raw_session_messages(&conn, &exact_messages_request("missing-host"))
+        .expect_err("exact identity reads must stay fail-closed");
+    assert!(error
+        .to_string()
+        .contains("provenance is missing or conflicted"));
+    assert!(!error.to_string().contains("re-ingest"));
+}
+
+#[test]
+fn list_sessions_skips_a_mixed_session_when_any_row_is_globally_unresolved() {
+    let conn = setup_conn();
+    let identified = insert_at_epoch(&conn, "mixed", "/repo", ROLE_USER, "identified", 100);
+    let other = insert_at_epoch(&conn, "healthy", "/repo", ROLE_USER, "healthy", 200);
+    identify_raw_row(
+        &conn,
+        identified,
+        "codex-cli",
+        "/tmp/.codex/sessions/mixed.jsonl",
+    );
+    identify_raw_row(
+        &conn,
+        other,
+        "codex-cli",
+        "/tmp/.codex/sessions/healthy.jsonl",
+    );
+    insert_unresolved_transcript(&conn, "mixed", "/repo", "unresolved sibling", 110);
+
+    let listing = list_sessions_with_exclusions(&conn, &RawSessionQuery::default())
+        .expect("a mixed unresolved session must not hide unrelated healthy sessions");
+    assert_eq!(listing.len(), 1);
+    assert_eq!(listing[0].session_id, "healthy");
+    assert_listing_reports_session(&listing, "mixed", None);
+    let error = query_raw_session_messages(&conn, &exact_messages_request("mixed"))
+        .expect_err("mixed unresolved exact selector must stay fail-closed");
     assert!(error
         .to_string()
         .contains("provenance is missing or conflicted"));

@@ -42,7 +42,7 @@ pub(super) fn ensure_provenance_resolved(
     )?;
     if unresolved {
         anyhow::bail!(
-            "raw session provenance is missing or conflicted for ({:?}, {:?}, {:?}); re-ingest its transcript",
+            "raw session provenance is missing or conflicted for ({:?}, {:?}, {:?})",
             request.source_root,
             request.project,
             request.session_id,

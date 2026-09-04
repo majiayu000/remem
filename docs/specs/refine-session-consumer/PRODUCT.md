@@ -34,10 +34,12 @@ valid Codex observations as `platform_unknown`.
 - `content_hash`: SHA-256 fingerprint of the ordered immutable raw
   occurrences selected for the session.
 
-The JSON envelope also reports `excluded_legacy_rows` and
-`excluded_legacy_sessions`. These counts cover retained pre-identity
-transcript rows that cannot safely enter a host-bound complete-session
-summary.
+The JSON envelope also reports `excluded_legacy_rows`,
+`excluded_legacy_sessions`, and `excluded_legacy_identities`. These cover
+retained rows and sessions that cannot safely enter a host-bound complete
+session summary, including pre-identity `legacy_unknown` rows and other
+missing or conflicted host/mode provenance. Each identity includes `source_root`,
+`project`, `session_id`, and `host` when known.
 
 The existing `source_root`, `project`, and `session_id` fields remain the exact
 raw-message selector. `source_root` identifies storage location; it is not a
@@ -47,27 +49,34 @@ Cursor may also appear on a virtual outcome-only row carrying
 `capture_health`. That row has no complete transcript and is not a Refine
 ingestion source.
 
-`--latest N` returns at most `N` sessions ordered by newest message time. The
-bound is applied by Remem before JSON is emitted so a scheduled consumer does
-not enumerate an unbounded archive and truncate it afterward.
+`--latest N` returns at most `N` **healthy** sessions ordered by newest message
+time. Unresolved or conflicted rows are skipped during the scan so they cannot
+abort listing or occupy latest slots. The bound is applied by Remem before
+JSON is emitted so a scheduled consumer does not enumerate an unbounded archive
+and truncate it afterward.
 
 ## Failure Semantics
 
 - Identified or current transcript rows that cannot be attributed to exactly
-  one supported host make the command fail with an actionable error.
+  one supported host are omitted from listing and reported in
+  `excluded_legacy_identities`. They do not abort the listing.
 - Pre-identity transcript rows with no identity and `legacy_unknown` event
   time are omitted from complete sessions and counted explicitly in the JSON
   envelope. They remain in the encrypted raw archive and raw search surfaces.
 - Re-ingestion may merge a pre-identity row only when one trusted transcript
   identity is the sole candidate and the stored stable fields match an exact
-  identified occurrence. Ambiguity remains fail-closed.
+  identified occurrence. Ambiguity remains fail-closed. Listing must not tell
+  operators to re-ingest a row that ingest cannot claim.
 - Unbound `hook` fallback rows are partial capture evidence rather than complete
   transcripts. They remain available on raw occurrence/search surfaces but do
   not enter the Refine session contract or poison unrelated session listing.
 - Two hosts must never collapse into one session summary, even when project and
   session ID are equal.
-- Conflicting known session modes for one session fail explicitly. A missing or
-  unrecognized upstream mode remains the honest `unknown` value.
+- Conflicting known session modes for one session skip that session and report
+  it. A missing or unrecognized upstream mode remains the honest `unknown` value
+  when the rest of the session is healthy.
+- Exact `raw messages` for a missing or conflicted selector stays fail-closed
+  and does not invent host provenance.
 - A malformed or zero `--latest` value is rejected.
 - The command never falls back to a downstream filesystem scanner.
 

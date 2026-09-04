@@ -219,9 +219,15 @@ Copy `host`, `source_root`, `project`, and `session_id` unchanged from one
 `raw sessions` summary into `raw messages`. Existing scripts must add the
 required `--host` selector and replace `--root LABEL=PATH` with
 `--root HOST:LABEL=PATH`; the same root format applies to `raw reconcile`.
-The JSON envelope reports `excluded_legacy_rows` and
-`excluded_legacy_sessions` when pre-identity transcript rows are retained in
-the raw archive but cannot safely enter the host-bound session contract.
+The JSON envelope reports `excluded_legacy_rows`, `excluded_legacy_sessions`,
+and `excluded_legacy_identities` when some archive rows cannot enter the
+host-bound session contract. Listing still returns healthy sessions;
+`--latest N` fills that bound from healthy sessions only and does not let
+unresolved rows occupy those slots. Use the skipped identities (`source_root`,
+`project`, `session_id`, and `host` when known) to inspect or repair those
+rows. Exact `raw messages` for a skipped selector stays fail-closed. Do not
+re-ingest a skipped row unless ingest can actually claim it — many legacy
+rows have no trusted host provenance.
 `HOST` is `claude-code` or `codex-cli`, and `LABEL` becomes the persisted
 `source_root`. Cursor snapshot evidence requires a manually configured and
 verified `remem summarize --host cursor` Stop integration; filesystem `--root`
