@@ -353,7 +353,14 @@ fn session_line(session: &SessionAnchor) -> String {
 }
 
 fn compact_text(value: &str, limit: usize) -> String {
-    truncate_chars_with_ellipsis(&inline_context_text(value), limit)
+    let sanitized: String = inline_context_text(value)
+        .chars()
+        .map(|ch| match ch {
+            '|' | '=' | '[' | ']' => '/',
+            other => other,
+        })
+        .collect();
+    truncate_chars_with_ellipsis(&sanitized, limit)
 }
 
 fn approximate_read_tokens(value: &str) -> usize {

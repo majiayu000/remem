@@ -612,6 +612,96 @@ async fn codex_stop_deduplicates_only_the_exact_captured_prompt_identity() -> an
 }
 
 #[tokio::test]
+async fn codex_stop_deduplicates_fixture_prompt_without_turn_id() -> anyhow::Result<()> {
+    let test_dir = ScopedTestDataDir::new("summary-hook-codex-fixture-dedup");
+    std::fs::create_dir_all(&test_dir.path)?;
+    let session_id = "sess-codex-fixture-dedup";
+    let repeated_prompt = "Codex rollout user text should enter the raw archive.";
+    let project = db::project_from_cwd(&test_dir.path.to_string_lossy());
+    let conn = db::open_db()?;
+    let captured = db::record_captured_event_with_id_and_turn_id(
+        &conn,
+        &db::CaptureEventInput {
+            host: "codex-cli",
+            session_id,
+            project: &project,
+            cwd: Some(&project),
+            event_type: "user_prompt_submit",
+            role: Some("user"),
+            tool_name: None,
+            content: repeated_prompt,
+            task_kind: Some(db::ExtractionTaskKind::SessionRollup),
+        },
+        Some(&crate::db::unique_capture_event_id(
+            "user_prompt_submit",
+            repeated_prompt,
+        )),
+        None,
+    )?;
+    conn.execute(
+        "UPDATE extraction_tasks
+         SET status = 'done', cursor_event_id = high_watermark_event_id
+         WHERE id = ?1",
+        [captured.extraction_task_id.expect("rollup task")],
+    )?;
+    let now = chrono::Utc::now().timestamp();
+    let worker_owner = db::current_worker_owner("daemon", std::process::id(), now * 1_000);
+    db::upsert_worker_heartbeat(
+        &conn,
+        &worker_owner,
+        i64::from(std::process::id()),
+        now,
+        now,
+    )?;
+    drop(conn);
+
+    let transcript = test_dir.path.join("rollout.jsonl");
+    std::fs::write(
+        &transcript,
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/codex-rollout-minimal.jsonl"
+        )),
+    )?;
+    let input = serde_json::json!({
+        "session_id": session_id,
+        "cwd": project,
+        "transcript_path": transcript
+    })
+    .to_string();
+
+    summarize_input(&input, Some("codex-cli"), None).await?;
+
+    let conn = db::open_db()?;
+    let user_messages: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM captured_events
+         WHERE session_id = ?1
+           AND event_type = 'message'
+           AND role = 'user'
+           AND content_text = ?2",
+        rusqlite::params![session_id, repeated_prompt],
+        |row| row.get(0),
+    )?;
+    assert_eq!(
+        user_messages, 0,
+        "fixture user turns without turn_id must not recapture an existing prompt"
+    );
+    let assistant_messages: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM captured_events
+         WHERE session_id = ?1
+           AND event_type = 'message'
+           AND role = 'assistant'",
+        rusqlite::params![session_id],
+        |row| row.get(0),
+    )?;
+    assert!(
+        assistant_messages > 0,
+        "assistant fixture turns must still be captured"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn summarize_hook_runs_stop_side_effects_without_summary_job() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("summary-hook-side-effects");
     let conn = db::open_db()?;

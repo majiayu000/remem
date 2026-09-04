@@ -2,7 +2,9 @@ use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::types::LoadedContext;
-use crate::memory::poisoning::{scan_instruction_pattern, InstructionPatternMatch};
+use crate::memory::poisoning::{
+    scan_instruction_pattern, scan_instruction_patterns, InstructionPatternMatch,
+};
 use crate::memory::Memory;
 
 #[derive(Debug, Clone, Default)]
@@ -144,13 +146,24 @@ pub(super) fn should_inject_memory_payload(
     payload: &str,
     channel: &str,
 ) -> Result<bool> {
-    let Some(pattern_match) = scan_instruction_pattern(payload) else {
-        return Ok(true);
-    };
-    let state = load_memory_poisoning_state(conn, memory.id)?;
-    if acknowledges_pattern(&state, pattern_match) {
+    let matches = scan_instruction_patterns(payload);
+    if matches.is_empty() {
         return Ok(true);
     }
+    let state = load_memory_poisoning_state(conn, memory.id)?;
+    if matches
+        .iter()
+        .copied()
+        .all(|pattern_match| acknowledges_pattern(&state, pattern_match))
+    {
+        return Ok(true);
+    }
+    let Some(pattern_match) = matches
+        .into_iter()
+        .find(|pattern_match| !acknowledges_pattern(&state, *pattern_match))
+    else {
+        return Ok(true);
+    };
 
     crate::log::error(
         "context-poisoning",

@@ -532,10 +532,13 @@ fn record_codex_transcript_message_events(
             continue;
         }
         if message.role == crate::memory::raw_archive::ROLE_USER {
-            if let Some(turn_id) = codex_transcript_message_turn_id(line) {
-                if codex_user_prompt_already_captured(conn, host, session_id, &turn_id, content)? {
-                    continue;
-                }
+            let already_captured = if let Some(turn_id) = codex_transcript_message_turn_id(line) {
+                codex_user_prompt_already_captured(conn, host, session_id, &turn_id, content)?
+            } else {
+                codex_user_prompt_content_already_captured(conn, host, session_id, content)?
+            };
+            if already_captured {
+                continue;
             }
         }
         let event_id =
@@ -612,6 +615,30 @@ fn codex_user_prompt_already_captured(
                AND e.event_type = 'user_prompt_submit'
          )",
         rusqlite::params![host, session_id, event_id, content_hash],
+        |row| row.get::<_, bool>(0),
+    )?;
+    Ok(exists)
+}
+
+fn codex_user_prompt_content_already_captured(
+    conn: &rusqlite::Connection,
+    host: &str,
+    session_id: &str,
+    content: &str,
+) -> Result<bool> {
+    let sanitized_content = db::redact_capture_content(content);
+    let content_hash = db::content_identity_hash(sanitized_content.as_bytes());
+    let exists = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1
+             FROM captured_events e
+             JOIN hosts h ON h.id = e.host_id
+             WHERE h.name = ?1
+               AND e.session_id = ?2
+               AND e.content_hash = ?3
+               AND e.event_type = 'user_prompt_submit'
+         )",
+        rusqlite::params![host, session_id, content_hash],
         |row| row.get::<_, bool>(0),
     )?;
     Ok(exists)

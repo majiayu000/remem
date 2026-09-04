@@ -34,9 +34,11 @@ pub(super) fn previously_injected_memory_ids(
         prompt_key_prefixes.push(format!("{key}:prompt-event:"));
         keys.push(key);
     }
-    let current_event = current_prompt_key
-        .and_then(|key| key.split_once(":prompt-event:"))
-        .map(|(_, event_id)| event_id);
+    let current_event = current_prompt_key.and_then(|key| {
+        prompt_key_prefixes
+            .iter()
+            .find_map(|prefix| key.strip_prefix(prefix.as_str()))
+    });
     let current_prompt_keys = current_event
         .map(|event_id| {
             prompt_key_prefixes
