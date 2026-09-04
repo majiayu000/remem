@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.87` aligns MCP mutation and recall contracts:
+  omitted `save_memory` hosts record as `unknown`, `recall_user_context`
+  requires `project` or `cwd`, and non-dry-run `govern_memory` requires the
+  dry-run `expected_versions` map. Dry-run versions are copied onto the
+  governance target inside the same transaction.
 - Staged source version `0.6.86` polishes CLI surface details: install and
   uninstall output is now English-only across the install flow, per-invocation
   `search-perf` diagnostics no longer mirror to stderr at default log level,
