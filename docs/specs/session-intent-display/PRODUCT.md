@@ -1,6 +1,6 @@
 # Session Intent Display Product Spec
 
-Status: Current contract (Phase 1 schema/display landed as v092; #1067–#1069 remaining)
+Status: Current contract (Phase 1 schema/display landed as v092; Phase 2 summary persist landed; #1068–#1069 remaining)
 Date: 2026-09-05
 
 Tracking:

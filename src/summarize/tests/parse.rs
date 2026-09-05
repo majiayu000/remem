@@ -63,3 +63,40 @@ fn parse_summary_returns_none_for_truncated_summary_block() {
     // A truncated response with no </summary> must return None, not Some with empty fields.
     assert!(parse_summary("<summary>truncated without closing tag").is_none());
 }
+
+#[test]
+fn parse_summary_accepts_closed_intent_and_abstains_on_unknown_or_invalid_topic() {
+    let parsed = parse_summary(
+        r#"
+<summary>
+<request>Fix listing</request>
+<session_intent>FIX</session_intent>
+<session_topic>Batch text display</session_topic>
+</summary>
+"#,
+    )
+    .expect("summary should parse");
+    assert_eq!(parsed.session_intent.as_deref(), Some("fix"));
+    assert_eq!(parsed.session_topic.as_deref(), Some("Batch text display"));
+
+    let abstain = parse_summary(
+        r#"
+<summary>
+<request>Fix listing</request>
+<session_intent>bugfix</session_intent>
+<session_topic></session_topic>
+</summary>
+"#,
+    )
+    .expect("summary should parse");
+    assert_eq!(abstain.session_intent, None);
+    assert_eq!(abstain.session_topic, None);
+
+    let too_long = "x".repeat(81);
+    let xml = format!(
+        "<summary><request>Fix listing</request><session_intent>fix</session_intent><session_topic>{too_long}</session_topic></summary>"
+    );
+    let parsed = parse_summary(&xml).expect("summary should parse");
+    assert_eq!(parsed.session_intent.as_deref(), Some("fix"));
+    assert_eq!(parsed.session_topic, None);
+}

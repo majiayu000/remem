@@ -206,7 +206,8 @@ remem ingest-sessions --root codex-cli:archive=/path/to/sessions --json
 `excluded_legacy_identities`。每条会话还带有可空的 `mmdd`、`session_intent`、
 `session_topic`、`display_label` 和 `session_intent_source`：`mmdd` 由创建时间
 按 Asia/Shanghai 推导；完整 `{MMDD}｜{INTENT}｜{topic}` 标签只在 intent 和 topic
-都已知时出现。listing 仍返回健康会话，`--latest N` 只从健康
+都已知时出现。Stop 摘要可用 `summary` 来源写入这些字段；未知、空、过长或被脱敏
+的值会弃权，而不是阻断整次摘要。listing 仍返回健康会话，`--latest N` 只从健康
 会话里取最新 N 条，未解决行既不会中断 listing，也不会占用 latest 名额。用信封
 里的 `source_root` / `project` / `session_id`（以及已知的 `host`）去检查或修复
 这些行；对跳过选择器的精确 `raw messages` 仍然 fail-closed。不要对 ingest 无法

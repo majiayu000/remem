@@ -2,7 +2,10 @@ use anyhow::{Context, Result};
 use rusqlite::{params, OptionalExtension};
 
 use crate::db;
+use crate::db::SessionIntentWrite;
 use crate::memory::format;
+use crate::memory::poisoning::scan_generated_surfaces;
+use crate::memory::session_label::{normalize_topic, SessionIntent};
 use crate::workstream::ParsedWorkStream;
 
 use super::super::parse::ParsedSummary;
@@ -27,6 +30,10 @@ pub(super) fn build_existing_summary_context(
         push_summary_tag(&mut parts, "learned", prev.learned.as_deref());
         push_summary_tag(&mut parts, "next_steps", prev.next_steps.as_deref());
         push_summary_tag(&mut parts, "preferences", prev.preferences.as_deref());
+        if let Some((intent, topic)) = previous_session_intent_fields(conn, memory_sid, project)? {
+            push_summary_tag(&mut parts, "session_intent", intent.as_deref());
+            push_summary_tag(&mut parts, "session_topic", topic.as_deref());
+        }
     }
     if let Some(prev_workstream) = prev_workstream {
         push_summary_tag(&mut parts, "workstream", Some(&prev_workstream.title));
@@ -75,6 +82,7 @@ pub(super) fn finalize_summary(
         summary.preferences.as_deref(),
         None,
         usage,
+        session_intent_write(&summary),
     ) {
         Ok(deleted) => deleted,
         Err(err) => {
@@ -169,12 +177,36 @@ fn summary_text_usage(summary: &ParsedSummary) -> i64 {
         summary.workstream_progress.as_deref(),
         summary.workstream_next.as_deref(),
         summary.workstream_blockers.as_deref(),
+        summary.session_intent.as_deref(),
+        summary.session_topic.as_deref(),
     ]
     .into_iter()
     .flatten()
     .map(str::len)
     .sum::<usize>();
     (total_len / 4) as i64
+}
+
+fn session_intent_write(summary: &ParsedSummary) -> SessionIntentWrite {
+    let session_intent = summary
+        .session_intent
+        .as_deref()
+        .and_then(SessionIntent::parse)
+        .map(|intent| intent.as_str().to_string());
+    let session_topic = summary.session_topic.as_deref().and_then(|raw| {
+        if scan_generated_surfaces(&[("session_topic", Some(raw))]).is_some() {
+            return None;
+        }
+        let redacted = crate::db::redact_capture_content(raw);
+        if redacted != raw {
+            return None;
+        }
+        normalize_topic(&redacted)
+    });
+    SessionIntentWrite {
+        session_intent,
+        session_topic,
+    }
 }
 
 fn release_lock_after_error(conn: &rusqlite::Connection, project: &str, reason: &str) {
@@ -194,6 +226,30 @@ struct ExistingWorkStreamContext {
     progress: Option<String>,
     next_action: Option<String>,
     blockers: Option<String>,
+}
+
+fn previous_session_intent_fields(
+    conn: &rusqlite::Connection,
+    memory_sid: &str,
+    project: &str,
+) -> Result<Option<(Option<String>, Option<String>)>> {
+    let row = conn
+        .query_row(
+            "SELECT session_intent, session_topic
+             FROM session_summaries
+             WHERE memory_session_id = ?1 AND project = ?2
+             ORDER BY created_at_epoch DESC
+             LIMIT 1",
+            params![memory_sid, project],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                ))
+            },
+        )
+        .optional()?;
+    Ok(row.filter(|(intent, topic)| intent.is_some() || topic.is_some()))
 }
 
 fn get_linked_workstream_context(
@@ -310,6 +366,8 @@ mod tests {
                 workstream_progress: None,
                 workstream_next: None,
                 workstream_blockers: None,
+                session_intent: None,
+                session_topic: None,
             },
         )
         .expect_err("missing candidate evidence should surface to the worker");
@@ -369,6 +427,8 @@ mod tests {
                 workstream_progress: None,
                 workstream_next: None,
                 workstream_blockers: None,
+                session_intent: None,
+                session_topic: None,
             },
         )?;
 
@@ -454,6 +514,8 @@ mod tests {
                 workstream_progress: None,
                 workstream_next: None,
                 workstream_blockers: None,
+                session_intent: None,
+                session_topic: None,
             },
         )?;
 
@@ -536,6 +598,8 @@ mod tests {
             workstream_progress: Some("ParsedSummary now carries workstream fields".to_string()),
             workstream_next: Some("Open PR for issue 136".to_string()),
             workstream_blockers: Some("Waiting for review".to_string()),
+            session_intent: None,
+            session_topic: None,
         };
 
         finalize_summary(
@@ -579,6 +643,66 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(request, "Wire summary workstream fields");
+        Ok(())
+    }
+
+    #[test]
+    fn finalize_summary_persists_closed_intent_and_abstains_without_blocking_promote() -> Result<()>
+    {
+        let mut conn = setup_conn()?;
+
+        finalize_summary(
+            &mut conn,
+            "intent-ok",
+            "mem-intent-ok",
+            "test/proj",
+            "hash-intent-ok",
+            ParsedSummary {
+                request: Some("Make session lists scannable".to_string()),
+                completed: Some("Stored closed intent codes".to_string()),
+                session_intent: Some("FIX".to_string()),
+                session_topic: Some("Batch text display".to_string()),
+                ..Default::default()
+            },
+        )?;
+
+        let ok: (Option<String>, Option<String>, Option<String>) = conn.query_row(
+            "SELECT session_intent, session_topic, session_intent_source
+             FROM session_summaries
+             WHERE memory_session_id = ?1",
+            params!["mem-intent-ok"],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(ok.0.as_deref(), Some("fix"));
+        assert_eq!(ok.1.as_deref(), Some("Batch text display"));
+        assert_eq!(ok.2.as_deref(), Some("summary"));
+
+        finalize_summary(
+            &mut conn,
+            "intent-abstain",
+            "mem-intent-abstain",
+            "test/proj",
+            "hash-intent-abstain",
+            ParsedSummary {
+                request: Some("Keep promoting memories".to_string()),
+                completed: Some("Summary saved despite bad intent".to_string()),
+                session_intent: Some("bugfix".to_string()),
+                session_topic: Some("ghp_abcdefghijklmnopqrstuvwxyz123456".to_string()),
+                ..Default::default()
+            },
+        )?;
+
+        let abstain: (Option<String>, Option<String>, Option<String>, String) = conn.query_row(
+            "SELECT session_intent, session_topic, session_intent_source, request
+             FROM session_summaries
+             WHERE memory_session_id = ?1",
+            params!["mem-intent-abstain"],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(abstain.0, None);
+        assert_eq!(abstain.1, None);
+        assert_eq!(abstain.2, None);
+        assert_eq!(abstain.3, "Keep promoting memories");
         Ok(())
     }
 }

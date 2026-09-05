@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.91` extracts optional `session_intent` and
+  `session_topic` from Stop summaries. Unknown, empty, too-long, poisoned, or
+  redacted topics abstain instead of blocking memory promotion.
 - Staged source version `0.6.90` stores optional session/workstream intent and
   topic, derives Asia/Shanghai `MMDD` from created time, and exposes
   `{MMDD}｜{INTENT}｜{topic}` labels on raw session lists, workstream lists, and
