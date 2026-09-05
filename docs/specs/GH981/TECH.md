@@ -1,6 +1,6 @@
 # Truthful MCP Tool Metadata — Tech Spec
 
-Refs #981, #932.
+Refs #981, #932, #1061.
 
 ## Design
 
@@ -118,7 +118,7 @@ null, such as governance `reason`, remain in `required` after normalization.
 | `lookup_commit` | array | `commits` | `commits` |
 | `commits_for_session` | array | `commits` | `commits` |
 | `save_memory` | object | same object | `status`, `operation`, `next_step` |
-| `govern_memory` | object | same object | `dry_run`, `action`, `reason`, `affected` |
+| `govern_memory` | object | same object | `dry_run`, `action`, `reason`, `affected`; dry-run also emits `expected_versions`, and each affected item includes the transaction-bound `version` |
 | `workstreams` | array | `workstreams` | `workstreams` |
 | `update_workstream` | object | same object | `id`, `updated` |
 | `search_raw` | object | same object | `query`, `count`, `has_more`, `results` |
@@ -196,6 +196,26 @@ Focused tests cover:
 Existing handler tests remain the behavioral oracle for the legacy text
 response. Verification uses focused MCP tests first, then `cargo fmt --check`,
 `cargo check`, `cargo test`, and the PR preflight.
+
+## Contract Amendment (#1061)
+
+#1061 updates the GH981 `save_memory`, `govern_memory`, and
+`recall_user_context` handler contracts without adding a second MCP spec:
+
+- Omitted `save_memory` host is recorded as `unknown`.
+- `govern_memories_inner` copies `target.version` onto each `GovernedMemory`
+  inside the open transaction. MCP dry-run maps those fields to
+  `expected_versions` and must not SELECT versions after commit.
+- `recall_user_context` rejects requests that omit both `project` and `cwd`.
+
+Adding `GovernedMemory.version` changes the exported Rust struct signature,
+including its field fingerprints. The five prior published identities are
+explicitly retired in the lifecycle manifest; the replacement struct and fields
+remain staged until release verification. The published baseline is retained.
+
+Focused MCP contract tests must prove dry-run `expected_versions` equal the
+versions loaded in that transaction even when another writer updates the row
+after commit.
 
 ## Version and Release Metadata
 

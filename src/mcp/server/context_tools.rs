@@ -86,7 +86,7 @@ impl MemoryServer {
     }
 
     #[tool(
-        description = "Assemble task-aware user context from safe claims, profile summary, repo memories, requested current-state keys, workstreams, and recent sessions. Its poisoning gate may quarantine an unsafe legacy or session summary. Requires a non-blank query. project sets the scope; otherwise cwd is normalized, and when both are omitted the current process working directory supplies the scope. Returns a compact source-attributed JSON object with included items, dropped items, reason codes, and budget metadata. Use search for exhaustive memory matches and current_state for one exact stable key; this tool selects a bounded context bundle instead. Invalid scope input, an unavailable process working directory, or database failures return a tool error."
+        description = "Assemble task-aware user context from safe claims, profile summary, repo memories, requested current-state keys, workstreams, and recent sessions. Its poisoning gate may quarantine an unsafe legacy or session summary. Requires a non-blank query and an explicit project or cwd scope. Returns a compact source-attributed JSON object with included items, dropped items, reason codes, and budget metadata. Use search for exhaustive memory matches and current_state for one exact stable key; this tool selects a bounded context bundle instead. Invalid or missing scope input and database failures return a tool error."
     )]
     pub(super) fn recall_user_context(
         &self,
@@ -437,10 +437,10 @@ fn resolve_recall_project(
     if let Some(cwd) = cwd.map(str::trim).filter(|value| !value.is_empty()) {
         return Ok(crate::db::project_from_cwd(cwd));
     }
-    let cwd = std::env::current_dir().map_err(|e| {
-        McpToolError::invalid_request(tool, format!("project or cwd required: {e}"))
-    })?;
-    Ok(crate::db::project_from_cwd(cwd.to_string_lossy().as_ref()))
+    Err(McpToolError::invalid_request(
+        tool,
+        "project or cwd is required",
+    ))
 }
 
 fn observation_details_with_compressed_sources(

@@ -87,9 +87,11 @@ pub(super) struct TimelineParams {
 pub(super) struct UserRecallParams {
     #[schemars(description = "Task or topic query for user-context recall.")]
     pub query: String,
-    #[schemars(description = "Project key/path filter. If omitted, cwd is normalized.")]
+    #[schemars(description = "Project key/path filter. Required when cwd is omitted.")]
     pub project: Option<String>,
-    #[schemars(description = "Current working directory used to derive the project key.")]
+    #[schemars(
+        description = "Working directory used to derive the project key. Required when project is omitted."
+    )]
     pub cwd: Option<String>,
     #[schemars(description = "Optional task intent, e.g. review, implement, debug, plan.")]
     pub task_intent: Option<String>,
@@ -196,7 +198,9 @@ pub(super) struct SaveMemoryParams {
         description = "Optional host session id. When provided, Stop summary promotion can suppress exact duplicate candidates from the same session."
     )]
     pub session_id: Option<String>,
-    #[schemars(description = "Optional host identifier, e.g. codex-cli, claude-code, api, cli.")]
+    #[schemars(
+        description = "Optional host identifier, e.g. codex-cli or claude-code. Defaults to unknown when omitted."
+    )]
     pub host: Option<String>,
     #[schemars(
         description = "Stable topic identifier for cross-session dedup. Same project+topic_key updates existing memory instead of creating new one. Format: kebab-case descriptive key, e.g. 'fts5-search-strategy', 'auth-middleware-design'."
@@ -268,6 +272,10 @@ pub(super) struct GovernMemoryParams {
     pub dry_run: Option<bool>,
     #[schemars(description = "Required true for non-dry-run destructive governance mutations.")]
     pub confirm_destructive: Option<bool>,
+    #[schemars(
+        description = "Current memory versions keyed by memory ID. Required for every ID in a non-dry-run mutation; obtain them from dry_run=true."
+    )]
+    pub expected_versions: Option<std::collections::BTreeMap<i64, i64>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

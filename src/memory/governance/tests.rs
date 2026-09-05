@@ -5,6 +5,23 @@ use super::*;
 use crate::memory::insert_memory;
 use crate::memory::tests_helper::setup_memory_schema;
 
+thread_local! {
+    static AFTER_GOVERNANCE_COMMIT: std::cell::Cell<Option<fn(&Connection)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+pub(crate) fn set_after_governance_commit_hook(hook: Option<fn(&Connection)>) {
+    AFTER_GOVERNANCE_COMMIT.with(|slot| slot.set(hook));
+}
+
+pub(super) fn run_after_governance_commit_hook(conn: &Connection) {
+    AFTER_GOVERNANCE_COMMIT.with(|slot| {
+        if let Some(hook) = slot.get() {
+            hook(conn);
+        }
+    });
+}
+
 #[test]
 fn govern_memories_requires_reason_and_confirmation_for_mutation() -> Result<()> {
     let conn = Connection::open_in_memory()?;
@@ -93,6 +110,11 @@ fn govern_memories_dry_run_lists_targets_without_mutation_or_audit() -> Result<(
     assert_eq!(result.affected.len(), 1);
     assert_eq!(result.affected[0].previous_status, "active");
     assert_eq!(result.affected[0].new_status, "deleted");
+    let loaded_version: i64 =
+        conn.query_row("SELECT version FROM memories WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(result.affected[0].version, loaded_version);
     let status: String =
         conn.query_row("SELECT status FROM memories WHERE id = ?1", [id], |row| {
             row.get(0)
@@ -104,6 +126,52 @@ fn govern_memories_dry_run_lists_targets_without_mutation_or_audit() -> Result<(
         |row| row.get(0),
     )?;
     assert_eq!(audit_count, 0);
+    Ok(())
+}
+
+#[test]
+fn govern_memories_dry_run_versions_come_from_the_open_transaction() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+    let id = insert_memory(
+        &conn,
+        Some("s1"),
+        "proj",
+        Some("tx-version"),
+        "Transaction version",
+        "Preview must keep the version loaded before commit.",
+        "discovery",
+        None,
+    )?;
+    let loaded_version: i64 =
+        conn.query_row("SELECT version FROM memories WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })?;
+    set_after_governance_commit_hook(Some(|conn| {
+        conn.execute("UPDATE memories SET version = version + 1 WHERE id > 0", [])
+            .expect("post-commit writer should bump versions");
+    }));
+    let result = govern_memories(
+        &conn,
+        &GovernMemoryRequest {
+            project: "proj",
+            ids: &[id],
+            action: MemoryGovernanceAction::MarkStale,
+            reason: None,
+            actor: Some("test"),
+            dry_run: true,
+            confirm_destructive: false,
+            acknowledge_pattern: None,
+        },
+    );
+    set_after_governance_commit_hook(None);
+    let result = result?;
+    assert_eq!(result.affected[0].version, loaded_version);
+    let db_version: i64 =
+        conn.query_row("SELECT version FROM memories WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(db_version, loaded_version + 1);
     Ok(())
 }
 

@@ -30,6 +30,9 @@ HOMEBREW_DOCS = (*README_PATHS, Path("docs/installation.md"))
 CURRENT_EXPORT_DOCS = (*README_PATHS, Path("docs/specs/project-memory-pack/PRODUCT.md"))
 SESSIONSTART_SMOKE_SCRIPT = Path("scripts/ci/smoke_sessionstart_context_gate.sh")
 SESSIONSTART_SMOKE_GUIDE = Path("docs/sessionstart-context-smoke.md")
+CURRENT_SPEC_ROOT = Path("docs/specs")
+HISTORICAL_SPEC_ROOT = Path("specs")
+SPEC_INDEX = CURRENT_SPEC_ROOT / "README.md"
 SESSIONSTART_SMOKE_ROUTES = {
     Path("README.md"): "scripts/ci/smoke_sessionstart_context_gate.sh",
     Path("README.zh-CN.md"): "scripts/ci/smoke_sessionstart_context_gate.sh",
@@ -571,6 +574,66 @@ def check_fts_semantics(root: Path, violations: list[str]) -> None:
         )
 
 
+def check_current_spec_handoffs(root: Path, violations: list[str]) -> None:
+    current_root = root / CURRENT_SPEC_ROOT
+    historical_root = root / HISTORICAL_SPEC_ROOT
+    current = (
+        {
+            path.name
+            for path in current_root.iterdir()
+            if path.is_dir() and re.fullmatch(r"GH\d+", path.name)
+        }
+        if current_root.is_dir()
+        else set()
+    )
+    historical = (
+        {
+            path.name
+            for path in historical_root.iterdir()
+            if path.is_dir() and re.fullmatch(r"GH\d+", path.name)
+        }
+        if historical_root.is_dir()
+        else set()
+    )
+    index = read(root, SPEC_INDEX)
+    section_match = re.search(
+        r"^### Current/Historical GH Packet Handoffs\s*$"
+        r"(?P<body>.*?)(?=^#{2,3}\s|\Z)",
+        index,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    section = section_match.group("body") if section_match else ""
+    declared_handoffs: set[str] = set()
+    for match in re.finditer(
+        r"^\|\s*`(?P<name>GH\d+)`\s*\|.*$", section, flags=re.MULTILINE
+    ):
+        name = match.group("name")
+        declared_handoffs.add(name)
+        expected = re.compile(
+            rf"^\|\s*`{name}`\s*\|\s*`docs/specs/{name}/`\s*"
+            rf"\|\s*`specs/{name}/`\s*\|\s*$"
+        )
+        if expected.fullmatch(match.group(0)) is None:
+            violations.append(
+                f"{SPEC_INDEX}: {name} handoff must declare exact current and historical paths"
+            )
+
+    for name in sorted((current & historical) - declared_handoffs):
+        violations.append(
+            f"{SPEC_INDEX}: overlapping {name} packets require a structured handoff row"
+        )
+
+    for name in sorted(declared_handoffs):
+        if not (current_root / name).is_dir():
+            violations.append(
+                f"{SPEC_INDEX}: declared current packet `docs/specs/{name}/` is missing"
+            )
+        if not (historical_root / name).is_dir():
+            violations.append(
+                f"{SPEC_INDEX}: declared historical packet `specs/{name}/` is missing"
+            )
+
+
 def check(root: Path = ROOT) -> list[str]:
     violations: list[str] = []
     check_homebrew_commands(root, violations)
@@ -580,6 +643,7 @@ def check(root: Path = ROOT) -> list[str]:
     check_bilingual_readme_invariants(root, violations)
     check_sessionstart_smoke(root, violations)
     check_fts_semantics(root, violations)
+    check_current_spec_handoffs(root, violations)
     return violations
 
 

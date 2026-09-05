@@ -34,11 +34,20 @@ pub struct RawSessionSummary {
     pub user_message_samples: Vec<String>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct ExcludedSessionIdentity {
+    pub source_root: String,
+    pub project: String,
+    pub session_id: String,
+    pub host: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RawSessionListing {
     pub(crate) sessions: Vec<RawSessionSummary>,
     pub(crate) excluded_legacy_rows: usize,
     pub(crate) excluded_legacy_sessions: usize,
+    pub(crate) excluded_legacy_identities: Vec<ExcludedSessionIdentity>,
 }
 
 impl std::ops::Deref for RawSessionListing {
@@ -85,6 +94,7 @@ pub(crate) struct RawSessionListingJson {
     count: usize,
     excluded_legacy_rows: usize,
     excluded_legacy_sessions: usize,
+    excluded_legacy_identities: Vec<ExcludedSessionIdentity>,
     sessions: Vec<RawSessionSummary>,
 }
 
@@ -101,6 +111,7 @@ pub(crate) fn build_session_listing_json(
         count: listing.sessions.len(),
         excluded_legacy_rows: listing.excluded_legacy_rows,
         excluded_legacy_sessions: listing.excluded_legacy_sessions,
+        excluded_legacy_identities: listing.excluded_legacy_identities,
         sessions: listing.sessions,
     }
 }
@@ -121,8 +132,7 @@ pub(crate) fn list_sessions_with_exclusions(
                 r.source_root, r.project, r.session_id, r.role, \
                 r.content_hash, r.created_at_epoch, r.id, r.source, \
                 r.event_time_source, \
-                CASE WHEN i.status = 'active' THEN i.host END, \
-                CASE WHEN i.status = 'active' THEN i.session_mode END \
+                i.host, i.session_mode, i.status \
          FROM raw_messages r \
          LEFT JOIN raw_session_identities i ON i.id = r.transcript_identity_id \
          WHERE NOT (r.source = 'hook' AND r.transcript_identity_id IS NULL)",
@@ -153,13 +163,13 @@ pub(crate) fn list_sessions_with_exclusions(
                 row.get::<_, String>(10)?,
                 row.get::<_, Option<String>>(11)?,
                 row.get::<_, Option<String>>(12)?,
+                row.get::<_, Option<String>>(13)?,
             ))
         },
     )?;
 
-    let mut grouped = BTreeMap::new();
-    let mut excluded_legacy_rows = 0_usize;
-    let mut excluded_legacy_sessions = BTreeSet::new();
+    let mut grouped: BTreeMap<(String, String, String, String), Accumulator> = BTreeMap::new();
+    let mut exclusions = ExclusionState::default();
     for row in rows {
         let (
             identity_id,
@@ -175,50 +185,108 @@ pub(crate) fn list_sessions_with_exclusions(
             event_time_source,
             host,
             session_mode,
+            status,
         ) = row?;
+        let active = status.as_deref() == Some("active");
         if identity_id.is_none() && source == "transcript" && event_time_source == "legacy_unknown"
         {
-            excluded_legacy_rows += 1;
-            excluded_legacy_sessions.insert((root, project, session_id));
+            exclusions.exclude(&root, &project, &session_id, None, ExclusionTaint::Tuple);
             continue;
         }
-        let host = host.with_context(|| {
-            format!(
-                "raw session provenance is missing or conflicted for ({root:?}, {project:?}, {session_id:?}); re-ingest its transcript"
-            )
-        })?;
-        crate::identity::InstallHost::parse(&host)?;
-        let session_mode = session_mode.with_context(|| {
-            format!(
-                "raw session mode provenance is missing for ({root:?}, {project:?}, {session_id:?}); re-ingest its transcript"
-            )
-        })?;
-        if !matches!(
-            session_mode.as_str(),
-            "interactive" | "unattended" | "subagent" | "unknown"
-        ) {
-            anyhow::bail!("raw session mode provenance is invalid: {session_mode:?}");
+        if !active {
+            let taint = if identity_id.is_none() || host.is_none() {
+                ExclusionTaint::Tuple
+            } else {
+                ExclusionTaint::Key
+            };
+            exclusions.exclude(&root, &project, &session_id, host.as_deref(), taint);
+            continue;
         }
-        let identity_id =
-            identity_id.context("identified raw row is missing transcript identity")?;
-        let ordinal = ordinal.context("identified raw row is missing transcript ordinal")?;
+        let Some(host) = host else {
+            exclusions.exclude(&root, &project, &session_id, None, ExclusionTaint::Tuple);
+            continue;
+        };
+        if crate::identity::InstallHost::parse(&host).is_err() {
+            exclusions.exclude(
+                &root,
+                &project,
+                &session_id,
+                Some(&host),
+                ExclusionTaint::Key,
+            );
+            continue;
+        }
+        let Some(session_mode) = session_mode else {
+            exclusions.exclude(
+                &root,
+                &project,
+                &session_id,
+                Some(&host),
+                ExclusionTaint::Key,
+            );
+            continue;
+        };
+        if !is_closed_session_mode(&session_mode) {
+            exclusions.exclude(
+                &root,
+                &project,
+                &session_id,
+                Some(&host),
+                ExclusionTaint::Key,
+            );
+            continue;
+        }
+        if exclusions.is_tainted(&root, &host, &project, &session_id) {
+            exclusions.exclude(
+                &root,
+                &project,
+                &session_id,
+                Some(&host),
+                ExclusionTaint::None,
+            );
+            continue;
+        }
+        let Some(identity_id) = identity_id else {
+            exclusions.exclude(
+                &root,
+                &project,
+                &session_id,
+                Some(&host),
+                ExclusionTaint::Key,
+            );
+            continue;
+        };
+        let Some(ordinal) = ordinal else {
+            exclusions.exclude(
+                &root,
+                &project,
+                &session_id,
+                Some(&host),
+                ExclusionTaint::Key,
+            );
+            continue;
+        };
         let key = (
             root.clone(),
             host.clone(),
             project.clone(),
             session_id.clone(),
         );
+        if let Some(accumulator) = grouped.get(&key) {
+            if accumulator.session_mode != session_mode {
+                exclusions.exclude(
+                    &root,
+                    &project,
+                    &session_id,
+                    Some(&host),
+                    ExclusionTaint::Key,
+                );
+                continue;
+            }
+        }
         let accumulator = grouped.entry(key).or_insert_with(|| {
             Accumulator::new(root, host, session_mode.clone(), project, session_id, epoch)
         });
-        if accumulator.session_mode != session_mode {
-            anyhow::bail!(
-                "raw session mode provenance conflicts for ({:?}, {:?}, {:?})",
-                accumulator.source_root,
-                accumulator.project,
-                accumulator.session_id
-            );
-        }
         accumulator.push(
             identity_id,
             ordinal,
@@ -229,6 +297,14 @@ pub(crate) fn list_sessions_with_exclusions(
             query.sample_user_messages.max(0),
         );
     }
+    grouped.retain(|key, accumulator| {
+        let (root, host, project, session_id) = key;
+        if !exclusions.is_tainted(root, host, project, session_id) {
+            return true;
+        }
+        exclusions.drop_accumulated(accumulator);
+        false
+    });
 
     let mut accumulators = grouped.into_values().collect::<Vec<_>>();
     if let Some(latest) = query.latest {
@@ -270,11 +346,119 @@ pub(crate) fn list_sessions_with_exclusions(
             Ok(accumulator.finish(samples))
         })
         .collect::<Result<Vec<_>>>()?;
-    Ok(RawSessionListing {
-        sessions,
-        excluded_legacy_rows,
-        excluded_legacy_sessions: excluded_legacy_sessions.len(),
-    })
+    Ok(exclusions.into_listing(sessions))
+}
+
+fn is_closed_session_mode(session_mode: &str) -> bool {
+    matches!(
+        session_mode,
+        "interactive" | "unattended" | "subagent" | "unknown"
+    )
+}
+
+#[derive(Clone, Copy)]
+enum ExclusionTaint {
+    Tuple,
+    Key,
+    None,
+}
+
+#[derive(Default)]
+struct ExclusionState {
+    rows: usize,
+    identities: BTreeSet<ExcludedSessionIdentity>,
+    tainted_tuples: BTreeSet<(String, String, String)>,
+    tainted_keys: BTreeSet<(String, String, String, String)>,
+}
+
+impl ExclusionState {
+    fn exclude(
+        &mut self,
+        source_root: &str,
+        project: &str,
+        session_id: &str,
+        host: Option<&str>,
+        taint: ExclusionTaint,
+    ) {
+        self.rows += 1;
+        self.identities.insert(ExcludedSessionIdentity {
+            source_root: source_root.to_string(),
+            project: project.to_string(),
+            session_id: session_id.to_string(),
+            host: host.map(str::to_string),
+        });
+        match taint {
+            ExclusionTaint::Tuple => {
+                self.tainted_tuples.insert((
+                    source_root.to_string(),
+                    project.to_string(),
+                    session_id.to_string(),
+                ));
+            }
+            ExclusionTaint::Key => {
+                if let Some(host) = host {
+                    self.tainted_keys.insert((
+                        source_root.to_string(),
+                        host.to_string(),
+                        project.to_string(),
+                        session_id.to_string(),
+                    ));
+                } else {
+                    self.tainted_tuples.insert((
+                        source_root.to_string(),
+                        project.to_string(),
+                        session_id.to_string(),
+                    ));
+                }
+            }
+            ExclusionTaint::None => {}
+        }
+    }
+
+    fn is_tainted(&self, root: &str, host: &str, project: &str, session_id: &str) -> bool {
+        self.tainted_tuples
+            .iter()
+            .any(|(tainted_root, tainted_project, tainted_session)| {
+                tainted_root == root && tainted_project == project && tainted_session == session_id
+            })
+            || self.tainted_keys.contains(&(
+                root.to_string(),
+                host.to_string(),
+                project.to_string(),
+                session_id.to_string(),
+            ))
+    }
+
+    fn drop_accumulated(&mut self, accumulator: &Accumulator) {
+        self.rows += accumulator.message_count as usize;
+        self.identities.insert(ExcludedSessionIdentity {
+            source_root: accumulator.source_root.clone(),
+            project: accumulator.project.clone(),
+            session_id: accumulator.session_id.clone(),
+            host: Some(accumulator.host.clone()),
+        });
+    }
+
+    fn into_listing(self, sessions: Vec<RawSessionSummary>) -> RawSessionListing {
+        let excluded_legacy_sessions = self
+            .identities
+            .iter()
+            .map(|identity| {
+                (
+                    identity.source_root.clone(),
+                    identity.project.clone(),
+                    identity.session_id.clone(),
+                )
+            })
+            .collect::<BTreeSet<_>>()
+            .len();
+        RawSessionListing {
+            sessions,
+            excluded_legacy_rows: self.rows,
+            excluded_legacy_sessions,
+            excluded_legacy_identities: self.identities.into_iter().collect(),
+        }
+    }
 }
 
 fn accumulator_selector_cmp(left: &Accumulator, right: &Accumulator) -> std::cmp::Ordering {

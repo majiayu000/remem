@@ -260,7 +260,7 @@ pub(super) fn run_raw_sessions(
     }
     if sessions.excluded_legacy_rows > 0 {
         println!(
-            "Excluded {} pre-identity legacy transcript rows across {} sessions; raw archive rows were retained.",
+            "Skipped {} unresolved raw rows across {} sessions; identities are in --json as excluded_legacy_identities. Do not re-ingest a skipped row unless ingest can claim it.",
             sessions.excluded_legacy_rows, sessions.excluded_legacy_sessions
         );
     }

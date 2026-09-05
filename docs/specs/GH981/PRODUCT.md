@@ -1,6 +1,6 @@
 # Truthful MCP Tool Metadata — Product Spec
 
-Refs #981, #932.
+Refs #981, #932, #1061.
 
 ## Problem
 
@@ -105,6 +105,26 @@ The detail union accepts `source=memory`, `source=observation`, and the exact-ID
 `source=session_summary` branch used by prompt-time continuity anchors. No
 public tool name, text serialization, ordering, whitespace, or error payload
 changes as part of #981.
+
+## Contract Amendment (#1061)
+
+GH981 remains the canonical MCP tool contract. #1061 is a reviewed breaking
+amendment to three production tools on that contract, not a parallel MCP spec:
+
+- `save_memory`: pass `host` when the calling host is known. An omitted host is
+  stored as `unknown`. The server does not infer `codex-cli`.
+- `govern_memory`: call `dry_run=true` first. The preview's `expected_versions`
+  are the versions loaded inside that governance transaction. Non-dry-run
+  mutations require `expected_versions` for every target ID, plus
+  `confirm_destructive=true` and an explicit reason. A later SELECT must not
+  authorize a mutation of a state the caller never previewed.
+- `recall_user_context`: `project` or `cwd` is required. The server does not
+  infer this scope from its own process working directory.
+
+Other tools keep the GH981 legacy text shapes. `govern_memory` dry-run text
+additionally includes `expected_versions`, and each `affected` item includes
+the transaction-bound `version`. Those fields are additive JSON; omitting
+`expected_versions` on a mutation is an invalid request.
 
 ## Non-Goals
 

@@ -316,6 +316,28 @@ fn production_null_paths_are_valid_in_every_nullable_output_family() -> anyhow::
         &raw_sessions,
         "excluded_legacy_sessions"
     ));
+    assert!(has_property(
+        &raw_sessions,
+        &raw_sessions,
+        "excluded_legacy_identities"
+    ));
+    let excluded_identity = array_items(
+        &raw_sessions,
+        property(&raw_sessions, "excluded_legacy_identities"),
+    )
+    .map(|items| resolve_local_ref(&raw_sessions, items))
+    .expect("excluded_legacy_identities must declare identity items");
+    assert!(has_property(
+        &raw_sessions,
+        excluded_identity,
+        "source_root"
+    ));
+    assert!(has_property(&raw_sessions, excluded_identity, "project"));
+    assert!(has_property(&raw_sessions, excluded_identity, "session_id"));
+    assert!(explicitly_allows_null(
+        &raw_sessions,
+        property(excluded_identity, "host")
+    ));
     Ok(())
 }
 

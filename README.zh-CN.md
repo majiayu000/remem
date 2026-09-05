@@ -202,7 +202,13 @@ remem ingest-sessions --root codex-cli:archive=/path/to/sessions --json
 把同一条 `raw sessions` 摘要中的 `host`、`source_root`、`project` 和
 `session_id` 原样传给 `raw messages`。旧脚本必须补上必填的 `--host`，并把
 `--root LABEL=PATH` 改成 `--root HOST:LABEL=PATH`；`raw reconcile` 使用相同
-格式。`HOST` 只能是 `claude-code` 或 `codex-cli`，`LABEL` 会持久化为
+格式。JSON 信封会报告 `excluded_legacy_rows`、`excluded_legacy_sessions` 和
+`excluded_legacy_identities`：listing 仍返回健康会话，`--latest N` 只从健康
+会话里取最新 N 条，未解决行既不会中断 listing，也不会占用 latest 名额。用信封
+里的 `source_root` / `project` / `session_id`（以及已知的 `host`）去检查或修复
+这些行；对跳过选择器的精确 `raw messages` 仍然 fail-closed。不要对 ingest 无法
+认领的行执行 re-ingest。
+`HOST` 只能是 `claude-code` 或 `codex-cli`，`LABEL` 会持久化为
 `source_root`。Cursor snapshot 证据需要手动配置并验证
 `remem summarize --host cursor` Stop 集成；文件系统 `--root` 摄取和对账会
 明确拒绝 `cursor`。
@@ -218,6 +224,17 @@ remem govern --action stale --dry-run --json <id>
 
 写入型治理命令会按风险提供预览、明确确认或 review 边界。最新参数以
 `remem <command> --help` 为准，README 不再手工复制整份命令表。
+
+MCP 工具使用同一份本地存储，但有更严格的线契约。规范入口是
+[GH981](docs/specs/GH981/PRODUCT.md)，并包含 #1061 的变更与范围边界：
+
+- `save_memory`：已知调用 host 时传入 `host`。省略时记为 `unknown`，不会推断成
+  `codex-cli`。
+- `govern_memory`：先 `dry_run`，预览 ID 以及该治理事务里加载到的当前版本。
+  正式写入必须为每个 ID 提供 `expected_versions`，并带上
+  `confirm_destructive=true` 和明确 reason。
+- `recall_user_context`：必须提供 `project` 或 `cwd`。服务器不会用自身进程的
+  工作目录推断范围。
 
 ### 配置 Memory AI 与检索
 

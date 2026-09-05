@@ -230,9 +230,15 @@ Copy `host`, `source_root`, `project`, and `session_id` unchanged from one
 `raw sessions` summary into `raw messages`. Existing scripts must add the
 required `--host` selector and replace `--root LABEL=PATH` with
 `--root HOST:LABEL=PATH`; the same root format applies to `raw reconcile`.
-The JSON envelope reports `excluded_legacy_rows` and
-`excluded_legacy_sessions` when pre-identity transcript rows are retained in
-the raw archive but cannot safely enter the host-bound session contract.
+The JSON envelope reports `excluded_legacy_rows`, `excluded_legacy_sessions`,
+and `excluded_legacy_identities` when some archive rows cannot enter the
+host-bound session contract. Listing still returns healthy sessions;
+`--latest N` fills that bound from healthy sessions only and does not let
+unresolved rows occupy those slots. Use the skipped identities (`source_root`,
+`project`, `session_id`, and `host` when known) to inspect or repair those
+rows. Exact `raw messages` for a skipped selector stays fail-closed. Do not
+re-ingest a skipped row unless ingest can actually claim it — many legacy
+rows have no trusted host provenance.
 `HOST` is `claude-code` or `codex-cli`, and `LABEL` becomes the persisted
 `source_root`. Cursor snapshot evidence requires a manually configured and
 verified `remem summarize --host cursor` Stop integration; filesystem `--root`
@@ -250,6 +256,18 @@ remem govern --action stale --dry-run --json <id>
 Mutating governance commands expose previews, explicit confirmations, or
 review boundaries according to their risk. Run `remem <command> --help` for
 the current contract instead of relying on a copied command inventory.
+
+MCP tools share that store with stricter wire contracts. The canonical MCP
+contract is [GH981](docs/specs/GH981/PRODUCT.md), including the #1061
+mutation and scope boundary:
+
+- `save_memory`: pass `host` when the calling host is known. An omitted host is
+  recorded as `unknown`, never inferred as `codex-cli`.
+- `govern_memory`: dry-run first to preview IDs and current versions from that
+  governance transaction. Non-dry-run mutations require `expected_versions`
+  for every ID, `confirm_destructive=true`, and an explicit reason.
+- `recall_user_context`: supply `project` or `cwd`. The server does not infer
+  this scope from its own process working directory.
 
 ### Configure memory AI and retrieval
 
