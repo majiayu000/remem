@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
-use super::{finalize_summarize, upsert_session};
+use super::{finalize_summarize, upsert_session, SessionIntentWrite};
 
 fn setup_summary_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
@@ -29,7 +29,11 @@ fn setup_summary_schema(conn: &Connection) -> Result<()> {
             acknowledged_pattern_version INTEGER,
             acknowledged_at_epoch INTEGER,
             poisoning_block_count INTEGER NOT NULL DEFAULT 0,
-            poisoning_last_blocked_at_epoch INTEGER
+            poisoning_last_blocked_at_epoch INTEGER,
+            session_intent TEXT,
+            session_topic TEXT,
+            session_intent_source TEXT,
+            session_intent_updated_at_epoch INTEGER
         );
         CREATE TABLE summarize_cooldown (
             project TEXT PRIMARY KEY,
@@ -74,6 +78,7 @@ fn finalize_summarize_replaces_in_single_commit() -> Result<()> {
         Some("pref"),
         None,
         99,
+        SessionIntentWrite::default(),
     )?;
     assert_eq!(deleted, 1);
 
@@ -136,6 +141,7 @@ fn finalize_summarize_quarantines_poisoned_generated_fields() -> Result<()> {
         None,
         None,
         12,
+        SessionIntentWrite::default(),
     )?;
 
     let (status, stage, field, pattern): (String, String, String, String) = conn.query_row(
@@ -169,6 +175,7 @@ fn finalize_summarize_marks_clean_summary_safe() -> Result<()> {
         None,
         None,
         12,
+        SessionIntentWrite::default(),
     )?;
 
     let status: String = conn.query_row(

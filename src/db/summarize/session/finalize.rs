@@ -2,6 +2,37 @@ use anyhow::Result;
 use rusqlite::{params, Connection};
 
 use crate::memory::poisoning::scan_generated_surfaces;
+use crate::memory::session_label::SessionIntentSource;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionIntentWrite {
+    pub session_intent: Option<String>,
+    pub session_topic: Option<String>,
+}
+
+impl SessionIntentWrite {
+    fn persist_columns(
+        &self,
+        created_at_epoch: i64,
+    ) -> (
+        Option<&str>,
+        Option<&str>,
+        Option<&'static str>,
+        Option<i64>,
+    ) {
+        let intent = self.session_intent.as_deref();
+        let topic = self.session_topic.as_deref();
+        if intent.is_none() && topic.is_none() {
+            return (None, None, None, None);
+        }
+        (
+            intent,
+            topic,
+            Some(SessionIntentSource::Summary.as_str()),
+            Some(created_at_epoch),
+        )
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn finalize_summarize(
@@ -17,10 +48,13 @@ pub fn finalize_summarize(
     preferences: Option<&str>,
     prompt_number: Option<i64>,
     discovery_tokens: i64,
+    session_intent: SessionIntentWrite,
 ) -> Result<usize> {
     let now = chrono::Utc::now();
     let created_at = now.to_rfc3339();
     let created_at_epoch = now.timestamp();
+    let (session_intent, session_topic, session_intent_source, session_intent_updated_at_epoch) =
+        session_intent.persist_columns(created_at_epoch);
     let verdict = scan_generated_surfaces(&[
         ("request", request),
         ("completed", completed),
@@ -51,8 +85,9 @@ pub fn finalize_summarize(
          (memory_session_id, project, request, completed, decisions, learned, \
           next_steps, preferences, prompt_number, created_at, created_at_epoch, \
           discovery_tokens, poisoning_status, quarantine_stage, quarantine_field, \
-          quarantine_pattern_id, quarantine_pattern_version) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+          quarantine_pattern_id, quarantine_pattern_version, session_intent, \
+          session_topic, session_intent_source, session_intent_updated_at_epoch) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
         params![
             memory_session_id,
             project,
@@ -77,6 +112,10 @@ pub fn finalize_summarize(
             verdict
                 .as_ref()
                 .map(|matched| matched.pattern.pattern_set_version),
+            session_intent,
+            session_topic,
+            session_intent_source,
+            session_intent_updated_at_epoch,
         ],
     )?;
     tx.execute(
