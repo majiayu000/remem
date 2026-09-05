@@ -8,9 +8,8 @@ Partial implementation. The modules below describe the landed planner and
 bounded MCP search projection. They are not the complete plan-controlled
 per-channel executor, execution-evidence propagation, per-intent goldens,
 static-vs-router ablation/default decision, or closure audit required by the
-original #934 acceptance. GitHub issue #934 is currently closed; remaining
-work needs a reopened or separately linked implementation issue plus fresh
-verification.
+original #934 acceptance. GitHub issue #934 is open and parked; remaining
+work needs a later implementation slice plus fresh verification.
 
 ## Module Layout
 

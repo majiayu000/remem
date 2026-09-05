@@ -9,15 +9,14 @@ and `context-plan` debug surface. PR #1006 (`d458bfeb`) subsequently unified
 Context Bundle on `RetrievalPlan` and added explicit SessionStart planning/DB
 execution. PR #1020 (`10b2d38d`, implementation commit `477ca5db`) later added
 the optional routed MCP `search` projection onto existing production loaders.
-GitHub issue #934 is currently closed, but its original acceptance still lacks
-the complete plan-controlled per-channel executor and full execution-evidence
-propagation, per-intent goldens, static-vs-router ablation/default decision,
-and a closure audit. The closed remote state therefore must not be read as
-proof that the acceptance contract below is complete.
+GitHub issue #934 is open and parked. Landed slices stay landed; the original
+acceptance still lacks the complete plan-controlled per-channel executor and
+full execution-evidence propagation, per-intent goldens, static-vs-router
+ablation/default decision, and a closure audit. Remaining work can stay parked
+until prioritized; it must not be tracked as overall completion.
 
-Remaining work requires either reopening #934 or a separately linked
-implementation issue before it starts. Until the registered ablation/default
-gate lands and passes, static retrieval remains the product default.
+Until the registered ablation/default gate lands and passes, static retrieval
+remains the product default.
 
 ## Problem
 
