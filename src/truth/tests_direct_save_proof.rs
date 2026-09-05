@@ -29,12 +29,7 @@ fn insert_active_bugfix(
     Ok(())
 }
 
-fn insert_claim(
-    conn: &Connection,
-    memory_id: i64,
-    fingerprint: &str,
-    preview: &str,
-) -> Result<()> {
+fn insert_claim(conn: &Connection, memory_id: i64, fingerprint: &str, preview: &str) -> Result<()> {
     conn.execute(
         "INSERT INTO memory_claims
          (memory_id, project, claim_source, memory_type, content_fingerprint,
@@ -71,12 +66,7 @@ fn arbitrary_unverified_path_with_claim_is_not_current() -> Result<()> {
 fn stale_claim_does_not_admit_rewritten_body() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     crate::migrate::run_migrations(&conn)?;
-    insert_active_bugfix(
-        &conn,
-        1,
-        "original body",
-        Some(r#"["reports/source.md"]"#),
-    )?;
+    insert_active_bugfix(&conn, 1, "original body", Some(r#"["reports/source.md"]"#))?;
     insert_claim(&conn, 1, "fingerprint-of-original-body", "original body")?;
     conn.execute(
         "UPDATE memories SET content = 'rewritten body' WHERE id = 1",

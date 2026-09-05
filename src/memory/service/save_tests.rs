@@ -811,4 +811,3 @@ fn rest_direct_save_with_arbitrary_files_is_not_current_context_eligible() -> an
     );
     Ok(())
 }
-
