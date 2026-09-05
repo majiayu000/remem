@@ -51,6 +51,7 @@ pub(crate) use hybrid_context::{
 };
 pub(crate) use policy::ContextLimits;
 pub(crate) use prompt_submit::prompt_submit_additional_context;
+pub(crate) use prompt_submit::prompt_submit_additional_context_for_event;
 pub(crate) use relevance::{
     build_sessionstart_relevance_plan, RelevanceCandidate, RelevanceSection,
     SessionStartRelevancePlan, SESSIONSTART_RELEVANCE_POLICY_VERSION,

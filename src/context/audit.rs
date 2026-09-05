@@ -110,11 +110,36 @@ impl ContextAuditItem {
         updated_at_epoch: i64,
         reason: &'static str,
     ) -> Self {
+        Self::dropped_workstream_for_channel(id, title, updated_at_epoch, "workstreams", reason)
+    }
+
+    pub fn dropped_prompt_continuity_workstream(
+        id: i64,
+        title: &str,
+        updated_at_epoch: i64,
+        reason: &'static str,
+    ) -> Self {
+        Self::dropped_workstream_for_channel(
+            id,
+            title,
+            updated_at_epoch,
+            "prompt_continuity",
+            reason,
+        )
+    }
+
+    fn dropped_workstream_for_channel(
+        id: i64,
+        title: &str,
+        updated_at_epoch: i64,
+        channel: &'static str,
+        reason: &'static str,
+    ) -> Self {
         Self {
             item_kind: "workstream",
             item_id: Some(id),
             memory_id: None,
-            channel: "workstreams",
+            channel,
             score: None,
             render_order: None,
             status: "dropped",

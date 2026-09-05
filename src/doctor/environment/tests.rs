@@ -44,6 +44,7 @@ fn probe_hooks_accepts_codex_strategy() -> anyhow::Result<()> {
         r#"{
   "hooks": {
     "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context --host codex-cli" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "command": "/tmp/remem session-init --host codex-cli", "timeout": 15 }] }],
     "Stop": [{ "hooks": [{ "command": "/tmp/remem summarize --host codex-cli" }] }]
   }
 }"#,
@@ -77,7 +78,7 @@ fn probe_hooks_accepts_codex_strategy() -> anyhow::Result<()> {
     });
 
     assert!(matches!(check.status, Status::Ok));
-    assert!(check.detail.contains("2/2 registered"), "{}", check.detail);
+    assert!(check.detail.contains("3/3 registered"), "{}", check.detail);
     Ok(())
 }
 
@@ -138,6 +139,7 @@ fn probe_hooks_warns_on_codex_posttool_observe() -> anyhow::Result<()> {
         r#"{
   "hooks": {
     "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context --host codex-cli" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "command": "/tmp/remem session-init --host codex-cli", "timeout": 15 }] }],
     "PostToolUse": [{ "hooks": [{ "command": "/stale/remem observe --host codex-cli" }] }],
     "Stop": [{ "hooks": [{ "command": "/tmp/remem summarize --host codex-cli" }] }]
   }
@@ -288,6 +290,7 @@ fn doctor_reports_each_present_host_even_if_only_one_targets_remem() {
         r#"{
   "hooks": {
     "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context --host codex-cli" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "command": "/tmp/remem session-init --host codex-cli", "timeout": 15 }] }],
     "Stop": [{ "hooks": [{ "command": "/tmp/remem summarize --host codex-cli" }] }]
   }
 }"#,

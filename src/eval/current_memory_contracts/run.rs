@@ -666,20 +666,22 @@ fn evaluate_prompt_audit_and_usage(
             && !output_gate.second_output_present,
     );
 
-    let rendered_citation_contract = injected_output.as_deref().is_some_and(|output| {
-        output.contains("Memory citations:") && output.contains(&format!("memory:#{memory_id}"))
+    let rendered_candidate_contract = injected_output.as_deref().is_some_and(|output| {
+        output.contains(&format!("memory:#{memory_id}"))
+            && output.contains("open=get_observations")
+            && !output.contains("Persist private data with SQLCipher encryption at rest.")
     });
     let injected_count = context_item_count(conn, PROMPT_SESSION, "injected")?;
     push_case(
         cases,
         "injection",
         "audit_injected",
-        "context injection audit has injected row and rendered citation contract",
+        "context injection audit has injected row and compact candidate contract",
         format!(
-            "injected={injected_count} item_id={injected_item_id} output_present={} citation_contract={rendered_citation_contract}",
+            "injected={injected_count} item_id={injected_item_id} output_present={} candidate_contract={rendered_candidate_contract}",
             injected_output.is_some(),
         ),
-        injected_count > 0 && injected_output.is_some() && rendered_citation_contract,
+        injected_count > 0 && injected_output.is_some() && rendered_candidate_contract,
     );
 
     let dropped_count = context_item_count(conn, PROMPT_SESSION, "dropped")?;

@@ -575,7 +575,10 @@ fn build_hooks_contains_expected_codex_commands() {
         "/tmp/remem context --host codex-cli"
     );
     assert!(hooks["SessionStart"][0].get("matcher").is_none());
-    assert!(hooks.get("UserPromptSubmit").is_none());
+    assert_eq!(
+        hooks["UserPromptSubmit"][0]["hooks"][0]["command"],
+        "/tmp/remem session-init --host codex-cli"
+    );
     assert!(hooks.get("PostToolUse").is_none());
     assert!(hooks.get("PreToolUse").is_none());
     assert!(hooks.get("PreCompact").is_none());

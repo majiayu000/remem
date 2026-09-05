@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.89` installs Codex `UserPromptSubmit` and emits a
+  compact prompt-time candidate index. The first prompt can receive bounded
+  continuity anchors; task memories use the existing hybrid RRF path and
+  expose metadata plus detail lookup hints without body previews or a final
+  confidence threshold.
 - Staged source version `0.6.88` keeps exact `raw messages` fail-closed when
   one host has conflicting session modes, while listing continues to skip and
   report those sessions. `--latest N` still fills from healthy sessions only.

@@ -1,25 +1,27 @@
-use std::collections::{HashMap, HashSet};
-
 use anyhow::Result;
+#[cfg(test)]
 use rusqlite::params;
 
-use crate::memory::Memory;
-
-use super::audit::{
-    memory_render_metadata_with_labels, record_context_injection_items, ContextAuditItem,
-};
-use super::fact_labels::annotate_memories_with_temporal_facts_for_query;
-use super::format::{char_len, format_epoch_short, truncate_chars_with_ellipsis};
+use super::audit::{record_context_injection_items, ContextAuditItem};
 use super::host::resolve_host_kind;
-use super::injection_gate::{injection_key_for_audit, ContextGateAction, ContextGateDecision};
+#[cfg(test)]
+use super::injection_gate::injection_key_for_audit;
+use super::injection_gate::{ContextGateAction, ContextGateDecision};
 use super::invocation::ContextInvocation;
 use super::policy::{ContextLimits, ContextPolicy, SectionKind};
 
-const PROMPT_SUBMIT_MEMORY_LIMIT: i64 = 3;
-const PROMPT_SUBMIT_CHAR_LIMIT: usize = 1_800;
-const PROMPT_SUBMIT_PREVIEW_CHARS: usize = 240;
+const PROMPT_SUBMIT_MEMORY_LIMIT: i64 = 4;
 #[cfg(test)]
 const PROMPT_SUBMIT_LATENCY_BUDGET_MS: u128 = 250;
+
+mod candidates;
+use candidates::{prompt_submit_staleness_labels, render_prompt_submit_context};
+mod audit_identity;
+
+#[cfg(test)]
+mod regression_tests;
+#[cfg(test)]
+mod review_regression_tests;
 
 pub(crate) fn prompt_submit_additional_context(
     conn: &rusqlite::Connection,
@@ -28,6 +30,20 @@ pub(crate) fn prompt_submit_additional_context(
     session_id: &str,
     prompt: &str,
     host_arg: Option<&str>,
+) -> Result<Option<String>> {
+    prompt_submit_additional_context_for_event(
+        conn, cwd, project, session_id, prompt, host_arg, None,
+    )
+}
+
+pub(crate) fn prompt_submit_additional_context_for_event(
+    conn: &rusqlite::Connection,
+    cwd: &str,
+    project: &str,
+    session_id: &str,
+    prompt: &str,
+    host_arg: Option<&str>,
+    prompt_event_id: Option<&str>,
 ) -> Result<Option<String>> {
     let prompt = prompt.trim();
     if prompt.is_empty() {
@@ -54,7 +70,13 @@ pub(crate) fn prompt_submit_additional_context(
         .unwrap_or(&[]);
     let current_branch = crate::db::detect_git_branch(cwd);
     let as_of_epoch = chrono::Utc::now().timestamp();
-    let mut retrieved = super::prompt_submit_retrieval::retrieve(
+    let prompt_injection_key = audit_identity::prompt_injection_key(&invocation, prompt_event_id);
+    let already_injected = audit_identity::previously_injected_memory_ids(
+        conn,
+        &invocation,
+        prompt_injection_key.as_deref(),
+    )?;
+    let retrieval = super::prompt_submit_retrieval::retrieve(
         conn,
         project,
         prompt,
@@ -62,13 +84,9 @@ pub(crate) fn prompt_submit_additional_context(
         excluded_types,
         PROMPT_SUBMIT_MEMORY_LIMIT,
         as_of_epoch,
+        &already_injected,
     )?;
-    annotate_memories_with_temporal_facts_for_query(
-        conn,
-        &mut retrieved,
-        Some(prompt),
-        Some(project),
-    )?;
+    let mut retrieved = retrieval.memories;
     let mut g2_drops = Vec::new();
     let mut g2_errors = Vec::new();
     super::query::exclude_non_current_context_memories(
@@ -81,7 +99,6 @@ pub(crate) fn prompt_submit_additional_context(
     if let Some(error) = g2_errors.first() {
         anyhow::bail!("prompt-submit memory visibility classification failed: {error:?}");
     }
-    let already_injected = query_previously_injected_memory_ids(conn, &invocation)?;
     let mut rendered = Vec::new();
     let mut audit_items = Vec::new();
     for drop in g2_drops {
@@ -100,11 +117,17 @@ pub(crate) fn prompt_submit_additional_context(
                 "prompt_submit",
                 "already_injected",
             ));
-        } else if !prompt_relevance_passes(prompt, &memory) {
+        } else if retrieval.detail_poisoning_drops.contains(&memory.id) {
             audit_items.push(ContextAuditItem::dropped_memory(
                 &memory,
                 "prompt_submit",
-                "below_prompt_relevance_threshold",
+                "prompt_submit_detail_poisoning_gate",
+            ));
+        } else if !retrieval.poisoning_safe_ids.contains(&memory.id) {
+            audit_items.push(ContextAuditItem::dropped_memory(
+                &memory,
+                "prompt_submit",
+                "prompt_submit_poisoning_gate",
             ));
         } else if rendered.len() < PROMPT_SUBMIT_MEMORY_LIMIT as usize {
             rendered.push(memory);
@@ -117,147 +140,47 @@ pub(crate) fn prompt_submit_additional_context(
         }
     }
 
-    if rendered.is_empty() {
-        if audit_items.is_empty() {
-            audit_items.push(prompt_submit_abstained_item(
-                "prompt_submit_no_relevant_context",
-            ));
-        }
-        let decision = empty_prompt_submit_decision();
+    let continuity = candidates::load_first_turn_continuity(conn, project, &invocation)?;
+    audit_items.extend(continuity.audit_items().iter().cloned());
+
+    if rendered.is_empty() && continuity.is_empty() {
+        audit_items.push(prompt_submit_abstained_item(
+            "prompt_submit_no_relevant_context",
+        ));
+        let decision = empty_prompt_submit_decision(prompt_injection_key);
         record_context_injection_items(conn, &invocation, &decision, &audit_items)?;
         return Ok(None);
     }
 
     let render_reference_epoch = chrono::Utc::now().timestamp();
     let staleness_labels = prompt_submit_staleness_labels(conn, &rendered, render_reference_epoch);
-    audit_items.extend(rendered.iter().enumerate().map(|(index, memory)| {
-        ContextAuditItem::injected_memory_with_labels(
-            memory,
-            "prompt_submit",
-            index as i64 + 1,
-            &staleness_labels,
-        )
-    }));
-    let output = render_prompt_submit_context(&rendered, &staleness_labels, render_reference_epoch);
-    let decision = prompt_submit_decision(output);
+    let rendered_context = render_prompt_submit_context(
+        &continuity,
+        &rendered,
+        &retrieval.detail_read_tokens,
+        &staleness_labels,
+        render_reference_epoch,
+    )?;
+    audit_items.extend(rendered_context.audit_items);
+    if !rendered_context.has_candidates {
+        audit_items.push(prompt_submit_abstained_item(
+            "prompt_submit_no_rendered_candidates",
+        ));
+        let decision = empty_prompt_submit_decision(prompt_injection_key);
+        record_context_injection_items(conn, &invocation, &decision, &audit_items)?;
+        return Ok(None);
+    }
+    let decision = prompt_submit_decision(rendered_context.output, prompt_injection_key);
     record_context_injection_items(conn, &invocation, &decision, &audit_items)?;
     Ok(Some(decision.output))
 }
 
-fn query_previously_injected_memory_ids(
-    conn: &rusqlite::Connection,
-    invocation: &ContextInvocation,
-) -> Result<HashSet<i64>> {
-    let key = injection_key_for_audit(invocation);
-    let Some(session_id) = invocation.session_id.as_deref() else {
-        return Ok(HashSet::new());
-    };
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT memory_id
-         FROM context_injection_items
-         WHERE host = ?1
-           AND project = ?2
-           AND session_id = ?3
-           AND injection_key = ?4
-           AND status = 'injected'
-           AND memory_id IS NOT NULL",
-    )?;
-    let rows = stmt.query_map(
-        params![
-            invocation.host.as_env_value(),
-            invocation.project,
-            session_id,
-            key
-        ],
-        |row| row.get::<_, i64>(0),
-    )?;
-    Ok(crate::db::query::collect_rows(rows)?.into_iter().collect())
-}
-
-fn prompt_relevance_passes(prompt: &str, memory: &Memory) -> bool {
-    super::relevance::significant_token_relevance_score(
-        prompt,
-        &format!("{} {}", memory.title, memory.text),
-    ) > 0.0
-}
-
-fn render_prompt_submit_context(
-    memories: &[Memory],
-    staleness_labels: &HashMap<i64, crate::memory::MemoryStalenessLabel>,
-    render_reference_epoch: i64,
-) -> String {
-    let mut output = String::from("# remem prompt context\n\n## Relevant Memories\n");
-    output.push_str(crate::memory::usage::citation_contract_line());
-    output.push('\n');
-    output.push_str(crate::user_context::usage_policy::USER_CONTEXT_USAGE_POLICY);
-    output.push('\n');
-    for memory in memories {
-        let header = format!(
-            "**#{} {}** ({}, {}; {})\n",
-            memory.id,
-            memory.title,
-            memory.memory_type,
-            format_epoch_short(memory.updated_at_epoch),
-            memory_render_metadata_with_labels(memory, render_reference_epoch, staleness_labels)
-        );
-        if char_len(&output) + char_len(&header) >= PROMPT_SUBMIT_CHAR_LIMIT {
-            break;
-        }
-        output.push_str(&header);
-        let remaining = PROMPT_SUBMIT_CHAR_LIMIT.saturating_sub(char_len(&output) + 1);
-        let preview =
-            truncate_chars_with_ellipsis(&memory.text, remaining.min(PROMPT_SUBMIT_PREVIEW_CHARS));
-        if !preview.is_empty() {
-            output.push_str(&preview);
-            output.push('\n');
-        }
-    }
-    output
-}
-
-fn prompt_submit_staleness_labels(
-    conn: &rusqlite::Connection,
-    memories: &[Memory],
-    render_reference_epoch: i64,
-) -> HashMap<i64, crate::memory::MemoryStalenessLabel> {
-    crate::memory::staleness::memory_staleness_labels_for_memories_lossy(
-        conn,
-        memories,
-        render_reference_epoch,
-        |id, error| {
-            crate::log::error(
-                "context",
-                &format!("prompt-submit source-anchor label failed for memory {id}: {error}"),
-            );
-        },
-    )
-    .unwrap_or_else(|error| {
-        crate::log::error(
-            "context",
-            &format!("prompt-submit staleness batch failed: {error}"),
-        );
-        memories
-            .iter()
-            .map(|memory| {
-                (
-                    memory.id,
-                    crate::memory::memory_staleness_error_label(
-                        memory,
-                        render_reference_epoch,
-                        &error,
-                    ),
-                )
-            })
-            .collect()
-    })
-}
-
-fn empty_prompt_submit_decision() -> ContextGateDecision {
+fn empty_prompt_submit_decision(key: Option<String>) -> ContextGateDecision {
     ContextGateDecision {
         output: String::new(),
         action: ContextGateAction::Bypassed,
         reason: "prompt_submit_empty",
-        key: None,
+        key,
         context_hash: None,
         output_mode: Some("prompt_submit"),
         retained_context_chars: None,
@@ -265,12 +188,12 @@ fn empty_prompt_submit_decision() -> ContextGateDecision {
     }
 }
 
-fn prompt_submit_decision(output: String) -> ContextGateDecision {
+fn prompt_submit_decision(output: String, key: Option<String>) -> ContextGateDecision {
     ContextGateDecision {
         output,
         action: ContextGateAction::Bypassed,
         reason: "prompt_submit",
-        key: None,
+        key,
         context_hash: None,
         output_mode: Some("prompt_submit"),
         retained_context_chars: None,
@@ -335,6 +258,29 @@ mod tests {
         Ok(id)
     }
 
+    fn record_prompt_event(
+        conn: &Connection,
+        project: &str,
+        session_id: &str,
+        content: &str,
+    ) -> Result<()> {
+        crate::db::record_captured_event(
+            conn,
+            &crate::db::CaptureEventInput {
+                host: "claude-code",
+                session_id,
+                project,
+                cwd: Some(project),
+                event_type: "user_prompt_submit",
+                role: Some("user"),
+                tool_name: None,
+                content,
+                task_kind: Some(crate::db::ExtractionTaskKind::SessionRollup),
+            },
+        )?;
+        Ok(())
+    }
+
     #[test]
     fn prompt_submit_injects_relevant_memory() -> Result<()> {
         let conn = setup_prompt_submit_conn()?;
@@ -358,17 +304,59 @@ mod tests {
 
         assert!(output.contains("SQLCipher storage decision"));
         assert!(output.contains("src=memory:#"));
-        assert_eq!(
-            output
-                .matches(crate::user_context::usage_policy::USER_CONTEXT_USAGE_POLICY)
-                .count(),
-            1
+        assert!(!output.contains("Persist private data with SQLCipher encryption at rest."));
+        assert!(output.contains("open=get_observations"));
+        assert!(output.contains("optional leads"));
+        Ok(())
+    }
+
+    #[test]
+    fn claude_repeated_continue_surfaces_continuity_only_once() -> Result<()> {
+        let conn = setup_prompt_submit_conn()?;
+        let project = "/tmp/remem-prompt-submit-continuity";
+        crate::workstream::upsert_workstream(
+            &conn,
+            project,
+            "memory-session-continuity",
+            &crate::workstream::ParsedWorkStream {
+                title: Some("Prompt-time recall rollout".to_string()),
+                progress: Some("Codex hook contract verified".to_string()),
+                next_action: Some("Implement compact candidate rendering".to_string()),
+                blockers: None,
+                is_completed: false,
+            },
+        )?;
+        record_prompt_event(&conn, project, "sess-prompt-continuity", "continue")?;
+        let first = prompt_submit_additional_context(
+            &conn,
+            project,
+            project,
+            "sess-prompt-continuity",
+            "continue",
+            Some("claude-code"),
+        )?
+        .ok_or_else(|| anyhow::anyhow!("first prompt should surface continuity"))?;
+        assert!(first.contains("Prompt-time recall rollout"), "{first}");
+        assert!(first.contains("first_turn_continuity"), "{first}");
+
+        record_prompt_event(&conn, project, "sess-prompt-continuity", "continue")?;
+        let later = prompt_submit_additional_context(
+            &conn,
+            project,
+            project,
+            "sess-prompt-continuity",
+            "unrelated quantum telemetry",
+            Some("claude-code"),
+        )?;
+        assert!(
+            later.is_none(),
+            "later prompt must omit continuity: {later:?}"
         );
         Ok(())
     }
 
     #[test]
-    fn prompt_submit_injects_fact_only_memory_with_temporal_label() -> Result<()> {
+    fn prompt_submit_indexes_fact_only_memory_without_preloading_fact_body() -> Result<()> {
         let conn = setup_prompt_submit_conn()?;
         let project = "/tmp/remem-prompt-submit-fact";
         let now = chrono::Utc::now().timestamp();
@@ -400,11 +388,12 @@ mod tests {
         .ok_or_else(|| anyhow::anyhow!("fact-only prompt should inject context"))?;
 
         assert!(output.contains("Opaque signer source"), "{output}");
-        assert!(output.contains("Temporal facts:"), "{output}");
+        assert!(!output.contains("Temporal facts:"), "{output}");
         assert!(
-            output.contains("HarborMint verified_by Toma Reed"),
+            !output.contains("HarborMint verified_by Toma Reed"),
             "{output}"
         );
+        assert!(output.contains("open=get_observations"), "{output}");
         Ok(())
     }
 
@@ -579,7 +568,7 @@ mod tests {
         )?
         .ok_or_else(|| anyhow::anyhow!("prompt output should not be suppressed"))?;
 
-        assert!(output.starts_with("# remem prompt context"));
+        assert!(output.starts_with("# remem prompt candidate index"));
         assert!(output.contains("Migration locking fix"));
         assert!(!output.contains("# remem context delta"));
         Ok(())
@@ -625,43 +614,6 @@ mod tests {
     }
 
     #[test]
-    fn prompt_submit_renderer_uses_supplied_reference_epoch() {
-        let memory = Memory {
-            id: 1,
-            session_id: None,
-            project: "/tmp/remem-prompt-submit-reference".to_string(),
-            topic_key: None,
-            title: "Older memory".to_string(),
-            text: "Body".to_string(),
-            memory_type: "decision".to_string(),
-            files: None,
-            created_at_epoch: 1_500_000_000,
-            updated_at_epoch: 1_500_000_000,
-            status: "active".to_string(),
-            branch: None,
-            scope: "project".to_string(),
-        };
-        let staleness_labels = HashMap::new();
-
-        let fresh = render_prompt_submit_context(
-            std::slice::from_ref(&memory),
-            &staleness_labels,
-            memory.updated_at_epoch,
-        );
-        let fresh_again = render_prompt_submit_context(
-            std::slice::from_ref(&memory),
-            &staleness_labels,
-            memory.updated_at_epoch,
-        );
-        let old =
-            render_prompt_submit_context(&[memory], &staleness_labels, 1_500_000_000 + 91 * 86_400);
-
-        assert_eq!(fresh, fresh_again);
-        assert!(fresh.contains("staleness=fresh"), "{fresh}");
-        assert!(old.contains("staleness=old"), "{old}");
-    }
-
-    #[test]
     fn prompt_submit_context_appends_without_rewriting_session_start_prefix() -> Result<()> {
         let conn = setup_prompt_submit_conn()?;
         let project = "/tmp/remem-prompt-submit-additive";
@@ -689,7 +641,7 @@ mod tests {
             &combined.as_bytes()[..session_start_prefix.len()],
             session_start_prefix.as_bytes()
         );
-        assert!(prompt_context.starts_with("# remem prompt context"));
+        assert!(prompt_context.starts_with("# remem prompt candidate index"));
         assert!(!prompt_context.contains("# remem context\n\n## Core"));
         Ok(())
     }
@@ -766,6 +718,7 @@ mod tests {
             "SELECT drop_reason
              FROM context_injection_items
              WHERE session_id = 'sess-prompt-g2'
+               AND status = 'dropped'
              ORDER BY id DESC
              LIMIT 1",
             [],

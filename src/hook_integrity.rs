@@ -1,7 +1,9 @@
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
+mod expected;
 mod parse;
+use expected::{CLAUDE_EXPECTED, CODEX_EXPECTED};
 use parse::{parse_remem_hook_value, parse_remem_invocation};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,76 +72,6 @@ impl RememInvocation {
         self.host.as_deref().or(self.env_host.as_deref())
     }
 }
-
-const CLAUDE_EXPECTED: &[ExpectedHookSpec] = &[
-    ExpectedHookSpec {
-        event: "PostToolUse",
-        subcommand: "observe",
-        nested_subcommand: None,
-        host: "claude-code",
-        matcher: Some("Write|Edit|NotebookEdit|Bash|Grep|Glob|Agent|Task"),
-        timeout_seconds: Some(120),
-    },
-    ExpectedHookSpec {
-        event: "PreCompact",
-        subcommand: "summarize",
-        nested_subcommand: None,
-        host: "claude-code",
-        matcher: None,
-        timeout_seconds: Some(120),
-    },
-    ExpectedHookSpec {
-        event: "Stop",
-        subcommand: "summarize",
-        nested_subcommand: None,
-        host: "claude-code",
-        matcher: None,
-        timeout_seconds: Some(120),
-    },
-    ExpectedHookSpec {
-        event: "SessionStart",
-        subcommand: "context",
-        nested_subcommand: None,
-        host: "claude-code",
-        matcher: Some("startup|resume|clear|compact"),
-        timeout_seconds: Some(15),
-    },
-    ExpectedHookSpec {
-        event: "UserPromptSubmit",
-        subcommand: "session-init",
-        nested_subcommand: None,
-        host: "claude-code",
-        matcher: None,
-        timeout_seconds: Some(15),
-    },
-    ExpectedHookSpec {
-        event: "PreToolUse",
-        subcommand: "rules",
-        nested_subcommand: Some("eval"),
-        host: "claude-code",
-        matcher: Some("Bash"),
-        timeout_seconds: Some(5),
-    },
-];
-
-const CODEX_EXPECTED: &[ExpectedHookSpec] = &[
-    ExpectedHookSpec {
-        event: "SessionStart",
-        subcommand: "context",
-        nested_subcommand: None,
-        host: "codex-cli",
-        matcher: None,
-        timeout_seconds: None,
-    },
-    ExpectedHookSpec {
-        event: "Stop",
-        subcommand: "summarize",
-        nested_subcommand: None,
-        host: "codex-cli",
-        matcher: None,
-        timeout_seconds: None,
-    },
-];
 
 pub(crate) fn expected_specs(host: &str) -> &'static [ExpectedHookSpec] {
     match host {
@@ -569,6 +501,59 @@ mod tests {
     }
 
     #[test]
+    fn codex_prompt_submit_requires_installer_timeout() {
+        for (timeout, healthy) in [(Some(15), true), (None, false), (Some(1), false)] {
+            let mut doc = json!({
+                "hooks": {
+                    "SessionStart": [{
+                        "hooks": [{
+                            "command": "/tmp/remem context --host codex-cli",
+                            "timeout": 15
+                        }]
+                    }],
+                    "UserPromptSubmit": [{
+                        "hooks": [{
+                            "command": "/tmp/remem session-init --host codex-cli",
+                            "timeout": timeout
+                        }]
+                    }],
+                    "Stop": [{
+                        "hooks": [{
+                            "command": "/tmp/remem summarize --host codex-cli",
+                            "timeout": 120
+                        }]
+                    }]
+                }
+            });
+            let prompt_hook = &mut doc["hooks"]["UserPromptSubmit"][0]["hooks"][0];
+            if timeout.is_none() {
+                prompt_hook
+                    .as_object_mut()
+                    .and_then(|hook| hook.remove("timeout"));
+            }
+
+            let report = evaluate_hooks(
+                &doc,
+                "codex",
+                PathBuf::from("/tmp/settings.json"),
+                Path::new("/tmp/remem"),
+            );
+
+            assert_eq!(report.is_healthy(), healthy, "timeout={timeout:?}");
+            if !healthy {
+                assert!(report
+                    .stale_details
+                    .iter()
+                    .any(|detail| detail.contains("UserPromptSubmit")
+                        && detail.contains("timeout drift")));
+                assert!(report
+                    .warning_block()
+                    .contains("Repair: remem install --target codex --repair"));
+            }
+        }
+    }
+
+    #[test]
     fn parses_exec_form_hooks() {
         let hook = json!({
             "type": "command",
@@ -685,7 +670,13 @@ mod tests {
                 "SessionStart": [{
                     "hooks": [{
                         "command": format!("{hook_s} context --host codex-cli"),
-                        "timeout": 15000
+                        "timeout": 15
+                    }]
+                }],
+                "UserPromptSubmit": [{
+                    "hooks": [{
+                        "command": format!("{hook_s} session-init --host codex-cli"),
+                        "timeout": 15
                     }]
                 }],
                 "Stop": [{

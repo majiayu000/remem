@@ -17,6 +17,7 @@ pub use lifecycle::{
 };
 pub use matcher::find_matching_workstream;
 pub use merge::merge_workstreams_manual;
+pub(crate) use query::query_active_workstreams_page;
 pub use query::{query_active_workstreams, query_workstreams};
 pub use types::{
     ParsedWorkStream, WorkStream, WorkStreamMergeResult, WorkStreamStatus, WorkStreamUpsertResult,

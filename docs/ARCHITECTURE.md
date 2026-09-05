@@ -8,10 +8,10 @@
 │                                                            │
 │  Claude: SessionStart/UserPromptSubmit/PreToolUse/PostToolUse│
 │          /Stop                                              │
-│  Codex:       SessionStart/Stop                             │
+│  Codex:       SessionStart/UserPromptSubmit/Stop            │
 │                                                            │
 │  SessionStart ──────→ context       (inject memories)      │
-│  UserPromptSubmit ──→ session-init  (Claude Code only)     │
+│  UserPromptSubmit ──→ session-init  (Claude Code / Codex)   │
 │  PreToolUse(Bash) ──→ rules eval    (Claude Code only)     │
 │  PostToolUse ───────→ observe       (Claude Code)           │
 │  Stop ──────────────→ summarize     (3-gate + worker)      │
@@ -521,6 +521,23 @@ counts from the embedded entries. A domain-separated artifact binding
 additionally covers the `injection_run_id` and audit hash. Control conditions
 carry an explicit `not_applicable` status instead of an empty or synthetic
 audit.
+
+### 4b. Prompt-Time Candidate Index (UserPromptSubmit → session-init)
+
+```text
+User prompt -> captured_events
+            -> first prompt: safe active workstream + unfinished session anchors (max 2)
+            -> existing hybrid RRF memory retrieval (max 4)
+            -> current-truth / ownership / lifecycle / suppression / poisoning filters
+            -> compact IDs, titles, state, retrieval reason, read cost, and open-tool hints
+```
+
+The prompt block is additive and never rewrites the SessionStart prefix. It
+does not preload memory bodies or apply a final relevance/confidence threshold.
+RRF proposes leads; the model may ignore, open, or search beyond them. The
+captured-event count controls the first-turn continuity lane without lexical
+intent rules. Every surfaced or dropped item is written to the existing
+context injection audit.
 
 ### 5. Legacy Pending Queue Recovery
 

@@ -43,8 +43,10 @@ user preferences.
 ## Activation
 
 The plugin exposes MCP tools as soon as Codex loads `.mcp.json` and the runtime
-manager can resolve a matching `remem` binary. Automatic context injection and
-Stop summarization require explicit activation. The plugin does not ship
+manager can resolve a matching `remem` binary. Automatic SessionStart context,
+UserPromptSubmit candidate recall, and Stop summarization require explicit
+activation. Prompt-time candidates are optional leads; open only useful IDs
+before relying on them. The plugin does not ship
 auto-loaded hook definitions because Codex hook runners do not always provide a
 plugin root environment. Activation writes verified host-level hooks through
 `remem install --target codex --hooks-only`.

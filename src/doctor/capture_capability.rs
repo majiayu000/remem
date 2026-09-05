@@ -39,7 +39,7 @@ fn capture_capability(host: &'static str) -> Check {
         "codex" => Check::new(
             "Capture capability (codex)",
             Status::Ok,
-            "capture=drain-only; SessionStart context and Stop transcript drain; PostToolUse observe is intentionally unsupported",
+            "capture=drain-only; SessionStart context, UserPromptSubmit prompt capture/candidate index, and Stop transcript drain; PostToolUse observe is intentionally unsupported",
         ),
         _ => Check::new(
             "Capture capability",

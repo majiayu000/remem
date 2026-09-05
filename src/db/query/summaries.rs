@@ -96,3 +96,68 @@ pub fn get_summary_by_session(
         None => Ok(None),
     }
 }
+
+pub fn get_summaries_by_ids(
+    conn: &Connection,
+    ids: &[i64],
+    project: Option<&str>,
+) -> Result<Vec<SessionSummary>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = (1..=ids.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>();
+    let mut parameters = ids
+        .iter()
+        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
+        .collect::<Vec<_>>();
+    let mut conditions = vec![
+        format!("id IN ({})", placeholders.join(", ")),
+        EPOCH_SECS_ONLY.to_string(),
+        NOT_QUARANTINED_SQL.to_string(),
+    ];
+    if let Some(project) = project {
+        let (owner_filter, next_idx) = crate::project_alias::push_project_value_filter(
+            conn,
+            "owner_key",
+            project,
+            ids.len() + 1,
+            &mut parameters,
+        )?;
+        let (target_filter, next_idx) = crate::project_alias::push_project_value_filter(
+            conn,
+            "target_project",
+            project,
+            next_idx,
+            &mut parameters,
+        )?;
+        let (legacy_filter, _) = crate::project_alias::push_project_value_filter(
+            conn,
+            "project",
+            project,
+            next_idx,
+            &mut parameters,
+        )?;
+        conditions.push(format!(
+            "((owner_scope = 'repo' AND {owner_filter})
+               OR (owner_scope = 'repo' AND {target_filter})
+               OR (owner_scope IS NULL AND {legacy_filter}))"
+        ));
+    }
+
+    let mut stmt = conn.prepare(&format!(
+        "SELECT id, memory_session_id, request, completed, decisions, learned, \
+         next_steps, preferences, COALESCE(created_at, datetime(created_at_epoch, 'unixepoch')), \
+         created_at_epoch, project \
+         FROM session_summaries WHERE {} ORDER BY created_at_epoch DESC",
+        conditions.join(" AND ")
+    ))?;
+    let refs = crate::db::to_sql_refs(&parameters);
+    let rows = stmt.query_map(refs.as_slice(), summary_from_row)?;
+    let mut summaries = collect_rows(rows)?;
+    summaries
+        .retain(|summary| summary_passes_poisoning_gate(conn, summary, "get_summaries_by_ids"));
+    Ok(summaries)
+}

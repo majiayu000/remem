@@ -63,6 +63,28 @@ pub(super) fn fetch_bounded_ranked<T>(
     memory_id: impl Fn(&T) -> i64,
     as_of_epoch: i64,
 ) -> Result<Vec<T>> {
+    fetch_bounded_ranked_where(
+        conn,
+        target,
+        initial_limit,
+        fetch,
+        memory_id,
+        as_of_epoch,
+        |_| Ok(true),
+    )
+}
+
+/// Retain the shortest ranked prefix containing `target` rows that pass both
+/// G2 and the caller's remaining admission gates.
+pub(super) fn fetch_bounded_ranked_where<T>(
+    conn: &Connection,
+    target: usize,
+    initial_limit: i64,
+    fetch: impl FnOnce(i64) -> Result<Vec<T>>,
+    memory_id: impl Fn(&T) -> i64,
+    as_of_epoch: i64,
+    mut additionally_admitted: impl FnMut(&mut T) -> Result<bool>,
+) -> Result<Vec<T>> {
     if target == 0 {
         return Ok(Vec::new());
     }
@@ -76,10 +98,11 @@ pub(super) fn fetch_bounded_ranked<T>(
     let admitted = crate::truth::admit_many_for_current_context(conn, &ids, as_of_epoch)?;
     let mut admitted_count = 0usize;
     let mut prefix_len = rows.len();
-    for (index, id) in ids.iter().enumerate() {
+    for (index, (id, row)) in ids.iter().zip(rows.iter_mut()).enumerate() {
         if admitted
             .get(id)
             .is_some_and(|row| row.current_context_eligible)
+            && additionally_admitted(row)?
         {
             admitted_count += 1;
             if admitted_count == target {

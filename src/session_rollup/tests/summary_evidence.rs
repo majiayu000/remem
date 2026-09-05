@@ -153,3 +153,68 @@ async fn session_rollup_keeps_codex_assistant_claim_review_gated() -> Result<()>
     assert_eq!(memory_count, 0);
     Ok(())
 }
+
+#[tokio::test]
+async fn drained_user_prompt_remains_in_stop_transcript_evidence() -> Result<()> {
+    let data_dir = crate::db::test_support::ScopedTestDataDir::new("rollup-drained-prompt");
+    std::fs::create_dir_all(&data_dir.path)?;
+    let transcript = data_dir.path.join("rollout.jsonl");
+    let request = "Preserve the user's request after the prompt range was drained.";
+    let answer = "The implementation and focused verification are complete.";
+    let mut conn = setup_conn();
+    let session_id = "drained-prompt-session";
+    let task_id = capture(&conn, session_id, "user_prompt_submit", request)?;
+    conn.execute(
+        "UPDATE extraction_tasks SET status = 'done', cursor_event_id = high_watermark_event_id WHERE id = ?1",
+        [task_id],
+    )?;
+    let message = |role: &str, text: &str| {
+        serde_json::json!({
+            "timestamp": "2026-09-02T00:00:00Z",
+            "type": "response_item",
+            "payload": {"type": "message", "role": role, "content": [{
+                "type": if role == "user" { "input_text" } else { "output_text" },
+                "text": text
+            }]}
+        })
+    };
+    std::fs::write(
+        &transcript,
+        format!(
+            "{}\n{}\n",
+            message("user", request),
+            message("assistant", answer)
+        ),
+    )?;
+    capture_codex_transcript_message(&conn, session_id, "assistant", answer)?;
+    capture(
+        &conn,
+        session_id,
+        "session_stop",
+        &serde_json::json!({
+            "session_id": session_id,
+            "cwd": "/tmp/remem",
+            "transcript_path": transcript,
+            "transcript_byte_len": std::fs::metadata(&transcript)?.len()
+        })
+        .to_string(),
+    )?;
+    let task = claim_rollup_task(&mut conn)?;
+    let range = load_rollup_range(&conn, &task)?.expect("follow-up range");
+    assert!(range
+        .events
+        .iter()
+        .all(|event| event.event_type != "user_prompt_submit"));
+    let result = process_with_summarizer(&mut conn, &task, |prompt| async move {
+        assert_eq!(
+            prompt.matches(&request.replace('\'', "&apos;")).count(),
+            1,
+            "{prompt}"
+        );
+        assert_eq!(prompt.matches(answer).count(), 1, "{prompt}");
+        Ok(xml_response("Completed the requested implementation.", ""))
+    })
+    .await?;
+    assert_eq!(result, SessionRollupResult::Written);
+    Ok(())
+}

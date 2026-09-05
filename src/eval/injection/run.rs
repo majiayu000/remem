@@ -19,6 +19,7 @@ const CURRENT_BRANCH: &str = "main";
 const ABSTENTION_FORBIDDEN_TITLE: &str = "Unrelated recent deployment note";
 const STALE_ANCHOR_TITLE: &str = "Stale source anchor decision";
 const USER_PROMPT_SESSION: &str = "eval-user-prompt-submit";
+const USER_PROMPT_ABSTENTION_SESSION: &str = "eval-user-prompt-submit-abstention";
 const ONE_ADDED_TITLE: &str = "Renderer churn added decision";
 const RANK_SIGNAL_PROJECT: &str = "/tmp/remem-injection-eval/rank-signal";
 const RANK_SIGNAL_QUERY: &str = "rankbridge 2026-07-30";
@@ -171,11 +172,31 @@ fn run_sandbox_eval_inner(
         Some(USER_PROMPT_HOST),
     )
     .context("render UserPromptSubmit matching additionalContext")?;
+    for (event_id, content) in [
+        ("eval-abstention-prompt-1", "inspect existing work"),
+        ("eval-abstention-prompt-2", "continue"),
+    ] {
+        crate::db::record_captured_event_with_id(
+            &conn,
+            &crate::db::CaptureEventInput {
+                host: USER_PROMPT_HOST,
+                session_id: USER_PROMPT_ABSTENTION_SESSION,
+                project: ABSTENTION_PROJECT,
+                cwd: None,
+                event_type: "user_prompt_submit",
+                role: Some("user"),
+                tool_name: None,
+                content,
+                task_kind: None,
+            },
+            Some(event_id),
+        )?;
+    }
     let user_prompt_abstention_context = crate::context::prompt_submit_additional_context(
         &conn,
         ABSTENTION_PROJECT,
         ABSTENTION_PROJECT,
-        USER_PROMPT_SESSION,
+        USER_PROMPT_ABSTENTION_SESSION,
         "Investigate quantum telemetry routing",
         Some(USER_PROMPT_HOST),
     )

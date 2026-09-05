@@ -299,6 +299,7 @@ pub(crate) fn build_sessionstart_relevance_plan(
     }
 }
 
+#[cfg(test)]
 pub(super) fn significant_token_relevance_score(query: &str, candidate_text: &str) -> f64 {
     relevance_score_from_tokens(&significant_tokens(query), candidate_text)
 }

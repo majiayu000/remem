@@ -62,6 +62,27 @@ pub fn record_captured_event_with_id(
         conn,
         input,
         event_id_override,
+        None,
+        now,
+        now,
+        None,
+        None,
+        CaptureGitBranch::DetectFromCwd,
+    )
+}
+
+pub(crate) fn record_captured_event_with_id_and_turn_id(
+    conn: &Connection,
+    input: &CaptureEventInput<'_>,
+    event_id_override: Option<&str>,
+    turn_id: Option<&str>,
+) -> Result<CaptureEventOutcome> {
+    let now = chrono::Utc::now().timestamp();
+    record_captured_event_inner(
+        conn,
+        input,
+        event_id_override,
+        turn_id,
         now,
         now,
         None,
@@ -82,6 +103,7 @@ pub fn record_captured_event_with_id_and_reference_time(
         conn,
         input,
         event_id_override,
+        None,
         created_at_epoch,
         now,
         reference_time_epoch,
@@ -103,6 +125,7 @@ pub fn record_captured_event_with_id_and_reference_time_and_git_evidence(
         conn,
         input,
         event_id_override,
+        None,
         created_at_epoch,
         now,
         reference_time_epoch,
@@ -122,6 +145,7 @@ pub fn record_captured_event_with_id_and_created_at(
         conn,
         input,
         event_id_override,
+        None,
         created_at_epoch,
         now,
         Some(created_at_epoch),
@@ -163,6 +187,7 @@ pub(crate) fn record_captured_event_with_precomputed_git_branch(
         conn,
         input,
         event_id_override,
+        None,
         created_at_epoch,
         now,
         reference_time_epoch,
@@ -175,6 +200,7 @@ fn record_captured_event_inner(
     conn: &Connection,
     input: &CaptureEventInput<'_>,
     event_id_override: Option<&str>,
+    turn_id: Option<&str>,
     created_at_epoch: i64,
     now: i64,
     reference_time_epoch: Option<i64>,
@@ -219,9 +245,10 @@ fn record_captured_event_inner(
           event_id, event_type, role, tool_name, content_text, content_blob_id,
           content_hash, token_estimate, retention_class, created_at_epoch, inserted_at_epoch,
           reference_time_epoch)
-         VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
          ON CONFLICT(host_id, session_id, event_id) DO UPDATE SET
              inserted_at_epoch = excluded.inserted_at_epoch,
+             turn_id = COALESCE(excluded.turn_id, captured_events.turn_id),
              reference_time_epoch = COALESCE(excluded.reference_time_epoch, captured_events.reference_time_epoch)",
         params![
             identity.host_id,
@@ -229,6 +256,7 @@ fn record_captured_event_inner(
             identity.project_id,
             identity.session_row_id,
             input.session_id,
+            turn_id,
             event_id,
             input.event_type,
             input.role,
