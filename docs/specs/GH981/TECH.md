@@ -206,6 +206,11 @@ response. Verification uses focused MCP tests first, then `cargo fmt --check`,
   `expected_versions` and must not SELECT versions after commit.
 - `recall_user_context` rejects requests that omit both `project` and `cwd`.
 
+Adding `GovernedMemory.version` changes the exported Rust struct signature,
+including its field fingerprints. The five prior published identities are
+explicitly retired in the lifecycle manifest; the replacement struct and fields
+remain staged until release verification. The published baseline is retained.
+
 Focused MCP contract tests must prove dry-run `expected_versions` equal the
 versions loaded in that transaction even when another writer updates the row
 after commit.
