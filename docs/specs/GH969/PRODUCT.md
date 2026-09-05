@@ -1,8 +1,8 @@
 # GH969 Product Contract — Stabilization And Surface Governance
 
-Status: Current contract; activation, surface, dependency-direction, and executable ship-matrix slices implemented; PR #1052 authority-verdict convergence in progress; final reconciliation pending; Issue: #969
+Status: Current contract; repository-local stabilization and close audit complete; #931, #933, and #935 remain independent parked contracts; Issue: #969
 
-Last reconciled against `origin/main`: 2026-08-26 (`36f3d38c`)
+Last reconciled against `origin/main`: 2026-09-03 (`d2072f1e`, post-v0.6.86 main)
 
 ## Purpose
 
@@ -59,13 +59,15 @@ following repository-local findings now have landed implementation evidence:
 | CurrentTruth was diagnostic-only | The safe v1 projection is used by the default Context Bundle/SessionStart path; #1019/#1029/#1032 and the #1037/#1038 cross-subject isolation shipped in v0.6.81. Breaking v2 work remains separate under #933. |
 | Retrieval Router was a plan-only concept | Explicit routed MCP search can apply plan effects, but complete plan-controlled execution and default-on evidence remain pending under `GH934/`. |
 
-These landed slices do not close the epic. The #1040 slice implements the
-single active-memory activation boundary and bypass guard for v0.6.82. The
-#1044 slice adds the reviewed dependency-direction baseline and no-expansion
-guard. The #1049 slice extends `eval-gates` with the executable decision/evidence
-matrix and outcome scorecard. Remaining material work is final
-architecture/current-spec synchronization and explicit lifecycle decisions for
-the referenced experimental surfaces.
+The repository-local slices are now complete. #1040/#1041 implement the single
+active-memory activation boundary and bypass guard. #1042/#1043 add the
+machine-readable lifecycle inventory and consistency guard. #1044/#1045 add
+the reviewed dependency baseline and no-expansion guard. #1049/#1052 extend
+`eval-gates` with the executable decision/evidence matrix, outcome scorecard,
+and runtime authority verdict. #1057 supplies the local-link and bilingual
+documentation prerequisites, while #1062 rebinds native security evidence to
+the exact post-merge production tree. #1050 synchronizes the architecture and
+current contracts and records the close audit.
 
 The executable matrix fails closed on evidence identity: the running binary
 must match the checkout, every input hash names the bytes actually consumed,
@@ -279,12 +281,12 @@ This spec-only slice is accepted when:
 - the remaining implementation slices are represented by focused child issues
   after the spec is accepted.
 
-The #969 epic is complete only when:
+The repository-local #969 stabilization contract is complete when:
 
 - the active-memory boundary and its bypass guard are implemented;
 - a machine-readable surface inventory and status-consistency guard are active;
-- the dependency-direction guard prevents expansion of the current cyclic
-  component and the accepted baseline shrinks;
+- the dependency-direction guard prevents expansion of the reviewed cyclic
+  component and makes every accepted reverse edge visible;
 - the ship matrix and user-outcome scorecard are executable, not only prose;
 - architecture and current-spec declarations match production callers;
 - every referenced experimental surface has reached an explicit integrate,
@@ -292,18 +294,32 @@ The #969 epic is complete only when:
 - automatic capture, LLM extraction, memory quality, host compatibility, and
   visible failure behavior have not regressed.
 
+The original issue also required the largest cyclic component to shrink before
+closure. Fresh measurement at `36f06d7a` is 37 roots, exactly the reviewed
+baseline established by #1045, so no reduction claim is made. That requirement
+is amended to the enforced no-expansion contract above: forcing an unrelated
+cross-module refactor into the close-audit slice would conflict with the epic's
+own no-opportunistic-refactor and no-premature-crate-split boundaries. A future
+dependency cleanup may shrink the baseline; regeneration still rejects growth
+or silent acceptance of new debt.
+
+The checkbox-by-checkbox evidence, amendments, rollback ownership, and
+independent dependencies are recorded in the
+[repository-local close audit](CLOSE-AUDIT.md).
+
 ## PR #1052 authority-verdict convergence
 
-This convergence is in progress. Its completion requires the runtime verifier
-to become the sole authority for evidence decisions. One invocation must
-consume the typed manifests, reports, suites, memory/coding runs, referenced
-artifacts, and SQLite snapshots and emit a serializable verdict with exact
-consumed-byte hashes and runtime build/checkout identity. The verdict is never
+This convergence completed in PR #1052 (`257fc4a0`) and its exact-main evidence
+repair PR #1062 (`36f06d7a`). The runtime verifier is the sole authority for
+evidence decisions. One invocation consumes the typed manifests, reports,
+suites, memory/coding runs, referenced artifacts, and SQLite snapshots and
+emits a serializable verdict with exact consumed-byte hashes and runtime
+build/checkout identity. The verdict is never
 checked in and does not contain a self-referential hash.
 
-Completion also requires security policy outcomes to be recomputed from exact
-typed evidence and verified SQLite state using the canonical memory-benchmark
-scorer. GH931 must be recomputed for the complete issue385-v1/official-v1
+Security policy outcomes are recomputed from exact typed evidence and verified
+SQLite state using the canonical memory-benchmark scorer. A GH931 `PASS` still
+requires the complete issue385-v1/official-v1
 matrix (16 tasks × 3 conditions × 3 run indices), with unique attempts,
 `target_started=true`, the task-cluster paired bootstrap, frozen registry
 thresholds, and memory-harm/stale-followed stop-losses. Report aggregates, run
