@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.90` stores optional session/workstream intent and
+  topic, derives Asia/Shanghai `MMDD` from created time, and exposes
+  `{MMDD}｜{INTENT}｜{topic}` labels on raw session lists, workstream lists, and
+  the REST session/workstream resources. Unknown stored codes abstain; writers
+  still fail closed. Summary extraction remains a follow-up.
 - Staged source version `0.6.89` installs Codex `UserPromptSubmit` and emits a
   compact prompt-time candidate index. The first prompt can receive bounded
   continuity anchors; task memories use the existing hybrid RRF path and

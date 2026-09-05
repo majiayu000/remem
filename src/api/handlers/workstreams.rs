@@ -41,6 +41,9 @@ struct WorkstreamRow {
     created_at_epoch: i64,
     updated_at_epoch: i64,
     completed_at_epoch: Option<i64>,
+    session_intent: Option<String>,
+    session_topic: Option<String>,
+    session_intent_source: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -56,13 +59,19 @@ struct WorkstreamItem {
     created_at_epoch: i64,
     updated_at_epoch: i64,
     completed_at_epoch: Option<i64>,
+    mmdd: Option<String>,
+    session_intent: Option<String>,
+    session_topic: Option<String>,
+    display_label: Option<String>,
+    session_intent_source: Option<String>,
     references: Vec<SafeResourceRef>,
 }
 
 const SELECT_WORKSTREAM: &str =
     "SELECT w.id, w.project, w.title, w.description, w.status, w.progress,
             w.next_action, w.blockers, w.topic_domain, w.created_at_epoch,
-            w.updated_at_epoch, w.completed_at_epoch
+            w.updated_at_epoch, w.completed_at_epoch,
+            w.session_intent, w.session_topic, w.session_intent_source
      FROM workstreams w";
 
 impl ReadResourceSpec for Workstreams {
@@ -124,6 +133,7 @@ impl ReadResourceSpec for Workstreams {
         visible.extend(row.next_action.as_deref());
         visible.extend(row.blockers.as_deref());
         visible.extend(row.topic_domain.as_deref());
+        visible.extend(row.session_topic.as_deref());
         let relations = row
             .topic_domain
             .as_deref()
@@ -133,6 +143,13 @@ impl ReadResourceSpec for Workstreams {
         if policy.suppresses(&visible, &relations) {
             return Ok(None);
         }
+        let label = crate::memory::session_label::render_from_stored(
+            Some(row.created_at_epoch),
+            row.session_intent.as_deref(),
+            row.session_topic.as_deref(),
+            row.session_intent_source.as_deref(),
+            Some(&row.title),
+        );
         Ok(Some(WorkstreamItem {
             id: row.id,
             project: redact_bounded(&row.project),
@@ -145,6 +162,11 @@ impl ReadResourceSpec for Workstreams {
             created_at_epoch: row.created_at_epoch,
             updated_at_epoch: row.updated_at_epoch,
             completed_at_epoch: row.completed_at_epoch,
+            mmdd: label.mmdd,
+            session_intent: label.session_intent,
+            session_topic: redact_optional(label.session_topic),
+            display_label: label.display_label,
+            session_intent_source: label.session_intent_source,
             references: Vec::new(),
         }))
     }
@@ -164,5 +186,8 @@ fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkstreamRow> {
         created_at_epoch: row.get(9)?,
         updated_at_epoch: row.get(10)?,
         completed_at_epoch: row.get(11)?,
+        session_intent: row.get(12)?,
+        session_topic: row.get(13)?,
+        session_intent_source: row.get(14)?,
     })
 }

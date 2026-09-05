@@ -460,6 +460,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "raw_session_host",
         sql: include_str!("../migrations/v091_raw_session_host.sql"),
     },
+    Migration {
+        version: 92,
+        name: "session_intent_display",
+        sql: include_str!("../migrations/v092_session_intent_display.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

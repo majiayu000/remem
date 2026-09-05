@@ -462,6 +462,21 @@ struct WorkstreamOutput {
     created_at_epoch: i64,
     updated_at_epoch: i64,
     completed_at_epoch: Option<i64>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    #[schemars(schema_with = "required_nullable_string_schema", required)]
+    mmdd: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    #[schemars(schema_with = "required_nullable_string_schema", required)]
+    session_intent: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    #[schemars(schema_with = "required_nullable_string_schema", required)]
+    session_topic: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    #[schemars(schema_with = "required_nullable_string_schema", required)]
+    display_label: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    #[schemars(schema_with = "required_nullable_string_schema", required)]
+    session_intent_source: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -555,4 +570,19 @@ struct RawSessionOutput {
     assistant_message_count: i64,
     content_hash: String,
     user_message_samples: Vec<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    #[schemars(schema_with = "required_nullable_string_schema", required)]
+    mmdd: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    #[schemars(schema_with = "required_nullable_string_schema", required)]
+    session_intent: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    #[schemars(schema_with = "required_nullable_string_schema", required)]
+    session_topic: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    #[schemars(schema_with = "required_nullable_string_schema", required)]
+    display_label: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    #[schemars(schema_with = "required_nullable_string_schema", required)]
+    session_intent_source: Option<String>,
 }

@@ -7,8 +7,8 @@ use serde::Serialize;
 
 use super::super::cursor::CursorKind;
 use super::super::read_resources::{
-    detail_resource, list_resource, redact_bounded, ReadResourceParams, ReadResourceSpec,
-    ResourceProjectionPolicy, SafeResourceRef,
+    detail_resource, list_resource, redact_bounded, redact_optional, ReadResourceParams,
+    ReadResourceSpec, ResourceProjectionPolicy, SafeResourceRef,
 };
 use super::super::types::DbState;
 
@@ -37,6 +37,9 @@ struct SessionRow {
     started_at_epoch: Option<i64>,
     last_seen_at_epoch: i64,
     status: String,
+    session_intent: Option<String>,
+    session_topic: Option<String>,
+    session_intent_source: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -48,14 +51,26 @@ struct SessionItem {
     summary: String,
     started_at_epoch: Option<i64>,
     last_seen_at_epoch: i64,
+    mmdd: Option<String>,
+    session_intent: Option<String>,
+    session_topic: Option<String>,
+    display_label: Option<String>,
+    session_intent_source: Option<String>,
     references: Vec<SafeResourceRef>,
 }
 
 const SELECT_SESSION: &str = "SELECT s.id, s.host_id, h.name, s.project_id, p.project_key,
-            s.started_at_epoch, s.last_seen_at_epoch, s.status
+            s.started_at_epoch, s.last_seen_at_epoch, s.status,
+            ss.session_intent, ss.session_topic, ss.session_intent_source
      FROM sessions s
      JOIN hosts h ON h.id = s.host_id
-     JOIN projects p ON p.id = s.project_id";
+     JOIN projects p ON p.id = s.project_id
+     LEFT JOIN session_summaries ss ON ss.id = (
+         SELECT id FROM session_summaries
+         WHERE session_row_id = s.id
+         ORDER BY COALESCE(session_intent_updated_at_epoch, created_at_epoch) DESC, id DESC
+         LIMIT 1
+     )";
 
 impl ReadResourceSpec for Sessions {
     type Row = SessionRow;
@@ -102,20 +117,34 @@ impl ReadResourceSpec for Sessions {
         row: Self::Row,
         policy: &ResourceProjectionPolicy,
     ) -> anyhow::Result<Option<Self::Item>> {
-        if policy.suppresses(&[&row.host, &row.project, &row.status], &[]) {
+        let mut visible = vec![row.host.as_str(), row.project.as_str(), row.status.as_str()];
+        visible.extend(row.session_topic.as_deref());
+        if policy.suppresses(&visible, &[]) {
             return Ok(None);
         }
         let host = redact_bounded(&row.host);
         let project = redact_bounded(&row.project);
         let status = redact_bounded(&row.status);
+        let label = crate::memory::session_label::render_from_stored(
+            row.started_at_epoch,
+            row.session_intent.as_deref(),
+            row.session_topic.as_deref(),
+            row.session_intent_source.as_deref(),
+            Some(&format!("Session on {host}")),
+        );
         Ok(Some(SessionItem {
             id: row.id,
-            summary: format!("Session on {host}"),
+            summary: label.display_title.clone(),
             host: host.clone(),
             project: project.clone(),
             status,
             started_at_epoch: row.started_at_epoch,
             last_seen_at_epoch: row.last_seen_at_epoch,
+            mmdd: label.mmdd,
+            session_intent: label.session_intent,
+            session_topic: redact_optional(label.session_topic),
+            display_label: label.display_label,
+            session_intent_source: label.session_intent_source,
             references: vec![
                 SafeResourceRef {
                     kind: "host",
@@ -144,5 +173,8 @@ fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRow> {
         started_at_epoch: row.get(5)?,
         last_seen_at_epoch: row.get(6)?,
         status: row.get(7)?,
+        session_intent: row.get(8)?,
+        session_topic: row.get(9)?,
+        session_intent_source: row.get(10)?,
     })
 }

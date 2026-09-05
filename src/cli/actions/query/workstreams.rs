@@ -168,11 +168,12 @@ fn render_workstream_list(workstreams: &[workstream::WorkStream]) -> String {
     }
     output.push_str("Workstreams:\n\n");
     for item in workstreams {
+        let heading = item.display_label.as_deref().unwrap_or(&item.title);
         output.push_str(&format!(
             "#{} [{}] {}\n",
             item.id,
             item.status.as_str(),
-            item.title
+            heading
         ));
         if let Some(next_action) = &item.next_action {
             output.push_str(&format!("  next: {next_action}\n"));
