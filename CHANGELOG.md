@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.90` adds provenance counterexamples so save
+  receipts and unverified file paths cannot count as G2 writer proof.
 - Staged source version `0.6.89` installs Codex `UserPromptSubmit` and emits a
   compact prompt-time candidate index. The first prompt can receive bounded
   continuity anchors; task memories use the existing hybrid RRF path and
