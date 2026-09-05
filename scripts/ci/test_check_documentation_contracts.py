@@ -8,6 +8,7 @@ from pathlib import Path
 
 import check_documentation_contracts
 from documentation_contract_markdown_edge_tests import MarkdownEdgeContractTests
+from documentation_contract_spec_handoff_tests import CurrentSpecHandoffContractTests
 
 
 EXPECTED_WORKFLOW_SMOKE_COMMAND = "python3 scripts/ci/run_sessionstart_context_gate_smoke.py"
@@ -651,7 +652,6 @@ remem export --pack .remem-pack/
         violations = check_documentation_contracts.check(self.root)
 
         self.assertTrue(any("all-status FTS" in item for item in violations))
-
 
 class RepositoryDocumentationContractTests(unittest.TestCase):
     def test_repository_documentation_contract(self) -> None:
