@@ -9,7 +9,7 @@ fn latest_schema_creates_immutable_activation_ledger_with_result_trust() -> Resu
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
     run_migrations(&conn)?;
 
-    assert_eq!(super::latest_schema_version(), 91);
+    assert_eq!(super::latest_schema_version(), 92);
     for object in [
         "memory_activation_requests",
         "idx_memory_activation_result",
