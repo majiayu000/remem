@@ -190,7 +190,7 @@ requires the same reviewed manifest update as changing status.
 | Inventory row | Entry point | Owner | Status | Real caller / default | Evidence | Compatibility | Next decision |
 |---|---|---|---|---|---|---|---|
 | `rust-library` | Exported Rust library surface | `src/lib.rs` and reachable public modules/re-exports | `production` | Every host-resolved exported module/symbol and public associated item with a normalized signature fingerprint, plus recursively discovered public contents of platform-cfg modules, except entries explicitly overridden below | Public API tests plus exhaustive export/signature discovery | Published exports follow SemVer; new or signature-changed symbols remain staged until release verification | Continuous; review on export-set or signature change |
-| `mcp-production` | MCP production tool set | `mcp/server/`, `mcp/server/tests/tool_metadata.rs` | `production` | All registered tools except the explicit experimental `context_bundle` entry: `current_state`, `search`, `recall_user_context`, `timeline`, `get_observations`, `lookup_commit`, `commits_for_session`, `save_memory`, `govern_memory`, `timeline_report`, `workstreams`, `update_workstream`, `search_raw`, `list_raw_sessions` | Registry completeness, metadata, schema, served-wire, and legacy-text tests | Tool names and stable legacy response contracts remain supported; routed `search` parameters are overridden below | Continuous; review on registry change |
+| `mcp-production` | MCP production tool set | `mcp/server/`, `mcp/server/tests/tool_metadata.rs` | `production` | All registered tools except the explicit experimental `context_bundle` entry: `current_state`, `search`, `recall_user_context`, `timeline`, `get_observations`, `lookup_commit`, `commits_for_session`, `save_memory`, `govern_memory`, `timeline_report`, `workstreams`, `update_workstream`, `search_raw`, `list_raw_sessions` | Registry completeness, metadata, schema, served-wire, and legacy-text tests | Tool names remain supported. GH981 is the canonical MCP contract; #1061 breaks the prior `save_memory`, `govern_memory`, and `recall_user_context` contracts. Routed `search` parameters are overridden below | Continuous; review on registry change |
 | `rest-api` | REST `/api/v1` method+path set | `api/server.rs`, `api/handlers/` | `production` | Every method+path reachable from `build_router`, including composed routers, Axum's implicit HEAD for GET, and memory save/archive/restore and candidate review | `tests/api_public.rs` and handler tests | Bearer transport auth is not human provenance; route/schema changes follow public API compatibility rules | Continuous; review on router change |
 | `cli-production` | CLI command tree | `cli/types.rs`, `cli/dispatch.rs` | `production` | Every default-feature compiled Clap command/subcommand and alias, with eval/report, plan, and recovery operations overridden by their specific inventory/spec rows | CLI parser/dispatch tests and command-specific contracts | Existing supported commands and aliases remain compatible; feature-gated absence is recorded in the expanded manifest | Continuous; review on command-tree change |
 | `sessionstart-context-bundle` | SessionStart Context Bundle compiler and audit | `context/`, `context_bundle/` | `production` | Host SessionStart in default `bundle` mode; `legacy` rolls back bundle relevance/audit but retains CurrentTruth-governed Core output | GH932 tests, SessionStart audits, coding-bench plan/audit evidence | Rendered SessionStart behavior and persisted audit schema require migration-aware change | Continuous; review on schema/policy bump |
@@ -212,6 +212,14 @@ requires the same reviewed manifest update as changing status.
 | `currenttruth-v2` | CurrentTruth v2 native writer/cutover | `docs/specs/GH933/` | `spec-only` | No production caller | Migration, rehearsal, rollout contracts only | Requires approved breaking cutover and rollback | 2026-11-30 under #933 |
 | `cross-host-harness` | Cross-host offline harness | `eval/cross-host/`, `docs/specs/GH935/` | `experimental` | Explicit offline schema/scanner/dry-run commands; no live execution claim | GH935 v1 infrastructure tests | Artifact schema is versioned; dry-run output is not a result | 2026-11-30 |
 | `cross-host-completion` | Cross-host benchmark completion | `docs/specs/GH935/` | `spec-only` | Completion is unimplemented beyond the experimental offline harness above | No live claim-bearing matrix | No public result until prerequisites and official runs exist | 2026-11-30; continue only with dated GH931/user-identity dependency evidence |
+
+GH981 remains the canonical MCP tool-metadata and output-schema contract.
+#1061 is a reviewed breaking amendment on that contract for three production
+tools, not a second MCP spec: omitted `save_memory` host is stored as
+`unknown` rather than inferred as `codex-cli`; non-dry-run `govern_memory`
+requires `expected_versions` captured from the dry-run governance transaction;
+`recall_user_context` requires `project` or `cwd`. Other production tools keep
+their GH981 legacy text shapes.
 
 Adding a major surface or changing a row's status requires updating this
 contract or a machine-readable manifest linked to it in the same PR.
@@ -344,6 +352,7 @@ fabricating unsupported platform artifacts.
 
 - `memory-poisoning-defense/` — trust, quarantine, Dream, production security eval
 - `legacy-observation-retirement/` — frozen/recovery legacy paths and events projection
+- `GH981/` — canonical MCP tool metadata and output-schema contract, including the #1061 mutation/scope boundary
 - `GH932/` — Context Bundle and SessionStart integration
 - `GH933/` — CurrentTruth v1 and pending v2 migration/cutover
 - `GH934/` — Retrieval Router graduation evidence

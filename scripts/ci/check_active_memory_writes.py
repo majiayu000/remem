@@ -33,7 +33,7 @@ ALLOWED_PRODUCTION_FILES = {
     "src/memory_candidate/apply/write.rs": "candidate promotion writer called inside execute_one",
     "src/cli/actions/pack_import/active_import.rs": "governed pack safe-add closure",
     "src/memory/scope_cleanup/plan.rs": "validated cleanup-plan activation closure",
-    "src/memory/governance.rs": "Web restore activation closure",
+    "src/memory/governance.rs": "Web restore activation closure and version-guarded governance status updates",
     "src/memory_candidate/review/approval.rs": "exact Dream stock recovery closure",
     "src/memory/lifecycle.rs": "Rust lifecycle replacement activation closure",
     "src/dream/apply.rs": "Dream consolidation calls the permit-gated canonical writer",
@@ -92,7 +92,8 @@ EXPECTED_ALLOWED_FINDINGS = {
     },
     "src/memory/governance.rs": {
         "apply_web_governance_mutation:active_status_update:286bbbd2d3737bf8": 1,
-        "govern_memories:active_status_update:d0ee564fdbd933ea": 1,
+        "govern_memories_inner:active_status_update:d0ee564fdbd933ea": 1,
+        "govern_memories_inner:active_status_update:d72be5a783013105": 1,
     },
     "src/memory/lesson.rs": {
         "save_lesson_with_reference_time_and_outcome_inner:raw_active_helper_call:61be54b164a77baa": 1
