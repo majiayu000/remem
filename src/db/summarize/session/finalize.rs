@@ -2,7 +2,6 @@ use anyhow::Result;
 use rusqlite::{params, Connection};
 
 use crate::memory::poisoning::scan_generated_surfaces;
-use crate::memory::session_label::SessionIntentSource;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionIntentWrite {
@@ -25,12 +24,7 @@ impl SessionIntentWrite {
         if intent.is_none() && topic.is_none() {
             return (None, None, None, None);
         }
-        (
-            intent,
-            topic,
-            Some(SessionIntentSource::Summary.as_str()),
-            Some(created_at_epoch),
-        )
+        (intent, topic, Some("summary"), Some(created_at_epoch))
     }
 }
 

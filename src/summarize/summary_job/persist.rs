@@ -197,7 +197,7 @@ fn session_intent_write(summary: &ParsedSummary) -> SessionIntentWrite {
         if scan_generated_surfaces(&[("session_topic", Some(raw))]).is_some() {
             return None;
         }
-        let redacted = crate::adapter::common::redact_sensitive_text(raw);
+        let redacted = crate::db::redact_capture_content(raw);
         if redacted != raw {
             return None;
         }
