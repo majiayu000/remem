@@ -7,7 +7,7 @@ pub(super) fn ensure_provenance_resolved(
     conn: &Connection,
     request: &RawSessionMessagesRequest,
 ) -> Result<()> {
-    let (tuple_exists, requested_host_exists, unresolved) = conn.query_row(
+    let (tuple_exists, requested_host_exists, unresolved, distinct_modes) = conn.query_row(
         "WITH eligible AS ( \
              SELECT r.transcript_identity_id \
              FROM raw_messages r \
@@ -25,7 +25,13 @@ pub(super) fn ensure_provenance_resolved(
                     LEFT JOIN raw_session_identities i ON i.id = e.transcript_identity_id \
                     WHERE i.id IS NULL OR i.host IS NULL \
                        OR (i.host = ?4 AND i.status != 'active') \
-                )",
+                ), \
+                COALESCE(( \
+                    SELECT COUNT(DISTINCT i.session_mode) \
+                    FROM eligible e \
+                    JOIN raw_session_identities i ON i.id = e.transcript_identity_id \
+                    WHERE i.host = ?4 AND i.status = 'active' \
+                ), 0)",
         params![
             request.source_root,
             request.project,
@@ -37,12 +43,13 @@ pub(super) fn ensure_provenance_resolved(
                 row.get::<_, bool>(0)?,
                 row.get::<_, bool>(1)?,
                 row.get::<_, bool>(2)?,
+                row.get::<_, i64>(3)?,
             ))
         },
     )?;
-    if unresolved {
+    if unresolved || distinct_modes > 1 {
         anyhow::bail!(
-            "raw session provenance is missing or conflicted for ({:?}, {:?}, {:?}); re-ingest its transcript",
+            "raw session provenance is missing or conflicted for ({:?}, {:?}, {:?})",
             request.source_root,
             request.project,
             request.session_id,

@@ -526,7 +526,17 @@ struct RawSessionsOutput {
     count: usize,
     excluded_legacy_rows: usize,
     excluded_legacy_sessions: usize,
+    excluded_legacy_identities: Vec<ExcludedSessionIdentityOutput>,
     sessions: Vec<RawSessionOutput>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ExcludedSessionIdentityOutput {
+    source_root: String,
+    project: String,
+    session_id: String,
+    host: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]

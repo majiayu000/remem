@@ -94,9 +94,11 @@ impl MemoryServer {
     #[tool(
         description = "List sessions with raw archive messages inside a time window, grouped by \
         (source_root, host, project, session_id) with a stable session_ref, content_hash, first/last \
-        message epoch, message count, and optional role=user message samples. `latest` bounds the \
-        result to the newest sessions. Use for recap-style summaries of what happened in a period. \
-        Output fields match `remem raw sessions --json`."
+        message epoch, message count, and optional role=user message samples. Unresolved or \
+        conflicted provenance is skipped and reported in `excluded_legacy_identities`; `latest` \
+        fills at most that many newest healthy sessions and does not spend slots on skipped rows. \
+        Use for recap-style summaries of what happened in a period. Output fields match \
+        `remem raw sessions --json`."
     )]
     pub(super) fn list_raw_sessions(
         &self,

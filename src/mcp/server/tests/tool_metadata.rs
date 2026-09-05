@@ -161,7 +161,7 @@ const EXPECTED_TOOL_METADATA: &[ExpectedToolMetadata] = &[
         destructive: false,
         idempotent: true,
         open_world: false,
-        required_output_fields: &["sample", "count", "sessions"],
+        required_output_fields: &["sample", "count", "sessions", "excluded_legacy_identities"],
     },
 ];
 
@@ -197,6 +197,17 @@ fn get_observations_tool_description_labels_observations_as_current() -> anyhow:
     assert!(description.contains("source='observation'"));
     assert!(description.contains("current extracted observations"));
     assert!(!description.contains("legacy observations"));
+    Ok(())
+}
+
+#[test]
+fn list_raw_sessions_description_explains_skip_and_healthy_latest() -> anyhow::Result<()> {
+    let server = MemoryServer::new()?;
+    let description = tool_description(&server, "list_raw_sessions");
+
+    assert!(description.contains("excluded_legacy_identities"));
+    assert!(description.contains("newest healthy sessions"));
+    assert!(!description.contains("`latest` bounds the result to the newest sessions"));
     Ok(())
 }
 

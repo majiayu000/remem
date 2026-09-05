@@ -30,10 +30,12 @@ identities must resolve to the same host. Legacy unidentified rows and mixed
 hosts do not enter a successful complete session. Unbound `source=hook`
 fallbacks remain outside this surface. Pre-v071 `source=transcript` rows with
 no identity and `event_time_source=legacy_unknown` are also excluded, retained,
-and reported through aggregate `excluded_legacy_rows` and
-`excluded_legacy_sessions` fields. Other missing, inactive, or conflicting
-provenance still fails closed. The host rules remain in Remem; consumers
-receive only the resolved value.
+and reported through `excluded_legacy_rows`, `excluded_legacy_sessions`, and
+`excluded_legacy_identities`. Other missing, inactive, or conflicting provenance
+is skipped and reported in that same envelope instead of aborting listing.
+Exact `raw messages` for those selectors stays fail-closed. The host rules
+remain in Remem; consumers receive only the resolved value. Listing recovery
+text must not recommend re-ingest unless ingest can claim the row.
 
 Batch re-ingestion may converge a pre-identity row only after Phase A has
 persisted all candidate transcript identities. The row's source root,
@@ -71,8 +73,8 @@ precedence, followed by unattended originators (`codex_exec` and
 interactive TUI/Desktop originators. Unknown values remain `unknown`; Claude
 Code currently reports `unknown`.
 An identity may promote from unknown to a known mode, but conflicting known
-modes fail before mutation. A grouped raw session also fails if contributing
-identities disagree.
+modes fail before mutation. A grouped raw session with contributing identities
+that disagree is skipped and reported in the listing envelope.
 
 ## Content Fingerprint
 
@@ -93,10 +95,11 @@ This computation is transport metadata only. Raw content remains canonical in
 
 Extend `RawSessionQuery` with `latest: Option<i64>`. Without `latest`, retain
 the existing window ordering. With it, group the selected raw occurrences,
-order by `last_epoch DESC` and the full grouping tuple, then truncate before
-serialization. The JSON envelope records the requested bound. This bounds the
-consumer transport and full-message fetches; it does not claim an SQL-level
-metadata scan limit.
+skip unresolved or conflicted rows during the scan, order remaining healthy
+sessions by `last_epoch DESC` and the full grouping tuple, then truncate before
+serialization. The JSON envelope records the requested bound and skipped
+identities. This bounds the consumer transport and full-message fetches; it does
+not claim an SQL-level metadata scan limit.
 
 ## Consumer Contract
 
@@ -114,7 +117,8 @@ host, timestamps, and derived observations.
 - component-safe host classification and near-miss paths;
 - Claude Code and Codex CLI transcript host fixtures;
 - Cursor outcome-only metadata is not accepted as a complete transcript;
-- mixed/unidentified identity rejection;
+- mixed/unidentified identity skip-and-report on listing, with exact messages
+  fail-closed;
 - explicit pre-identity exclusion counts and single-host exact convergence;
 - same session ID collision isolation across hosts;
 - deterministic fingerprint and mutation sensitivity;
