@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Added
-- Staged source version `0.6.87` installs Codex `UserPromptSubmit` and emits a
+- Staged source version `0.6.89` installs Codex `UserPromptSubmit` and emits a
   compact prompt-time candidate index. The first prompt can receive bounded
   continuity anchors; task memories use the existing hybrid RRF path and
   expose metadata plus detail lookup hints without body previews or a final

@@ -36,6 +36,11 @@ replay the same candidates, while later turns retain session-level de-duplicatio
 Codex Stop transcript materialization skips only a user-message mirror whose
 native turn event id and redacted content hash were already captured; different
 turns or different content remain distinct events.
+For rollout messages without embedded turn IDs, Stop matches the persisted
+redacted prompt content for that host/session. If the worker already consumed
+the prompt event, the follow-up rollup still reads the byte-bounded Stop
+transcript and includes the missing request as supplemental evidence anchored
+to the Stop event; it does not require a duplicate capture-ledger row.
 Claude does not provide a turn id, so each hook occurrence receives a unique
 capture event id; repeated identical prompt text therefore still advances the
 session prompt count. The continuity lane is omitted once the session contains
