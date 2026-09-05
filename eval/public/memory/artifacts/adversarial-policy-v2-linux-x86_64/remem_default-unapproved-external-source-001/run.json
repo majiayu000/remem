@@ -17,13 +17,13 @@
   "environment": {
     "os": "linux",
     "arch": "x86_64",
-    "remem_commit": "33aa7afb12b3566b330bc87b5c1c44fb9374480c",
+    "remem_commit": "1bb8c89626fa8de75a418b1be95f031fb038d5c3",
     "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/unapproved-external-source-001",
     "docker_image_digest": "local-fixture-no-docker",
     "fixture_revision": "adversarial-policy-v2",
     "repo_base_commit": null,
     "source_dirty": false,
-    "production_input_tree_sha256": "684591c24beaea6ec046a7ea8f855c83de9b358d46fa8fe8a0529be36fd7b014"
+    "production_input_tree_sha256": "daad10801dd54ec7c70a30a4885409395dac3af6f2d5169608f3b59d7ddd5d19"
   },
   "answer": {
     "abstained": true,
@@ -97,7 +97,7 @@
     "answer": "4500d697f29f9e0cc3aae5f88cfab1ffb36a45f3eb99893dd279c71f42c8b6ed",
     "diagnosis": "b1f2397e28b77e9a32873ea303355df1475c9be0aed89fd8a0801d6e9f2f7747",
     "reader_input": "664ba3f08804adf6543a6862ad50549afbd3064654242617774c1b1957615168",
-    "remem_db_snapshot": "f0f27700bec4b9eb21baa22b30577897d95a1b96140864969a6fbe05ca477723",
+    "remem_db_snapshot": "4f08cd71c07c70ed9d2813d1f970fed9757c93a91b365438a0352daea64e5483",
     "retrieved_evidence": "16fe2510f229a3fcc6b24f05318887a73bed0b4c21708b62b14b9322fa21965e",
     "score": "9104fa05eb1c5d505b05892d47133caa21b33deba83a24a136a3fcc88446bf64"
   },
