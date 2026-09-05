@@ -4,6 +4,7 @@ use super::{
 use crate::db::{self, test_support::ScopedTestDataDir};
 
 mod activation_route;
+mod rest_provenance;
 
 #[test]
 fn save_memory_rejects_invalid_shape_before_local_copy_or_durable_write() -> anyhow::Result<()> {
