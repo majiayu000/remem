@@ -1,7 +1,7 @@
 # Session Intent Display Product Spec
 
-Status: Current contract (spec-only; implementation phased under #1065)
-Date: 2026-09-03
+Status: Current contract (Phase 1 schema/display landed as v092; #1067–#1069 remaining)
+Date: 2026-09-05
 
 Tracking:
 - Capability epic: #1065

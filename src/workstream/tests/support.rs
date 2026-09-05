@@ -32,7 +32,11 @@ pub(super) fn setup_workstream_schema(conn: &Connection) {
             valid_from_epoch INTEGER,
             valid_to_epoch INTEGER,
             identity_key TEXT,
-            merged_into_workstream_id INTEGER
+            merged_into_workstream_id INTEGER,
+            session_intent TEXT,
+            session_topic TEXT,
+            session_intent_source TEXT,
+            session_intent_updated_at_epoch INTEGER
         );
         CREATE TABLE workstream_sessions (
             id INTEGER PRIMARY KEY,

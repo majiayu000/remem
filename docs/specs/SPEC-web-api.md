@@ -440,6 +440,21 @@ remain auditable but are never returned beside a higher-priority result.
 Malformed outcome JSON or DB read failure returns the existing structured 5xx
 error rather than `capture_health: null`.
 
+### Session intent display (#1066)
+
+Source version `0.6.90` adds the same nullable label fields to
+`GET /api/v1/sessions` and `GET /api/v1/workstreams` (list and detail):
+
+- `mmdd`: four-digit Asia/Shanghai date from **created** epoch, or null
+- `session_intent`: closed code `fea|des|fix|opt|rel|exp|doc|res`, or null
+- `session_topic`: short redacted topic, or null
+- `display_label`: `{MMDD}｜{INTENT}｜{topic}` only when intent and topic are both present
+- `session_intent_source`: `summary|override|rollup`, or null
+
+Session `summary` uses the display label when present, otherwise the existing
+fallback title. Clients must treat missing intent/topic as abstain, not as an
+empty TYPE. These fields do not mutate host conversation titles.
+
 ### GH-880 recoverable memory governance
 
 Memory list and detail responses add the current integer `version` while

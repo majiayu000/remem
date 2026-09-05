@@ -1,7 +1,7 @@
 # Session Intent Display Technical Spec
 
-Status: Current contract (spec-only; implementation phased under #1065)
-Date: 2026-09-03
+Status: Current contract (Phase 1 schema/display landed as migration v092; #1067–#1069 remaining)
+Date: 2026-09-05
 
 Tracking:
 - Capability epic: #1065
@@ -35,8 +35,7 @@ Tracking:
 
 ## Storage Contract
 
-Additive migration (exact version assigned at implementation time), suggested
-shape:
+Additive migration `v092_session_intent_display`:
 
 ```sql
 ALTER TABLE session_summaries ADD COLUMN session_intent TEXT;
@@ -70,8 +69,8 @@ time so timezone/format policy can evolve without backfills.
 
 ## Display Helper
 
-Add a pure helper (suggested module ownership: `src/session_label/` or beside
-session summary formatting):
+Pure helper `src/memory/session_label.rs` (`pub(crate)` under `memory`, not a
+crate-root module):
 
 ```text
 inputs:
@@ -204,9 +203,10 @@ Epic #1065 closes only after phases are verified.
 
 ## Open Implementation Notes
 
-- Prefer a shared Rust enum `SessionIntent` near summary/workstream writers so
-  MCP/REST/CLI cannot drift.
-- Keep Chinese labels in a display-only map; do not persist translated INTENT.
-- If Session Observatory projection tables are a better attachment point than
-  `session_summaries` for list performance, document the choice in the
-  implementation PR and keep summary as the semantic write source.
+- Shared Rust enum `SessionIntent` lives in `src/memory/session_label.rs` so
+  MCP/REST/CLI renderers cannot drift. Writers in #1067/#1068 must reuse
+  `parse_write`.
+- Chinese labels stay display-only; storage and default English rendering use
+  closed codes (`fix`, not `FIX`).
+- Session Observatory projection tables remain a possible later attachment
+  point for list performance; summary is still the semantic write source.

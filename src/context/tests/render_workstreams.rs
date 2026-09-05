@@ -18,6 +18,11 @@ fn render_workstreams_includes_next_action_when_present() {
         created_at_epoch: 0,
         updated_at_epoch: 0,
         completed_at_epoch: None,
+        mmdd: None,
+        session_intent: None,
+        session_topic: None,
+        display_label: None,
+        session_intent_source: None,
     }];
 
     render_workstreams(&mut output, &workstreams);

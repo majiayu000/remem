@@ -280,6 +280,7 @@ const MIGRATION_SQL_INPUTS: &[&str] = &[
     "src/migrations/v089_supplemental_local_copy_receipt.sql",
     "src/migrations/v090_scope_cleanup_receipt.sql",
     "src/migrations/v091_raw_session_host.sql",
+    "src/migrations/v092_session_intent_display.sql",
 ];
 
 #[derive(Debug, Clone, Serialize)]

@@ -42,6 +42,16 @@ pub struct WorkStream {
     pub created_at_epoch: i64,
     pub updated_at_epoch: i64,
     pub completed_at_epoch: Option<i64>,
+    #[serde(default)]
+    pub mmdd: Option<String>,
+    #[serde(default)]
+    pub session_intent: Option<String>,
+    #[serde(default)]
+    pub session_topic: Option<String>,
+    #[serde(default)]
+    pub display_label: Option<String>,
+    #[serde(default)]
+    pub session_intent_source: Option<String>,
 }
 
 #[derive(Debug, Clone)]
