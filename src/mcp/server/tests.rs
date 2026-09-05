@@ -13,6 +13,7 @@ use crate::memory::service::{resolve_local_note_path, sanitize_segment};
 
 mod compressed_sources;
 mod context_bundle;
+mod contract_alignment;
 mod current_state;
 mod search;
 mod tool_metadata;
@@ -337,6 +338,15 @@ fn save_memory_response_reports_durable_feedback_shape() {
     assert_eq!(json["created_at_epoch"], 1_700_000_123);
     assert_eq!(json["reference_time_epoch"], 1_600_000_123);
     assert!(json["updated_at_epoch"].as_i64().is_some_and(|ts| ts > 0));
+    let host: String = crate::db::open_db()
+        .expect("database should open")
+        .query_row(
+            "SELECT host FROM memory_claims WHERE memory_id = ?1",
+            [json["id"].as_i64().expect("saved id")],
+            |row| row.get(0),
+        )
+        .expect("saved memory should expose provenance");
+    assert_eq!(host, "unknown");
 }
 
 #[test]
@@ -395,6 +405,7 @@ fn govern_memory_validation_failures_are_invalid_request() {
                 actor: None,
                 dry_run: Some(false),
                 confirm_destructive: Some(true),
+                expected_versions: None,
             },
             "at least one memory id",
         ),
@@ -408,6 +419,7 @@ fn govern_memory_validation_failures_are_invalid_request() {
                 actor: None,
                 dry_run: Some(false),
                 confirm_destructive: Some(false),
+                expected_versions: None,
             },
             "confirm_destructive=true",
         ),
@@ -421,8 +433,23 @@ fn govern_memory_validation_failures_are_invalid_request() {
                 actor: None,
                 dry_run: Some(false),
                 confirm_destructive: Some(true),
+                expected_versions: None,
             },
             "explicit reason",
+        ),
+        (
+            GovernMemoryParams {
+                ids: vec![1],
+                project: Some("proj".to_string()),
+                action: "delete".to_string(),
+                acknowledge_pattern: None,
+                reason: Some("cleanup".to_string()),
+                actor: None,
+                dry_run: Some(false),
+                confirm_destructive: Some(true),
+                expected_versions: None,
+            },
+            "expected_versions",
         ),
     ];
 

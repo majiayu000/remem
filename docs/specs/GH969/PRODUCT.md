@@ -1,8 +1,8 @@
 # GH969 Product Contract — Stabilization And Surface Governance
 
-Status: Current contract; activation, surface, dependency-direction, and executable ship-matrix slices implemented; PR #1052 authority-verdict convergence in progress; final reconciliation pending; Issue: #969
+Status: Current contract; repository-local stabilization and close audit complete; #931, #933, and #935 remain independent parked contracts; Issue: #969
 
-Last reconciled against `origin/main`: 2026-08-26 (`36f3d38c`)
+Last reconciled against `origin/main`: 2026-09-03 (`d2072f1e`, post-v0.6.86 main)
 
 ## Purpose
 
@@ -59,13 +59,15 @@ following repository-local findings now have landed implementation evidence:
 | CurrentTruth was diagnostic-only | The safe v1 projection is used by the default Context Bundle/SessionStart path; #1019/#1029/#1032 and the #1037/#1038 cross-subject isolation shipped in v0.6.81. Breaking v2 work remains separate under #933. |
 | Retrieval Router was a plan-only concept | Explicit routed MCP search can apply plan effects, but complete plan-controlled execution and default-on evidence remain pending under `GH934/`. |
 
-These landed slices do not close the epic. The #1040 slice implements the
-single active-memory activation boundary and bypass guard for v0.6.82. The
-#1044 slice adds the reviewed dependency-direction baseline and no-expansion
-guard. The #1049 slice extends `eval-gates` with the executable decision/evidence
-matrix and outcome scorecard. Remaining material work is final
-architecture/current-spec synchronization and explicit lifecycle decisions for
-the referenced experimental surfaces.
+The repository-local slices are now complete. #1040/#1041 implement the single
+active-memory activation boundary and bypass guard. #1042/#1043 add the
+machine-readable lifecycle inventory and consistency guard. #1044/#1045 add
+the reviewed dependency baseline and no-expansion guard. #1049/#1052 extend
+`eval-gates` with the executable decision/evidence matrix, outcome scorecard,
+and runtime authority verdict. #1057 supplies the local-link and bilingual
+documentation prerequisites, while #1062 rebinds native security evidence to
+the exact post-merge production tree. #1050 synchronizes the architecture and
+current contracts and records the close audit.
 
 The executable matrix fails closed on evidence identity: the running binary
 must match the checkout, every input hash names the bytes actually consumed,
@@ -188,7 +190,7 @@ requires the same reviewed manifest update as changing status.
 | Inventory row | Entry point | Owner | Status | Real caller / default | Evidence | Compatibility | Next decision |
 |---|---|---|---|---|---|---|---|
 | `rust-library` | Exported Rust library surface | `src/lib.rs` and reachable public modules/re-exports | `production` | Every host-resolved exported module/symbol and public associated item with a normalized signature fingerprint, plus recursively discovered public contents of platform-cfg modules, except entries explicitly overridden below | Public API tests plus exhaustive export/signature discovery | Published exports follow SemVer; new or signature-changed symbols remain staged until release verification | Continuous; review on export-set or signature change |
-| `mcp-production` | MCP production tool set | `mcp/server/`, `mcp/server/tests/tool_metadata.rs` | `production` | All registered tools except the explicit experimental `context_bundle` entry: `current_state`, `search`, `recall_user_context`, `timeline`, `get_observations`, `lookup_commit`, `commits_for_session`, `save_memory`, `govern_memory`, `timeline_report`, `workstreams`, `update_workstream`, `search_raw`, `list_raw_sessions` | Registry completeness, metadata, schema, served-wire, and legacy-text tests | Tool names and stable legacy response contracts remain supported; routed `search` parameters are overridden below | Continuous; review on registry change |
+| `mcp-production` | MCP production tool set | `mcp/server/`, `mcp/server/tests/tool_metadata.rs` | `production` | All registered tools except the explicit experimental `context_bundle` entry: `current_state`, `search`, `recall_user_context`, `timeline`, `get_observations`, `lookup_commit`, `commits_for_session`, `save_memory`, `govern_memory`, `timeline_report`, `workstreams`, `update_workstream`, `search_raw`, `list_raw_sessions` | Registry completeness, metadata, schema, served-wire, and legacy-text tests | Tool names remain supported. GH981 is the canonical MCP contract; #1061 breaks the prior `save_memory`, `govern_memory`, and `recall_user_context` contracts. Routed `search` parameters are overridden below | Continuous; review on registry change |
 | `rest-api` | REST `/api/v1` method+path set | `api/server.rs`, `api/handlers/` | `production` | Every method+path reachable from `build_router`, including composed routers, Axum's implicit HEAD for GET, and memory save/archive/restore and candidate review | `tests/api_public.rs` and handler tests | Bearer transport auth is not human provenance; route/schema changes follow public API compatibility rules | Continuous; review on router change |
 | `cli-production` | CLI command tree | `cli/types.rs`, `cli/dispatch.rs` | `production` | Every default-feature compiled Clap command/subcommand and alias, with eval/report, plan, and recovery operations overridden by their specific inventory/spec rows | CLI parser/dispatch tests and command-specific contracts | Existing supported commands and aliases remain compatible; feature-gated absence is recorded in the expanded manifest | Continuous; review on command-tree change |
 | `sessionstart-context-bundle` | SessionStart Context Bundle compiler and audit | `context/`, `context_bundle/` | `production` | Host SessionStart in default `bundle` mode; `legacy` rolls back bundle relevance/audit but retains CurrentTruth-governed Core output | GH932 tests, SessionStart audits, coding-bench plan/audit evidence | Rendered SessionStart behavior and persisted audit schema require migration-aware change | Continuous; review on schema/policy bump |
@@ -210,6 +212,14 @@ requires the same reviewed manifest update as changing status.
 | `currenttruth-v2` | CurrentTruth v2 native writer/cutover | `docs/specs/GH933/` | `spec-only` | No production caller | Migration, rehearsal, rollout contracts only | Requires approved breaking cutover and rollback | 2026-11-30 under #933 |
 | `cross-host-harness` | Cross-host offline harness | `eval/cross-host/`, `docs/specs/GH935/` | `experimental` | Explicit offline schema/scanner/dry-run commands; no live execution claim | GH935 v1 infrastructure tests | Artifact schema is versioned; dry-run output is not a result | 2026-11-30 |
 | `cross-host-completion` | Cross-host benchmark completion | `docs/specs/GH935/` | `spec-only` | Completion is unimplemented beyond the experimental offline harness above | No live claim-bearing matrix | No public result until prerequisites and official runs exist | 2026-11-30; continue only with dated GH931/user-identity dependency evidence |
+
+GH981 remains the canonical MCP tool-metadata and output-schema contract.
+#1061 is a reviewed breaking amendment on that contract for three production
+tools, not a second MCP spec: omitted `save_memory` host is stored as
+`unknown` rather than inferred as `codex-cli`; non-dry-run `govern_memory`
+requires `expected_versions` captured from the dry-run governance transaction;
+`recall_user_context` requires `project` or `cwd`. Other production tools keep
+their GH981 legacy text shapes.
 
 Adding a major surface or changing a row's status requires updating this
 contract or a machine-readable manifest linked to it in the same PR.
@@ -279,12 +289,12 @@ This spec-only slice is accepted when:
 - the remaining implementation slices are represented by focused child issues
   after the spec is accepted.
 
-The #969 epic is complete only when:
+The repository-local #969 stabilization contract is complete when:
 
 - the active-memory boundary and its bypass guard are implemented;
 - a machine-readable surface inventory and status-consistency guard are active;
-- the dependency-direction guard prevents expansion of the current cyclic
-  component and the accepted baseline shrinks;
+- the dependency-direction guard prevents expansion of the reviewed cyclic
+  component and makes every accepted reverse edge visible;
 - the ship matrix and user-outcome scorecard are executable, not only prose;
 - architecture and current-spec declarations match production callers;
 - every referenced experimental surface has reached an explicit integrate,
@@ -292,18 +302,32 @@ The #969 epic is complete only when:
 - automatic capture, LLM extraction, memory quality, host compatibility, and
   visible failure behavior have not regressed.
 
+The original issue also required the largest cyclic component to shrink before
+closure. Fresh measurement at `36f06d7a` is 37 roots, exactly the reviewed
+baseline established by #1045, so no reduction claim is made. That requirement
+is amended to the enforced no-expansion contract above: forcing an unrelated
+cross-module refactor into the close-audit slice would conflict with the epic's
+own no-opportunistic-refactor and no-premature-crate-split boundaries. A future
+dependency cleanup may shrink the baseline; regeneration still rejects growth
+or silent acceptance of new debt.
+
+The checkbox-by-checkbox evidence, amendments, rollback ownership, and
+independent dependencies are recorded in the
+[repository-local close audit](CLOSE-AUDIT.md).
+
 ## PR #1052 authority-verdict convergence
 
-This convergence is in progress. Its completion requires the runtime verifier
-to become the sole authority for evidence decisions. One invocation must
-consume the typed manifests, reports, suites, memory/coding runs, referenced
-artifacts, and SQLite snapshots and emit a serializable verdict with exact
-consumed-byte hashes and runtime build/checkout identity. The verdict is never
+This convergence completed in PR #1052 (`257fc4a0`) and its exact-main evidence
+repair PR #1062 (`36f06d7a`). The runtime verifier is the sole authority for
+evidence decisions. One invocation consumes the typed manifests, reports,
+suites, memory/coding runs, referenced artifacts, and SQLite snapshots and
+emits a serializable verdict with exact consumed-byte hashes and runtime
+build/checkout identity. The verdict is never
 checked in and does not contain a self-referential hash.
 
-Completion also requires security policy outcomes to be recomputed from exact
-typed evidence and verified SQLite state using the canonical memory-benchmark
-scorer. GH931 must be recomputed for the complete issue385-v1/official-v1
+Security policy outcomes are recomputed from exact typed evidence and verified
+SQLite state using the canonical memory-benchmark scorer. A GH931 `PASS` still
+requires the complete issue385-v1/official-v1
 matrix (16 tasks × 3 conditions × 3 run indices), with unique attempts,
 `target_started=true`, the task-cluster paired bootstrap, frozen registry
 thresholds, and memory-harm/stale-followed stop-losses. Report aggregates, run
@@ -328,6 +352,7 @@ fabricating unsupported platform artifacts.
 
 - `memory-poisoning-defense/` — trust, quarantine, Dream, production security eval
 - `legacy-observation-retirement/` — frozen/recovery legacy paths and events projection
+- `GH981/` — canonical MCP tool metadata and output-schema contract, including the #1061 mutation/scope boundary
 - `GH932/` — Context Bundle and SessionStart integration
 - `GH933/` — CurrentTruth v1 and pending v2 migration/cutover
 - `GH934/` — Retrieval Router graduation evidence

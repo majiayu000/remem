@@ -73,6 +73,72 @@ trusted identities. Git branch state is resolved once before the batch, and
 transcript-derived message events share the rollup prompt's 128-message/64 KiB
 aggregate budget.
 
+## Runtime And Surface Lifecycle
+
+The supported production memory paths converge on one activation boundary.
+The diagram below is limited to the two normal user-facing acquisition paths:
+automatic capture plus explicit MCP/REST `save_memory`. Administrative import,
+restore, cleanup, recovery, and Dream consolidation routes are inventoried in
+the GH969 Technical contract's Route Rules rather than duplicated here. Only
+`memory::activation` can make curated memory active. CurrentTruth v1 then
+governs the Core projection consumed by the default Context Bundle and
+SessionStart renderer.
+
+```text
+automatic: Claude/Codex capture
+  -> captured_events + extraction_tasks
+  -> observation/session rollup (LLM-derived, source trust retained)
+  -> governed candidate review or bounded auto-promotion
+
+supplemental: explicit MCP/REST save_memory
+  -> execute_supplemental_save
+
+these acquisition paths -> memory::activation + immutable activation receipt
+  -> curated memory / relations
+  -> CurrentTruth v1
+  -> default Context Bundle -> SessionStart + durable audit
+```
+
+The host boundary is capability-specific:
+
+| Capability | Claude Code | Codex CLI | Cursor v1 |
+|---|---|---|---|
+| MCP memory tools | Supported | Supported | Supported on macOS/Linux |
+| SessionStart context | Supported | Supported | Not installed by the v1 profile |
+| Prompt-time session-init | Installed `UserPromptSubmit` | Not installed by the current profile | Unsupported |
+| Automatic Stop memory | Supported | Supported | Not installed by the v1 profile |
+| Tool-event capture | Installed PostToolUse hooks | Legacy Bash observe is opt-in | Runtime exists; no hook is installed by the v1 profile |
+| Compiled Bash rules | Optional PreToolUse warn/block | Unsupported | Unsupported |
+
+Bounded Graph retrieval, deterministic eval gates, and the default-built
+`local-onnx` provider are production surfaces. Their conditional callers do not
+make them experimental; any future default change still passes the default-on
+and stop-loss gates. CurrentTruth v1 governs Core in both Context Bundle render
+modes, while `legacy` rolls back only bundle relevance compilation and audit.
+
+Implemented surfaces outside that chain keep one explicit lifecycle:
+
+```text
+experimental: explicit MCP/Rust/CLI caller only
+  context_bundle API, retrieval-router/context-plan, routed search parameters,
+  entity-BFS eval arm, coding/public and cross-host harnesses
+
+recovery-only: residual historical state -> bounded worker/admin replay
+  legacy pending rows and historical Summary state; no normal new-work writer
+
+deprecated: canonical capture -> transactional legacy events projection
+  compatibility readers only; the projection is not a second source of truth
+```
+
+The canonical human-readable classifications, callers, evidence, rollback, and
+decision dates are in the
+[GH969 surface inventory](specs/GH969/PRODUCT.md#canonical-surface-inventory).
+The exact machine expansion is
+[`surface-manifest.json`](specs/GH969/surface-manifest.json) and is checked by
+`python3 scripts/ci/check_public_surface.py`. Current contracts live under
+`docs/specs/`; same-numbered root `specs/GH*/` packets are historical planning
+evidence and cannot override current code or current contracts.
+
 ## Module Map
 
 This ownership map is intentionally non-exhaustive. It includes primary

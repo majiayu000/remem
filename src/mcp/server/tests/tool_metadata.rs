@@ -513,7 +513,8 @@ fn search_and_context_descriptions_explain_selection_boundaries() -> anyhow::Res
     assert!(recall.contains("Use search for exhaustive memory matches"));
     assert!(recall.contains("current_state"));
     assert!(recall.contains("bounded context bundle"));
-    assert!(recall.contains("current process working directory"));
+    assert!(recall.contains("explicit project or cwd scope"));
+    assert!(!recall.contains("current process working directory"));
 
     let timeline = tool_description(&server, "timeline");
     assert!(timeline.contains("Read-only"));
