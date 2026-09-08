@@ -179,3 +179,11 @@ fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRow> {
         session_intent_source: row.get(10)?,
     })
 }
+
+pub(in crate::api) fn session_is_visible(conn: &Connection, id: i64) -> anyhow::Result<bool> {
+    let policy = ResourceProjectionPolicy::load(conn)?;
+    match Sessions::load_one(conn, id)? {
+        Some(row) => Ok(Sessions::project(row, &policy)?.is_some()),
+        None => Ok(false),
+    }
+}

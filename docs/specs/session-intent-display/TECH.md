@@ -1,7 +1,7 @@
 # Session Intent Display Technical Spec
 
-Status: Current contract (Phase 1 schema/display landed as migration v092; Phase 2 summary persist landed; #1068–#1069 remaining)
-Date: 2026-09-05
+Status: Current contract (schema, automatic rollup, UI/governance, and candidate-title guidance staged)
+Date: 2026-09-08
 
 Tracking:
 - Capability epic: #1065
@@ -164,6 +164,19 @@ CLI/API preview-then-apply:
 5. For workstreams, record prior topic/title through #603 alias machinery when
    the display topic changes.
 
+### Prompt-time candidate titles (#1069)
+
+`src/observation_extract/prompt.rs` supplies title guidance to the production
+JSON extraction prompt. `src/session_rollup/prompt.rs` supplies matching guidance
+for production rollup requests and segment titles. Existing workstream names
+remain unchanged for identity continuity. The prompt index in `src/context/prompt_submit/candidates.rs`
+continues to render stored memory titles, workstream titles, and summary requests
+through its existing compact/escaped renderer. No deterministic title rewriting,
+historical backfill, new badge option, or host title writer is introduced.
+
+The README documents an optional host-sidebar rename tip. It does not prescribe
+host-private storage edits or make host labels authoritative for Remem fields.
+
 ### Workstream rollup
 
 Optional later: when a linked session gains high-confidence intent and the
@@ -223,3 +236,38 @@ Epic #1065 closes only after phases are verified.
   closed codes (`fix`, not `FIX`).
 - Session Observatory projection tables remain a possible later attachment
   point for list performance; summary is still the semantic write source.
+
+## Phase 3 implementation contract (#1068)
+
+Extend the existing session-activity list with shared label fields, the trusted
+`session_row_id` (nullable), and override eligibility from persisted summaries.
+Reuse exact raw identity resolution; do not infer host/session IDs. Filter by
+`session_intent` (including `abstain` for any incomplete display label) and inclusive created epoch
+`since_epoch` / exclusive `until_epoch`; the widget converts date inputs from
+Asia/Shanghai midnight. Bind these filters into continuation cursors.
+
+Add native authenticated API preview/apply endpoints for a bounded batch of
+canonical session/workstream IDs. Preview validates and redacts fields using
+the shared intent/topic contract. Apply requires its preview token, explicit
+confirmation, and reason; recheck the full before-state within the write
+transaction and reject stale or missing targets atomically. Existing
+`events` records preview snapshots and applied before/after values with reason
+in the same transaction. Tokens are random 256-bit values, stored only as hashes,
+expire after 15 minutes and can be applied once. Apply carries only the token and
+confirmation; its reviewed reason and payload come from the stored preview.
+Session overrides update the authoritative existing summary, requiring a
+summary when none exists; never manufacture semantic summaries for display.
+Workstream edits reuse alias recording for prior title/topic and replacement
+topic while keeping canonical ID, identity key, title and links unchanged.
+The app bridges those routes with its existing local POST security guard;
+no host mutation, migration, new config or generic policy framework is added.
+
+## Activity-list caller update (#1068)
+
+The Rust `RawSessionActivity` DTO gains the nullable label/identity fields. Rust
+struct-literal callers must supply those fields, and `list_activity_sessions`
+callers must pass the intent/date filters and the visibility predicate. REST
+fields are additive. Activity pagination uses `sa3_` cursors bound to all
+filters; clients discard an old `sa2_` cursor and restart the first page after
+upgrade. The surface manifest retires the exact previous Rust declaration
+fingerprints; no compatibility wrapper or cursor fallback is added.

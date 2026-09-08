@@ -192,3 +192,11 @@ fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WorkstreamRow> {
         session_intent_source: row.get(14)?,
     })
 }
+
+pub(in crate::api) fn workstream_is_visible(conn: &Connection, id: i64) -> anyhow::Result<bool> {
+    let policy = ResourceProjectionPolicy::load(conn)?;
+    match Workstreams::load_one(conn, id)? {
+        Some(row) => Ok(Workstreams::project(row, &policy)?.is_some()),
+        None => Ok(false),
+    }
+}

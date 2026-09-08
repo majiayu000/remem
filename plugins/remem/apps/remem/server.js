@@ -57,6 +57,7 @@ function readWidgetHtml() {
 
 const PUBLIC_ASSETS = new Map([
   ["/widget.css", { file: "widget.css", contentType: "text/css; charset=utf-8" }],
+  ["/session-labels.js", { file: "session-labels.js", contentType: "text/javascript; charset=utf-8" }],
   ["/widget.js", { file: "widget.js", contentType: "text/javascript; charset=utf-8" }]
 ]);
 
@@ -524,6 +525,10 @@ async function callTool(backend, name, args = {}) {
       `Governance dry-run found ${result.affected?.length ?? 0} affected memory result(s).`,
       result
     );
+  }
+  if (name === "remem_session_intent_preview" || name === "remem_session_intent_apply") {
+    const result = name.endsWith("_preview") ? await backend.sessionIntentPreview(args) : await backend.sessionIntentApply(args);
+    return toolResult(name.endsWith("_preview") ? "Review the label changes before confirming apply." : "Session label override applied.", result);
   }
   if (name === "remem_activity_sessions") {
     const result = await backend.activitySessions(args);

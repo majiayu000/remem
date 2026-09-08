@@ -13,6 +13,7 @@ mod observations;
 mod save;
 mod search;
 mod session_activity;
+mod session_intent;
 mod sessions;
 mod show;
 mod stats;
@@ -56,3 +57,5 @@ pub(super) use status::handle_status;
 pub(super) use tasks::{handle_list_tasks, handle_task_detail};
 pub(super) use user_recall::handle_user_recall;
 pub(super) use workstreams::{handle_list_workstreams, handle_workstream_detail};
+
+pub(super) use session_intent::{handle_session_intent_apply, handle_session_intent_preview};

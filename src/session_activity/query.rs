@@ -12,25 +12,39 @@ const MAX_RETURNED_ACTIONS_PER_TURN: i64 = 100;
 const MAX_COUNTED_MESSAGES_PER_SESSION: i64 = 10_000;
 const SESSION_SCAN_ROWS_PER_RESULT: i64 = 64;
 const MAX_SESSION_SCAN_ROWS: i64 = 12_800;
-const ACTIVITY_CURSOR_PREFIX: &str = "sa2_";
+const ACTIVITY_CURSOR_PREFIX: &str = "sa3_";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ActivitySessionCursor {
     version: u8,
     project_filter: Option<String>,
+    intent_filter: Option<String>,
+    since_epoch: Option<i64>,
+    until_epoch: Option<i64>,
     last_epoch: i64,
     last_row_id: i64,
 }
 
+// Keep the existing bounded query parameters and inject API visibility without an API dependency.
+#[allow(clippy::too_many_arguments)]
 pub fn list_activity_sessions(
     conn: &Connection,
     project: Option<&str>,
+    session_intent: Option<&str>,
+    since_epoch: Option<i64>,
+    until_epoch: Option<i64>,
     cursor: Option<&str>,
     limit: i64,
+    is_visible: impl Fn(&[&str]) -> bool,
 ) -> Result<RawSessionActivityPage> {
     let cursor = cursor.map(decode_activity_cursor).transpose()?;
     if let Some(cursor) = cursor.as_ref() {
-        if cursor.version != 2 || cursor.project_filter.as_deref() != project {
+        if cursor.version != 3
+            || cursor.project_filter.as_deref() != project
+            || cursor.intent_filter.as_deref() != session_intent
+            || cursor.since_epoch != since_epoch
+            || cursor.until_epoch != until_epoch
+        {
             bail!("session activity cursor does not match the requested filters");
         }
     }
@@ -104,13 +118,28 @@ pub fn list_activity_sessions(
     {
         last_scanned = Some((epoch, row_id));
         if is_latest {
-            data.push(load_raw_session_activity(
+            let Some((item, created_epoch)) = load_raw_session_activity(
                 conn,
                 &source_root,
                 &candidate_project,
                 &session_id,
                 epoch,
-            )?);
+                &is_visible,
+            )?
+            else {
+                continue;
+            };
+            let matches_intent = match session_intent {
+                None => true,
+                Some("abstain") => item.display_label.is_none(),
+                Some(intent) => item.session_intent.as_deref() == Some(intent),
+            };
+            if matches_intent
+                && since_epoch.is_none_or(|since| created_epoch >= since)
+                && until_epoch.is_none_or(|until| created_epoch < until)
+            {
+                data.push(item);
+            }
         }
         if data.len() as i64 >= limit {
             stopped_early = index + 1 < candidate_count;
@@ -122,8 +151,11 @@ pub fn list_activity_sessions(
         let (last_epoch, last_row_id) = last_scanned
             .context("session activity pagination lost its scanned continuation row")?;
         Some(encode_activity_cursor(&ActivitySessionCursor {
-            version: 2,
+            version: 3,
             project_filter: project.map(str::to_string),
+            intent_filter: session_intent.map(str::to_string),
+            since_epoch,
+            until_epoch,
             last_epoch,
             last_row_id,
         })?)
@@ -156,8 +188,55 @@ fn load_raw_session_activity(
     project: &str,
     session_id: &str,
     last_epoch: i64,
-) -> Result<RawSessionActivity> {
-    conn.query_row(
+    is_visible: &impl Fn(&[&str]) -> bool,
+) -> Result<Option<(RawSessionActivity, i64)>> {
+    let key = super::types::SessionActivityKey {
+        source_root: source_root.to_string(),
+        project: project.to_string(),
+        session_id: session_id.to_string(),
+    };
+    let (created_epoch, identity_min, identity_max): (i64, Option<i64>, Option<i64>) = conn
+        .query_row(
+            "SELECT MIN(created_at_epoch), MIN(transcript_identity_id), MAX(transcript_identity_id)
+         FROM raw_messages WHERE source_root = ?1 AND project = ?2 AND session_id = ?3",
+            params![source_root, project, session_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+    let session_row_id = if identity_min == identity_max {
+        super::projection::resolve_session_row_id(conn, &key, identity_min)?
+    } else {
+        None
+    };
+    let summary = conn.query_row(
+        "SELECT session_intent, session_topic, session_intent_source
+         FROM session_summaries WHERE session_row_id = ?1
+         ORDER BY COALESCE(session_intent_updated_at_epoch, created_at_epoch) DESC, id DESC LIMIT 1",
+        [session_row_id],
+        |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?)),
+    ).optional()?;
+    let host: Option<String> = conn
+        .query_row(
+            "SELECT h.name FROM sessions s JOIN hosts h ON h.id = s.host_id WHERE s.id = ?1",
+            [session_row_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let raw_topic = summary.as_ref().and_then(|s| s.1.as_deref());
+    let mut visible = vec![source_root, project, session_id];
+    visible.extend(host.as_deref());
+    visible.extend(raw_topic);
+    if !is_visible(&visible) {
+        return Ok(None);
+    }
+    let safe_topic = safe_optional_text(raw_topic.map(str::to_owned));
+    let label = crate::memory::session_label::render_from_stored(
+        Some(created_epoch),
+        summary.as_ref().and_then(|s| s.0.as_deref()),
+        safe_topic.as_deref(),
+        summary.as_ref().and_then(|s| s.2.as_deref()),
+        None,
+    );
+    let item = conn.query_row(
         "WITH bounded AS MATERIALIZED (
            SELECT id, role, created_at_epoch
            FROM raw_messages
@@ -188,6 +267,13 @@ fn load_raw_session_activity(
         |row| {
             let counts_truncated = row.get(4)?;
             Ok(RawSessionActivity {
+                session_row_id,
+                override_available: summary.is_some(),
+                mmdd: label.mmdd,
+                session_intent: label.session_intent,
+                session_topic: label.session_topic,
+                session_intent_source: label.session_intent_source,
+                display_label: label.display_label,
                 source_root: source_root.to_string(),
                 project: project.to_string(),
                 session_id: session_id.to_string(),
@@ -200,8 +286,8 @@ fn load_raw_session_activity(
                 projected_turn_count: row.get(5)?,
             })
         },
-    )
-    .map_err(Into::into)
+    )?;
+    Ok(Some((item, created_epoch)))
 }
 
 pub fn list_turns(

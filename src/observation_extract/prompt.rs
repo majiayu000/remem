@@ -47,6 +47,7 @@ pub(super) fn build_extract_prompt(task: &db::ExtractionTask, range: &EvidenceRa
         },
         "quality_gates": [
             "Save only information that would make a future agent act more correctly.",
+            "Use a short, specific title naming the action or finding. Do not repeat the current project name as a title prefix; retain technical names needed to identify the subject. If no supported title is available, use null.",
             "Prefer no_observations for routine command output, repeated context, greetings, or unverified plans.",
             "Normalize relative dates to absolute ISO dates using event reference_time_iso; omit dates when not resolvable.",
             "Do not output secrets. If a secret-like value is relevant, write [REDACTED_SECRET].",

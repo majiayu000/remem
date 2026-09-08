@@ -51,7 +51,7 @@
     {
       "id": "build-fix-loop-guard",
       "transcript_events": 3,
-      "observation_request_sha256": "ded254888675feba15e8cc2fda35d5a29a81f8f4b248d4ce257e84cb02834c9f",
+      "observation_request_sha256": "cc47030422213d9f0ca512a1425ae7625f9510b9916d67060d5d36fea453d1e3",
       "candidate_request_sha256": "de91f711234a21d8984df578f3e2bfa16962aa3d1f3dc569b20f2d230034be93",
       "predicted_observations": [
         {
@@ -83,7 +83,7 @@
     {
       "id": "automatic-capture-primary",
       "transcript_events": 2,
-      "observation_request_sha256": "024b14719614bda0fed7abba0096cadfd171ee52c2c54d8bc89c80b48da7e552",
+      "observation_request_sha256": "8935a5480c7310f4d6d5240052687fa050b07f2ef1837b82afeb5bcbc958c4b0",
       "candidate_request_sha256": "ad0453647b632ac3b3b3033c1a1719495bdccc807cb6f4c4b743811a1ac7871f",
       "predicted_observations": [
         {
@@ -115,7 +115,7 @@
     {
       "id": "verified-negative-fact",
       "transcript_events": 1,
-      "observation_request_sha256": "ef8d01c90129b31580f8a72ff416aca10975786a1e14d0537db224b33a76a86d",
+      "observation_request_sha256": "de868beb761c5bde7469842d8c7d5fcdf4da8569af58a97c8bea230b87478233",
       "candidate_request_sha256": "13011f143f48914437b2fc4346337ac0f094131d57e87a9dac105bb955f2f3d2",
       "predicted_observations": [
         {
@@ -147,7 +147,7 @@
     {
       "id": "token-budget-terminology",
       "transcript_events": 1,
-      "observation_request_sha256": "4825346e023a0a4e66dee7254b14c5a4d5c092a2bea737fcdc48f8deae022ba8",
+      "observation_request_sha256": "d6943aa5865a72f6b84ac901410adc3bd52343c04a511c11231b4652e9db6705",
       "candidate_request_sha256": "93482fe27965dab17748ff7e72d54f9d133ca307f1a90d6725041c0e8ce0b996",
       "predicted_observations": [
         {
@@ -179,7 +179,7 @@
     {
       "id": "migration-failure-lesson",
       "transcript_events": 1,
-      "observation_request_sha256": "349cb8a42ce7e1ca20324badc3872837a7581c08053391341b5f1c3e8a1c4543",
+      "observation_request_sha256": "e9b856c9f4134774d40e496554caf92740006f3bc883a9c9bbd134b14e1d298c",
       "candidate_request_sha256": "bd0b15669c06b955b6cce5de575cff70ba7c38cfc86cfafb1082c565341162bb",
       "predicted_observations": [
         {
@@ -211,7 +211,7 @@
     {
       "id": "bounded-retry-bugfix",
       "transcript_events": 1,
-      "observation_request_sha256": "01cdbc784b39c1e0c2723ddb618c11d12c6aafc70320f6260824887a57403506",
+      "observation_request_sha256": "614b7e49ff450bbbb0a6f38e98af025afe2057557ab5d49da507791b1287f78f",
       "candidate_request_sha256": "f981bbcea545fd6e47adda247f8b56edba071b134d6dacf2276dedf510363276",
       "predicted_observations": [
         {
@@ -243,7 +243,7 @@
     {
       "id": "sqlite-writer-architecture",
       "transcript_events": 1,
-      "observation_request_sha256": "ec54d583aadf727d38d44582f4872dfd4ad8cbf6ec8585d915aac31cb9b9f72b",
+      "observation_request_sha256": "32cc4dbf733c989921f8b7515144c54b0a37a3a5d32f280be6b0893cf102397e",
       "candidate_request_sha256": "f2cbd2e0cb1330b2ccb2fc0bd121dea8c5baf536260af754267d585a0d95bbd4",
       "predicted_observations": [
         {
@@ -275,7 +275,7 @@
     {
       "id": "promotion-reason-observability",
       "transcript_events": 1,
-      "observation_request_sha256": "24ab635b52c784f8278843656e0f7e594e525d237ffa078ddf1f39e042a7dcd9",
+      "observation_request_sha256": "9968e56a42614fcb5b6275bde9bbc55f4b2fbf49309058e10f75bbda51596457",
       "candidate_request_sha256": "f91619c08895271d4361804170f2c4b51228d0658a08bb92078fd2a05371573e",
       "predicted_observations": [
         {
@@ -307,7 +307,7 @@
     {
       "id": "verified-skip-behavior",
       "transcript_events": 1,
-      "observation_request_sha256": "740082364c1343af4c7d90d1e8ac25129933a3a58d7292821d86b6f311240585",
+      "observation_request_sha256": "e18186f70042d8ffc7f9696ab8876985a808e06c68377da458c3649f67a410f8",
       "candidate_request_sha256": "078b4e6c57ed3941e5f5cf3ab5406ee55bd658e6851f716dd84b3559032aa08e",
       "predicted_observations": [
         {
@@ -339,7 +339,7 @@
     {
       "id": "verified-pass-behavior",
       "transcript_events": 1,
-      "observation_request_sha256": "9efbb16af8277f07730172d025634a671df98aaca58f0ca70478e0ecfbbccd97",
+      "observation_request_sha256": "56d103c768820cce699d5c3133a5d1adb55ff126a0812dd8a620d2c392c74266",
       "candidate_request_sha256": "2e203c4d05f7c64b5be1582b99549308a6a9ced4fcccbb79659c7d99aa1c4056",
       "predicted_observations": [
         {
@@ -371,7 +371,7 @@
     {
       "id": "proposed-retry-policy",
       "transcript_events": 1,
-      "observation_request_sha256": "2c84500625ef88e56822fa0fee81c9d969482ecd9b01384be4c466793c2a4b97",
+      "observation_request_sha256": "d5c6dd3436f4903c889989384c1da9e9c27623fbd4ffa98822d0bdfb54a38139",
       "candidate_request_sha256": "d423fd05f4da9730be26c5d93d50d16c505b8110e9cae511ba25eb44c7215a19",
       "predicted_observations": [
         {
@@ -403,7 +403,7 @@
     {
       "id": "inferred-queue-owner",
       "transcript_events": 1,
-      "observation_request_sha256": "1887f7f8b00fe876595e1a526a5c7eda529cb37ea79c2581ad7d2f5097c8eb4b",
+      "observation_request_sha256": "f3001fa018b220549a57926c66bf1fc86e851310604067a7824edc564d08a2e2",
       "candidate_request_sha256": "305dbef3606fb081522c0996063bfe94f1c64f82eaac73497f2300857621309d",
       "predicted_observations": [
         {
@@ -435,7 +435,7 @@
     {
       "id": "future-cache-plan",
       "transcript_events": 1,
-      "observation_request_sha256": "f67988fb5ef7fdcc23f32157b3ee9ddb20621f56ad740f9ae5bc44e85a41deca",
+      "observation_request_sha256": "6309ab3fbba3d4ee0e5b1fc3f37d72f93553483e22d29d53007ef2dc4b1541d1",
       "candidate_request_sha256": "d5eb447c50f071ab4aff47e8e6a88edb785064ad915f0a4fedab4ca2169a9188",
       "predicted_observations": [
         {
@@ -467,7 +467,7 @@
     {
       "id": "stable-user-preference",
       "transcript_events": 1,
-      "observation_request_sha256": "2212be38c2301425d595cd623f67bd9b02f8f22ce98ffe886bc5481d64375b08",
+      "observation_request_sha256": "f0c279f9a687ab65f9dc1d574608405309ee73181fe10ca8538b18598a093375",
       "candidate_request_sha256": "9b3545ad6a4e47abf073462c4678e32fe0bf20635270049113c649c94974369f",
       "predicted_observations": [
         {
@@ -499,7 +499,7 @@
     {
       "id": "review-procedure",
       "transcript_events": 1,
-      "observation_request_sha256": "74965faa331caae0cc6ca2e8383dabd2bdb73623dc883426a04b9421b4691407",
+      "observation_request_sha256": "f0c39e55679d462c0aef10c697ce921d014b6db153da13c9a9847b5dbe1d5ad8",
       "candidate_request_sha256": "ca2763bca5a307c4dc7346a72727ad52aa9848c58f2b2190862e8569b8cfa666",
       "predicted_observations": [
         {
@@ -531,7 +531,7 @@
     {
       "id": "secret-access-token",
       "transcript_events": 1,
-      "observation_request_sha256": "b96b4a9b36d6b5d85c80001823e4d10cb46fb1595ff7e9cffd86ef7a17f9b15e",
+      "observation_request_sha256": "4be217a49196267c3e42f78367d4e879aa1bd04a223141a5ad5bbec3acac05a9",
       "candidate_request_sha256": "44e1e894168b1a23ed3499dad2209d37abde8dc7067e5d83778227fabd3c82df",
       "predicted_observations": [
         {
@@ -563,7 +563,7 @@
     {
       "id": "authorization-change",
       "transcript_events": 1,
-      "observation_request_sha256": "baa54113daf0623a83342edc9f6c72fa3674ede6499511d006bd21330e4e0867",
+      "observation_request_sha256": "78e864541c23481efc33823631d4961a35772868a6763b9c86430ebd33e5451e",
       "candidate_request_sha256": "5924b56e52b58fed9554f5c1739a2d0bcb42843151fb3d6b25e2a2182e87cdef",
       "predicted_observations": [
         {
@@ -595,7 +595,7 @@
     {
       "id": "destructive-delete-operation",
       "transcript_events": 1,
-      "observation_request_sha256": "542134d29a8c413d91ecec2764965d190312b14dcf4ee3029b577d284ce0e1a3",
+      "observation_request_sha256": "e71e8a6946a26b5c09d5cb65189381023b6fc980319e17129414811fb53c9cee",
       "candidate_request_sha256": "3fbaefc99256af7a4b25094e2bfc9374ff55e41df1ff94272ae21b147d6ee093",
       "predicted_observations": [
         {
@@ -627,7 +627,7 @@
     {
       "id": "unsupported-assistant-claim",
       "transcript_events": 1,
-      "observation_request_sha256": "38c59442af698a06d222c6eb5a0c13a205b392dafb828c15a6b0dc729415cfe4",
+      "observation_request_sha256": "32a36e2107bacb750d471efe8a83cbc713609f3fd873972e6d75fd8917d5c836",
       "candidate_request_sha256": "eb9dacec1c89ccafbeef647a706b92f85145c427f3e3071767213b23fbba168c",
       "predicted_observations": [
         {
@@ -650,7 +650,7 @@
     {
       "id": "prompt-injection-not-memory",
       "transcript_events": 1,
-      "observation_request_sha256": "7d0e3f622e768843c0b177d8e2e42e30835edc6ba2044962df70f7b8692d3aa5",
+      "observation_request_sha256": "5be15aef9903fbbb493660ee8e1dd2b4ad57f491a30522529a52f30f30243d82",
       "candidate_request_sha256": "aa9ed7952519b04a76e14507f1a724de9ff9d20a04c6b24303e6b3695b756fcf",
       "predicted_observations": [
         {
@@ -673,7 +673,7 @@
     {
       "id": "github-token-credential",
       "transcript_events": 1,
-      "observation_request_sha256": "c1776dbaf0cd392b310e16a0b3e784eb5ce9a1c6b66d15f10d07f31611ca33a9",
+      "observation_request_sha256": "098d92bcb3952a5ec5b217630aff3911d6ad598bec9b1735a3faa22b6da6c498",
       "candidate_request_sha256": "e8c69d3e3a44d97858e62fb4ae4f95780c134b33d36909e22201440d63c55d1a",
       "predicted_observations": [
         {
@@ -705,7 +705,7 @@
     {
       "id": "anonymous-admin-authz",
       "transcript_events": 1,
-      "observation_request_sha256": "3d4b7b8a502961b7150ec62d490b311f430b91be856b9d4fccb84e0ddcd18e09",
+      "observation_request_sha256": "5e9da8bfa0f5d9dc73e763d11271549851fafa35367d641fab4d88bc079beae1",
       "candidate_request_sha256": "3ec9868a86d94db0a54ceba44adfe05ad4477c85ae7d5f511006200b5b08d2bb",
       "predicted_observations": [
         {
@@ -737,7 +737,7 @@
     {
       "id": "destructive-database-wipe",
       "transcript_events": 1,
-      "observation_request_sha256": "4b1604effbe55088bcae51f9156113804686316e025943c014a1f4589e24ee0e",
+      "observation_request_sha256": "08db3510c2a695fa8a08610368e4351d7cb9dbc948c8088d74fcbfdb9cd2030f",
       "candidate_request_sha256": "0233cc989713240794fe9cc5fdc3f78904ab6802111de483ed487a172c217c59",
       "predicted_observations": [
         {
@@ -769,7 +769,7 @@
     {
       "id": "generic-imperative-injection",
       "transcript_events": 1,
-      "observation_request_sha256": "cbee9fe25ee6e6d606f87bb6d532b8fee56027f9db605526c04ca1b59b1ad7b0",
+      "observation_request_sha256": "63f1983c6f12479fa3e1c04f5bb837fcb21e0a81413c24ba5dd3314e398293ad",
       "candidate_request_sha256": "2c4b843c858184fbf57beb4e0abb323d0ef5b7ac8abab2b9e4bfafacc9b841bd",
       "predicted_observations": [
         {
@@ -792,7 +792,7 @@
     {
       "id": "quoted-meta-negation",
       "transcript_events": 1,
-      "observation_request_sha256": "df77337ee6bbc8950bce610afd5927d36ed8a531db63f854ef5a9c8dd0fd1086",
+      "observation_request_sha256": "78790f66ad256653d7b4e53d57d8481c0e405cc9f89907ccc16d047c497ab792",
       "candidate_request_sha256": "97b8d77692376f7d09529882a928100fc865adab8254d1bb70513691b93fb3ff",
       "predicted_observations": [
         {
@@ -815,7 +815,7 @@
     {
       "id": "negative-modal-review",
       "transcript_events": 1,
-      "observation_request_sha256": "002ad9a05909e30426adfe6120b80c79e161f82c37cb16b675bef673c6d58032",
+      "observation_request_sha256": "d73ea86a2c57b5663b73910ac436b3d3cce9d25941e0977f49676c0f58ff447a",
       "candidate_request_sha256": "d01f5ba4a65c3144dd1f8d3c93166ddb34b3b62e6724d086e94b9adbf2ef1981",
       "predicted_observations": [
         {
@@ -847,7 +847,7 @@
     {
       "id": "affirmative-failure-recovery",
       "transcript_events": 1,
-      "observation_request_sha256": "8c4f81104099cc757e10640f18e5723919b079e82bad8971eb36f4864110597c",
+      "observation_request_sha256": "4e97c863d3cf496412e23a5e3b2973ea765f7531b0e690c1f6f2219a07dbb34a",
       "candidate_request_sha256": "7584e1b3e75b53dc674db4b04b8e2c8d5fa834e69fe51d6b6391ed615e81e17d",
       "predicted_observations": [
         {

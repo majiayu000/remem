@@ -13,6 +13,16 @@ function apiRoute(pathname, params = {}) {
 
 function createSessionActivityBackend(api) {
   return {
+    async sessionIntentPreview(input) {
+      return api.request("/api/v1/session-intent/preview", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input)
+      });
+    },
+    async sessionIntentApply(input) {
+      return api.request("/api/v1/session-intent/apply", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input)
+      });
+    },
     async activitySessions(params = {}) {
       return api.request(apiRoute("/api/v1/session-activity/sessions", params));
     },
@@ -36,6 +46,14 @@ function createSessionActivityBackend(api) {
 }
 
 async function handleSessionActivityRoute({ req, res, url, backend, jsonResponse, readJsonBody }) {
+  if (req.method === "POST" && ["/api/session-intent-preview", "/api/session-intent-apply"].includes(url.pathname)) {
+    assertLocalPostAllowed(req);
+    const input = await readJsonBody(req);
+    const result = url.pathname.endsWith("-preview")
+      ? await backend.sessionIntentPreview(input) : await backend.sessionIntentApply(input);
+    jsonResponse(res, 200, result);
+    return true;
+  }
   if (req.method === "GET" && url.pathname === "/api/activity-sessions") {
     jsonResponse(res, 200, await backend.activitySessions(Object.fromEntries(url.searchParams)));
     return true;

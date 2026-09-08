@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.93` adds session labels and intent/created-date
+  filters to the app, audited preview/apply corrections for sessions and
+  workstreams, and concise candidate-title guidance. Explicit corrections and
+  clears survive later automatic summaries; host titles stay unchanged.
 - Staged source version `0.6.92` extracts optional `session_intent` and
   `session_topic` from Stop summaries. Unknown, empty, too-long, poisoned, or
   redacted topics abstain instead of blocking memory promotion.

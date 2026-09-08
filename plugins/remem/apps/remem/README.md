@@ -14,6 +14,7 @@ This app surface provides:
 - timeline: project report and around-anchor/query browsing
 - workstreams: status filtering plus confirmed status/next-action/blocker updates
 - activation: packaged hook review plus hooks-only dry-run plan without writing Codex config
+- session labels: intent/created-date filters and audited preview-then-apply batch corrections
 - session observatory: exact raw-session discovery, idempotent turn projection,
   evidence-aware turn detail, and activity statistics
 
@@ -59,3 +60,30 @@ descriptors and a `ui://remem/dashboard.html` resource. The plugin manifest
 does not point at `.app.json` yet because Codex plugin validation only accepts
 real app IDs there. Add `.app.json` after a real Apps SDK app or connector id
 exists.
+
+## Correct session and workstream labels
+
+In **Sessions**, filter by intent or created-date range. Dates use Asia/Shanghai
+calendar days, including the selected end date. The Label column shows
+`MMDD｜intent｜topic` or explicit `Abstain` with the available fallback. The
+list remains bounded and displays a notice when more matching sessions exist.
+
+Open **Correct labels · preview before apply** in Sessions or Workstreams.
+Copy the stable numeric IDs from the list, enter a replacement intent/topic
+and reason, then choose **Preview changes**. Both fields are replacements;
+an empty intent or topic explicitly clears that field. Review each Before /
+After row, check **I reviewed Before / After**, then choose **Apply reviewed
+changes**. Editing the proposal invalidates the preview. Stale, expired, or
+already-applied previews require a new preview; no partial batch is applied.
+
+Raw sessions without a trusted canonical session and persisted summary show
+`Override unavailable` and remain readable. Workstream display changes retain
+the canonical ID, title, identity key, links, and aliases. No operation changes
+a Codex or Claude conversation title. Audits record the reason and reviewed
+values in the existing event log.
+
+The standalone app routes `POST /api/session-intent-preview` and
+`POST /api/session-intent-apply` proxy the authenticated native
+`/api/v1/session-intent/preview` and `/api/v1/session-intent/apply` routes.
+Embedded widgets use `remem_session_intent_preview` and
+`remem_session_intent_apply` with the same payloads.

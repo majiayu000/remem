@@ -1,7 +1,7 @@
 # Session Intent Display Product Spec
 
-Status: Current contract (Phase 1 schema/display landed as v092; Phase 2 summary persist landed; #1068–#1069 remaining)
-Date: 2026-09-05
+Status: Current contract (schema, automatic rollup, UI/governance, and candidate-title guidance staged)
+Date: 2026-09-08
 
 Tracking:
 - Capability epic: #1065
@@ -137,6 +137,20 @@ workstream. They:
 - must remain compatible with #603 matching order and SessionStart canonical
   rendering.
 
+## Candidate Title Guidance (#1069)
+
+Automatic extraction asks for short, specific titles that identify the action
+or finding without repeating the current project name as a prefix. Technical
+names needed to distinguish the subject remain in the title. Session rollup requests
+and segment titles follow the same guidance. Existing workstream names stay
+stable. Prompt-time rendering continues to use stored titles with its
+existing length and escaping limits. Guidance is not a guarantee of model output
+and does not rewrite historical titles or add an intent badge.
+
+Operators may optionally rename host conversations for sidebar readability.
+Those host-only labels do not edit Remem intent/topic, memory types, aliases, or
+workstream identity. Remem's structured fields remain authoritative.
+
 ## Non-Goals
 
 - Batch-renaming host agent conversation titles.
@@ -175,3 +189,18 @@ workstream. They:
 3. Should prompt-time candidates show INTENT badges by default?
    Recommendation: optional and compact; default off until Phase 4 measures
    noise.
+
+## Phase 3 operator workflow (#1068)
+
+Sessions workspace shows a Label column using the shared label or explicit
+`Abstain` with the original fallback. Intent and created-date filters apply
+to the paginated session query; dates use Asia/Shanghai calendar days.
+Sessions lacking a trusted canonical session row or a persisted summary stay
+readable but cannot yet receive an override; the UI explains this limitation.
+
+Sessions and Workstreams offer batch intent/topic correction. The operator
+selects stable IDs, enters the replacement fields and a reason, reviews a
+Before/After table, then explicitly confirms Apply. Editing the proposal
+invalidates the preview. A changed target rejects the whole apply as stale.
+The transaction preserves workstream identity and aliases and records its
+before/after values and reason in the existing governance audit.

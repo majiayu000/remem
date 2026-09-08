@@ -6,6 +6,8 @@ use crate::api::types::{CapabilitiesFeatures, CapabilitiesResponse};
 
 pub(in crate::api) async fn handle_capabilities() -> impl IntoResponse {
     let mut endpoints = BTreeMap::from([
+        ("session_intent_preview", "/api/v1/session-intent/preview"),
+        ("session_intent_apply", "/api/v1/session-intent/apply"),
         ("health", "/api/v1/health"),
         ("status", "/api/v1/status"),
         ("stats", "/api/v1/stats"),

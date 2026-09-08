@@ -12,11 +12,11 @@ fn setup() -> Result<Connection> {
     crate::migrate::run_migrations(&conn)?;
     conn.execute_batch(
         "INSERT INTO raw_session_identities (
-            id, source_root, transcript_path, fallback_session_id,
+            id, host, source_root, transcript_path, fallback_session_id,
             canonical_session_id, project, legacy_project, status,
             observed_mtime_ns, observed_size_bytes, first_seen_at_epoch,
             last_seen_at_epoch
-         ) VALUES (1, 'local', '/home/test/.codex/sessions/session-1.jsonl',
+         ) VALUES (1, 'codex-cli', 'local', '/home/test/.codex/sessions/session-1.jsonl',
                    'session-1', 'session-1', '/repo', 'repo', 'active',
                    1, 1, 1, 1);",
     )?;
@@ -257,7 +257,8 @@ fn projects_ordered_turns_with_actions_and_is_idempotent() -> Result<()> {
     assert!(action.1.contains("Bash"));
     assert_eq!(action.2, 20);
 
-    let sessions = list_activity_sessions(&conn, Some("/repo"), None, 10)?;
+    let sessions =
+        list_activity_sessions(&conn, Some("/repo"), None, None, None, None, 10, |_| true)?;
     assert_eq!(sessions.data.len(), 1);
     assert_eq!(sessions.data[0].projected_turn_count, 2);
     let turns = list_turns(
@@ -495,10 +496,19 @@ fn activity_session_cursor_preserves_equal_epoch_tuples() -> Result<()> {
             params![id, session, project, format!("hash-{id}")],
         )?;
     }
-    let first = list_activity_sessions(&conn, None, None, 2)?;
+    let first = list_activity_sessions(&conn, None, None, None, None, None, 2, |_| true)?;
     assert!(first.has_more);
     assert_eq!(first.data.len(), 2);
-    let second = list_activity_sessions(&conn, None, first.next_cursor.as_deref(), 2)?;
+    let second = list_activity_sessions(
+        &conn,
+        None,
+        None,
+        None,
+        None,
+        first.next_cursor.as_deref(),
+        2,
+        |_| true,
+    )?;
     assert!(!second.has_more);
     assert_eq!(second.data.len(), 1);
     assert_eq!(second.data[0].project, "/a");
@@ -527,14 +537,32 @@ fn activity_session_scan_is_bounded_and_sparse_pages_advance() -> Result<()> {
         [],
     )?;
 
-    let first = list_activity_sessions(&conn, None, None, 1)?;
+    let first = list_activity_sessions(&conn, None, None, None, None, None, 1, |_| true)?;
     assert_eq!(first.data[0].session_id, "large");
     assert!(first.has_more);
-    let sparse = list_activity_sessions(&conn, None, first.next_cursor.as_deref(), 1)?;
+    let sparse = list_activity_sessions(
+        &conn,
+        None,
+        None,
+        None,
+        None,
+        first.next_cursor.as_deref(),
+        1,
+        |_| true,
+    )?;
     assert!(sparse.data.is_empty());
     assert!(sparse.has_more);
     assert_ne!(sparse.next_cursor, first.next_cursor);
-    let final_page = list_activity_sessions(&conn, None, sparse.next_cursor.as_deref(), 1)?;
+    let final_page = list_activity_sessions(
+        &conn,
+        None,
+        None,
+        None,
+        None,
+        sparse.next_cursor.as_deref(),
+        1,
+        |_| true,
+    )?;
     assert_eq!(final_page.data[0].session_id, "older");
     assert!(!final_page.has_more);
     Ok(())
@@ -556,7 +584,7 @@ fn activity_session_message_counts_are_bounded_and_explicitly_truncated() -> Res
     }
     conn.execute_batch("COMMIT")?;
 
-    let page = list_activity_sessions(&conn, Some("/huge"), None, 1)?;
+    let page = list_activity_sessions(&conn, Some("/huge"), None, None, None, None, 1, |_| true)?;
     assert_eq!(page.data.len(), 1);
     assert_eq!(page.data[0].message_count, 10_000);
     assert_eq!(page.data[0].assistant_message_count, 10_000);
@@ -603,7 +631,7 @@ fn local_transcript_never_borrows_actions_from_a_different_host() -> Result<()> 
     let mut conn = setup()?;
     conn.execute(
         "UPDATE raw_session_identities
-         SET transcript_path = '/home/test/.claude/projects/session-1.jsonl'
+         SET host = 'claude-code', transcript_path = '/home/test/.claude/projects/session-1.jsonl'
          WHERE id = 1",
         [],
     )?;
@@ -707,3 +735,6 @@ fn action_first_turn_does_not_invent_understanding_and_reprojection_preserves_id
     assert_eq!(preserved_id, first_id);
     Ok(())
 }
+
+#[path = "tests/labels.rs"]
+mod labels;

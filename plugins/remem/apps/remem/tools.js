@@ -315,9 +315,23 @@ function sessionActivityToolDescriptors() {
     session_id: { type: "string", minLength: 1, maxLength: 512 }
   };
   return [
+    activityTool("remem_session_intent_preview", "Preview Label Override", "Preview audited batch session or workstream intent/topic corrections.", {
+      targets: { type: "array", minItems: 1, maxItems: 50, items: { type: "object", properties: {
+        kind: { type: "string", enum: ["session", "workstream"] }, id: { type: "integer", minimum: 1 }
+      }, required: ["kind", "id"], additionalProperties: false } },
+      session_intent: { type: ["string", "null"], enum: ["fea", "des", "fix", "opt", "rel", "exp", "doc", "res", null] },
+      session_topic: { type: ["string", "null"], maxLength: 80 },
+      reason: { type: "string", minLength: 1, maxLength: 1000 }
+    }, { required: ["targets", "session_intent", "session_topic", "reason"], readOnly: false }),
+    activityTool("remem_session_intent_apply", "Apply Label Override", "Apply a reviewed unexpired label preview, rejecting stale targets.", {
+      preview_token: { type: "string", minLength: 1 }, confirm: { type: "boolean", const: true }
+    }, { required: ["preview_token", "confirm"], readOnly: false }),
     activityTool("remem_activity_sessions", "List Session Activity", "List bounded raw-backed session tuples.", {
       project: { type: "string" },
       cursor: { type: "string" },
+      session_intent: { type: "string", enum: ["fea", "des", "fix", "opt", "rel", "exp", "doc", "res", "abstain"] },
+      since_epoch: { type: "integer" },
+      until_epoch: { type: "integer" },
       limit: { type: "integer", minimum: 1, maximum: 200 }
     }),
     activityTool("remem_session_activity", "Read Session Turns", "Read one bounded page of projected session turns.", {

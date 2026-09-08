@@ -15,7 +15,8 @@ use super::handlers::{
     handle_reject_candidate, handle_restore_memory, handle_safe_approve_candidate,
     handle_safe_edit_candidate, handle_safe_reject_candidate, handle_save_memory, handle_search,
     handle_session_activity_detail, handle_session_activity_stats, handle_session_detail,
-    handle_stats, handle_status, handle_task_detail, handle_user_recall, handle_workstream_detail,
+    handle_session_intent_apply, handle_session_intent_preview, handle_stats, handle_status,
+    handle_task_detail, handle_user_recall, handle_workstream_detail,
 };
 use super::types::{DbState, StatusCache};
 
@@ -61,6 +62,14 @@ pub fn build_router(_port: u16) -> Router<DbState> {
         )
         .route("/api/v1/observations", get(handle_list_observations))
         .route("/api/v1/observations/{id}", get(handle_observation_detail))
+        .route(
+            "/api/v1/session-intent/preview",
+            post(handle_session_intent_preview),
+        )
+        .route(
+            "/api/v1/session-intent/apply",
+            post(handle_session_intent_apply),
+        )
         .route("/api/v1/sessions", get(handle_list_sessions))
         .route("/api/v1/sessions/{id}", get(handle_session_detail))
         .route(

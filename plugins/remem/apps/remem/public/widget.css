@@ -154,3 +154,14 @@ pre { white-space:pre-wrap; overflow-wrap:anywhere; margin:0; border:1px solid v
   .toolbar,.form-grid { grid-template-columns:1fr; }
   .form-grid .wide { grid-column:auto; }
 }
+
+.label-filters { margin-bottom: 18px; }
+.label-editor { margin-bottom: 18px; }
+.label-editor details { border: 1px solid var(--line, #d5d8d0); padding: 14px; border-radius: 8px; }
+.label-editor summary { cursor: pointer; font-weight: 600; }
+.label-editor .form-grid { margin: 14px 0; }
+.label-preview { overflow-x: auto; }
+.label-preview table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 13px; text-align: left; }
+.label-preview th, .label-preview td { padding: 10px; border-bottom: 1px solid var(--line, #d5d8d0); overflow-wrap: anywhere; }
+.label-editor button:disabled { opacity: .5; cursor: not-allowed; }
+.label-column-heading { padding: 12px 16px 0; }
