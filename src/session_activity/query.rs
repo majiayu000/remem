@@ -228,7 +228,7 @@ fn load_raw_session_activity(
     if !is_visible(&visible) {
         return Ok(None);
     }
-    let safe_topic = raw_topic.map(crate::adapter::common::redact_sensitive_text);
+    let safe_topic = safe_optional_text(raw_topic.map(str::to_owned));
     let label = crate::memory::session_label::render_from_stored(
         Some(created_epoch),
         summary.as_ref().and_then(|s| s.0.as_deref()),

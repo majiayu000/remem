@@ -261,3 +261,13 @@ Workstream edits reuse alias recording for prior title/topic and replacement
 topic while keeping canonical ID, identity key, title and links unchanged.
 The app bridges those routes with its existing local POST security guard;
 no host mutation, migration, new config or generic policy framework is added.
+
+## Activity-list caller update (#1068)
+
+The Rust `RawSessionActivity` DTO gains the nullable label/identity fields. Rust
+struct-literal callers must supply those fields, and `list_activity_sessions`
+callers must pass the intent/date filters and the visibility predicate. REST
+fields are additive. Activity pagination uses `sa3_` cursors bound to all
+filters; clients discard an old `sa2_` cursor and restart the first page after
+upgrade. The surface manifest retires the exact previous Rust declaration
+fingerprints; no compatibility wrapper or cursor fallback is added.
