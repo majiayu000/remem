@@ -223,3 +223,28 @@ Epic #1065 closes only after phases are verified.
   closed codes (`fix`, not `FIX`).
 - Session Observatory projection tables remain a possible later attachment
   point for list performance; summary is still the semantic write source.
+
+## Phase 3 implementation contract (#1068)
+
+Extend the existing session-activity list with shared label fields, the trusted
+`session_row_id` (nullable), and override eligibility from persisted summaries.
+Reuse exact raw identity resolution; do not infer host/session IDs. Filter by
+`session_intent` (including `abstain` for any incomplete display label) and inclusive created epoch
+`since_epoch` / exclusive `until_epoch`; the widget converts date inputs from
+Asia/Shanghai midnight. Bind these filters into continuation cursors.
+
+Add native authenticated API preview/apply endpoints for a bounded batch of
+canonical session/workstream IDs. Preview validates and redacts fields using
+the shared intent/topic contract. Apply requires its preview token, explicit
+confirmation, and reason; recheck the full before-state within the write
+transaction and reject stale or missing targets atomically. Existing
+`events` records preview snapshots and applied before/after values with reason
+in the same transaction. Tokens are random 256-bit values, stored only as hashes,
+expire after 15 minutes and can be applied once. Apply carries only the token and
+confirmation; its reviewed reason and payload come from the stored preview.
+Session overrides update the authoritative existing summary, requiring a
+summary when none exists; never manufacture semantic summaries for display.
+Workstream edits reuse alias recording for prior title/topic and replacement
+topic while keeping canonical ID, identity key, title and links unchanged.
+The app bridges those routes with its existing local POST security guard;
+no host mutation, migration, new config or generic policy framework is added.

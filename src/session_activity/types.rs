@@ -48,6 +48,13 @@ pub struct ProjectionResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RawSessionActivity {
+    pub session_row_id: Option<i64>,
+    pub override_available: bool,
+    pub mmdd: Option<String>,
+    pub session_intent: Option<String>,
+    pub session_topic: Option<String>,
+    pub session_intent_source: Option<String>,
+    pub display_label: Option<String>,
     pub source_root: String,
     pub project: String,
     pub session_id: String,

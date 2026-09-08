@@ -64,7 +64,7 @@ pub(super) struct ResourceProjectionPolicy {
 }
 
 impl ResourceProjectionPolicy {
-    fn load(conn: &Connection) -> anyhow::Result<Self> {
+    pub(super) fn load(conn: &Connection) -> anyhow::Result<Self> {
         let mut stmt = conn.prepare(
             "SELECT target_kind, target_id, target_value
              FROM memory_suppressions WHERE status = 'active' ORDER BY id",

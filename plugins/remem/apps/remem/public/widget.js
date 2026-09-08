@@ -47,6 +47,8 @@ async function callHostTool(name, args) {
   return window.openai.callTool(name, args);
 }
 function apiToolName(pathname, method) {
+  if (method === "POST" && pathname === "/api/session-intent-preview") return "remem_session_intent_preview";
+  if (method === "POST" && pathname === "/api/session-intent-apply") return "remem_session_intent_apply";
   if (method === "GET" && pathname === "/api/status") return "remem_dashboard";
   if (method === "GET" && pathname === "/api/search") return "remem_search";
   if (method === "GET" && pathname === "/api/memory") return "remem_get_memory";
@@ -65,6 +67,7 @@ function apiToolName(pathname, method) {
   return null;
 }
 function apiToolArgs(url, method, options) {
+  if (method === "POST" && url.pathname.startsWith("/api/session-intent-")) return JSON.parse(options.body || "{}");
   if (method === "GET" && url.pathname === "/api/search") {
     return {
       query: url.searchParams.get("query") || "",
@@ -105,6 +108,9 @@ function apiToolArgs(url, method, options) {
     return {
       project: url.searchParams.get("project") || undefined,
       cursor: url.searchParams.get("cursor") || undefined,
+      session_intent: url.searchParams.get("session_intent") || undefined,
+      since_epoch: optionalNumericParam(url.searchParams, "since_epoch"),
+      until_epoch: optionalNumericParam(url.searchParams, "until_epoch"),
       limit: numericParam(url.searchParams, "limit", 50)
     };
   }
@@ -226,6 +232,7 @@ async function refreshActivity(project = "") {
   for (let page = 0; page < 5 && sessions.length < 50; page += 1) {
     const params = new URLSearchParams({ limit: "50" });
     if (project) params.set("project", project);
+    SessionLabels.addFilters(params);
     if (cursor) params.set("cursor", cursor);
     const payload = await request(`/api/activity-sessions?${params}`);
     if (requestGeneration !== state.activityRequestGeneration) return;
@@ -284,17 +291,7 @@ function formatDate(epoch) {
 }
 
 function renderSessionItems(target, sessions, compact = false) {
-  if (!sessions.length) {
-    target.innerHTML = `<div class="empty">No raw sessions found. Remem will show them here after capture.</div>`;
-    return;
-  }
-  target.innerHTML = sessions.map((session) => `
-    <button class="session-item ${state.selectedSession && sessionKey(state.selectedSession) === sessionKey(session) ? "active" : ""}" data-session-key="${escapeHtml(sessionKey(session))}">
-      <span class="session-item-title">${escapeHtml(projectName(session.project))} / ${escapeHtml(shortSessionId(session.session_id))}</span>
-      <span class="session-item-project">${escapeHtml(session.project || session.source_root)}</span>
-      <span class="session-item-meta"><span>${escapeHtml(session.message_count)}${session.message_counts_truncated ? "+" : ""} msg</span><span>${compact ? escapeHtml(formatDate(session.last_epoch)) : `${escapeHtml(session.projected_turn_count)} turns · ${escapeHtml(formatDate(session.last_epoch))}`}</span></span>
-    </button>
-  `).join("");
+  SessionLabels.renderItems(target, sessions, compact, { state, sessionKey, projectName, shortSessionId, formatDate });
 }
 
 function renderSessionList() {
@@ -670,7 +667,7 @@ function renderWorkstreams(payload) {
     <div><strong>${escapeHtml(payload.count ?? rows.length)}</strong> workstream(s)</div>
     ${rows.map((item) => `
       <div class="detail-text">
-        <div><strong>#${escapeHtml(item.id)} ${escapeHtml(item.title || item.summary || "")}</strong></div>
+        <div><strong>#${escapeHtml(item.id)} ${escapeHtml(item.display_label || `Abstain · ${item.title || item.summary || ""}`)}</strong></div>
         <div class="row">
           <span class="pill">${escapeHtml(item.status || "")}</span>
           <span class="pill">${escapeHtml(item.updated_at || item.last_activity_epoch || "")}</span>
@@ -786,4 +783,5 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "1") switchView("overview");
   if (event.key === "2") switchView("sessions");
 });
+SessionLabels.init({ request, refreshActivity, loadWorkstreams, state });
 refresh();

@@ -135,3 +135,49 @@ test("project filter invalidates an in-flight session request before refresh", (
   assert.match(widget, /params\.set\("cursor", cursor\)/);
   assert.match(widget, /state\.sessionsTruncated = hasMore/);
 });
+
+test("label override bridge preserves reviewed nullable fields and requires local POST", async () => {
+  const calls = [];
+  const backend = createSessionActivityBackend({ async request(route, options) {
+    calls.push({ route, body: JSON.parse(options.body) });
+    return route.endsWith("preview") ? { preview_token: "reviewed", changes: [] } : { audit_id: 42 };
+  } });
+  backend.stop = () => {};
+  const proposal = { targets: [{ kind: "session", id: 12 }], session_intent: null, session_topic: null, reason: "Clear an incorrect label" };
+  await withActivityServer(backend, async (base) => {
+    const options = (body, origin = base) => ({ method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify(body) });
+    const preview = await fetch(`${base}/api/session-intent-preview`, options(proposal));
+    assert.equal(preview.status, 200);
+    assert.equal((await preview.json()).preview_token, "reviewed");
+    const apply = await fetch(`${base}/api/session-intent-apply`, options({ preview_token: "reviewed", confirm: true }));
+    assert.equal((await apply.json()).audit_id, 42);
+    const denied = await fetch(`${base}/api/session-intent-apply`, options({ preview_token: "reviewed", confirm: true }, "https://attacker.example"));
+    assert.equal(denied.status, 403);
+    const asset = await fetch(`${base}/session-labels.js`);
+    assert.equal(asset.status, 200);
+  });
+  assert.deepEqual(calls, [
+    { route: "/api/v1/session-intent/preview", body: proposal },
+    { route: "/api/v1/session-intent/apply", body: { preview_token: "reviewed", confirm: true } }
+  ]);
+  for (const [name, args] of [["remem_session_intent_preview", proposal], ["remem_session_intent_apply", { preview_token: "reviewed", confirm: true }]]) {
+    const descriptor = toolDescriptors().find((tool) => tool.name === name);
+    assert.equal(descriptor._meta["openai/widgetAccessible"], true);
+    assert.equal(descriptor.annotations.readOnlyHint, false);
+    assert.ok((await callTool(backend, name, args)).structuredContent);
+  }
+});
+
+test("session label filters use Shanghai midnight and survive embedded tool dispatch", async () => {
+  const { dateEpoch } = require("./public/session-labels");
+  assert.equal(dateEpoch("2025-01-01"), 1735660800);
+  const calls = [];
+  const backend = createSessionActivityBackend({ async request(route) { calls.push(route); return {}; } });
+  const filters = { session_intent: "fix", since_epoch: dateEpoch("2025-01-01"), until_epoch: dateEpoch("2025-01-02"), cursor: "opaque" };
+  await callTool(backend, "remem_activity_sessions", filters);
+  const query = new URL(calls[0], "http://localhost").searchParams;
+  assert.equal(query.get("session_intent"), "fix");
+  assert.equal(query.get("since_epoch"), "1735660800");
+  assert.equal(query.get("until_epoch"), "1735747200");
+  assert.equal(query.get("cursor"), "opaque");
+});

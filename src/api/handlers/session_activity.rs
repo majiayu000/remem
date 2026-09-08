@@ -24,6 +24,7 @@ pub(in crate::api) struct ActivityParams {
     session_id: Option<String>,
     before_id: Option<i64>,
     cursor: Option<String>,
+    session_intent: Option<String>,
     since_epoch: Option<i64>,
     until_epoch: Option<i64>,
     limit: Option<i64>,
@@ -40,16 +41,47 @@ pub(in crate::api) async fn handle_activity_sessions(
     State(_state): State<DbState>,
     Query(params): Query<ActivityParams>,
 ) -> Response {
+    let intent = trimmed_filter(params.session_intent.as_deref());
+    if intent.is_some_and(|intent| {
+        intent != "abstain"
+            && !crate::memory::session_label::SessionIntent::ALL
+                .iter()
+                .any(|known| known.as_str() == intent)
+    }) {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "invalid_session_intent",
+            "session_intent must be a known intent code or abstain",
+        )
+        .into_response();
+    }
+    if matches!((params.since_epoch, params.until_epoch), (Some(since), Some(until)) if since >= until)
+    {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "invalid_activity_window",
+            "since_epoch must precede exclusive until_epoch",
+        )
+        .into_response();
+    }
     let conn = match open_request_db() {
         Ok(conn) => conn,
         Err(response) => return response,
+    };
+    let policy = match super::super::read_resources::ResourceProjectionPolicy::load(&conn) {
+        Ok(policy) => policy,
+        Err(error) => return activity_error("session_activity_policy_failed", error),
     };
     let limit = bounded_limit(params.limit);
     match session_activity::list_activity_sessions(
         &conn,
         trimmed_filter(params.project.as_deref()),
+        intent,
+        params.since_epoch,
+        params.until_epoch,
         trimmed_filter(params.cursor.as_deref()),
         limit,
+        |visible| !policy.suppresses(visible, &[]),
     ) {
         Ok(page) => Json(json!({
             "meta": {

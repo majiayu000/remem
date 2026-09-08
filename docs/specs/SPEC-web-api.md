@@ -676,3 +676,22 @@ GH-880 list/detail/action template under bearer-token auth. It covers safe
 candidate review, all five read-resource bundles, archive/restore, delete
 absence, and the legacy search raw-hit compatibility shape. It must not print
 or leak the token or raw idempotency keys.
+
+## Session label governance (#1068)
+
+Authenticated `POST /api/v1/session-intent/preview` accepts 1–50 canonical
+`{kind: "session" | "workstream", id}` targets, required nullable
+`session_intent` / `session_topic`, and a nonempty reason. It returns
+`preview_token`, `changes` with Before/After fields, and `expires_at_epoch`.
+Preview records a redacted audit snapshot without changing labels.
+`POST /api/v1/session-intent/apply` accepts only that token and `confirm: true`,
+rechecks the reviewed state, updates atomically, and returns `audit_id`.
+Tokens expire after 15 minutes and can apply once. Missing summaries, hidden
+targets, invalid fields and stale snapshots fail explicitly.
+
+`GET /api/v1/session-activity/sessions` additionally exposes nullable label
+fields, `session_row_id` and `override_available`. Its intent filter accepts
+the eight canonical codes or `abstain` for an incomplete display label. `since_epoch` is
+inclusive and `until_epoch` exclusive against created time; continuation
+cursors bind all filters. See the current
+[session-intent contract](session-intent-display/TECH.md).

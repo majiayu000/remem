@@ -175,3 +175,18 @@ workstream. They:
 3. Should prompt-time candidates show INTENT badges by default?
    Recommendation: optional and compact; default off until Phase 4 measures
    noise.
+
+## Phase 3 operator workflow (#1068)
+
+Sessions workspace shows a Label column using the shared label or explicit
+`Abstain` with the original fallback. Intent and created-date filters apply
+to the paginated session query; dates use Asia/Shanghai calendar days.
+Sessions lacking a trusted canonical session row or a persisted summary stay
+readable but cannot yet receive an override; the UI explains this limitation.
+
+Sessions and Workstreams offer batch intent/topic correction. The operator
+selects stable IDs, enters the replacement fields and a reason, reviews a
+Before/After table, then explicitly confirms Apply. Editing the proposal
+invalidates the preview. A changed target rejects the whole apply as stale.
+The transaction preserves workstream identity and aliases and records its
+before/after values and reason in the existing governance audit.

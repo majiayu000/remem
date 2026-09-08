@@ -259,7 +259,7 @@ fn single_transcript_identity(messages: &[RawMessage]) -> Result<Option<i64>> {
     Ok(identities.first().copied())
 }
 
-fn resolve_session_row_id(
+pub(super) fn resolve_session_row_id(
     conn: &Connection,
     key: &SessionActivityKey,
     transcript_identity_id: Option<i64>,
@@ -270,9 +270,9 @@ fn resolve_session_row_id(
     let Some(transcript_identity_id) = transcript_identity_id else {
         return Ok(None);
     };
-    let transcript_path = conn
+    let host = conn
         .query_row(
-            "SELECT transcript_path FROM raw_session_identities
+            "SELECT host FROM raw_session_identities
              WHERE id = ?1 AND source_root = ?2 AND project = ?3
                AND canonical_session_id = ?4 AND status = 'active'",
             params![
@@ -281,10 +281,11 @@ fn resolve_session_row_id(
                 key.project,
                 key.session_id
             ],
-            |row| row.get::<_, String>(0),
+            |row| row.get::<_, Option<String>>(0),
         )
-        .optional()?;
-    let Some(host_name) = transcript_path.as_deref().and_then(transcript_host) else {
+        .optional()?
+        .flatten();
+    let Some(host_name) = host.as_deref() else {
         return Ok(None);
     };
     let Some(project_id) =
@@ -308,24 +309,6 @@ fn resolve_session_row_id(
         [id] => Some(*id),
         _ => None,
     })
-}
-
-fn transcript_host(path: &str) -> Option<&'static str> {
-    let normalized = path.replace('\\', "/");
-    let segments = normalized.split('/').collect::<BTreeSet<_>>();
-    let matches = [
-        (".claude", "claude-code"),
-        (".codex", "codex-cli"),
-        (".cursor", "cursor"),
-    ]
-    .into_iter()
-    .filter_map(|(segment, host)| segments.contains(segment).then_some(host))
-    .collect::<Vec<_>>();
-    matches
-        .as_slice()
-        .first()
-        .copied()
-        .filter(|_| matches.len() == 1)
 }
 
 fn load_captured_actions(conn: &Connection, session_row_id: i64) -> Result<Vec<CapturedAction>> {

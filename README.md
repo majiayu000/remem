@@ -276,6 +276,12 @@ mutation and scope boundary:
 - `recall_user_context`: supply `project` or `cwd`. The server does not infer
   this scope from its own process working directory.
 
+The local [Remem app](plugins/remem/apps/remem/README.md#correct-session-and-workstream-labels)
+shows session/workstream labels or explicit abstention. Sessions can be filtered
+by intent and created date in Asia/Shanghai. Operators can correct labels in
+batches with a Before/After preview, explicit confirmation, and an audit;
+workstream identity and host conversation titles stay stable.
+
 ### Configure memory AI and retrieval
 
 ```bash

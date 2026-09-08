@@ -97,7 +97,7 @@ pub(super) fn workstream_identity_key(
     format!("ws_{}", &suffix[..16])
 }
 
-pub(super) fn ensure_workstream_alias(
+pub(crate) fn ensure_workstream_alias(
     conn: &Connection,
     workstream_id: i64,
     title: &str,

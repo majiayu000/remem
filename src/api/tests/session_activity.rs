@@ -61,6 +61,10 @@ async fn session_activity_routes_project_list_detail_and_report_stats() -> anyho
     let sessions: Value =
         serde_json::from_slice(&to_bytes(sessions.into_body(), usize::MAX).await?)?;
     assert_eq!(sessions["data"][0]["projected_turn_count"], 1);
+    assert!(sessions["data"][0]["session_row_id"].is_null());
+    assert_eq!(sessions["data"][0]["override_available"], false);
+    assert_eq!(sessions["data"][0]["mmdd"], "0101");
+    assert!(sessions["data"][0]["display_label"].is_null());
 
     let turns = app
         .clone()
@@ -92,6 +96,7 @@ async fn session_activity_routes_project_list_detail_and_report_stats() -> anyho
     assert_eq!(detail.status(), StatusCode::OK);
 
     let stats = app
+        .clone()
         .oneshot(authorized_request(
             Method::GET,
             "/api/v1/session-stats?project=activity%2Fproject&since_epoch=90&until_epoch=200",
@@ -104,6 +109,20 @@ async fn session_activity_routes_project_list_detail_and_report_stats() -> anyho
     assert_eq!(stats["data"]["sessions"], 1);
     assert_eq!(stats["data"]["turns"], 1);
     assert_eq!(stats["data"]["actions"], 0);
+    let conn = db::open_db()?;
+    conn.execute("INSERT INTO memory_suppressions(target_kind,target_value,reason,actor,status,created_at_epoch,updated_at_epoch) VALUES ('pattern','activity/project','test','test','active',1,1)", [])?;
+    drop(conn);
+    let hidden = app
+        .oneshot(authorized_request(
+            Method::GET,
+            "/api/v1/session-activity/sessions?session_intent=abstain",
+            &token,
+            Body::empty(),
+        ))
+        .await?;
+    assert_eq!(hidden.status(), StatusCode::OK);
+    let hidden: Value = serde_json::from_slice(&to_bytes(hidden.into_body(), usize::MAX).await?)?;
+    assert_eq!(hidden["data"], serde_json::json!([]));
     Ok(())
 }
 
@@ -115,6 +134,22 @@ async fn session_activity_rejects_invalid_windows_and_ids() -> anyhow::Result<()
     let token = crate::api::load_api_token()?;
     let app = crate::api::build_router(0).with_state(DbState);
 
+    for query in [
+        "session_intent=bugfix",
+        "since_epoch=20&until_epoch=10",
+        "since_epoch=20&until_epoch=20",
+    ] {
+        let response = app
+            .clone()
+            .oneshot(authorized_request(
+                Method::GET,
+                &format!("/api/v1/session-activity/sessions?{query}"),
+                &token,
+                Body::empty(),
+            ))
+            .await?;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
     let window = app
         .clone()
         .oneshot(authorized_request(
