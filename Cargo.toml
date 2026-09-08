@@ -1,6 +1,6 @@
 [package]
 name = "remem-ai"
-version = "0.6.91"
+version = "0.6.92"
 default-run = "remem"
 edition = "2021"
 description = "Local-first coding agent memory for Claude Code and OpenAI Codex"

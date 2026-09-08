@@ -2,6 +2,9 @@ use std::collections::HashSet;
 
 use anyhow::{anyhow, Context, Result};
 
+use crate::memory::poisoning::scan_generated_surfaces;
+use crate::memory::session_label::{normalize_topic, SessionIntent};
+
 use super::RollupRange;
 
 #[derive(Debug, Clone)]
@@ -14,6 +17,8 @@ pub(super) struct RollupOutput {
 #[derive(Debug, Clone, Default)]
 pub(super) struct RollupStructuredFields {
     pub(super) request: Option<String>,
+    pub(super) session_intent: Option<String>,
+    pub(super) session_topic: Option<String>,
     pub(super) decisions: Option<String>,
     pub(super) learned: Option<String>,
     pub(super) next_steps: Option<String>,
@@ -98,11 +103,31 @@ fn parse_structured_fields(text: &str) -> Result<RollupStructuredFields> {
         .ok_or_else(|| anyhow!("session_rollup response missing <structured_fields>"))?;
     Ok(RollupStructuredFields {
         request: optional_structured_tag(&body, "request")?,
+        session_intent: extract_tag(&body, "session_intent")
+            .as_deref()
+            .and_then(SessionIntent::parse)
+            .map(|intent| intent.as_str().to_string()),
+        session_topic: extract_tag(&body, "session_topic")
+            .as_deref()
+            .and_then(normalize_model_topic),
         decisions: optional_structured_tag(&body, "decisions")?,
         learned: optional_structured_tag(&body, "learned")?,
         next_steps: optional_structured_tag(&body, "next_steps")?,
         preferences: optional_structured_tag(&body, "preferences")?,
     })
+}
+
+fn normalize_model_topic(raw: &str) -> Option<String> {
+    // Labels are optional display metadata. Reject unsafe model labels without
+    // blocking independently evidenced memory candidates from this range.
+    if scan_generated_surfaces(&[("session_topic", Some(raw))]).is_some() {
+        return None;
+    }
+    let redacted = crate::db::redact_capture_content(raw);
+    if redacted != raw {
+        return None;
+    }
+    normalize_topic(&redacted)
 }
 
 fn optional_structured_tag(body: &str, tag: &str) -> Result<Option<String>> {

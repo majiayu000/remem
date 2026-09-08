@@ -10,6 +10,7 @@ mod followup_scheduling;
 mod native_memory;
 mod poisoning;
 mod range_side_effects;
+mod session_labels;
 mod side_effects;
 mod summary_evidence;
 

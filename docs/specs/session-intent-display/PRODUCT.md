@@ -1,6 +1,6 @@
 # Session Intent Display Product Spec
 
-Status: Current contract (Phase 1 schema/display landed as v092; #1067–#1069 remaining)
+Status: Current contract (Phase 1 schema/display landed as v092; Phase 2 summary persist landed; #1068–#1069 remaining)
 Date: 2026-09-05
 
 Tracking:
@@ -124,6 +124,8 @@ Rules:
 3. **Display-only derivation:** `MMDD` is computed, not a second source of truth.
 
 Auto extraction must not block memory promotion when intent/topic are absent.
+Later automatic summaries preserve manual overrides, including an explicit
+clear, until the operator changes them again.
 
 ### Workstream identity
 
