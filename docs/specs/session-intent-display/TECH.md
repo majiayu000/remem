@@ -1,7 +1,7 @@
 # Session Intent Display Technical Spec
 
-Status: Current contract (Phase 1 schema/display landed as migration v092; Phase 2 summary persist landed; #1068–#1069 remaining)
-Date: 2026-09-05
+Status: Current contract (schema, automatic rollup, UI/governance, and candidate-title guidance staged)
+Date: 2026-09-08
 
 Tracking:
 - Capability epic: #1065
@@ -163,6 +163,19 @@ CLI/API preview-then-apply:
 4. Persist `session_intent_source = 'override'` and updated epoch.
 5. For workstreams, record prior topic/title through #603 alias machinery when
    the display topic changes.
+
+### Prompt-time candidate titles (#1069)
+
+`src/observation_extract/prompt.rs` supplies title guidance to the production
+JSON extraction prompt. `src/session_rollup/prompt.rs` supplies matching guidance
+for production rollup requests and segment titles. Existing workstream names
+remain unchanged for identity continuity. The prompt index in `src/context/prompt_submit/candidates.rs`
+continues to render stored memory titles, workstream titles, and summary requests
+through its existing compact/escaped renderer. No deterministic title rewriting,
+historical backfill, new badge option, or host title writer is introduced.
+
+The README documents an optional host-sidebar rename tip. It does not prescribe
+host-private storage edits or make host labels authoritative for Remem fields.
 
 ### Workstream rollup
 

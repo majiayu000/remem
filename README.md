@@ -191,7 +191,18 @@ memory bodies. They are optional leads that Codex may ignore, open, or search
 beyond. The first prompt may also receive up to two continuity anchors so a
 prompt such as `continue` does not depend on lexical overlap. Existing hybrid
 RRF ranks memory candidates; no final confidence threshold decides relevance
-for the model.
+for the model. Automatic extraction asks for short, specific candidate titles
+without a redundant project-name prefix; existing stored titles remain intact.
+
+For your own Codex sidebar, an optional rename convention is
+`MMDD｜TYPE｜Topic`, such as `0903｜FIX｜FTS5 tokenizer mismatch`. If you use a
+separate host-supported rename workflow, preview its proposed names before
+applying a batch. This is host-sidebar organization only: Remem does not rename
+host conversations or import those names as intent overrides. Remem's structured
+session/workstream fields remain authoritative, and a host title does not change
+memory types or workstream identity. See the
+[session intent contract](docs/specs/session-intent-display/PRODUCT.md) and
+[implementation epic #1065](https://github.com/majiayu000/remem/issues/1065).
 
 ## Everyday workflows
 

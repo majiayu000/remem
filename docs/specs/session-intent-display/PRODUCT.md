@@ -1,7 +1,7 @@
 # Session Intent Display Product Spec
 
-Status: Current contract (Phase 1 schema/display landed as v092; Phase 2 summary persist landed; #1068–#1069 remaining)
-Date: 2026-09-05
+Status: Current contract (schema, automatic rollup, UI/governance, and candidate-title guidance staged)
+Date: 2026-09-08
 
 Tracking:
 - Capability epic: #1065
@@ -136,6 +136,20 @@ workstream. They:
 - must not create a new workstream row solely because the label changed;
 - must remain compatible with #603 matching order and SessionStart canonical
   rendering.
+
+## Candidate Title Guidance (#1069)
+
+Automatic extraction asks for short, specific titles that identify the action
+or finding without repeating the current project name as a prefix. Technical
+names needed to distinguish the subject remain in the title. Session rollup requests
+and segment titles follow the same guidance. Existing workstream names stay
+stable. Prompt-time rendering continues to use stored titles with its
+existing length and escaping limits. Guidance is not a guarantee of model output
+and does not rewrite historical titles or add an intent badge.
+
+Operators may optionally rename host conversations for sidebar readability.
+Those host-only labels do not edit Remem intent/topic, memory types, aliases, or
+workstream identity. Remem's structured fields remain authoritative.
 
 ## Non-Goals
 
