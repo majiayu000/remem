@@ -63,6 +63,11 @@ pub(super) fn sample_workstream(id: i64, title: &str, next_action: Option<&str>)
         created_at_epoch: 0,
         updated_at_epoch: id,
         completed_at_epoch: None,
+        mmdd: None,
+        session_intent: None,
+        session_topic: None,
+        display_label: None,
+        session_intent_source: None,
     }
 }
 
@@ -389,7 +394,11 @@ pub(super) fn create_workstream_schema(conn: &Connection) {
             owner_key TEXT,
             target_project TEXT,
             identity_key TEXT,
-            merged_into_workstream_id INTEGER
+            merged_into_workstream_id INTEGER,
+            session_intent TEXT,
+            session_topic TEXT,
+            session_intent_source TEXT,
+            session_intent_updated_at_epoch INTEGER
         );",
     )
     .unwrap();

@@ -32,6 +32,11 @@ pub struct RawSessionSummary {
     pub assistant_message_count: i64,
     pub content_hash: String,
     pub user_message_samples: Vec<String>,
+    pub mmdd: Option<String>,
+    pub session_intent: Option<String>,
+    pub session_topic: Option<String>,
+    pub display_label: Option<String>,
+    pub session_intent_source: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -327,7 +332,7 @@ pub(crate) fn list_sessions_with_exclusions(
          FROM raw_messages
          WHERE id = ?1 AND role = 'user'",
     )?;
-    let sessions = accumulators
+    let mut sessions = accumulators
         .into_iter()
         .map(|accumulator| {
             let samples = accumulator
@@ -346,6 +351,7 @@ pub(crate) fn list_sessions_with_exclusions(
             Ok(accumulator.finish(samples))
         })
         .collect::<Result<Vec<_>>>()?;
+    super::session_labels::attach_session_labels(conn, &mut sessions)?;
     Ok(exclusions.into_listing(sessions))
 }
 
@@ -586,6 +592,11 @@ impl Accumulator {
             assistant_message_count: self.assistant_message_count,
             content_hash: self.fingerprint.finish(),
             user_message_samples: samples,
+            mmdd: None,
+            session_intent: None,
+            session_topic: None,
+            display_label: None,
+            session_intent_source: None,
         }
     }
 }

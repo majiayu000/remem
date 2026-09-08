@@ -395,3 +395,27 @@ fn test_query_active_workstreams_excludes_tool_domain_owned_rows() {
 
     assert_eq!(titles, vec!["Repo Task"]);
 }
+
+#[test]
+fn query_renders_session_intent_label_from_created_epoch() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_workstream_schema(&conn);
+    conn.execute(
+        "INSERT INTO workstreams
+         (project, title, status, created_at_epoch, updated_at_epoch,
+          owner_scope, owner_key, session_intent, session_topic, session_intent_source)
+         VALUES ('test/proj', 'Repair listing', 'active', 1735660800, 1735660800,
+                 'repo', 'test/proj', 'fix', 'Batch text display', 'summary')",
+        [],
+    )
+    .unwrap();
+
+    let workstreams = query_active_workstreams(&conn, "test/proj").unwrap();
+    assert_eq!(workstreams.len(), 1);
+    assert_eq!(workstreams[0].mmdd.as_deref(), Some("0101"));
+    assert_eq!(
+        workstreams[0].display_label.as_deref(),
+        Some("0101｜fix｜Batch text display")
+    );
+    assert_eq!(workstreams[0].title, "Repair listing");
+}

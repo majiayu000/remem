@@ -234,12 +234,16 @@ async fn every_schema_bearing_served_route_validates_a_real_non_empty_success() 
     );
     assert!(results["govern_memory"]["reason"].is_null());
     assert!(results["workstreams"]["workstreams"][0]["description"].is_null());
+    assert_eq!(results["workstreams"]["workstreams"][0]["mmdd"], "0101");
+    assert!(results["workstreams"]["workstreams"][0]["session_intent"].is_null());
     assert_eq!(results["update_workstream"]["updated"], true);
     assert_eq!(results["search_raw"]["results"][0]["source"], SOURCE_HOOK);
     assert_eq!(
         results["list_raw_sessions"]["sessions"][0]["message_count"],
         1
     );
+    assert!(results["list_raw_sessions"]["sessions"][0]["mmdd"].is_string());
+    assert!(results["list_raw_sessions"]["sessions"][0]["session_intent"].is_null());
 
     client_writer.shutdown().await?;
     drop(messages);

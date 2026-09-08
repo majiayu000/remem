@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
+mod session_labels;
 mod sessions;
 #[cfg(test)]
 pub(crate) use sessions::RawSessionListing;
@@ -635,3 +636,5 @@ fn fts_query(query: &str) -> String {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_session_labels;

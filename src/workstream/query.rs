@@ -3,10 +3,18 @@ use rusqlite::Connection;
 
 use super::{WorkStream, WorkStreamStatus};
 
-const SELECT_FIELDS: &str =
+pub(super) const SELECT_FIELDS: &str =
     "SELECT id, project, title, description, status, progress, next_action, blockers,
-                                    created_at_epoch, updated_at_epoch, completed_at_epoch
-                             FROM workstreams";
+            created_at_epoch, updated_at_epoch, completed_at_epoch,
+            session_intent, session_topic, session_intent_source
+     FROM workstreams";
+
+pub(super) const SELECT_FIELDS_ALIASED: &str =
+    "SELECT ws.id, ws.project, ws.title, ws.description, ws.status, ws.progress,
+            ws.next_action, ws.blockers, ws.created_at_epoch, ws.updated_at_epoch,
+            ws.completed_at_epoch, ws.session_intent, ws.session_topic,
+            ws.session_intent_source
+     FROM workstreams ws";
 
 fn workstream_owner_filter(
     conn: &Connection,
@@ -108,17 +116,34 @@ pub fn query_workstreams(
 
 pub(crate) fn map_workstream_row(row: &rusqlite::Row) -> rusqlite::Result<WorkStream> {
     let status_str: String = row.get(4)?;
+    let title: String = row.get(2)?;
+    let created_at_epoch: i64 = row.get(8)?;
+    let intent: Option<String> = row.get(11)?;
+    let topic: Option<String> = row.get(12)?;
+    let source: Option<String> = row.get(13)?;
+    let label = crate::memory::session_label::render_from_stored(
+        Some(created_at_epoch),
+        intent.as_deref(),
+        topic.as_deref(),
+        source.as_deref(),
+        Some(&title),
+    );
     Ok(WorkStream {
         id: row.get(0)?,
         project: row.get(1)?,
-        title: row.get(2)?,
+        title,
         description: row.get(3)?,
         status: WorkStreamStatus::from_db(&status_str),
         progress: row.get(5)?,
         next_action: row.get(6)?,
         blockers: row.get(7)?,
-        created_at_epoch: row.get(8)?,
+        created_at_epoch,
         updated_at_epoch: row.get(9)?,
         completed_at_epoch: row.get(10)?,
+        mmdd: label.mmdd,
+        session_intent: label.session_intent,
+        session_topic: label.session_topic,
+        display_label: label.display_label,
+        session_intent_source: label.session_intent_source,
     })
 }

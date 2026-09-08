@@ -29,6 +29,7 @@ pub mod scope_cleanup;
 pub mod search_context;
 pub(crate) mod semantic_dedup;
 pub mod service;
+pub(crate) mod session_label;
 pub mod staleness;
 pub mod state_key;
 pub mod store;

@@ -203,7 +203,10 @@ remem ingest-sessions --root codex-cli:archive=/path/to/sessions --json
 `session_id` 原样传给 `raw messages`。旧脚本必须补上必填的 `--host`，并把
 `--root LABEL=PATH` 改成 `--root HOST:LABEL=PATH`；`raw reconcile` 使用相同
 格式。JSON 信封会报告 `excluded_legacy_rows`、`excluded_legacy_sessions` 和
-`excluded_legacy_identities`：listing 仍返回健康会话，`--latest N` 只从健康
+`excluded_legacy_identities`。每条会话还带有可空的 `mmdd`、`session_intent`、
+`session_topic`、`display_label` 和 `session_intent_source`：`mmdd` 由创建时间
+按 Asia/Shanghai 推导；完整 `{MMDD}｜{INTENT}｜{topic}` 标签只在 intent 和 topic
+都已知时出现。listing 仍返回健康会话，`--latest N` 只从健康
 会话里取最新 N 条，未解决行既不会中断 listing，也不会占用 latest 名额。用信封
 里的 `source_root` / `project` / `session_id`（以及已知的 `host`）去检查或修复
 这些行；对跳过选择器的精确 `raw messages` 仍然 fail-closed。不要对 ingest 无法

@@ -232,7 +232,11 @@ required `--host` selector and replace `--root LABEL=PATH` with
 `--root HOST:LABEL=PATH`; the same root format applies to `raw reconcile`.
 The JSON envelope reports `excluded_legacy_rows`, `excluded_legacy_sessions`,
 and `excluded_legacy_identities` when some archive rows cannot enter the
-host-bound session contract. Listing still returns healthy sessions;
+host-bound session contract. Each listed session also carries additive nullable
+`mmdd`, `session_intent`, `session_topic`, `display_label`, and
+`session_intent_source` fields. `mmdd` is derived from the session created epoch
+in Asia/Shanghai; the full `{MMDD}｜{INTENT}｜{topic}` label is present only when
+both intent and topic are known. Listing still returns healthy sessions;
 `--latest N` fills that bound from healthy sessions only and does not let
 unresolved rows occupy those slots. Use the skipped identities (`source_root`,
 `project`, `session_id`, and `host` when known) to inspect or repair those

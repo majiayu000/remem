@@ -287,6 +287,9 @@ pub(super) fn render_raw_sessions(sessions: &[RawSessionSummary]) -> String {
             session.message_count,
             session.content_hash
         ));
+        if let Some(label) = &session.display_label {
+            output.push_str(&format!("      {label}\n"));
+        }
         for sample in &session.user_message_samples {
             output.push_str(&format!("      user: {}\n", sample.replace('\n', " ")));
         }

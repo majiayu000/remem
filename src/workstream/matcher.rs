@@ -6,7 +6,7 @@ use super::{
         has_continuity_alias, normalize_title, title_has_continuity, MATCH_REASON_ALIAS_EXACT,
         MATCH_REASON_SESSION_LINK, MATCH_REASON_TITLE_CONTAINS, MATCH_REASON_TITLE_EXACT,
     },
-    query::map_workstream_row,
+    query::{map_workstream_row, SELECT_FIELDS, SELECT_FIELDS_ALIASED},
     WorkStream,
 };
 
@@ -45,15 +45,15 @@ fn find_title_workstream(
 ) -> Result<Option<WorkStreamMatch>> {
     let exact = conn
         .query_row(
-            "SELECT id, project, title, description, status, progress, next_action, blockers,
-                    created_at_epoch, updated_at_epoch, completed_at_epoch
-             FROM workstreams
+            &format!(
+                "{SELECT_FIELDS}
              WHERE title = ?2 AND status IN ('active', 'paused')
                AND merged_into_workstream_id IS NULL
                AND ((owner_scope = 'repo' AND owner_key = ?1)
                     OR (owner_scope = 'repo' AND target_project = ?1)
                     OR (owner_scope = 'workstream' AND target_project = ?1)
-                    OR (owner_scope IS NULL AND project = ?1))",
+                    OR (owner_scope IS NULL AND project = ?1))"
+            ),
             params![project, title],
             map_workstream_row,
         )
@@ -66,18 +66,16 @@ fn find_title_workstream(
     }
 
     let title_lower = title.to_lowercase();
-    let mut stmt = conn.prepare(
-        "SELECT id, project, title, description, status, progress, next_action, blockers,
-                created_at_epoch, updated_at_epoch, completed_at_epoch
-         FROM workstreams
+    let mut stmt = conn.prepare(&format!(
+        "{SELECT_FIELDS}
          WHERE status IN ('active', 'paused')
            AND merged_into_workstream_id IS NULL
            AND ((owner_scope = 'repo' AND owner_key = ?1)
                 OR (owner_scope = 'repo' AND target_project = ?1)
                 OR (owner_scope = 'workstream' AND target_project = ?1)
                 OR (owner_scope IS NULL AND project = ?1))
-         ORDER BY updated_at_epoch DESC",
-    )?;
+         ORDER BY updated_at_epoch DESC"
+    ))?;
     let rows = stmt.query_map(params![project], map_workstream_row)?;
     for row in rows {
         let workstream = row?;
@@ -107,11 +105,8 @@ fn find_linked_workstream(
         return Ok(None);
     }
 
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT ws.id, ws.project, ws.title, ws.description, ws.status, ws.progress,
-                ws.next_action, ws.blockers, ws.created_at_epoch, ws.updated_at_epoch,
-                ws.completed_at_epoch
-         FROM workstreams ws
+    let mut stmt = conn.prepare(&format!(
+        "{}
          JOIN workstream_sessions wss ON wss.workstream_id = ws.id
          WHERE wss.memory_session_id = ?2
            AND ws.status IN ('active', 'paused')
@@ -121,7 +116,8 @@ fn find_linked_workstream(
                 OR (ws.owner_scope = 'workstream' AND ws.target_project = ?1)
                 OR (ws.owner_scope IS NULL AND ws.project = ?1))
          ORDER BY ws.updated_at_epoch DESC",
-    )?;
+        SELECT_FIELDS_ALIASED.replacen("SELECT ", "SELECT DISTINCT ", 1)
+    ))?;
     let rows = stmt.query_map(params![project, memory_session_id], map_workstream_row)?;
     let candidates = crate::db::query::collect_rows(rows)?;
 
@@ -191,12 +187,9 @@ fn find_alias_workstream(
         return Ok(None);
     }
 
-    let mut stmt = conn.prepare(
-        "SELECT ws.id, ws.project, ws.title, ws.description, ws.status, ws.progress,
-                ws.next_action, ws.blockers, ws.created_at_epoch, ws.updated_at_epoch,
-                ws.completed_at_epoch
-         FROM workstream_aliases wa
-         JOIN workstreams ws ON ws.id = wa.workstream_id
+    let mut stmt = conn.prepare(&format!(
+        "{SELECT_FIELDS_ALIASED}
+         JOIN workstream_aliases wa ON wa.workstream_id = ws.id
          WHERE wa.normalized_title = ?2
            AND ws.status IN ('active', 'paused')
            AND ws.merged_into_workstream_id IS NULL
@@ -204,8 +197,8 @@ fn find_alias_workstream(
                 OR (ws.owner_scope = 'repo' AND ws.target_project = ?1)
                 OR (ws.owner_scope = 'workstream' AND ws.target_project = ?1)
                 OR (ws.owner_scope IS NULL AND ws.project = ?1))
-         ORDER BY ws.updated_at_epoch DESC",
-    )?;
+         ORDER BY ws.updated_at_epoch DESC"
+    ))?;
     let rows = stmt.query_map(params![project, normalized_title], map_workstream_row)?;
     let candidates = crate::db::query::collect_rows(rows)?;
 

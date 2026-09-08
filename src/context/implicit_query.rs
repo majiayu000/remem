@@ -109,6 +109,11 @@ mod tests {
             created_at_epoch: 1,
             updated_at_epoch: 1,
             completed_at_epoch: None,
+            mmdd: None,
+            session_intent: None,
+            session_topic: None,
+            display_label: None,
+            session_intent_source: None,
         }];
 
         let query = build_implicit_context_query(

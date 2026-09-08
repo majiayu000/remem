@@ -300,6 +300,17 @@ fn production_null_paths_are_valid_in_every_nullable_output_family() -> anyhow::
         &workstreams,
         property(workstream, "description")
     ));
+    assert_required_nullable_fields(
+        &workstreams,
+        workstream,
+        &[
+            "mmdd",
+            "session_intent",
+            "session_topic",
+            "display_label",
+            "session_intent_source",
+        ],
+    );
 
     let raw_sessions = schema_value(OutputSchema::ListRawSessions)?;
     assert!(explicitly_allows_null(
@@ -338,6 +349,20 @@ fn production_null_paths_are_valid_in_every_nullable_output_family() -> anyhow::
         &raw_sessions,
         property(excluded_identity, "host")
     ));
+    let raw_session = array_items(&raw_sessions, property(&raw_sessions, "sessions"))
+        .map(|items| resolve_local_ref(&raw_sessions, items))
+        .expect("list_raw_sessions must declare session items");
+    assert_required_nullable_fields(
+        &raw_sessions,
+        raw_session,
+        &[
+            "mmdd",
+            "session_intent",
+            "session_topic",
+            "display_label",
+            "session_intent_source",
+        ],
+    );
     Ok(())
 }
 
