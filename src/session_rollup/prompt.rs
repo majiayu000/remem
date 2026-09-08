@@ -37,6 +37,8 @@ pub(super) fn build_rollup_prompt(
          <summary>overall session summary</summary>\n\
          <structured_fields>\n\
          <request>short user-facing task or question for this event range</request>\n\
+         <session_intent>one of fea, des, fix, opt, rel, exp, doc, res; empty when uncertain</session_intent>\n\
+         <session_topic>specific topic, at most 80 characters, without the project name; empty when uncertain</session_topic>\n\
          <decisions>durable decisions from this range, or empty</decisions>\n\
          <learned>lessons or discoveries from this range, or empty</learned>\n\
          <next_steps>explicit follow-up actions from this range, or empty</next_steps>\n\

@@ -10,6 +10,7 @@ mod followup_scheduling;
 mod native_memory;
 mod poisoning;
 mod range_side_effects;
+mod session_labels;
 mod side_effects;
 mod summary_evidence;
 
@@ -246,7 +247,6 @@ async fn summary_writer_equivalence_fixture_documents_field_level_deltas() -> Re
         Some(legacy_preferences),
         None,
         legacy_discovery_tokens,
-        crate::db::SessionIntentWrite::default(),
     )?;
     assert_eq!(deleted, 0);
 

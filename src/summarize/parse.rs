@@ -1,7 +1,5 @@
 use crate::memory::format;
-use crate::memory::session_label::{normalize_topic, SessionIntent};
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ParsedSummary {
     pub request: Option<String>,
     pub completed: Option<String>,
@@ -13,8 +11,6 @@ pub struct ParsedSummary {
     pub workstream_progress: Option<String>,
     pub workstream_next: Option<String>,
     pub workstream_blockers: Option<String>,
-    pub session_intent: Option<String>,
-    pub session_topic: Option<String>,
 }
 
 pub fn parse_summary(text: &str) -> Option<ParsedSummary> {
@@ -41,9 +37,5 @@ pub fn parse_summary(text: &str) -> Option<ParsedSummary> {
         workstream_progress: format::extract_field(&content, "workstream_progress"),
         workstream_next: format::extract_field(&content, "workstream_next"),
         workstream_blockers: format::extract_field(&content, "workstream_blockers"),
-        session_intent: format::extract_field(&content, "session_intent")
-            .and_then(|raw| SessionIntent::parse(&raw).map(|intent| intent.as_str().to_string())),
-        session_topic: format::extract_field(&content, "session_topic")
-            .and_then(|raw| normalize_topic(&raw)),
     })
 }

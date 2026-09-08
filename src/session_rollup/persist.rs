@@ -99,6 +99,41 @@ pub(super) fn persist_session_rollup(
         );
     }
     let tx = conn.transaction()?;
+    let previous_label = tx
+        .query_row(
+            "SELECT session_intent, session_topic, session_intent_source,
+                    session_intent_updated_at_epoch
+             FROM session_summaries WHERE session_row_id = ?1
+             ORDER BY COALESCE(session_intent_updated_at_epoch, created_at_epoch) DESC, id DESC
+             LIMIT 1",
+            [session_row_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                ))
+            },
+        )
+        .optional()?;
+    let (session_intent, session_topic, intent_source, intent_updated) = match previous_label {
+        Some((intent, topic, source, updated)) if source.as_deref() == Some("override") => {
+            // Preserve explicit NULL clears and the audit time as well as labels.
+            (intent, topic, source, updated)
+        }
+        _ => {
+            let intent = output.structured_fields.session_intent.clone();
+            let topic = output.structured_fields.session_topic.clone();
+            let has_label = intent.is_some() || topic.is_some();
+            (
+                intent,
+                topic,
+                has_label.then(|| "summary".to_string()),
+                has_label.then_some(created_at_epoch),
+            )
+        }
+    };
     tx.execute(
         "INSERT INTO session_summaries
          (memory_session_id, project, request, completed, created_at, created_at_epoch,
@@ -110,8 +145,9 @@ pub(super) fn persist_session_rollup(
           followup_compress_job_id, followup_dream_disposition,
           followup_dream_job_id, poisoning_status, quarantine_stage,
           quarantine_field, quarantine_event_id, quarantine_pattern_id,
-          quarantine_pattern_version)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, NULL, ?18, ?19, NULL, NULL, NULL, NULL, NULL, ?20, ?21, ?22, ?23, ?24, ?25)",
+          quarantine_pattern_version, session_intent, session_topic,
+          session_intent_source, session_intent_updated_at_epoch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, NULL, ?18, ?19, NULL, NULL, NULL, NULL, NULL, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)",
         params![
             memory_session_id,
             task.project,
@@ -140,6 +176,10 @@ pub(super) fn persist_session_rollup(
             verdict
                 .as_ref()
                 .map(|matched| matched.pattern.pattern_set_version),
+            session_intent,
+            session_topic,
+            intent_source,
+            intent_updated,
         ],
     )?;
 
@@ -272,6 +312,8 @@ fn estimate_discovery_tokens(output: &RollupOutput) -> i64 {
     let structured_len = [
         Some(output.summary_text.as_str()),
         output.structured_fields.request.as_deref(),
+        output.structured_fields.session_intent.as_deref(),
+        output.structured_fields.session_topic.as_deref(),
         output.structured_fields.decisions.as_deref(),
         output.structured_fields.learned.as_deref(),
         output.structured_fields.next_steps.as_deref(),

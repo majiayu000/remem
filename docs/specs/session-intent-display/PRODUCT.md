@@ -124,6 +124,8 @@ Rules:
 3. **Display-only derivation:** `MMDD` is computed, not a second source of truth.
 
 Auto extraction must not block memory promotion when intent/topic are absent.
+Later automatic summaries preserve manual overrides, including an explicit
+clear, until the operator changes them again.
 
 ### Workstream identity
 

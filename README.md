@@ -238,7 +238,8 @@ host-bound session contract. Each listed session also carries additive nullable
 in Asia/Shanghai; the full `{MMDD}｜{INTENT}｜{topic}` label is present only when
 both intent and topic are known. Stop summaries may fill those fields with
 source `summary`; unknown, empty, too-long, or redacted values abstain instead
-of blocking the rest of the summary. Listing still returns healthy sessions;
+of blocking the rest of the summary. Automatic Stop rollups preserve manual
+label overrides, including explicit clears, across later turns. Listing still returns healthy sessions;
 `--latest N` fills that bound from healthy sessions only and does not let
 unresolved rows occupy those slots. Use the skipped identities (`source_root`,
 `project`, `session_id`, and `host` when known) to inspect or repair those

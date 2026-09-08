@@ -129,7 +129,8 @@ progress updates must not clear intent unless requested.
 
 ### Summary extraction (#1067)
 
-Extend `prompts/summary.txt` with optional:
+The automatic Stop path is `SessionRollup`, dispatched by the extraction
+worker. Extend its `src/session_rollup/prompt.rs` structured fields with optional:
 
 ```xml
 <session_intent>fix</session_intent>
@@ -142,6 +143,15 @@ Parse rules:
 - Topic empty/too long/redacted-empty ⇒ NULL.
 - On success, set `session_intent_source = 'summary'`.
 - Memory candidate promotion remains independent.
+- Parse and persist through `src/session_rollup/{parse,persist}.rs`, retaining
+  `session_row_id` so API and host-bound raw-session lists see the same label.
+- Every new range inherits the latest summary's explicit `override` label,
+  including NULL intent/topic, source, and original override timestamp. The
+  lookup and insert share a transaction; later model output cannot undo a
+  correction or explicit clear. Absent or invalid model fields otherwise
+  remain NULL on the new summary rather than mixing labels across ranges.
+- Retired legacy Summary jobs and `prompts/summary.txt` are not this feature's
+  automatic write path.
 
 ### Manual override (#1068)
 
