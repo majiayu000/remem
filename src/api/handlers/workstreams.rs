@@ -143,10 +143,11 @@ impl ReadResourceSpec for Workstreams {
         if policy.suppresses(&visible, &relations) {
             return Ok(None);
         }
+        let session_topic = redact_optional(row.session_topic);
         let label = crate::memory::session_label::render_from_stored(
             Some(row.created_at_epoch),
             row.session_intent.as_deref(),
-            row.session_topic.as_deref(),
+            session_topic.as_deref(),
             row.session_intent_source.as_deref(),
             Some(&row.title),
         );
@@ -164,7 +165,7 @@ impl ReadResourceSpec for Workstreams {
             completed_at_epoch: row.completed_at_epoch,
             mmdd: label.mmdd,
             session_intent: label.session_intent,
-            session_topic: redact_optional(label.session_topic),
+            session_topic: label.session_topic,
             display_label: label.display_label,
             session_intent_source: label.session_intent_source,
             references: Vec::new(),

@@ -115,6 +115,9 @@ still derived when created epoch exists.
 
 Same additive fields on Session Observatory / sessions list payloads. Label
 column renders `display_label` or an abstain placeholder plus fallback title.
+REST projection redacts the topic before rendering derived labels and summaries.
+Raw session labels require a summary bound to the exact host-scoped session row;
+unbound historical summaries abstain.
 
 ### Workstreams MCP/CLI
 

@@ -18,8 +18,7 @@ pub(super) fn attach_session_labels(
     }
 
     let mut by_host_key = HashMap::new();
-    let mut by_memory_key = HashMap::new();
-    load_summary_labels(conn, sessions, &mut by_host_key, &mut by_memory_key)?;
+    load_summary_labels(conn, sessions, &mut by_host_key)?;
 
     for session in sessions.iter_mut() {
         let host_key = (
@@ -27,10 +26,7 @@ pub(super) fn attach_session_labels(
             session.project.clone(),
             session.session_id.clone(),
         );
-        let stored = by_host_key
-            .get(&host_key)
-            .or_else(|| by_memory_key.get(&(session.session_id.clone(), session.project.clone())))
-            .cloned();
+        let stored = by_host_key.get(&host_key).cloned();
         if let Some((intent, topic, source)) = stored {
             apply_label(
                 session,
@@ -65,7 +61,6 @@ fn load_summary_labels(
         (String, String, String),
         (Option<String>, Option<String>, Option<String>),
     >,
-    by_memory_key: &mut HashMap<(String, String), (Option<String>, Option<String>, Option<String>)>,
 ) -> Result<()> {
     let session_ids = sessions
         .iter()
@@ -106,29 +101,5 @@ fn load_summary_labels(
             .or_insert((intent, topic, source));
     }
 
-    let fallback_sql = format!(
-        "SELECT memory_session_id, project, session_intent, session_topic, session_intent_source
-         FROM session_summaries
-         WHERE memory_session_id IN ({placeholders})
-         ORDER BY COALESCE(session_intent_updated_at_epoch, created_at_epoch) DESC, id DESC"
-    );
-    let mut statement = conn.prepare(&fallback_sql)?;
-    let rows = statement.query_map(params_from_iter(session_ids.iter()), |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, Option<String>>(1)?,
-            row.get::<_, Option<String>>(2)?,
-            row.get::<_, Option<String>>(3)?,
-            row.get::<_, Option<String>>(4)?,
-        ))
-    })?;
-    for row in rows {
-        let (memory_session_id, project, intent, topic, source) = row?;
-        if let Some(project) = project {
-            by_memory_key
-                .entry((memory_session_id, project))
-                .or_insert((intent, topic, source));
-        }
-    }
     Ok(())
 }

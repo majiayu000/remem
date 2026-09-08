@@ -91,6 +91,54 @@ async fn every_resource_returns_real_safe_list_and_detail_projection() -> anyhow
 }
 
 #[tokio::test]
+async fn session_intent_labels_redact_topics_before_deriving_display_fields() -> anyhow::Result<()>
+{
+    let _test_dir = ScopedTestDataDir::new("api-session-intent-redaction");
+    let fixture = insert_fixture("intent-redaction")?;
+    let conn = db::open_db()?;
+    let topic = "token=label-secret-token contact label-private@example.com";
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, session_row_id, request, created_at_epoch,
+          session_intent, session_topic, session_intent_source)
+         VALUES ('intent-redaction', 'intent-redaction-project', ?1, 'safe',
+                 1735660800, 'fix', ?2, 'summary')",
+        params![fixture.session_id, topic],
+    )?;
+    conn.execute(
+        "UPDATE workstreams SET session_intent = 'fix', session_topic = ?2,
+         session_intent_source = 'summary' WHERE id = ?1",
+        params![fixture.workstream_id, topic],
+    )?;
+    crate::api::ensure_api_token()?;
+    let token = crate::api::load_api_token()?;
+    let app = super::super::build_router(0).with_state(DbState);
+    for (route, id) in [
+        ("/api/v1/sessions", fixture.session_id),
+        ("/api/v1/workstreams", fixture.workstream_id),
+    ] {
+        for uri in [route.to_owned(), format!("{route}/{id}")] {
+            let (status, response) = get_json(&app, &uri, &token).await?;
+            assert_eq!(status, StatusCode::OK);
+            let encoded = response.to_string();
+            assert!(!encoded.contains("label-secret-token"), "{uri}: {encoded}");
+            assert!(
+                !encoded.contains("label-private@example.com"),
+                "{uri}: {encoded}"
+            );
+            let item = if response["data"].is_array() {
+                &response["data"][0]
+            } else {
+                &response["data"]
+            };
+            assert_eq!(item["session_intent"], "fix");
+            assert!(item["display_label"].is_string());
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn empty_not_found_and_invalid_id_states_are_distinct() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("api-read-resource-empty");
     crate::api::ensure_api_token()?;

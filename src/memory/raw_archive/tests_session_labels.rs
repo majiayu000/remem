@@ -184,7 +184,7 @@ fn list_sessions_joins_summary_intent_by_session_row_id() {
 }
 
 #[test]
-fn list_sessions_falls_back_to_memory_session_id_when_row_id_is_missing() {
+fn list_sessions_abstains_when_summary_host_is_unknown() {
     let conn = setup_conn();
     insert_at_epoch(
         &conn,
@@ -205,12 +205,41 @@ fn list_sessions_falls_back_to_memory_session_id_when_row_id_is_missing() {
 
     let sessions = list_project(&conn, "/proj");
     assert_eq!(sessions.len(), 1);
-    assert_eq!(
-        sessions[0].display_label.as_deref(),
-        Some("0101｜doc｜README navigation")
+    assert_eq!(sessions[0].display_label, None);
+    assert_eq!(sessions[0].session_intent, None);
+    assert_eq!(sessions[0].session_topic, None);
+    assert_eq!(sessions[0].session_intent_source, None);
+}
+
+#[test]
+fn list_sessions_does_not_attach_summary_from_another_host() {
+    let conn = setup_conn();
+    insert_at_epoch(
+        &conn,
+        "s-shared",
+        "/proj",
+        "codex question",
+        SHANGHAI_NEW_YEAR,
     );
-    assert_eq!(
-        sessions[0].session_intent_source.as_deref(),
-        Some("override")
-    );
+    identify_raw_sessions(&conn, "codex-cli");
+    let session_row_id =
+        seed_host_project_session(&conn, "claude-code", "/proj", "s-shared", SHANGHAI_NEW_YEAR);
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, session_row_id, request, created_at_epoch,
+          session_intent, session_topic, session_intent_source)
+         VALUES ('s-shared', '/proj', ?1, 'claude question', ?2, 'fix',
+                 'Claude-only topic', 'summary')",
+        params![session_row_id, SHANGHAI_NEW_YEAR],
+    )
+    .unwrap();
+
+    let sessions = list_project(&conn, "/proj");
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].host, "codex-cli");
+    assert_eq!(sessions[0].mmdd.as_deref(), Some("0101"));
+    assert_eq!(sessions[0].display_label, None);
+    assert_eq!(sessions[0].session_intent, None);
+    assert_eq!(sessions[0].session_topic, None);
+    assert_eq!(sessions[0].session_intent_source, None);
 }

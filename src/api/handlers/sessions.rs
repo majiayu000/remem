@@ -125,10 +125,11 @@ impl ReadResourceSpec for Sessions {
         let host = redact_bounded(&row.host);
         let project = redact_bounded(&row.project);
         let status = redact_bounded(&row.status);
+        let session_topic = redact_optional(row.session_topic);
         let label = crate::memory::session_label::render_from_stored(
             row.started_at_epoch,
             row.session_intent.as_deref(),
-            row.session_topic.as_deref(),
+            session_topic.as_deref(),
             row.session_intent_source.as_deref(),
             Some(&format!("Session on {host}")),
         );
@@ -142,7 +143,7 @@ impl ReadResourceSpec for Sessions {
             last_seen_at_epoch: row.last_seen_at_epoch,
             mmdd: label.mmdd,
             session_intent: label.session_intent,
-            session_topic: redact_optional(label.session_topic),
+            session_topic: label.session_topic,
             display_label: label.display_label,
             session_intent_source: label.session_intent_source,
             references: vec![
