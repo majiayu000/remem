@@ -344,6 +344,32 @@ fn projected_sensitive_text_redacts_short_inline_credential_assignments() {
 }
 
 #[test]
+fn projected_sensitive_text_redacts_space_separated_credential_options() {
+    let source = "Run curl --oauth2-bearer tiny-token";
+    let redacted = redact_projected_sensitive_text(source);
+    assert!(
+        redacted.contains("--oauth2-bearer [REDACTED]"),
+        "{redacted}"
+    );
+    assert!(!redacted.contains("tiny-token"), "{redacted}");
+}
+
+#[test]
+fn projected_sensitive_text_preserves_benign_long_project_paths() {
+    let path = "/home/u/project2abcd1234567890abcdef12";
+    assert_eq!(redact_projected_sensitive_text(path), path);
+    assert_eq!(redact_sensitive_text(path), path);
+}
+
+#[test]
+fn projected_sensitive_text_still_redacts_credential_bearing_project_values() {
+    let source = "token=envelope-project-secret";
+    let redacted = redact_projected_sensitive_text(source);
+    assert!(!redacted.contains("envelope-project-secret"), "{redacted}");
+    assert!(redacted.contains("token=[REDACTED]"), "{redacted}");
+}
+
+#[test]
 fn general_sensitive_text_redaction_does_not_treat_bare_words_as_options() {
     let source = "please pass the user value through without changing this phrase\nu value";
 

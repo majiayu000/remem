@@ -102,12 +102,26 @@ pub(crate) fn redact_sensitive_text(text: &str) -> String {
 }
 
 /// Redact user-facing projection text (MCP/CLI) including short inline
-/// credential assignments such as `Investigate token=abc123`.
+/// credential assignments such as `Investigate token=abc123` and space-separated
+/// sensitive option arguments such as `curl --oauth2-bearer tiny-token`.
 ///
 /// Keep this separate from [`redact_sensitive_text`], which intentionally omits
-/// the hook inline-assignment heuristic to avoid scrubbing ordinary code/prose.
+/// the hook inline-assignment and sensitive-option heuristics to avoid scrubbing
+/// ordinary code/prose.
 pub(crate) fn redact_projected_sensitive_text(text: &str) -> String {
-    redact_sensitive_text(&redact_inline_sensitive_assignments(text))
+    let redacted = redact_inline_sensitive_assignments(text);
+    redacted
+        .lines()
+        .map(redact_projected_sensitive_line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn redact_projected_sensitive_line(line: &str) -> String {
+    if let Some((prefix, _)) = split_sensitive_assignment(line) {
+        return format!("{prefix}[REDACTED]");
+    }
+    redact_tokens(line, true)
 }
 
 fn redact_sensitive_line(line: &str) -> String {
@@ -416,7 +430,8 @@ pub(crate) fn redact_token(token: &str) -> String {
     if let Some(redacted) = redact_url_userinfo(token) {
         redacted
     } else if contains_prefixed_secret(trimmed)
-        || (trimmed.len() >= 32
+        || (!looks_like_filesystem_path(token)
+            && trimmed.len() >= 32
             && trimmed.chars().any(|ch| ch.is_ascii_alphabetic())
             && trimmed.chars().any(|ch| ch.is_ascii_digit()))
     {
@@ -424,6 +439,18 @@ pub(crate) fn redact_token(token: &str) -> String {
     } else {
         token.to_string()
     }
+}
+
+fn looks_like_filesystem_path(token: &str) -> bool {
+    let trimmed = token.trim_matches(|ch: char| matches!(ch, '"' | '\'' | '`' | ',' | ';' | ')'));
+    trimmed.starts_with('/')
+        || trimmed.starts_with("~/")
+        || trimmed.starts_with("./")
+        || trimmed.starts_with(".\\")
+        || (trimmed.len() >= 3
+            && trimmed.as_bytes()[1] == b':'
+            && trimmed.as_bytes()[0].is_ascii_alphabetic()
+            && matches!(trimmed.as_bytes()[2], b'\\' | b'/'))
 }
 
 fn redact_url_userinfo(token: &str) -> Option<String> {

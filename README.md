@@ -367,6 +367,12 @@ checked-in report.
 - The data directory and key use restrictive per-user permissions.
 - The REST API binds to `127.0.0.1` and requires a bearer token.
 - Hook-captured event previews are redacted before durable storage.
+- MCP and CLI workstream listings project redacted text: credential-like
+  assignments, short inline secrets, and sensitive command options are replaced
+  with `[REDACTED]` in returned fields (and CLI `--json` envelope `project`),
+  while ordinary filesystem project paths stay readable. Stored workstream rows
+  keep their canonical values for matching and scope checks, so queried output
+  can differ from the database when secrets were present.
 - Memory candidates and injected content pass secret and poisoning defenses.
 - `remem doctor` reports encryption, plaintext residue, schema, and audit
   failures without printing memory payloads.

@@ -110,4 +110,14 @@ mod tests {
             Some("Batch text display")
         );
     }
+
+    #[test]
+    fn output_projection_preserves_benign_long_project_paths_with_real_redactor() {
+        let project = "/home/u/project2abcd1234567890abcdef12";
+        let projected = redact_workstream_for_output(
+            sample("Batch text display", "Repair listing", project),
+            crate::adapter::common::redact_projected_sensitive_text,
+        );
+        assert_eq!(projected.project, project);
+    }
 }

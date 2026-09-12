@@ -307,6 +307,65 @@ mod tests {
     }
 
     #[test]
+    fn list_projection_redacts_space_separated_credential_options() {
+        let workstreams = vec![workstream::redact_workstream_for_output(
+            workstream::WorkStream {
+                id: 9,
+                project: "test/proj".to_string(),
+                title: "Safe listing".to_string(),
+                description: None,
+                status: workstream::WorkStreamStatus::Active,
+                progress: Some("Run curl --oauth2-bearer tiny-token".to_string()),
+                next_action: Some("Retry with -u alice:pw".to_string()),
+                blockers: None,
+                created_at_epoch: 1735660800,
+                updated_at_epoch: 1735660800,
+                completed_at_epoch: None,
+                mmdd: None,
+                session_intent: Some("FIX".to_string()),
+                session_topic: Some("Command remediation".to_string()),
+                display_label: None,
+                session_intent_source: Some("summary".to_string()),
+            },
+            |text| crate::adapter::common::redact_projected_sensitive_text(text),
+        )];
+        let encoded = serde_json::to_string(&workstreams).unwrap();
+        assert!(!encoded.contains("tiny-token"), "{encoded}");
+        assert!(!encoded.contains("alice:pw"), "{encoded}");
+        assert!(encoded.contains("--oauth2-bearer [REDACTED]"), "{encoded}");
+        assert!(encoded.contains("-u [REDACTED]"), "{encoded}");
+    }
+
+    #[test]
+    fn list_projection_preserves_benign_long_project_paths() {
+        let project = "/home/u/project2abcd1234567890abcdef12";
+        let workstreams = vec![workstream::redact_workstream_for_output(
+            workstream::WorkStream {
+                id: 10,
+                project: project.to_string(),
+                title: "Path listing".to_string(),
+                description: None,
+                status: workstream::WorkStreamStatus::Active,
+                progress: None,
+                next_action: None,
+                blockers: None,
+                created_at_epoch: 1735660800,
+                updated_at_epoch: 1735660800,
+                completed_at_epoch: None,
+                mmdd: None,
+                session_intent: Some("FIX".to_string()),
+                session_topic: Some("Path listing".to_string()),
+                display_label: None,
+                session_intent_source: Some("summary".to_string()),
+            },
+            |text| crate::adapter::common::redact_projected_sensitive_text(text),
+        )];
+        let encoded = serde_json::to_string(&workstreams).unwrap();
+        assert!(encoded.contains(project), "{encoded}");
+        assert!(!encoded.contains("[REDACTED]"), "{encoded}");
+    }
+
+    #[test]
     fn workstream_update_requires_confirmation() {
         let error = validate_workstream_update_request(
             Some(WorkstreamStatusArg::Paused),
