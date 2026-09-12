@@ -52,6 +52,14 @@ impl MemoryServer {
                         McpToolError::db_query(TOOL, e)
                     })?
             };
+            let results: Vec<_> = results
+                .into_iter()
+                .map(|workstream| {
+                    crate::workstream::redact_workstream_for_output(workstream, |text| {
+                        crate::adapter::common::redact_sensitive_text(text)
+                    })
+                })
+                .collect();
             crate::log::info("mcp", &format!("workstreams done count={}", results.len()));
             errors::to_json_pretty(TOOL, &results)
         })

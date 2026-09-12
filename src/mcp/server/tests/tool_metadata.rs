@@ -713,6 +713,47 @@ fn workstreams_rejects_unknown_status_filter() -> anyhow::Result<()> {
 }
 
 #[test]
+fn workstreams_redacts_secret_bearing_fields_on_output_projection() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("mcp-workstreams-output-redaction");
+    let server = MemoryServer::new()?;
+    let conn = crate::db::open_db()?;
+    conn.execute(
+        "INSERT INTO workstreams
+         (project, title, description, status, progress, next_action, blockers,
+          created_at_epoch, updated_at_epoch, owner_scope, owner_key,
+          session_intent, session_topic, session_intent_source)
+         VALUES ('test/proj', 'Safe listing', 'token=desc-secret', 'active',
+                 'token=progress-secret', 'token=next-secret',
+                 'token=blocker-secret', 1735660800, 1735660800,
+                 'repo', 'test/proj', 'fix', 'token=mcp-cli-workstream-secret', 'summary')",
+        [],
+    )?;
+
+    let raw = crate::workstream::query_workstreams(&conn, "test/proj", Some("active"))?;
+    assert_eq!(
+        raw[0].session_topic.as_deref(),
+        Some("token=mcp-cli-workstream-secret")
+    );
+
+    let encoded = server
+        .workstreams(Parameters(WorkStreamsParams {
+            project: Some("test/proj".to_string()),
+            status: Some("active".to_string()),
+        }))
+        .expect("workstreams listing should succeed");
+    assert!(
+        !encoded.contains("mcp-cli-workstream-secret"),
+        "session_topic/display_label leaked secret: {encoded}"
+    );
+    assert!(!encoded.contains("desc-secret"), "{encoded}");
+    assert!(!encoded.contains("progress-secret"), "{encoded}");
+    assert!(!encoded.contains("next-secret"), "{encoded}");
+    assert!(!encoded.contains("blocker-secret"), "{encoded}");
+    assert!(encoded.contains("token=[REDACTED]"), "{encoded}");
+    Ok(())
+}
+
+#[test]
 fn timeline_rejects_blank_query_without_selecting_recent_observation() -> anyhow::Result<()> {
     let _dir = ScopedTestDataDir::new("mcp-timeline-blank-query");
     let server = MemoryServer::new()?;

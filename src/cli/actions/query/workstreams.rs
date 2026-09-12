@@ -45,7 +45,14 @@ fn run_workstream_list(
 ) -> Result<()> {
     let conn = db::open_db()?;
     let status_str = status.map(WorkstreamStatusArg::as_str);
-    let results = workstream::query_workstreams(&conn, project, status_str)?;
+    let results = workstream::query_workstreams(&conn, project, status_str)?
+        .into_iter()
+        .map(|item| {
+            workstream::redact_workstream_for_output(item, |text| {
+                crate::adapter::common::redact_sensitive_text(text)
+            })
+        })
+        .collect::<Vec<_>>();
     if json {
         let output = WorkstreamListJson {
             project: project.to_string(),
@@ -215,6 +222,42 @@ mod tests {
     fn workstream_update_rejects_empty_mutation() {
         let error = validate_workstream_update_request(None, None, None, true).unwrap_err();
         assert!(error.to_string().contains("--status"));
+    }
+
+    #[test]
+    fn list_projection_redacts_secret_bearing_fields() {
+        let workstreams = vec![workstream::redact_workstream_for_output(
+            workstream::WorkStream {
+                id: 7,
+                project: "test/proj".to_string(),
+                title: "Safe listing".to_string(),
+                description: Some("token=desc-secret".to_string()),
+                status: workstream::WorkStreamStatus::Active,
+                progress: Some("token=progress-secret".to_string()),
+                next_action: Some("token=next-secret".to_string()),
+                blockers: Some("token=blocker-secret".to_string()),
+                created_at_epoch: 1735660800,
+                updated_at_epoch: 1735660800,
+                completed_at_epoch: None,
+                mmdd: None,
+                session_intent: Some("fix".to_string()),
+                session_topic: Some("token=mcp-cli-workstream-secret".to_string()),
+                display_label: None,
+                session_intent_source: Some("summary".to_string()),
+            },
+            |text| crate::adapter::common::redact_sensitive_text(text),
+        )];
+        let rendered = render_workstream_list(&workstreams);
+        assert!(
+            !rendered.contains("mcp-cli-workstream-secret"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("token=[REDACTED]"), "{rendered}");
+        let encoded = serde_json::to_string(&workstreams).unwrap();
+        assert!(!encoded.contains("desc-secret"), "{encoded}");
+        assert!(!encoded.contains("progress-secret"), "{encoded}");
+        assert!(!encoded.contains("next-secret"), "{encoded}");
+        assert!(!encoded.contains("blocker-secret"), "{encoded}");
     }
 
     #[test]
