@@ -212,6 +212,54 @@ fn list_sessions_abstains_when_summary_host_is_unknown() {
 }
 
 #[test]
+fn list_sessions_redacts_secret_topics_before_deriving_display_label() {
+    let conn = setup_conn();
+    insert_at_epoch(
+        &conn,
+        "s-secret",
+        "/proj",
+        "repair listing",
+        SHANGHAI_NEW_YEAR,
+    );
+    identify_raw_sessions(&conn, "codex-cli");
+    let session_row_id =
+        seed_host_project_session(&conn, "codex-cli", "/proj", "s-secret", SHANGHAI_NEW_YEAR);
+    let topic = "token=label-secret-token contact label-private@example.com";
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, session_row_id, request, created_at_epoch,
+          session_intent, session_topic, session_intent_source)
+         VALUES ('s-secret', '/proj', ?1, 'safe', ?2, 'fix', ?3, 'summary')",
+        params![session_row_id, SHANGHAI_NEW_YEAR, topic],
+    )
+    .unwrap();
+
+    let sessions = list_project(&conn, "/proj");
+    assert_eq!(sessions.len(), 1);
+    let session = &sessions[0];
+    let encoded = serde_json::to_string(session).unwrap();
+    assert!(
+        !encoded.contains("label-secret-token"),
+        "serialized listing leaked token: {encoded}"
+    );
+    assert!(
+        !encoded.contains("label-private@example.com"),
+        "serialized listing leaked email: {encoded}"
+    );
+    assert_eq!(session.session_intent.as_deref(), Some("fix"));
+    assert_eq!(session.session_intent_source.as_deref(), Some("summary"));
+    assert!(session.session_topic.is_some());
+    assert!(session.display_label.is_some());
+    let topic = session.session_topic.as_deref().unwrap();
+    let label = session.display_label.as_deref().unwrap();
+    assert!(!topic.contains("label-secret-token"));
+    assert!(!topic.contains("label-private@example.com"));
+    assert!(!label.contains("label-secret-token"));
+    assert!(!label.contains("label-private@example.com"));
+    assert!(label.contains("fix"));
+}
+
+#[test]
 fn list_sessions_does_not_attach_summary_from_another_host() {
     let conn = setup_conn();
     insert_at_epoch(
