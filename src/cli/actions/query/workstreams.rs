@@ -55,7 +55,9 @@ fn run_workstream_list(
         .collect::<Vec<_>>();
     if json {
         let output = WorkstreamListJson {
-            project: project.to_string(),
+            // Envelope project comes from --project; redact so list JSON cannot
+            // echo a credential-bearing argument while item.project is sanitized.
+            project: crate::adapter::common::redact_sensitive_text(project),
             status: status_str.map(str::to_string),
             count: results.len(),
             workstreams: results,
@@ -258,6 +260,20 @@ mod tests {
         assert!(!encoded.contains("progress-secret"), "{encoded}");
         assert!(!encoded.contains("next-secret"), "{encoded}");
         assert!(!encoded.contains("blocker-secret"), "{encoded}");
+    }
+
+    #[test]
+    fn list_json_envelope_redacts_secret_bearing_project() {
+        let project = "token=envelope-project-secret";
+        let output = WorkstreamListJson {
+            project: crate::adapter::common::redact_sensitive_text(project),
+            status: None,
+            count: 0,
+            workstreams: vec![],
+        };
+        let encoded = serde_json::to_string(&output).unwrap();
+        assert!(!encoded.contains("envelope-project-secret"), "{encoded}");
+        assert!(encoded.contains("token=[REDACTED]"), "{encoded}");
     }
 
     #[test]
