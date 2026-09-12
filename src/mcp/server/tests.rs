@@ -17,6 +17,7 @@ mod contract_alignment;
 mod current_state;
 mod search;
 mod tool_metadata;
+mod workstream_behavior;
 
 fn assert_mcp_error(
     err: McpToolError,
