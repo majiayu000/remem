@@ -11,6 +11,7 @@ use super::super::read_resources::{
     ReadResourceSpec, ResourceProjectionPolicy, SafeResourceRef,
 };
 use super::super::types::DbState;
+use crate::db::summary_poisoning::LABEL_ROW_ELIGIBLE_SQL;
 
 pub(in crate::api) async fn handle_list_sessions(
     State(_state): State<DbState>,
@@ -59,7 +60,9 @@ struct SessionItem {
     references: Vec<SafeResourceRef>,
 }
 
-const SELECT_SESSION: &str = "SELECT s.id, s.host_id, h.name, s.project_id, p.project_key,
+fn select_session_sql() -> String {
+    format!(
+        "SELECT s.id, s.host_id, h.name, s.project_id, p.project_key,
             s.started_at_epoch, s.last_seen_at_epoch, s.status,
             ss.session_intent, ss.session_topic, ss.session_intent_source
      FROM sessions s
@@ -68,9 +71,12 @@ const SELECT_SESSION: &str = "SELECT s.id, s.host_id, h.name, s.project_id, p.pr
      LEFT JOIN session_summaries ss ON ss.id = (
          SELECT id FROM session_summaries
          WHERE session_row_id = s.id
+           AND {LABEL_ROW_ELIGIBLE_SQL}
          ORDER BY COALESCE(session_intent_updated_at_epoch, created_at_epoch) DESC, id DESC
          LIMIT 1
-     )";
+     )"
+    )
+}
 
 impl ReadResourceSpec for Sessions {
     type Row = SessionRow;
@@ -89,11 +95,12 @@ impl ReadResourceSpec for Sessions {
         limit: usize,
     ) -> anyhow::Result<Vec<Self::Row>> {
         let sql = format!(
-            "{SELECT_SESSION}
+            "{}
              WHERE (?1 IS NULL OR s.id < ?1)
                AND (?2 IS NULL OR p.project_key = ?2)
                AND (?3 IS NULL OR s.status = ?3)
-             ORDER BY s.id DESC LIMIT ?4"
+             ORDER BY s.id DESC LIMIT ?4",
+            select_session_sql()
         );
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt.query_map(
@@ -105,7 +112,7 @@ impl ReadResourceSpec for Sessions {
 
     fn load_one(conn: &Connection, id: i64) -> anyhow::Result<Option<Self::Row>> {
         conn.query_row(
-            &format!("{SELECT_SESSION} WHERE s.id = ?1"),
+            &format!("{} WHERE s.id = ?1", select_session_sql()),
             params![id],
             map_row,
         )

@@ -4,6 +4,7 @@ use anyhow::Result;
 use rusqlite::{params_from_iter, Connection};
 
 use super::sessions::RawSessionSummary;
+use crate::db::summary_poisoning::LABEL_ROW_ELIGIBLE_SQL;
 use crate::memory::session_label::render_from_stored;
 
 pub(super) fn attach_session_labels(
@@ -81,6 +82,7 @@ fn load_summary_labels(
          JOIN hosts h ON h.id = s.host_id
          JOIN projects p ON p.id = s.project_id
          WHERE s.session_id IN ({placeholders})
+           AND {LABEL_ROW_ELIGIBLE_SQL}
          ORDER BY COALESCE(ss.session_intent_updated_at_epoch, ss.created_at_epoch) DESC, ss.id DESC"
     );
     let mut statement = conn.prepare(&sql)?;

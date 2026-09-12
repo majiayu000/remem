@@ -139,6 +139,94 @@ async fn session_intent_labels_redact_topics_before_deriving_display_fields() ->
 }
 
 #[tokio::test]
+async fn session_api_skips_quarantined_model_labels_and_keeps_override() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-session-quarantine-labels");
+    let fixture = insert_fixture("intent-quarantine")?;
+    let conn = db::open_db()?;
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, session_row_id, request, created_at_epoch,
+          session_intent, session_topic, session_intent_source, poisoning_status,
+          session_intent_updated_at_epoch)
+         VALUES ('intent-quarantine', 'intent-quarantine-project', ?1, 'safe',
+                 1735660800, 'fix', 'Safe API topic', 'summary', 'safe', 1735660800)",
+        params![fixture.session_id],
+    )?;
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, session_row_id, request, created_at_epoch,
+          session_intent, session_topic, session_intent_source, poisoning_status,
+          session_intent_updated_at_epoch)
+         VALUES ('intent-quarantine', 'intent-quarantine-project', ?1, 'poisoned',
+                 1735660810, 'opt', 'Quarantined API topic', 'summary', 'quarantined',
+                 1735660810)",
+        params![fixture.session_id],
+    )?;
+
+    crate::api::ensure_api_token()?;
+    let token = crate::api::load_api_token()?;
+    let app = super::super::build_router(0).with_state(DbState);
+    for uri in [
+        "/api/v1/sessions".to_owned(),
+        format!("/api/v1/sessions/{}", fixture.session_id),
+    ] {
+        let (status, response) = get_json(&app, &uri, &token).await?;
+        assert_eq!(status, StatusCode::OK);
+        let encoded = response.to_string();
+        assert!(
+            !encoded.contains("Quarantined API topic"),
+            "{uri}: {encoded}"
+        );
+        let item = if response["data"].is_array() {
+            &response["data"][0]
+        } else {
+            &response["data"]
+        };
+        assert_eq!(item["session_intent"], "fix");
+        assert_eq!(item["session_topic"], "Safe API topic");
+        assert_eq!(item["session_intent_source"], "summary");
+        assert!(
+            item["display_label"]
+                .as_str()
+                .unwrap_or_default()
+                .ends_with("｜fix｜Safe API topic"),
+            "{uri}: {}",
+            item["display_label"]
+        );
+    }
+
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, session_row_id, request, created_at_epoch,
+          session_intent, session_topic, session_intent_source, poisoning_status,
+          session_intent_updated_at_epoch)
+         VALUES ('intent-quarantine', 'intent-quarantine-project', ?1, 'override',
+                 1735660820, 'doc', 'Operator API override', 'override', 'quarantined',
+                 1735660820)",
+        params![fixture.session_id],
+    )?;
+    let (status, response) = get_json(
+        &app,
+        &format!("/api/v1/sessions/{}", fixture.session_id),
+        &token,
+    )
+    .await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(response["data"]["session_intent"], "doc");
+    assert_eq!(response["data"]["session_topic"], "Operator API override");
+    assert_eq!(response["data"]["session_intent_source"], "override");
+    assert!(
+        response["data"]["display_label"]
+            .as_str()
+            .unwrap_or_default()
+            .ends_with("｜doc｜Operator API override"),
+        "{}",
+        response["data"]["display_label"]
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn empty_not_found_and_invalid_id_states_are_distinct() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("api-read-resource-empty");
     crate::api::ensure_api_token()?;

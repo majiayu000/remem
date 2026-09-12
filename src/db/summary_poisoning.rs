@@ -17,6 +17,18 @@ use crate::memory::poisoning::{scan_generated_surfaces, SurfacePatternMatch};
 pub(crate) const NOT_QUARANTINED_SQL: &str =
     "COALESCE(poisoning_status, 'legacy_unscanned') != 'quarantined'";
 
+/// SQL fragment for listing-surface label selection (LOGIC-11 / GH-1080).
+///
+/// Quarantined model rows must not publish `session_intent` /
+/// `session_topic` / `display_label`, but explicit operator overrides stay
+/// visible. Callers order by intent update time and take the latest row that
+/// satisfies this predicate so a newer quarantined model label falls back to
+/// the latest safe (or override) row.
+pub(crate) const LABEL_ROW_ELIGIBLE_SQL: &str = "(\
+    COALESCE(poisoning_status, 'legacy_unscanned') != 'quarantined' \
+    OR session_intent_source = 'override'\
+)";
+
 /// Re-scan the model-visible fields of a summary row immediately before use.
 ///
 /// Returns `true` only when the row is safe to expose to a model-visible

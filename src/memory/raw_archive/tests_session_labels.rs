@@ -243,3 +243,98 @@ fn list_sessions_does_not_attach_summary_from_another_host() {
     assert_eq!(sessions[0].session_topic, None);
     assert_eq!(sessions[0].session_intent_source, None);
 }
+
+#[test]
+fn list_sessions_skips_quarantined_model_labels_and_falls_back_to_safe_or_override() {
+    let conn = setup_conn();
+    insert_at_epoch(
+        &conn,
+        "s-quarantine",
+        "/proj",
+        "repair listing",
+        SHANGHAI_NEW_YEAR,
+    );
+    identify_raw_sessions(&conn, "codex-cli");
+    let session_row_id = seed_host_project_session(
+        &conn,
+        "codex-cli",
+        "/proj",
+        "s-quarantine",
+        SHANGHAI_NEW_YEAR,
+    );
+
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, session_row_id, request, created_at_epoch,
+          session_intent, session_topic, session_intent_source, poisoning_status,
+          session_intent_updated_at_epoch)
+         VALUES ('s-quarantine', '/proj', ?1, 'safe prior', ?2, 'fix',
+                 'Safe listing topic', 'summary', 'safe', ?2)",
+        params![session_row_id, SHANGHAI_NEW_YEAR],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, session_row_id, request, created_at_epoch,
+          session_intent, session_topic, session_intent_source, poisoning_status,
+          session_intent_updated_at_epoch)
+         VALUES ('s-quarantine', '/proj', ?1, 'poisoned', ?2, 'opt',
+                 'Quarantined model topic', 'summary', 'quarantined', ?3)",
+        params![
+            session_row_id,
+            SHANGHAI_NEW_YEAR + 10,
+            SHANGHAI_NEW_YEAR + 10
+        ],
+    )
+    .unwrap();
+
+    let sessions = list_project(&conn, "/proj");
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].session_intent.as_deref(), Some("fix"));
+    assert_eq!(
+        sessions[0].session_topic.as_deref(),
+        Some("Safe listing topic")
+    );
+    assert_eq!(
+        sessions[0].session_intent_source.as_deref(),
+        Some("summary")
+    );
+    assert_eq!(
+        sessions[0].display_label.as_deref(),
+        Some("0101｜fix｜Safe listing topic")
+    );
+    let encoded = serde_json::to_string(&sessions[0]).unwrap();
+    assert!(
+        !encoded.contains("Quarantined model topic"),
+        "quarantined model topic leaked: {encoded}"
+    );
+
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, session_row_id, request, created_at_epoch,
+          session_intent, session_topic, session_intent_source, poisoning_status,
+          session_intent_updated_at_epoch)
+         VALUES ('s-quarantine', '/proj', ?1, 'override', ?2, 'doc',
+                 'Operator override topic', 'override', 'quarantined', ?3)",
+        params![
+            session_row_id,
+            SHANGHAI_NEW_YEAR + 20,
+            SHANGHAI_NEW_YEAR + 20
+        ],
+    )
+    .unwrap();
+    let sessions = list_project(&conn, "/proj");
+    assert_eq!(sessions[0].session_intent.as_deref(), Some("doc"));
+    assert_eq!(
+        sessions[0].session_topic.as_deref(),
+        Some("Operator override topic")
+    );
+    assert_eq!(
+        sessions[0].session_intent_source.as_deref(),
+        Some("override")
+    );
+    assert_eq!(
+        sessions[0].display_label.as_deref(),
+        Some("0101｜doc｜Operator override topic")
+    );
+}
