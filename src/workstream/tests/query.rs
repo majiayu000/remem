@@ -419,3 +419,48 @@ fn query_renders_session_intent_label_from_created_epoch() {
     );
     assert_eq!(workstreams[0].title, "Repair listing");
 }
+
+#[test]
+fn query_redacts_secret_bearing_session_topic_before_label_projection() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_workstream_schema(&conn);
+    // Field values start with sensitive assignments so redact_sensitive_text matches
+    // the same patterns REST already covers (see api::tests::read_resources).
+    conn.execute(
+        "INSERT INTO workstreams
+         (project, title, description, status, progress, next_action, blockers,
+          created_at_epoch, updated_at_epoch, owner_scope, owner_key,
+          session_intent, session_topic, session_intent_source)
+         VALUES ('test/proj', 'Safe listing', 'token=desc-secret', 'active',
+                 'token=progress-secret', 'token=next-secret',
+                 'token=blocker-secret', 1735660800, 1735660800,
+                 'repo', 'test/proj', 'fix', 'token=mcp-cli-workstream-secret', 'summary')",
+        [],
+    )
+    .unwrap();
+
+    let workstreams = query_active_workstreams(&conn, "test/proj").unwrap();
+    assert_eq!(workstreams.len(), 1);
+    let encoded = serde_json::to_string(&workstreams[0]).unwrap();
+    assert!(
+        !encoded.contains("mcp-cli-workstream-secret"),
+        "session_topic/display_label leaked secret: {encoded}"
+    );
+    assert!(!encoded.contains("desc-secret"), "{encoded}");
+    assert!(!encoded.contains("progress-secret"), "{encoded}");
+    assert!(!encoded.contains("next-secret"), "{encoded}");
+    assert!(!encoded.contains("blocker-secret"), "{encoded}");
+    assert_eq!(workstreams[0].session_intent.as_deref(), Some("fix"));
+    assert_eq!(
+        workstreams[0].session_topic.as_deref(),
+        Some("token=[REDACTED]")
+    );
+    assert_eq!(
+        workstreams[0].display_label.as_deref(),
+        Some("0101｜fix｜token=[REDACTED]")
+    );
+    assert_eq!(
+        workstreams[0].description.as_deref(),
+        Some("token=[REDACTED]")
+    );
+}

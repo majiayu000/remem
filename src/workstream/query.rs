@@ -116,10 +116,12 @@ pub fn query_workstreams(
 
 pub(crate) fn map_workstream_row(row: &rusqlite::Row) -> rusqlite::Result<WorkStream> {
     let status_str: String = row.get(4)?;
-    let title: String = row.get(2)?;
+    // Redact before label projection so MCP/CLI listings cannot compose secrets into
+    // session_topic / display_label (REST already redacts these fields).
+    let title = redact_text(row.get(2)?);
     let created_at_epoch: i64 = row.get(8)?;
     let intent: Option<String> = row.get(11)?;
-    let topic: Option<String> = row.get(12)?;
+    let topic = redact_optional_text(row.get(12)?);
     let source: Option<String> = row.get(13)?;
     let label = crate::memory::session_label::render_from_stored(
         Some(created_at_epoch),
@@ -130,13 +132,13 @@ pub(crate) fn map_workstream_row(row: &rusqlite::Row) -> rusqlite::Result<WorkSt
     );
     Ok(WorkStream {
         id: row.get(0)?,
-        project: row.get(1)?,
+        project: redact_text(row.get(1)?),
         title,
-        description: row.get(3)?,
+        description: redact_optional_text(row.get(3)?),
         status: WorkStreamStatus::from_db(&status_str),
-        progress: row.get(5)?,
-        next_action: row.get(6)?,
-        blockers: row.get(7)?,
+        progress: redact_optional_text(row.get(5)?),
+        next_action: redact_optional_text(row.get(6)?),
+        blockers: redact_optional_text(row.get(7)?),
         created_at_epoch,
         updated_at_epoch: row.get(9)?,
         completed_at_epoch: row.get(10)?,
@@ -146,4 +148,12 @@ pub(crate) fn map_workstream_row(row: &rusqlite::Row) -> rusqlite::Result<WorkSt
         display_label: label.display_label,
         session_intent_source: label.session_intent_source,
     })
+}
+
+fn redact_text(value: String) -> String {
+    crate::adapter::common::redact_sensitive_text(&value)
+}
+
+fn redact_optional_text(value: Option<String>) -> Option<String> {
+    value.map(redact_text)
 }
