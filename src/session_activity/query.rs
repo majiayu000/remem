@@ -6,6 +6,7 @@ use super::types::{
     ActivityCount, RawSessionActivity, RawSessionActivityPage, SessionActivityItem,
     SessionActivityPage, SessionActivityStats, SessionTurn, TurnAction,
 };
+use crate::db::summary_poisoning::LABEL_ROW_ELIGIBLE_SQL;
 
 const MAX_VISIBLE_USER_CHARS: usize = 4_000;
 const MAX_RETURNED_ACTIONS_PER_TURN: i64 = 100;
@@ -208,9 +209,12 @@ fn load_raw_session_activity(
         None
     };
     let summary = conn.query_row(
-        "SELECT session_intent, session_topic, session_intent_source
-         FROM session_summaries WHERE session_row_id = ?1
-         ORDER BY COALESCE(session_intent_updated_at_epoch, created_at_epoch) DESC, id DESC LIMIT 1",
+        &format!(
+            "SELECT session_intent, session_topic, session_intent_source
+             FROM session_summaries WHERE session_row_id = ?1
+               AND {LABEL_ROW_ELIGIBLE_SQL}
+             ORDER BY COALESCE(session_intent_updated_at_epoch, created_at_epoch) DESC, id DESC LIMIT 1"
+        ),
         [session_row_id],
         |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?)),
     ).optional()?;

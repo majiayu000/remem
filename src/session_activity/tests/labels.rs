@@ -126,3 +126,72 @@ fn activity_label_redacts_before_render_and_suppresses_before_filter() -> Result
     assert!(!unknown.data[0].override_available);
     Ok(())
 }
+
+#[test]
+fn activity_labels_skip_quarantined_model_rows_and_keep_override() -> Result<()> {
+    let conn = setup()?;
+    let created = 1_735_660_800;
+    insert_message(&conn, 1, "user", "request", created)?;
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, session_row_id, created_at_epoch, session_intent,
+          session_topic, session_intent_source, poisoning_status,
+          session_intent_updated_at_epoch)
+         VALUES ('session-1', '/repo', 1, ?1, 'fix', 'Safe activity topic', 'summary',
+                 'safe', ?1)",
+        [created],
+    )?;
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, session_row_id, created_at_epoch, session_intent,
+          session_topic, session_intent_source, poisoning_status,
+          session_intent_updated_at_epoch)
+         VALUES ('session-1', '/repo', 1, ?1, 'opt', 'Quarantined activity topic', 'summary',
+                 'quarantined', ?2)",
+        [created + 10, created + 10],
+    )?;
+
+    let page = list_activity_sessions(&conn, None, Some("fix"), None, None, None, 10, |_| true)?;
+    assert_eq!(page.data.len(), 1);
+    assert_eq!(page.data[0].session_intent.as_deref(), Some("fix"));
+    assert_eq!(
+        page.data[0].session_topic.as_deref(),
+        Some("Safe activity topic")
+    );
+    assert_eq!(
+        page.data[0].display_label.as_deref(),
+        Some("0101｜fix｜Safe activity topic")
+    );
+    let encoded = serde_json::to_string(&page)?;
+    assert!(
+        !encoded.contains("Quarantined activity topic"),
+        "quarantined activity topic leaked: {encoded}"
+    );
+    assert!(
+        list_activity_sessions(&conn, None, Some("opt"), None, None, None, 10, |_| true)?
+            .data
+            .is_empty()
+    );
+
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, session_row_id, created_at_epoch, session_intent,
+          session_topic, session_intent_source, poisoning_status,
+          session_intent_updated_at_epoch)
+         VALUES ('session-1', '/repo', 1, ?1, 'doc', 'Operator activity override', 'override',
+                 'quarantined', ?2)",
+        [created + 20, created + 20],
+    )?;
+    let page = list_activity_sessions(&conn, None, Some("doc"), None, None, None, 10, |_| true)?;
+    assert_eq!(page.data.len(), 1);
+    assert_eq!(page.data[0].session_intent.as_deref(), Some("doc"));
+    assert_eq!(
+        page.data[0].session_topic.as_deref(),
+        Some("Operator activity override")
+    );
+    assert_eq!(
+        page.data[0].session_intent_source.as_deref(),
+        Some("override")
+    );
+    Ok(())
+}
