@@ -101,6 +101,15 @@ pub(crate) fn redact_sensitive_text(text: &str) -> String {
         .join("\n")
 }
 
+/// Redact user-facing projection text (MCP/CLI) including short inline
+/// credential assignments such as `Investigate token=abc123`.
+///
+/// Keep this separate from [`redact_sensitive_text`], which intentionally omits
+/// the hook inline-assignment heuristic to avoid scrubbing ordinary code/prose.
+pub(crate) fn redact_projected_sensitive_text(text: &str) -> String {
+    redact_sensitive_text(&redact_inline_sensitive_assignments(text))
+}
+
 fn redact_sensitive_line(line: &str) -> String {
     if let Some((prefix, _)) = split_sensitive_assignment(line) {
         return format!("{prefix}[REDACTED]");

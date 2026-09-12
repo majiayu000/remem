@@ -177,3 +177,32 @@ fn workstreams_redacts_secret_bearing_fields_on_output_projection() -> anyhow::R
     assert!(encoded.contains("token=[REDACTED]"), "{encoded}");
     Ok(())
 }
+
+#[test]
+fn workstreams_redacts_short_inline_credential_assignments_on_output() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("mcp-workstreams-inline-redaction");
+    let server = MemoryServer::new()?;
+    let conn = crate::db::open_db()?;
+    conn.execute(
+        "INSERT INTO workstreams
+         (project, title, description, status, progress, next_action, blockers,
+          created_at_epoch, updated_at_epoch, owner_scope, owner_key,
+          session_intent, session_topic, session_intent_source)
+         VALUES ('test/proj', 'Investigate token=abc123', 'Fix OAuth token=short-secret',
+                 'active', NULL, 'Rotate token=xyz789', NULL, 1735660800, 1735660800,
+                 'repo', 'test/proj', 'fix', 'Investigate token=abc123', 'summary')",
+        [],
+    )?;
+
+    let encoded = server
+        .workstreams(Parameters(WorkStreamsParams {
+            project: Some("test/proj".to_string()),
+            status: Some("active".to_string()),
+        }))
+        .expect("workstreams listing should succeed");
+    assert!(!encoded.contains("abc123"), "{encoded}");
+    assert!(!encoded.contains("short-secret"), "{encoded}");
+    assert!(!encoded.contains("xyz789"), "{encoded}");
+    assert!(encoded.contains("token=[REDACTED]"), "{encoded}");
+    Ok(())
+}

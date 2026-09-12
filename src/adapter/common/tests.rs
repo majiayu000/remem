@@ -4,8 +4,9 @@ use crate::adapter::redaction::hook_payload_preview_contains_sensitive_match;
 
 use super::{
     event_summary, hook_payload_preview_redaction_input, parse_tool_hook, redact_and_truncate,
-    redact_hook_payload_preview, redact_sensitive_text, redact_token, should_skip_bash_command,
-    should_skip_tool, HOOK_PAYLOAD_PREVIEW_REDACTION_LOOKAHEAD_BYTES,
+    redact_hook_payload_preview, redact_projected_sensitive_text, redact_sensitive_text,
+    redact_token, should_skip_bash_command, should_skip_tool,
+    HOOK_PAYLOAD_PREVIEW_REDACTION_LOOKAHEAD_BYTES,
 };
 
 fn read_log_tail(scoped: &ScopedTestDataDir) -> String {
@@ -332,6 +333,14 @@ fn general_sensitive_text_redaction_does_not_use_hook_inline_heuristic() {
     let source = "let token = lexer.next_token();\nlet auth = AuthState::Anonymous;";
 
     assert_eq!(redact_sensitive_text(source), source);
+}
+
+#[test]
+fn projected_sensitive_text_redacts_short_inline_credential_assignments() {
+    let source = "Investigate token=abc123";
+    let redacted = redact_projected_sensitive_text(source);
+    assert!(!redacted.contains("abc123"), "{redacted}");
+    assert!(redacted.contains("token=[REDACTED]"), "{redacted}");
 }
 
 #[test]
