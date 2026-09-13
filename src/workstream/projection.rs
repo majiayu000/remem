@@ -4,7 +4,7 @@ use super::WorkStream;
 ///
 /// Keep this out of `map_workstream_row`: matcher identity and context project-scope
 /// checks must continue to see canonical stored values.
-pub fn redact_workstream_for_output(
+pub(crate) fn redact_workstream_for_output(
     workstream: WorkStream,
     redact: impl Fn(&str) -> String,
 ) -> WorkStream {

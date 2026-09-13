@@ -355,10 +355,46 @@ fn projected_sensitive_text_redacts_space_separated_credential_options() {
 }
 
 #[test]
+fn projected_sensitive_text_redacts_standard_space_separated_secret_options() {
+    for source in [
+        "deploy --token abc123",
+        "login --password short-secret",
+        "configure --api-key short-key",
+    ] {
+        let redacted = redact_projected_sensitive_text(source);
+        assert!(
+            redacted.contains("[REDACTED]"),
+            "expected redaction for {source}: {redacted}"
+        );
+        assert!(
+            !redacted.contains("abc123")
+                && !redacted.contains("short-secret")
+                && !redacted.contains("short-key"),
+            "secret leaked for {source}: {redacted}"
+        );
+    }
+}
+
+#[test]
+fn projected_sensitive_text_preserves_benign_suffix_after_leading_credential() {
+    let source = "token=abc123 investigate database regression";
+    let redacted = redact_projected_sensitive_text(source);
+    assert!(!redacted.contains("abc123"), "{redacted}");
+    assert_eq!(redacted, "token=[REDACTED] investigate database regression");
+}
+
+#[test]
 fn projected_sensitive_text_preserves_benign_long_project_paths() {
     let path = "/home/u/project2abcd1234567890abcdef12";
     assert_eq!(redact_projected_sensitive_text(path), path);
-    assert_eq!(redact_sensitive_text(path), path);
+}
+
+#[test]
+fn shared_sensitive_text_still_redacts_credential_shaped_filesystem_paths() {
+    let path = "/tmp/Abcdef0123456789Abcdef0123456789";
+    assert_eq!(redact_sensitive_text(path), "[REDACTED]");
+    // Projection keeps ordinary project identifiers readable.
+    assert_eq!(redact_projected_sensitive_text(path), path);
 }
 
 #[test]

@@ -18,7 +18,7 @@ pub use lifecycle::{
 };
 pub use matcher::find_matching_workstream;
 pub use merge::merge_workstreams_manual;
-pub use projection::redact_workstream_for_output;
+pub(crate) use projection::redact_workstream_for_output;
 pub(crate) use query::query_active_workstreams_page;
 pub use query::{query_active_workstreams, query_workstreams};
 pub use types::{

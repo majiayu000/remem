@@ -118,17 +118,17 @@ pub(crate) fn redact_projected_sensitive_text(text: &str) -> String {
 }
 
 fn redact_projected_sensitive_line(line: &str) -> String {
-    if let Some((prefix, _)) = split_sensitive_assignment(line) {
-        return format!("{prefix}[REDACTED]");
+    if let Some((prefix, value)) = split_sensitive_assignment(line) {
+        return redact_assignment_keeping_suffix(prefix, value);
     }
-    redact_tokens(line, true)
+    redact_tokens(line, true, true)
 }
 
 fn redact_sensitive_line(line: &str) -> String {
     if let Some((prefix, _)) = split_sensitive_assignment(line) {
         return format!("{prefix}[REDACTED]");
     }
-    redact_tokens(line, false)
+    redact_tokens(line, false, false)
 }
 
 fn redact_hook_payload_text(text: &str) -> String {
@@ -146,17 +146,32 @@ fn hook_payload_text_contains_sensitive_match(text: &str) -> bool {
 }
 
 fn redact_hook_payload_line(line: &str) -> String {
-    if let Some((prefix, _)) = split_sensitive_assignment(line) {
-        return format!("{prefix}[REDACTED]");
+    if let Some((prefix, value)) = split_sensitive_assignment(line) {
+        return redact_assignment_keeping_suffix(prefix, value);
     }
-    redact_tokens(line, true)
+    redact_tokens(line, true, false)
 }
 
 fn hook_payload_line_contains_sensitive_match(line: &str) -> bool {
     split_sensitive_assignment(line).is_some() || tokens_contain_sensitive_match(line, true)
 }
 
-fn redact_tokens(line: &str, redact_sensitive_options: bool) -> String {
+/// After the bounded inline pass, a line may look like
+/// `token=[REDACTED] investigate database regression`. Preserve the benign
+/// suffix instead of treating the whole remainder as the credential value.
+fn redact_assignment_keeping_suffix(prefix: &str, value: &str) -> String {
+    let trimmed = value.trim_start();
+    if let Some(rest) = trimmed.strip_prefix("[REDACTED]") {
+        return format!("{prefix}[REDACTED]{rest}");
+    }
+    format!("{prefix}[REDACTED]")
+}
+
+fn redact_tokens(
+    line: &str,
+    redact_sensitive_options: bool,
+    preserve_filesystem_paths: bool,
+) -> String {
     let mut previous_was_bearer = false;
     let mut previous_was_sensitive_option = false;
     line.split_whitespace()
@@ -164,7 +179,7 @@ fn redact_tokens(line: &str, redact_sensitive_options: bool) -> String {
             let redacted = if previous_was_bearer || previous_was_sensitive_option {
                 "[REDACTED]".to_string()
             } else {
-                redact_token(token)
+                redact_token_with_options(token, preserve_filesystem_paths)
             };
             previous_was_sensitive_option =
                 redact_sensitive_options && token_expects_sensitive_argument(token);
@@ -369,7 +384,7 @@ fn is_sensitive_option_key(key: &str) -> bool {
     matches!(
         normalized_sensitive_key(key).as_str(),
         "u" | "user" | "pass" | "oauth2_bearer" | "proxy_user" | "proxy_pass"
-    )
+    ) || is_sensitive_key(key)
 }
 
 fn token_expects_sensitive_argument(token: &str) -> bool {
@@ -425,12 +440,16 @@ fn is_sensitive_key(key: &str) -> bool {
 }
 
 pub(crate) fn redact_token(token: &str) -> String {
+    redact_token_with_options(token, false)
+}
+
+fn redact_token_with_options(token: &str, preserve_filesystem_paths: bool) -> String {
     let trimmed =
         token.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_');
     if let Some(redacted) = redact_url_userinfo(token) {
         redacted
     } else if contains_prefixed_secret(trimmed)
-        || (!looks_like_filesystem_path(token)
+        || (!(preserve_filesystem_paths && looks_like_filesystem_path(token))
             && trimmed.len() >= 32
             && trimmed.chars().any(|ch| ch.is_ascii_alphabetic())
             && trimmed.chars().any(|ch| ch.is_ascii_digit()))
