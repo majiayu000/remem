@@ -4,8 +4,8 @@ use crate::adapter::redaction::hook_payload_preview_contains_sensitive_match;
 
 use super::{
     event_summary, hook_payload_preview_redaction_input, parse_tool_hook, redact_and_truncate,
-    redact_hook_payload_preview, redact_projected_sensitive_text, redact_sensitive_text,
-    redact_token, should_skip_bash_command, should_skip_tool,
+    redact_hook_payload_preview, redact_projected_project_text, redact_projected_sensitive_text,
+    redact_sensitive_text, redact_token, should_skip_bash_command, should_skip_tool,
     HOOK_PAYLOAD_PREVIEW_REDACTION_LOOKAHEAD_BYTES,
 };
 
@@ -436,19 +436,24 @@ fn hook_payload_preview_redacts_quoted_cookie_header_parameters() {
 #[test]
 fn projected_sensitive_text_preserves_benign_long_project_paths() {
     let path = "/home/u/project2abcd1234567890abcdef12";
-    assert_eq!(redact_projected_sensitive_text(path), path);
+    assert_eq!(redact_projected_project_text(path), path);
+    // Non-project projection must still scrub credential-shaped filesystem tokens.
+    assert_eq!(redact_projected_sensitive_text(path), "[REDACTED]");
 }
 
 #[test]
 fn projected_sensitive_text_preserves_benign_unc_and_extended_windows_paths() {
     let unc = r"\\server\share\project2abcd1234567890abcdef12";
-    assert_eq!(redact_projected_sensitive_text(unc), unc);
+    assert_eq!(redact_projected_project_text(unc), unc);
+    assert_eq!(redact_projected_sensitive_text(unc), "[REDACTED]");
 
     let forward_unc = "//server/share/project2abcd1234567890abcdef12";
-    assert_eq!(redact_projected_sensitive_text(forward_unc), forward_unc);
+    assert_eq!(redact_projected_project_text(forward_unc), forward_unc);
+    assert_eq!(redact_projected_sensitive_text(forward_unc), "[REDACTED]");
 
     let extended = r"\\?\C:\Users\u\project2abcd1234567890abcdef12";
-    assert_eq!(redact_projected_sensitive_text(extended), extended);
+    assert_eq!(redact_projected_project_text(extended), extended);
+    assert_eq!(redact_projected_sensitive_text(extended), "[REDACTED]");
 }
 
 #[test]
@@ -472,16 +477,74 @@ fn hook_payload_preview_redacts_escaped_whitespace_secret_arguments() {
 fn shared_sensitive_text_still_redacts_credential_shaped_filesystem_paths() {
     let path = "/tmp/Abcdef0123456789Abcdef0123456789";
     assert_eq!(redact_sensitive_text(path), "[REDACTED]");
-    // Projection keeps ordinary project identifiers readable.
-    assert_eq!(redact_projected_sensitive_text(path), path);
+    // Strict projection redacts the same token; only project identifiers preserve paths.
+    assert_eq!(redact_projected_sensitive_text(path), "[REDACTED]");
+    assert_eq!(redact_projected_project_text(path), path);
 }
 
 #[test]
 fn projected_sensitive_text_still_redacts_credential_bearing_project_values() {
     let source = "token=envelope-project-secret";
-    let redacted = redact_projected_sensitive_text(source);
+    let redacted = redact_projected_project_text(source);
     assert!(!redacted.contains("envelope-project-secret"), "{redacted}");
     assert!(redacted.contains("token=[REDACTED]"), "{redacted}");
+}
+
+#[test]
+fn projected_sensitive_text_consumes_full_shell_assignment_values() {
+    for source in [r#"token=correct\ horse"#, r#"token="abc"tail"#] {
+        let redacted = redact_projected_sensitive_text(source);
+        assert!(
+            redacted.contains("token=[REDACTED]") || redacted.contains(r#"token="[REDACTED]""#),
+            "expected assignment redaction for {source}: {redacted}"
+        );
+        assert!(
+            !redacted.contains("horse"),
+            "suffix leaked for {source}: {redacted}"
+        );
+        assert!(
+            !redacted.contains("tail"),
+            "suffix leaked for {source}: {redacted}"
+        );
+        assert!(
+            !redacted.contains("correct"),
+            "value leaked for {source}: {redacted}"
+        );
+        assert!(
+            !redacted.contains("abc"),
+            "value leaked for {source}: {redacted}"
+        );
+    }
+}
+
+#[test]
+fn projected_sensitive_text_splits_on_unicode_whitespace() {
+    let nbsp = '\u{00a0}';
+    let bearer = format!("Authorization:{nbsp}Bearer{nbsp}tiny-token");
+    let option = format!("Retry curl --token{nbsp}abc123");
+    for source in [bearer.as_str(), option.as_str()] {
+        let redacted = redact_projected_sensitive_text(source);
+        assert!(
+            redacted.contains("[REDACTED]"),
+            "expected redaction for {source}: {redacted}"
+        );
+        assert!(
+            !redacted.contains("tiny-token"),
+            "bearer leaked: {redacted}"
+        );
+        assert!(!redacted.contains("abc123"), "option leaked: {redacted}");
+    }
+}
+
+#[test]
+fn projected_sensitive_text_redacts_compound_access_key_assignments() {
+    let source = "Rotate AWS_SECRET_ACCESS_KEY=short-secret before deploy";
+    let redacted = redact_projected_sensitive_text(source);
+    assert!(!redacted.contains("short-secret"), "{redacted}");
+    assert!(
+        redacted.contains("AWS_SECRET_ACCESS_KEY=[REDACTED]"),
+        "{redacted}"
+    );
 }
 
 #[test]

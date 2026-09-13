@@ -108,20 +108,35 @@ pub(crate) fn redact_sensitive_text(text: &str) -> String {
 /// Keep this separate from [`redact_sensitive_text`], which intentionally omits
 /// the hook inline-assignment and sensitive-option heuristics to avoid scrubbing
 /// ordinary code/prose.
+///
+/// Filesystem-shaped high-entropy tokens are redacted here. Project identifiers
+/// that must stay readable go through [`redact_projected_project_text`].
 pub(crate) fn redact_projected_sensitive_text(text: &str) -> String {
+    redact_projected_sensitive_text_with_options(text, false)
+}
+
+/// Redact projected project identifiers while preserving benign filesystem paths.
+pub(crate) fn redact_projected_project_text(text: &str) -> String {
+    redact_projected_sensitive_text_with_options(text, true)
+}
+
+fn redact_projected_sensitive_text_with_options(
+    text: &str,
+    preserve_filesystem_paths: bool,
+) -> String {
     let redacted = redact_inline_sensitive_assignments(text);
     redacted
         .lines()
-        .map(redact_projected_sensitive_line)
+        .map(|line| redact_projected_sensitive_line(line, preserve_filesystem_paths))
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-fn redact_projected_sensitive_line(line: &str) -> String {
+fn redact_projected_sensitive_line(line: &str, preserve_filesystem_paths: bool) -> String {
     if let Some((prefix, value)) = split_sensitive_assignment(line) {
         return redact_assignment_keeping_suffix(prefix, value);
     }
-    redact_tokens(line, true, true)
+    redact_tokens(line, true, preserve_filesystem_paths)
 }
 
 fn redact_sensitive_line(line: &str) -> String {
@@ -172,7 +187,7 @@ fn strip_redacted_assignment_marker(value: &str) -> Option<&str> {
     if let Some(rest) = value.strip_prefix("[REDACTED]") {
         // Only treat whitespace-delimited remainders as benign suffixes. A glued
         // remainder such as `[REDACTED]"abc123"` is leftover secret material.
-        if rest.is_empty() || rest.starts_with(|ch: char| ch.is_ascii_whitespace()) {
+        if rest.is_empty() || rest.starts_with(char::is_whitespace) {
             return Some(rest);
         }
         return None;
@@ -190,7 +205,12 @@ fn strip_redacted_assignment_marker(value: &str) -> Option<&str> {
         if after_marker_chars.next() != Some(quote) {
             continue;
         }
-        return Some(after_marker_chars.as_str());
+        let rest = after_marker_chars.as_str();
+        // `"abc"tail` is one shell word; a glued remainder is still secret.
+        if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+            return Some(rest);
+        }
+        return None;
     }
     None
 }
@@ -265,7 +285,7 @@ fn next_redaction_token(line: &str, group_quotes: bool) -> Option<(String, &str)
 fn take_whitespace_token(line: &str) -> Option<(String, &str)> {
     let end = line
         .char_indices()
-        .find_map(|(idx, ch)| ch.is_ascii_whitespace().then_some(idx))
+        .find_map(|(idx, ch)| ch.is_whitespace().then_some(idx))
         .unwrap_or(line.len());
     Some((line[..end].to_string(), &line[end..]))
 }
@@ -275,53 +295,70 @@ fn take_whitespace_token(line: &str) -> Option<(String, &str)> {
 ///
 /// Unquoted arguments also honor backslash-escaped whitespace so
 /// `--token correct\ horse` is consumed as one credential.
+/// Adjacent quote concatenation such as `"abc"tail` is one shell word.
 fn take_shell_like_argument(line: &str) -> Option<(String, &str)> {
-    let mut chars = line.chars();
-    let first = chars.next()?;
-    if matches!(first, '"' | '\'') {
-        let mut token = String::from(first);
-        let quote = first;
-        let mut escaped = false;
-        for ch in chars.by_ref() {
-            token.push(ch);
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if ch == '\\' && quote == '"' {
-                escaped = true;
-                continue;
-            }
-            if ch == quote {
-                break;
-            }
-        }
-        return Some((token, chars.as_str()));
+    if line.is_empty() {
+        return None;
     }
-
     let mut token = String::new();
+    let end = extend_glued_shell_word(line, 0, &mut token);
+    if token.is_empty() {
+        return None;
+    }
+    Some((token, &line[end..]))
+}
+
+fn extend_glued_shell_word(line: &str, start: usize, token: &mut String) -> usize {
+    let mut end = start;
     let mut escaped = false;
-    let mut end = 0usize;
-    for (idx, ch) in line.char_indices() {
+    while end < line.len() {
+        let ch = line[end..].chars().next().expect("end in bounds");
         if escaped {
             token.push(ch);
             escaped = false;
-            end = idx + ch.len_utf8();
+            end += ch.len_utf8();
             continue;
         }
         if ch == '\\' {
             token.push(ch);
             escaped = true;
-            end = idx + ch.len_utf8();
+            end += ch.len_utf8();
             continue;
         }
-        if ch.is_ascii_whitespace() {
+        if is_shell_word_break(ch) {
             break;
         }
+        if matches!(ch, '"' | '\'') {
+            let quote = ch;
+            token.push(ch);
+            end += ch.len_utf8();
+            let mut inner_escaped = false;
+            while end < line.len() {
+                let inner = line[end..].chars().next().expect("end in bounds");
+                token.push(inner);
+                end += inner.len_utf8();
+                if inner_escaped {
+                    inner_escaped = false;
+                    continue;
+                }
+                if inner == '\\' && quote == '"' {
+                    inner_escaped = true;
+                    continue;
+                }
+                if inner == quote {
+                    break;
+                }
+            }
+            continue;
+        }
         token.push(ch);
-        end = idx + ch.len_utf8();
+        end += ch.len_utf8();
     }
-    Some((token, &line[end..]))
+    end
+}
+
+fn is_shell_word_break(ch: char) -> bool {
+    ch.is_whitespace() || matches!(ch, ',' | ';' | '}' | ']' | '&')
 }
 
 fn redact_inline_sensitive_assignments(line: &str) -> String {
@@ -404,26 +441,45 @@ fn sensitive_assignment_value_bounds(
     key: &str,
     separator: char,
 ) -> (usize, usize) {
-    let prefix_end = skip_ascii_whitespace(line, value_offset);
-    let Some((quote_offset, quote)) = line[prefix_end..]
-        .char_indices()
-        .next()
-        .filter(|(_, ch)| matches!(ch, '"' | '\''))
-        .map(|(offset, ch)| (prefix_end + offset, ch))
-    else {
-        let value_end = if key_owns_header_value(key, separator) {
-            header_sensitive_value_end(line, prefix_end)
-        } else {
-            unquoted_sensitive_value_end(line, prefix_end)
-        };
-        return (prefix_end, value_end);
-    };
+    let prefix_end = skip_unicode_whitespace(line, value_offset);
+    if key_owns_header_value(key, separator) {
+        return (prefix_end, header_sensitive_value_end(line, prefix_end));
+    }
 
-    let value_start = quote_offset + quote.len_utf8();
-    (
-        value_start,
-        quoted_sensitive_value_end(line, value_start, quote),
-    )
+    let Some((token, remaining)) = take_shell_like_argument(&line[prefix_end..]) else {
+        return (prefix_end, prefix_end);
+    };
+    let mut value_end = line.len() - remaining.len();
+
+    // `token=Bearer xyz` owns both words; shell parsing alone would leave xyz.
+    if token.eq_ignore_ascii_case("bearer")
+        || token
+            .trim_matches(|ch: char| matches!(ch, '"' | '\''))
+            .eq_ignore_ascii_case("bearer")
+    {
+        let second_start = skip_unicode_whitespace(line, value_end);
+        if let Some((_, second_remaining)) = take_shell_like_argument(&line[second_start..]) {
+            value_end = line.len() - second_remaining.len();
+        }
+    }
+
+    // Prefer redacting inside quotes when the shell word is a single quoted span
+    // with no glued suffix, matching prior `token="abc"` → `token="[REDACTED]"` shape
+    // before suffix normalization.
+    if let Some(quote) = token.chars().next().filter(|ch| matches!(ch, '"' | '\'')) {
+        if token.len() >= 2
+            && token.ends_with(quote)
+            && token[1..token.len() - 1].find(quote).is_none()
+        {
+            let value_start = prefix_end + quote.len_utf8();
+            let close_at = value_end - quote.len_utf8();
+            if close_at >= value_start {
+                return (value_start, close_at);
+            }
+        }
+    }
+
+    (prefix_end, value_end)
 }
 
 fn quoted_sensitive_value_end(line: &str, value_start: usize, quote: char) -> usize {
@@ -470,31 +526,10 @@ fn header_sensitive_value_end(line: &str, value_start: usize) -> usize {
     line.len()
 }
 
-fn skip_ascii_whitespace(line: &str, offset: usize) -> usize {
+fn skip_unicode_whitespace(line: &str, offset: usize) -> usize {
     line[offset..]
         .char_indices()
-        .find_map(|(relative, ch)| (!ch.is_ascii_whitespace()).then_some(offset + relative))
-        .unwrap_or(line.len())
-}
-
-fn unquoted_sensitive_value_end(line: &str, value_start: usize) -> usize {
-    let first_end = line[value_start..]
-        .char_indices()
-        .find_map(|(relative, ch)| {
-            (ch.is_ascii_whitespace() || matches!(ch, ',' | ';' | '}' | ']' | '&'))
-                .then_some(value_start + relative)
-        })
-        .unwrap_or(line.len());
-    if !line[value_start..first_end].eq_ignore_ascii_case("bearer") {
-        return first_end;
-    }
-    let second_start = skip_ascii_whitespace(line, first_end);
-    line[second_start..]
-        .char_indices()
-        .find_map(|(relative, ch)| {
-            (ch.is_ascii_whitespace() || matches!(ch, ',' | ';' | '}' | ']' | '&'))
-                .then_some(second_start + relative)
-        })
+        .find_map(|(relative, ch)| (!ch.is_whitespace()).then_some(offset + relative))
         .unwrap_or(line.len())
 }
 
@@ -570,10 +605,13 @@ fn is_sensitive_key(key: &str) -> bool {
             | "clientsecret"
             | "private_key"
             | "privatekey"
+            | "access_key"
+            | "secret_access_key"
     ) || normalized.ends_with("_api_key")
         || normalized.ends_with("_token")
         || normalized.ends_with("_secret")
         || normalized.ends_with("_password")
+        || normalized.ends_with("_access_key")
 }
 
 pub(crate) fn redact_token(token: &str) -> String {

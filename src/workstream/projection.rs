@@ -4,6 +4,10 @@ use super::WorkStream;
 ///
 /// Keep this out of `map_workstream_row`: matcher identity and context project-scope
 /// checks must continue to see canonical stored values.
+///
+/// The `project` field uses path-preserving projection redaction so benign project
+/// filesystem identifiers stay readable; every other text field uses the caller
+/// redactor (strict projection redaction in production paths).
 pub(crate) fn redact_workstream_for_output(
     workstream: WorkStream,
     redact: impl Fn(&str) -> String,
@@ -20,7 +24,7 @@ pub(crate) fn redact_workstream_for_output(
     );
     WorkStream {
         id: workstream.id,
-        project: redact(&workstream.project),
+        project: crate::adapter::common::redact_projected_project_text(&workstream.project),
         title: redact(&workstream.title),
         description: workstream.description.as_deref().map(&redact),
         status: workstream.status,
@@ -152,5 +156,16 @@ mod tests {
             crate::adapter::common::redact_projected_sensitive_text,
         );
         assert_eq!(projected.project, project);
+    }
+
+    #[test]
+    fn output_projection_redacts_filesystem_token_outside_project_field() {
+        let path = "/tmp/Abcdef0123456789Abcdef0123456789";
+        let projected = redact_workstream_for_output(
+            sample("Batch text display", path, "test/proj"),
+            crate::adapter::common::redact_projected_sensitive_text,
+        );
+        assert_eq!(projected.title, "[REDACTED]");
+        assert_eq!(projected.project, "test/proj");
     }
 }

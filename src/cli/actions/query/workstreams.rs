@@ -58,7 +58,7 @@ fn run_workstream_list(
         let output = WorkstreamListJson {
             // Envelope project comes from --project; redact so list JSON cannot
             // echo a credential-bearing argument while item.project is sanitized.
-            project: crate::adapter::common::redact_projected_sensitive_text(project),
+            project: crate::adapter::common::redact_projected_project_text(project),
             status: status_str.map(str::to_string),
             count: results.len(),
             workstreams: results,
@@ -297,7 +297,7 @@ mod tests {
     fn list_json_envelope_redacts_secret_bearing_project() {
         let project = "token=envelope-project-secret";
         let output = WorkstreamListJson {
-            project: crate::adapter::common::redact_projected_sensitive_text(project),
+            project: crate::adapter::common::redact_projected_project_text(project),
             status: None,
             count: 0,
             workstreams: vec![],
