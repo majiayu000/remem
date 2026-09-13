@@ -160,13 +160,13 @@ fn hook_payload_preview_redacts_malformed_inline_sensitive_assignments() {
 }
 
 #[test]
-fn hook_payload_preview_sensitive_match_ignores_whitespace_normalization() {
+fn hook_payload_preview_preserves_benign_whitespace_without_false_sensitive_match() {
     let payload = "project path with  two spaces\nfile path with\tone tab";
     let preview = redact_hook_payload_preview(payload, 1_000);
 
-    assert_ne!(
+    assert_eq!(
         preview, payload,
-        "existing preview still normalizes whitespace"
+        "benign preview text must keep original separators"
     );
     assert!(!hook_payload_preview_contains_sensitive_match(
         payload, 1_000
@@ -570,6 +570,27 @@ fn projected_sensitive_text_redacts_attached_short_option_credentials() {
     assert_eq!(redacted, "Retry curl -u[REDACTED]");
     assert!(!redacted.contains("alice"), "{redacted}");
     assert!(!redacted.contains("pw"), "{redacted}");
+}
+
+#[test]
+fn projected_sensitive_text_redacts_attached_quoted_short_option_credentials() {
+    let source = "Retry curl -u\"alice:correct horse\"";
+    let redacted = redact_projected_sensitive_text(source);
+    assert_eq!(redacted, "Retry curl -u[REDACTED]");
+    assert!(!redacted.contains("alice"), "{redacted}");
+    assert!(!redacted.contains("horse"), "{redacted}");
+}
+
+#[test]
+fn general_sensitive_text_leaves_benign_dash_username_tokens_unchanged() {
+    let source = "docs mention -username as a flag cluster example";
+    assert_eq!(redact_sensitive_text(source), source);
+}
+
+#[test]
+fn projected_project_text_preserves_internal_whitespace_separators() {
+    let source = "/home/u/My  Project";
+    assert_eq!(redact_projected_project_text(source), source);
 }
 
 #[test]

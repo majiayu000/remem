@@ -1,237 +1,46 @@
-use crate::db;
+//! Token walks, shell-word parsing, and inline assignment redaction.
 
-pub(crate) const HOOK_PAYLOAD_PREVIEW_REDACTION_LOOKAHEAD_BYTES: usize = 4 * 1024;
+use super::keys::{
+    is_sensitive_key, is_sensitive_option_key, key_owns_header_value, redact_token_with_options,
+};
+use super::redact_token;
 
-pub(crate) fn redact_and_truncate(text: &str, max_bytes: usize) -> String {
-    let redacted = redact_sensitive_text(text);
-    db::truncate_str(&redacted, max_bytes).to_string()
-}
-
-pub(crate) fn redact_hook_payload_preview(raw_payload: &str, max_bytes: usize) -> String {
-    let preview_input = hook_payload_preview_redaction_input(raw_payload, max_bytes);
-    let redacted = serde_json::from_str::<serde_json::Value>(preview_input)
-        .map(|value| redact_hook_payload_value(&value).to_string())
-        .unwrap_or_else(|_| redact_hook_payload_text(preview_input));
-    db::truncate_str(&redacted, max_bytes).to_string()
-}
-
-pub(crate) fn hook_payload_preview_contains_sensitive_match(
-    raw_payload: &str,
-    max_bytes: usize,
-) -> bool {
-    let preview_input = hook_payload_preview_redaction_input(raw_payload, max_bytes);
-    serde_json::from_str::<serde_json::Value>(preview_input)
-        .map(|value| hook_payload_value_contains_sensitive_match(&value))
-        .unwrap_or_else(|_| hook_payload_text_contains_sensitive_match(preview_input))
-}
-
-pub(crate) fn hook_payload_preview_redaction_input(raw_payload: &str, max_bytes: usize) -> &str {
-    db::truncate_str(
-        raw_payload,
-        max_bytes.saturating_add(HOOK_PAYLOAD_PREVIEW_REDACTION_LOOKAHEAD_BYTES),
-    )
-}
-
-fn redact_hook_payload_value(value: &serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(map) => serde_json::Value::Object(
-            map.iter()
-                .map(|(key, value)| {
-                    let redacted = if is_sensitive_key(key) {
-                        serde_json::Value::String("[REDACTED]".to_string())
-                    } else {
-                        redact_hook_payload_value(value)
-                    };
-                    (key.clone(), redacted)
-                })
-                .collect(),
-        ),
-        serde_json::Value::Array(items) => serde_json::Value::Array(
-            items
-                .iter()
-                .map(redact_hook_payload_value)
-                .collect::<Vec<_>>(),
-        ),
-        serde_json::Value::String(text) => {
-            serde_json::Value::String(redact_hook_payload_text(text))
-        }
-        _ => value.clone(),
-    }
-}
-
-fn hook_payload_value_contains_sensitive_match(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::Object(map) => map.iter().any(|(key, value)| {
-            is_sensitive_key(key) || hook_payload_value_contains_sensitive_match(value)
-        }),
-        serde_json::Value::Array(items) => items
-            .iter()
-            .any(hook_payload_value_contains_sensitive_match),
-        serde_json::Value::String(text) => hook_payload_text_contains_sensitive_match(text),
-        _ => false,
-    }
-}
-
-pub(crate) fn redact_sensitive_value(value: &serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(map) => serde_json::Value::Object(
-            map.iter()
-                .map(|(key, value)| {
-                    let redacted = if is_sensitive_key(key) {
-                        serde_json::Value::String("[REDACTED]".to_string())
-                    } else {
-                        redact_sensitive_value(value)
-                    };
-                    (key.clone(), redacted)
-                })
-                .collect(),
-        ),
-        serde_json::Value::Array(items) => {
-            serde_json::Value::Array(items.iter().map(redact_sensitive_value).collect::<Vec<_>>())
-        }
-        serde_json::Value::String(text) => serde_json::Value::String(redact_sensitive_text(text)),
-        _ => value.clone(),
-    }
-}
-
-pub(crate) fn redact_sensitive_text(text: &str) -> String {
-    text.lines()
-        .map(redact_sensitive_line)
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// Redact user-facing projection text (MCP/CLI) including short inline
-/// credential assignments such as `Investigate token=abc123` and space-separated
-/// sensitive option arguments such as `curl --oauth2-bearer tiny-token`.
-///
-/// Keep this separate from [`redact_sensitive_text`], which intentionally omits
-/// the hook inline-assignment and sensitive-option heuristics to avoid scrubbing
-/// ordinary code/prose.
-///
-/// Filesystem-shaped high-entropy tokens are redacted here. Project identifiers
-/// that must stay readable go through [`redact_projected_project_text`].
-pub(crate) fn redact_projected_sensitive_text(text: &str) -> String {
-    redact_projected_sensitive_text_with_options(text, false)
-}
-
-/// Redact projected project identifiers while preserving benign filesystem paths.
-pub(crate) fn redact_projected_project_text(text: &str) -> String {
-    redact_projected_sensitive_text_with_options(text, true)
-}
-
-fn redact_projected_sensitive_text_with_options(
-    text: &str,
-    preserve_filesystem_paths: bool,
-) -> String {
-    let redacted = redact_inline_sensitive_assignments(text);
-    redacted
-        .lines()
-        .map(|line| redact_projected_sensitive_line(line, preserve_filesystem_paths))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn redact_projected_sensitive_line(line: &str, preserve_filesystem_paths: bool) -> String {
-    if let Some((prefix, value)) = split_sensitive_assignment(line) {
-        return redact_assignment_keeping_suffix(prefix, value);
-    }
-    redact_tokens(line, true, preserve_filesystem_paths)
-}
-
-fn redact_sensitive_line(line: &str) -> String {
-    if let Some((prefix, _)) = split_sensitive_assignment(line) {
-        return format!("{prefix}[REDACTED]");
-    }
-    redact_tokens(line, false, false)
-}
-
-fn redact_hook_payload_text(text: &str) -> String {
-    let redacted = redact_inline_sensitive_assignments(text);
-    redacted
-        .lines()
-        .map(redact_hook_payload_line)
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn hook_payload_text_contains_sensitive_match(text: &str) -> bool {
-    contains_inline_sensitive_assignment(text)
-        || text.lines().any(hook_payload_line_contains_sensitive_match)
-}
-
-fn redact_hook_payload_line(line: &str) -> String {
-    if let Some((prefix, value)) = split_sensitive_assignment(line) {
-        return redact_assignment_keeping_suffix(prefix, value);
-    }
-    redact_tokens(line, true, false)
-}
-
-fn hook_payload_line_contains_sensitive_match(line: &str) -> bool {
-    split_sensitive_assignment(line).is_some() || tokens_contain_sensitive_match(line, true)
-}
-
-/// After the bounded inline pass, a line may look like
-/// `token=[REDACTED] investigate database regression` or
-/// `token="[REDACTED]" investigate database regression`. Preserve the benign
-/// suffix instead of treating the whole remainder as the credential value.
-fn redact_assignment_keeping_suffix(prefix: &str, value: &str) -> String {
-    let trimmed = value.trim_start();
-    if let Some(rest) = strip_redacted_assignment_marker(trimmed) {
-        return format!("{prefix}[REDACTED]{rest}");
-    }
-    format!("{prefix}[REDACTED]")
-}
-
-fn strip_redacted_assignment_marker(value: &str) -> Option<&str> {
-    if let Some(rest) = value.strip_prefix("[REDACTED]") {
-        // Only treat whitespace-delimited remainders as benign suffixes. A glued
-        // remainder such as `[REDACTED]"abc123"` is leftover secret material.
-        if rest.is_empty() || rest.starts_with(char::is_whitespace) {
-            return Some(rest);
-        }
-        return None;
-    }
-    for quote in ['"', '\''] {
-        let mut chars = value.chars();
-        if chars.next() != Some(quote) {
-            continue;
-        }
-        let after_open = chars.as_str();
-        let Some(after_marker) = after_open.strip_prefix("[REDACTED]") else {
-            continue;
-        };
-        let mut after_marker_chars = after_marker.chars();
-        if after_marker_chars.next() != Some(quote) {
-            continue;
-        }
-        let rest = after_marker_chars.as_str();
-        // `"abc"tail` is one shell word; a glued remainder is still secret.
-        if rest.is_empty() || rest.starts_with(char::is_whitespace) {
-            return Some(rest);
-        }
-        return None;
-    }
-    None
-}
-
-fn redact_tokens(
+pub(super) fn redact_tokens(
     line: &str,
     redact_sensitive_options: bool,
     preserve_filesystem_paths: bool,
 ) -> String {
     let mut previous_was_bearer = false;
     let mut previous_was_sensitive_option = false;
-    let mut redacted_tokens = Vec::new();
+    let mut output = String::with_capacity(line.len());
     let mut rest = line;
 
-    while let Some((token, remaining)) =
-        next_redaction_token(rest, previous_was_bearer || previous_was_sensitive_option)
-    {
+    while !rest.is_empty() {
+        let trimmed = rest.trim_start();
+        if trimmed.is_empty() {
+            // Preserve trailing whitespace exactly.
+            output.push_str(rest);
+            break;
+        }
+        let leading_ws_len = rest.len() - trimmed.len();
+        output.push_str(&rest[..leading_ws_len]);
+
+        let group_quotes = previous_was_bearer
+            || previous_was_sensitive_option
+            || (redact_sensitive_options && attached_sensitive_short_option_starts_quoted(trimmed));
+
+        let Some((token, remaining)) = next_redaction_token(trimmed, group_quotes) else {
+            break;
+        };
+
         let redacted = if previous_was_bearer || previous_was_sensitive_option {
             "[REDACTED]".to_string()
-        } else if let Some(attached) = redact_attached_sensitive_short_option(&token) {
-            attached
+        } else if redact_sensitive_options {
+            if let Some(attached) = redact_attached_sensitive_short_option(&token) {
+                attached
+            } else {
+                redact_token_with_options(&token, preserve_filesystem_paths)
+            }
         } else {
             redact_token_with_options(&token, preserve_filesystem_paths)
         };
@@ -240,23 +49,32 @@ fn redact_tokens(
         previous_was_bearer = token
             .trim_matches(|ch: char| !ch.is_ascii_alphanumeric())
             .eq_ignore_ascii_case("bearer");
-        redacted_tokens.push(redacted);
+        output.push_str(&redacted);
         rest = remaining;
     }
 
-    redacted_tokens.join(" ")
+    output
 }
 
-fn tokens_contain_sensitive_match(line: &str, redact_sensitive_options: bool) -> bool {
+pub(super) fn tokens_contain_sensitive_match(line: &str, redact_sensitive_options: bool) -> bool {
     let mut previous_was_bearer = false;
     let mut previous_was_sensitive_option = false;
     let mut rest = line;
-    while let Some((token, remaining)) =
-        next_redaction_token(rest, previous_was_bearer || previous_was_sensitive_option)
-    {
+    while !rest.is_empty() {
+        let trimmed = rest.trim_start();
+        if trimmed.is_empty() {
+            break;
+        }
+        let group_quotes = previous_was_bearer
+            || previous_was_sensitive_option
+            || (redact_sensitive_options && attached_sensitive_short_option_starts_quoted(trimmed));
+        let Some((token, remaining)) = next_redaction_token(trimmed, group_quotes) else {
+            break;
+        };
         if previous_was_bearer
             || previous_was_sensitive_option
-            || redact_attached_sensitive_short_option(&token).is_some()
+            || (redact_sensitive_options
+                && redact_attached_sensitive_short_option(&token).is_some())
             || redact_token(&token) != token
         {
             return true;
@@ -274,17 +92,17 @@ fn tokens_contain_sensitive_match(line: &str, redact_sensitive_options: bool) ->
 /// Take the next token for redaction.
 ///
 /// Quote grouping is only enabled while consuming a known sensitive option or
-/// Bearer argument so benign phrases like `Review "phase 2 migration …"` are
-/// not glued into one length-heuristic hit.
+/// Bearer argument, or an attached quoted short-option credential, so benign
+/// phrases like `Review "phase 2 migration …"` are not glued into one
+/// length-heuristic hit.
 fn next_redaction_token(line: &str, group_quotes: bool) -> Option<(String, &str)> {
-    let trimmed = line.trim_start();
-    if trimmed.is_empty() {
+    if line.is_empty() {
         return None;
     }
     if group_quotes {
-        take_shell_like_argument(trimmed)
+        take_shell_like_argument(line)
     } else {
-        take_whitespace_token(trimmed)
+        take_whitespace_token(line)
     }
 }
 
@@ -302,7 +120,7 @@ fn take_whitespace_token(line: &str) -> Option<(String, &str)> {
 /// Unquoted arguments also honor backslash-escaped whitespace so
 /// `--token correct\ horse` is consumed as one credential.
 /// Adjacent quote concatenation such as `"abc"tail` is one shell word.
-fn take_shell_like_argument(line: &str) -> Option<(String, &str)> {
+pub(super) fn take_shell_like_argument(line: &str) -> Option<(String, &str)> {
     if line.is_empty() {
         return None;
     }
@@ -441,7 +259,7 @@ fn is_shell_word_break(ch: char) -> bool {
     ch.is_whitespace() || matches!(ch, ',' | ';' | '}' | ']' | '&')
 }
 
-fn redact_inline_sensitive_assignments(line: &str) -> String {
+pub(super) fn redact_inline_sensitive_assignments(line: &str) -> String {
     let mut output = String::with_capacity(line.len());
     let mut scan_cursor = 0usize;
     let mut output_cursor = 0usize;
@@ -472,7 +290,7 @@ fn redact_inline_sensitive_assignments(line: &str) -> String {
     output
 }
 
-fn contains_inline_sensitive_assignment(line: &str) -> bool {
+pub(super) fn contains_inline_sensitive_assignment(line: &str) -> bool {
     let mut scan_cursor = 0usize;
     while let Some((separator, ch)) = find_next_assignment_separator(line, scan_cursor) {
         let Some(key_start) = assignment_key_start(line, separator) else {
@@ -606,14 +424,14 @@ fn header_sensitive_value_end(line: &str, value_start: usize) -> usize {
     line.len()
 }
 
-fn skip_unicode_whitespace(line: &str, offset: usize) -> usize {
+pub(super) fn skip_unicode_whitespace(line: &str, offset: usize) -> usize {
     line[offset..]
         .char_indices()
         .find_map(|(relative, ch)| (!ch.is_whitespace()).then_some(offset + relative))
         .unwrap_or(line.len())
 }
 
-fn split_sensitive_assignment(line: &str) -> Option<(&str, &str)> {
+pub(super) fn split_sensitive_assignment(line: &str) -> Option<(&str, &str)> {
     let (idx, separator_len) = line
         .find('=')
         .map(|idx| (idx, 1))
@@ -623,20 +441,6 @@ fn split_sensitive_assignment(line: &str) -> Option<(&str, &str)> {
         return None;
     }
     Some((&line[..idx + separator_len], &line[idx + separator_len..]))
-}
-
-fn normalized_sensitive_key(key: &str) -> String {
-    key.trim()
-        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
-        .to_ascii_lowercase()
-        .replace('-', "_")
-}
-
-fn is_sensitive_option_key(key: &str) -> bool {
-    matches!(
-        normalized_sensitive_key(key).as_str(),
-        "u" | "user" | "pass" | "oauth2_bearer" | "proxy_user" | "proxy_pass"
-    ) || is_sensitive_key(key)
 }
 
 fn token_expects_sensitive_argument(token: &str) -> bool {
@@ -657,6 +461,23 @@ fn token_expects_sensitive_argument(token: &str) -> bool {
         return false;
     }
     !option.contains('=') && is_sensitive_option_key(option)
+}
+
+/// True when the next token is an attached sensitive short option whose value
+/// opens with a quote, e.g. `-u"alice:correct horse"`.
+fn attached_sensitive_short_option_starts_quoted(token: &str) -> bool {
+    if !token.starts_with('-') || token.starts_with("--") {
+        return false;
+    }
+    let after_dash = &token[1..];
+    let mut chars = after_dash.chars();
+    let Some(opt) = chars.next() else {
+        return false;
+    };
+    if !opt.is_ascii_alphabetic() || !is_sensitive_option_key(&opt.to_string()) {
+        return false;
+    }
+    matches!(chars.next(), Some('"' | '\''))
 }
 
 /// Recognize curl-style attached short options such as `-ualice:pw`.
@@ -691,131 +512,4 @@ fn redact_attached_sensitive_short_option(token: &str) -> Option<String> {
         return None;
     }
     Some(format!("{}-{}[REDACTED]", &token[..leading_len], opt))
-}
-
-fn key_owns_header_value(key: &str, separator: char) -> bool {
-    let normalized = normalized_sensitive_key(key);
-    matches!(normalized.as_str(), "cookie" | "set_cookie")
-        || (separator == ':' && matches!(normalized.as_str(), "auth" | "authorization"))
-}
-
-fn is_sensitive_key(key: &str) -> bool {
-    let normalized = normalized_sensitive_key(key);
-    matches!(
-        normalized.as_str(),
-        "api_key"
-            | "apikey"
-            | "auth"
-            | "authorization"
-            | "bearer"
-            | "cookie"
-            | "set_cookie"
-            | "password"
-            | "passwd"
-            | "secret"
-            | "token"
-            | "access_token"
-            | "accesstoken"
-            | "refresh_token"
-            | "refreshtoken"
-            | "id_token"
-            | "idtoken"
-            | "client_secret"
-            | "clientsecret"
-            | "private_key"
-            | "privatekey"
-            | "access_key"
-            | "secret_access_key"
-    ) || normalized.ends_with("_api_key")
-        || normalized.ends_with("_token")
-        || normalized.ends_with("_secret")
-        || normalized.ends_with("_password")
-        || normalized.ends_with("_access_key")
-}
-
-pub(crate) fn redact_token(token: &str) -> String {
-    redact_token_with_options(token, false)
-}
-
-fn redact_token_with_options(token: &str, preserve_filesystem_paths: bool) -> String {
-    let trimmed =
-        token.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_');
-    if let Some(redacted) = redact_url_userinfo(token) {
-        redacted
-    } else if contains_prefixed_secret(trimmed)
-        || (!(preserve_filesystem_paths && looks_like_filesystem_path(token))
-            && trimmed.len() >= 32
-            && trimmed.chars().any(|ch| ch.is_ascii_alphabetic())
-            && trimmed.chars().any(|ch| ch.is_ascii_digit()))
-    {
-        "[REDACTED]".to_string()
-    } else {
-        token.to_string()
-    }
-}
-
-fn looks_like_filesystem_path(token: &str) -> bool {
-    let trimmed = token.trim_matches(|ch: char| matches!(ch, '"' | '\'' | '`' | ',' | ';' | ')'));
-    trimmed.starts_with('/')
-        || trimmed.starts_with("~/")
-        || trimmed.starts_with("./")
-        || trimmed.starts_with(".\\")
-        // UNC (`\\server\share\...`) and extended-length (`\\?\...`, `\\.\...`)
-        // Windows prefixes; also accept `//server/share` style UNC.
-        || trimmed.starts_with("\\\\")
-        || trimmed.starts_with("//")
-        || (trimmed.len() >= 3
-            && trimmed.as_bytes()[1] == b':'
-            && trimmed.as_bytes()[0].is_ascii_alphabetic()
-            && matches!(trimmed.as_bytes()[2], b'\\' | b'/'))
-}
-
-fn redact_url_userinfo(token: &str) -> Option<String> {
-    let scheme_end = token.find("://")?;
-    let authority_start = scheme_end + 3;
-    let authority = &token[authority_start..];
-    let at = authority.find('@')?;
-    let authority_end = authority
-        .char_indices()
-        .find_map(|(idx, ch)| matches!(ch, '/' | '?' | '#').then_some(idx))
-        .unwrap_or(authority.len());
-    if at == 0 || at >= authority_end {
-        return None;
-    }
-
-    Some(format!(
-        "{}[REDACTED]{}",
-        &token[..authority_start],
-        &authority[at..]
-    ))
-}
-
-fn contains_prefixed_secret(token: &str) -> bool {
-    [("sk-", 8), ("ghp_", 8), ("github_pat_", 4), ("xoxb-", 8)]
-        .iter()
-        .any(|(prefix, min_suffix_len)| {
-            contains_prefixed_secret_with(token, prefix, *min_suffix_len)
-        })
-}
-
-fn contains_prefixed_secret_with(token: &str, prefix: &str, min_suffix_len: usize) -> bool {
-    token.match_indices(prefix).any(|(index, _)| {
-        has_secret_prefix_boundary(token, index)
-            && key_like_suffix_len(&token[index + prefix.len()..]) >= min_suffix_len
-    })
-}
-
-fn has_secret_prefix_boundary(token: &str, index: usize) -> bool {
-    index == 0
-        || token[..index]
-            .chars()
-            .next_back()
-            .is_some_and(|ch| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_')
-}
-
-fn key_like_suffix_len(suffix: &str) -> usize {
-    suffix
-        .chars()
-        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '-' || *ch == '_')
-        .count()
 }
