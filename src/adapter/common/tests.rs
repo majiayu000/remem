@@ -588,6 +588,75 @@ fn general_sensitive_text_leaves_benign_dash_username_tokens_unchanged() {
 }
 
 #[test]
+fn projected_sensitive_text_consumes_commas_inside_credential_shell_words() {
+    for source in ["Investigate token=abc,def", "Retry --password abc,def"] {
+        let redacted = redact_projected_sensitive_text(source);
+        assert!(
+            redacted.contains("[REDACTED]"),
+            "expected redaction for {source}: {redacted}"
+        );
+        assert!(
+            !redacted.contains("abc"),
+            "credential fragment leaked for {source}: {redacted}"
+        );
+        assert!(
+            !redacted.contains("def"),
+            "comma-glued suffix leaked for {source}: {redacted}"
+        );
+    }
+}
+
+#[test]
+fn projected_sensitive_text_redacts_assignment_with_nbsp_before_separator() {
+    let nbsp = '\u{00a0}';
+    let source = format!("Investigate token{nbsp}=abc123");
+    let redacted = redact_projected_sensitive_text(&source);
+    assert!(!redacted.contains("abc123"), "{redacted}");
+    assert!(
+        redacted.contains("token") && redacted.contains("[REDACTED]"),
+        "{redacted}"
+    );
+}
+
+#[test]
+fn projected_project_text_preserves_long_components_after_spaces() {
+    let path = "/home/u/My Project2abcd1234567890abcdef1234567890";
+    assert_eq!(redact_projected_project_text(path), path);
+}
+
+#[test]
+fn projected_sensitive_text_preserves_text_after_standalone_shell_operators() {
+    let and_op = redact_projected_sensitive_text("Retry --token && echo safe");
+    assert_eq!(and_op, "Retry --token && echo safe");
+
+    let amp = redact_projected_sensitive_text("Support Bearer & OAuth");
+    assert_eq!(amp, "Support Bearer & OAuth");
+}
+
+#[test]
+fn projected_sensitive_text_honors_escaped_quotes_in_sensitive_headers() {
+    let source = r#"curl -H "Authorization: Bearer abc\"def ghi" https://x"#;
+    let redacted = redact_projected_sensitive_text(source);
+    assert!(
+        redacted.contains("Authorization:[REDACTED]")
+            || redacted.contains("Authorization: [REDACTED]"),
+        "{redacted}"
+    );
+    assert!(!redacted.contains("abc"), "{redacted}");
+    assert!(!redacted.contains("def"), "{redacted}");
+    assert!(!redacted.contains("ghi"), "{redacted}");
+    assert!(redacted.contains("https://x"), "{redacted}");
+}
+
+#[test]
+fn export_scan_ignores_benign_attached_username_documentation() {
+    let source = "docs mention -username as a flag cluster example";
+    assert!(!crate::adapter::redaction::export_field_contains_sensitive_match(source));
+    // Hook match may still be aggressive; export must not reject this prose.
+    assert_eq!(redact_sensitive_text(source), source);
+}
+
+#[test]
 fn projected_project_text_preserves_internal_whitespace_separators() {
     let source = "/home/u/My  Project";
     assert_eq!(redact_projected_project_text(source), source);

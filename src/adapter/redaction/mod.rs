@@ -5,7 +5,7 @@ use crate::db;
 mod keys;
 mod tokens;
 
-use keys::is_sensitive_key;
+use keys::{is_sensitive_key, looks_like_filesystem_path};
 use tokens::{
     contains_inline_sensitive_assignment, redact_inline_sensitive_assignments, redact_tokens,
     split_sensitive_assignment, tokens_contain_sensitive_match,
@@ -151,6 +151,12 @@ fn redact_projected_sensitive_line(line: &str, preserve_filesystem_paths: bool) 
     if let Some((prefix, value)) = split_sensitive_assignment(line) {
         return redact_assignment_keeping_suffix(prefix, value);
     }
+    // Project identifiers may contain spaces (`/home/u/My Project…`). Classify
+    // the complete projected value before whitespace tokenization so long path
+    // components are not independently entropy-redacted.
+    if preserve_filesystem_paths && looks_like_filesystem_path(line) {
+        return line.to_string();
+    }
     redact_tokens(line, true, preserve_filesystem_paths)
 }
 
@@ -183,7 +189,18 @@ fn redact_hook_payload_line(line: &str) -> String {
 }
 
 fn hook_payload_line_contains_sensitive_match(line: &str) -> bool {
-    split_sensitive_assignment(line).is_some() || tokens_contain_sensitive_match(line, true)
+    split_sensitive_assignment(line).is_some() || tokens_contain_sensitive_match(line, true, true)
+}
+
+/// Scan procedure-export fields for secrets without the attached short-option
+/// heuristic, so benign documentation like `docs mention -username` does not
+/// reject an entire export.
+pub(crate) fn export_field_contains_sensitive_match(value: &str) -> bool {
+    contains_inline_sensitive_assignment(value)
+        || value.lines().any(|line| {
+            split_sensitive_assignment(line).is_some()
+                || tokens_contain_sensitive_match(line, true, false)
+        })
 }
 
 /// After the bounded inline pass, a line may look like

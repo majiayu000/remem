@@ -75,7 +75,7 @@ pub(super) fn is_sensitive_key(key: &str) -> bool {
         || normalized.ends_with("_access_key")
 }
 
-fn looks_like_filesystem_path(token: &str) -> bool {
+pub(super) fn looks_like_filesystem_path(token: &str) -> bool {
     let trimmed = token.trim_matches(|ch: char| matches!(ch, '"' | '\'' | '`' | ',' | ';' | ')'));
     trimmed.starts_with('/')
         || trimmed.starts_with("~/")

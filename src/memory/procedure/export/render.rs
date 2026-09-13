@@ -359,10 +359,7 @@ fn scan_render_fields(
 }
 
 fn ensure_no_export_scan_hit(field: &str, value: &str) -> Result<()> {
-    let max_bytes = value
-        .len()
-        .saturating_add(crate::adapter::redaction::HOOK_PAYLOAD_PREVIEW_REDACTION_LOOKAHEAD_BYTES);
-    if crate::adapter::redaction::hook_payload_preview_contains_sensitive_match(value, max_bytes) {
+    if crate::adapter::redaction::export_field_contains_sensitive_match(value) {
         bail!("procedure export blocked by redaction scan for field {field}");
     }
     if let Some(matched) = crate::memory::poisoning::scan_instruction_pattern(value) {
@@ -551,6 +548,18 @@ Run this command:\n\
             .expect_err("secret-like command must reject before rendering");
 
         assert!(err.to_string().contains("redaction scan for field command"));
+    }
+
+    #[test]
+    fn render_allows_benign_username_documentation_without_attached_option_false_positive(
+    ) -> Result<()> {
+        let mut source = fixture_source();
+        source.reuse_condition = "docs mention -username as a flag cluster example".to_string();
+
+        let rendered =
+            render_procedure_export(&source, ProcedureExportFormat::RunbookMd, GENERATED_AT)?;
+        assert!(rendered.contains("docs mention -username as a flag cluster example"));
+        Ok(())
     }
 
     #[test]

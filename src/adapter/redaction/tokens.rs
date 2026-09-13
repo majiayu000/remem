@@ -30,6 +30,15 @@ pub(super) fn redact_tokens(
             || (redact_sensitive_options && attached_sensitive_short_option_starts_quoted(trimmed));
 
         let Some((token, remaining)) = next_redaction_token(trimmed, group_quotes) else {
+            // Preserve standalone shell operators (e.g. `&&`, `&`) instead of
+            // truncating the rebuild when a pending sensitive argument is absent.
+            if let Some((op, after)) = take_leading_shell_operator(trimmed) {
+                output.push_str(op);
+                previous_was_bearer = false;
+                previous_was_sensitive_option = false;
+                rest = after;
+                continue;
+            }
             break;
         };
 
@@ -56,7 +65,11 @@ pub(super) fn redact_tokens(
     output
 }
 
-pub(super) fn tokens_contain_sensitive_match(line: &str, redact_sensitive_options: bool) -> bool {
+pub(super) fn tokens_contain_sensitive_match(
+    line: &str,
+    redact_sensitive_options: bool,
+    detect_attached_short_options: bool,
+) -> bool {
     let mut previous_was_bearer = false;
     let mut previous_was_sensitive_option = false;
     let mut rest = line;
@@ -67,13 +80,22 @@ pub(super) fn tokens_contain_sensitive_match(line: &str, redact_sensitive_option
         }
         let group_quotes = previous_was_bearer
             || previous_was_sensitive_option
-            || (redact_sensitive_options && attached_sensitive_short_option_starts_quoted(trimmed));
+            || (redact_sensitive_options
+                && detect_attached_short_options
+                && attached_sensitive_short_option_starts_quoted(trimmed));
         let Some((token, remaining)) = next_redaction_token(trimmed, group_quotes) else {
+            if let Some((_, after)) = take_leading_shell_operator(trimmed) {
+                previous_was_bearer = false;
+                previous_was_sensitive_option = false;
+                rest = after;
+                continue;
+            }
             break;
         };
         if previous_was_bearer
             || previous_was_sensitive_option
             || (redact_sensitive_options
+                && detect_attached_short_options
                 && redact_attached_sensitive_short_option(&token).is_some())
             || redact_token(&token) != token
         {
@@ -256,7 +278,20 @@ fn consume_balanced_shell_group(
 }
 
 fn is_shell_word_break(ch: char) -> bool {
-    ch.is_whitespace() || matches!(ch, ',' | ';' | '}' | ']' | '&')
+    // Commas and closing brackets are ordinary glued shell-word characters
+    // (`token=abc,def`, `password abc,def]`), so they must not truncate credentials.
+    ch.is_whitespace() || matches!(ch, ';' | '}' | '&')
+}
+
+/// Consume one leading non-whitespace shell control character so rebuilds keep
+/// operators like `&&` / `&` when a pending sensitive argument is missing.
+fn take_leading_shell_operator(line: &str) -> Option<(&str, &str)> {
+    let ch = line.chars().next()?;
+    if ch.is_whitespace() || !is_shell_word_break(ch) {
+        return None;
+    }
+    let len = ch.len_utf8();
+    Some((&line[..len], &line[len..]))
 }
 
 pub(super) fn redact_inline_sensitive_assignments(line: &str) -> String {
@@ -315,7 +350,9 @@ fn find_next_assignment_separator(line: &str, cursor: usize) -> Option<(usize, c
 fn assignment_key_start(line: &str, separator: usize) -> Option<usize> {
     let mut key_end = separator;
     while let Some((idx, ch)) = line[..key_end].char_indices().next_back() {
-        if ch.is_ascii_whitespace() || matches!(ch, '"' | '\'' | '`') {
+        // Match token splitting: Unicode whitespace (e.g. NBSP) may separate the key
+        // from `=` / `:` and must be skipped before reading the key characters.
+        if ch.is_whitespace() || matches!(ch, '"' | '\'' | '`') {
             key_end = idx;
             continue;
         }
@@ -361,19 +398,22 @@ fn sensitive_assignment_value_bounds(
         }
     }
 
-    // Prefer redacting inside quotes when the shell word is a single quoted span
-    // with no glued suffix, matching prior `token="abc"` → `token="[REDACTED]"` shape
-    // before suffix normalization.
+    // Prefer redacting inside quotes when the shell word opens with a quote.
+    // Keep glued unquoted suffixes (`"abc"tail`) inside the credential, but stop
+    // before a comma/bracket that starts a new field (`"secret","safe":…`).
     if let Some(quote) = token.chars().next().filter(|ch| matches!(ch, '"' | '\'')) {
-        if token.len() >= 2
-            && token.ends_with(quote)
-            && token[1..token.len() - 1].find(quote).is_none()
-        {
-            let value_start = prefix_end + quote.len_utf8();
-            let close_at = value_end - quote.len_utf8();
-            if close_at >= value_start {
-                return (value_start, close_at);
+        let value_start = prefix_end + quote.len_utf8();
+        let close = quoted_sensitive_value_end(line, value_start, quote);
+        if close >= value_start && close <= value_end && line[close..].starts_with(quote) {
+            let after_close = close + quote.len_utf8();
+            if after_close >= value_end {
+                return (value_start, close);
             }
+            let rest = &line[after_close..value_end];
+            if rest.starts_with(',') || rest.starts_with(']') {
+                return (value_start, close);
+            }
+            return (prefix_end, value_end);
         }
     }
 
@@ -396,8 +436,21 @@ fn quoted_sensitive_value_end(line: &str, value_start: usize, quote: char) -> us
 
 fn header_sensitive_value_end(line: &str, value_start: usize) -> usize {
     let mut idx = value_start;
+    let mut escaped = false;
     while idx < line.len() {
         let ch = line[idx..].chars().next().expect("idx in bounds");
+        if escaped {
+            escaped = false;
+            idx += ch.len_utf8();
+            continue;
+        }
+        if ch == '\\' {
+            // Track shell-style escapes so `\"` inside a double-quoted header
+            // does not terminate the Authorization/Cookie span early.
+            escaped = true;
+            idx += ch.len_utf8();
+            continue;
+        }
         if matches!(ch, '`' | '\r' | '\n') {
             return idx;
         }
@@ -503,9 +556,9 @@ fn redact_attached_sensitive_short_option(token: &str) -> Option<String> {
     if value.is_empty() {
         return None;
     }
-    // Clustered flags like `-vu` stay untouched; attached credentials usually
-    // contain punctuation (`:`) or are clearly longer than a flag cluster.
-    if value.chars().all(|ch| ch.is_ascii_alphabetic()) && value.chars().count() <= 3 {
+    // Clustered flags (`-vu`) and prose (`-username`) stay untouched. Attached
+    // credentials usually contain punctuation (`:`), digits, or other marks.
+    if value.chars().all(|ch| ch.is_ascii_alphabetic()) {
         return None;
     }
     if !is_sensitive_option_key(&opt.to_string()) {
