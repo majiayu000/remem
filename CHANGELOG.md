@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.95` hides quarantined session-summary labels on listing surfaces, keeping explicit override labels and falling back to the latest safe row.
 - Staged source version `0.6.94` redacts stored raw-archive session topics before listing-label projection so MCP/CLI serialized fields cannot leak credential-like `token=` or email sentinels.
 - Staged source version `0.6.93` adds session labels and intent/created-date
   filters to the app, audited preview/apply corrections for sessions and
