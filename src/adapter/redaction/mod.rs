@@ -30,6 +30,7 @@ pub(crate) fn redact_hook_payload_preview(raw_payload: &str, max_bytes: usize) -
     db::truncate_str(&redacted, max_bytes).to_string()
 }
 
+#[cfg(test)]
 pub(crate) fn hook_payload_preview_contains_sensitive_match(
     raw_payload: &str,
     max_bytes: usize,
@@ -74,6 +75,7 @@ fn redact_hook_payload_value(value: &serde_json::Value) -> serde_json::Value {
     }
 }
 
+#[cfg(test)]
 fn hook_payload_value_contains_sensitive_match(value: &serde_json::Value) -> bool {
     match value {
         serde_json::Value::Object(map) => map.iter().any(|(key, value)| {
@@ -176,6 +178,7 @@ fn redact_hook_payload_text(text: &str) -> String {
         .join("\n")
 }
 
+#[cfg(test)]
 fn hook_payload_text_contains_sensitive_match(text: &str) -> bool {
     contains_inline_sensitive_assignment(text)
         || text.lines().any(hook_payload_line_contains_sensitive_match)
@@ -188,6 +191,7 @@ fn redact_hook_payload_line(line: &str) -> String {
     redact_tokens(line, true, false)
 }
 
+#[cfg(test)]
 fn hook_payload_line_contains_sensitive_match(line: &str) -> bool {
     split_sensitive_assignment(line).is_some() || tokens_contain_sensitive_match(line, true, true)
 }
