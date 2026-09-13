@@ -157,14 +157,37 @@ fn hook_payload_line_contains_sensitive_match(line: &str) -> bool {
 }
 
 /// After the bounded inline pass, a line may look like
-/// `token=[REDACTED] investigate database regression`. Preserve the benign
+/// `token=[REDACTED] investigate database regression` or
+/// `token="[REDACTED]" investigate database regression`. Preserve the benign
 /// suffix instead of treating the whole remainder as the credential value.
 fn redact_assignment_keeping_suffix(prefix: &str, value: &str) -> String {
     let trimmed = value.trim_start();
-    if let Some(rest) = trimmed.strip_prefix("[REDACTED]") {
+    if let Some(rest) = strip_redacted_assignment_marker(trimmed) {
         return format!("{prefix}[REDACTED]{rest}");
     }
     format!("{prefix}[REDACTED]")
+}
+
+fn strip_redacted_assignment_marker(value: &str) -> Option<&str> {
+    if let Some(rest) = value.strip_prefix("[REDACTED]") {
+        return Some(rest);
+    }
+    for quote in ['"', '\''] {
+        let mut chars = value.chars();
+        if chars.next() != Some(quote) {
+            continue;
+        }
+        let after_open = chars.as_str();
+        let Some(after_marker) = after_open.strip_prefix("[REDACTED]") else {
+            continue;
+        };
+        let mut after_marker_chars = after_marker.chars();
+        if after_marker_chars.next() != Some(quote) {
+            continue;
+        }
+        return Some(after_marker_chars.as_str());
+    }
+    None
 }
 
 fn redact_tokens(
@@ -174,15 +197,16 @@ fn redact_tokens(
 ) -> String {
     let mut previous_was_bearer = false;
     let mut previous_was_sensitive_option = false;
-    line.split_whitespace()
+    split_shell_like_tokens(line)
+        .into_iter()
         .map(|token| {
             let redacted = if previous_was_bearer || previous_was_sensitive_option {
                 "[REDACTED]".to_string()
             } else {
-                redact_token_with_options(token, preserve_filesystem_paths)
+                redact_token_with_options(&token, preserve_filesystem_paths)
             };
             previous_was_sensitive_option =
-                redact_sensitive_options && token_expects_sensitive_argument(token);
+                redact_sensitive_options && token_expects_sensitive_argument(&token);
             previous_was_bearer = token
                 .trim_matches(|ch: char| !ch.is_ascii_alphanumeric())
                 .eq_ignore_ascii_case("bearer");
@@ -195,17 +219,53 @@ fn redact_tokens(
 fn tokens_contain_sensitive_match(line: &str, redact_sensitive_options: bool) -> bool {
     let mut previous_was_bearer = false;
     let mut previous_was_sensitive_option = false;
-    for token in line.split_whitespace() {
-        if previous_was_bearer || previous_was_sensitive_option || redact_token(token) != token {
+    for token in split_shell_like_tokens(line) {
+        if previous_was_bearer || previous_was_sensitive_option || redact_token(&token) != token {
             return true;
         }
         previous_was_sensitive_option =
-            redact_sensitive_options && token_expects_sensitive_argument(token);
+            redact_sensitive_options && token_expects_sensitive_argument(&token);
         previous_was_bearer = token
             .trim_matches(|ch: char| !ch.is_ascii_alphanumeric())
             .eq_ignore_ascii_case("bearer");
     }
     false
+}
+
+/// Split on whitespace while keeping shell-quoted spans intact so a sensitive
+/// option argument such as `-u "alice:correct horse"` redacts as one value.
+fn split_shell_like_tokens(line: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut chars = line.chars().peekable();
+    let mut in_quote: Option<char> = None;
+
+    while let Some(ch) = chars.next() {
+        if let Some(quote) = in_quote {
+            current.push(ch);
+            if ch == '\\' && quote == '"' {
+                if let Some(next) = chars.next() {
+                    current.push(next);
+                }
+            } else if ch == quote {
+                in_quote = None;
+            }
+        } else if ch == '"' || ch == '\'' {
+            current.push(ch);
+            in_quote = Some(ch);
+        } else if ch.is_ascii_whitespace() {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+        } else {
+            current.push(ch);
+        }
+    }
+
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
 }
 
 fn redact_inline_sensitive_assignments(line: &str) -> String {

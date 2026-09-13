@@ -384,6 +384,23 @@ fn projected_sensitive_text_preserves_benign_suffix_after_leading_credential() {
 }
 
 #[test]
+fn projected_sensitive_text_preserves_suffix_after_quoted_leading_credential() {
+    let source = "token=\"abc123\" investigate database regression";
+    let redacted = redact_projected_sensitive_text(source);
+    assert!(!redacted.contains("abc123"), "{redacted}");
+    assert_eq!(redacted, "token=[REDACTED] investigate database regression");
+}
+
+#[test]
+fn projected_sensitive_text_redacts_quoted_whitespace_sensitive_option_args() {
+    let source = "Retry curl -u \"alice:correct horse\"";
+    let redacted = redact_projected_sensitive_text(source);
+    assert_eq!(redacted, "Retry curl -u [REDACTED]");
+    assert!(!redacted.contains("alice"), "{redacted}");
+    assert!(!redacted.contains("horse"), "{redacted}");
+}
+
+#[test]
 fn projected_sensitive_text_preserves_benign_long_project_paths() {
     let path = "/home/u/project2abcd1234567890abcdef12";
     assert_eq!(redact_projected_sensitive_text(path), path);
