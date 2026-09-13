@@ -55,9 +55,10 @@ impl MemoryServer {
             let results: Vec<_> = results
                 .into_iter()
                 .map(|workstream| {
-                    crate::workstream::redact_workstream_for_output(workstream, |text| {
-                        crate::adapter::common::redact_projected_sensitive_text(text)
-                    })
+                    crate::workstream::redact_workstream_for_output(
+                        workstream,
+                        crate::adapter::common::redact_projected_sensitive_text,
+                    )
                 })
                 .collect();
             crate::log::info("mcp", &format!("workstreams done count={}", results.len()));

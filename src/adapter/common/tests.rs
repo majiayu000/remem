@@ -440,6 +440,35 @@ fn projected_sensitive_text_preserves_benign_long_project_paths() {
 }
 
 #[test]
+fn projected_sensitive_text_preserves_benign_unc_and_extended_windows_paths() {
+    let unc = r"\\server\share\project2abcd1234567890abcdef12";
+    assert_eq!(redact_projected_sensitive_text(unc), unc);
+
+    let forward_unc = "//server/share/project2abcd1234567890abcdef12";
+    assert_eq!(redact_projected_sensitive_text(forward_unc), forward_unc);
+
+    let extended = r"\\?\C:\Users\u\project2abcd1234567890abcdef12";
+    assert_eq!(redact_projected_sensitive_text(extended), extended);
+}
+
+#[test]
+fn projected_sensitive_text_redacts_escaped_whitespace_secret_arguments() {
+    let source = r"Retry curl --token correct\ horse";
+    let redacted = redact_projected_sensitive_text(source);
+    assert_eq!(redacted, "Retry curl --token [REDACTED]");
+    assert!(!redacted.contains("correct"), "{redacted}");
+    assert!(!redacted.contains("horse"), "{redacted}");
+}
+
+#[test]
+fn hook_payload_preview_redacts_escaped_whitespace_secret_arguments() {
+    let redacted = redact_hook_payload_preview(r"curl --token correct\ horse", 1_000);
+    assert!(redacted.contains("--token [REDACTED]"), "{redacted}");
+    assert!(!redacted.contains("correct"), "{redacted}");
+    assert!(!redacted.contains("horse"), "{redacted}");
+}
+
+#[test]
 fn shared_sensitive_text_still_redacts_credential_shaped_filesystem_paths() {
     let path = "/tmp/Abcdef0123456789Abcdef0123456789";
     assert_eq!(redact_sensitive_text(path), "[REDACTED]");

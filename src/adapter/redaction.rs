@@ -272,6 +272,9 @@ fn take_whitespace_token(line: &str) -> Option<(String, &str)> {
 
 /// Consume one shell-like argument, keeping a quoted span intact so
 /// `-u "alice:correct horse"` redacts as a single value.
+///
+/// Unquoted arguments also honor backslash-escaped whitespace so
+/// `--token correct\ horse` is consumed as one credential.
 fn take_shell_like_argument(line: &str) -> Option<(String, &str)> {
     let mut chars = line.chars();
     let first = chars.next()?;
@@ -296,11 +299,29 @@ fn take_shell_like_argument(line: &str) -> Option<(String, &str)> {
         return Some((token, chars.as_str()));
     }
 
-    let end = line
-        .char_indices()
-        .find_map(|(idx, ch)| ch.is_ascii_whitespace().then_some(idx))
-        .unwrap_or(line.len());
-    Some((line[..end].to_string(), &line[end..]))
+    let mut token = String::new();
+    let mut escaped = false;
+    let mut end = 0usize;
+    for (idx, ch) in line.char_indices() {
+        if escaped {
+            token.push(ch);
+            escaped = false;
+            end = idx + ch.len_utf8();
+            continue;
+        }
+        if ch == '\\' {
+            token.push(ch);
+            escaped = true;
+            end = idx + ch.len_utf8();
+            continue;
+        }
+        if ch.is_ascii_whitespace() {
+            break;
+        }
+        token.push(ch);
+        end = idx + ch.len_utf8();
+    }
+    Some((token, &line[end..]))
 }
 
 fn redact_inline_sensitive_assignments(line: &str) -> String {
@@ -582,6 +603,10 @@ fn looks_like_filesystem_path(token: &str) -> bool {
         || trimmed.starts_with("~/")
         || trimmed.starts_with("./")
         || trimmed.starts_with(".\\")
+        // UNC (`\\server\share\...`) and extended-length (`\\?\...`, `\\.\...`)
+        // Windows prefixes; also accept `//server/share` style UNC.
+        || trimmed.starts_with("\\\\")
+        || trimmed.starts_with("//")
         || (trimmed.len() >= 3
             && trimmed.as_bytes()[1] == b':'
             && trimmed.as_bytes()[0].is_ascii_alphabetic()

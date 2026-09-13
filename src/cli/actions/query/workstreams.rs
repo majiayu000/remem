@@ -48,9 +48,10 @@ fn run_workstream_list(
     let results = workstream::query_workstreams(&conn, project, status_str)?
         .into_iter()
         .map(|item| {
-            workstream::redact_workstream_for_output(item, |text| {
-                crate::adapter::common::redact_projected_sensitive_text(text)
-            })
+            workstream::redact_workstream_for_output(
+                item,
+                crate::adapter::common::redact_projected_sensitive_text,
+            )
         })
         .collect::<Vec<_>>();
     if json {
@@ -247,7 +248,7 @@ mod tests {
                 display_label: None,
                 session_intent_source: Some("summary".to_string()),
             },
-            |text| crate::adapter::common::redact_projected_sensitive_text(text),
+            crate::adapter::common::redact_projected_sensitive_text,
         )];
         let rendered = render_workstream_list(&workstreams);
         assert!(
@@ -283,7 +284,7 @@ mod tests {
                 display_label: None,
                 session_intent_source: Some("summary".to_string()),
             },
-            |text| crate::adapter::common::redact_projected_sensitive_text(text),
+            crate::adapter::common::redact_projected_sensitive_text,
         )];
         let encoded = serde_json::to_string(&workstreams).unwrap();
         assert!(!encoded.contains("abc123"), "{encoded}");
@@ -327,7 +328,7 @@ mod tests {
                 display_label: None,
                 session_intent_source: Some("summary".to_string()),
             },
-            |text| crate::adapter::common::redact_projected_sensitive_text(text),
+            crate::adapter::common::redact_projected_sensitive_text,
         )];
         let encoded = serde_json::to_string(&workstreams).unwrap();
         assert!(!encoded.contains("tiny-token"), "{encoded}");
@@ -358,7 +359,7 @@ mod tests {
                 display_label: None,
                 session_intent_source: Some("summary".to_string()),
             },
-            |text| crate::adapter::common::redact_projected_sensitive_text(text),
+            crate::adapter::common::redact_projected_sensitive_text,
         )];
         let encoded = serde_json::to_string(&workstreams).unwrap();
         assert!(encoded.contains(project), "{encoded}");
