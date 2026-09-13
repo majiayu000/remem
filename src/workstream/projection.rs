@@ -8,13 +8,13 @@ pub(crate) fn redact_workstream_for_output(
     workstream: WorkStream,
     redact: impl Fn(&str) -> String,
 ) -> WorkStream {
-    let redacted_topic = workstream.session_topic.as_deref().map(&redact);
-    // Match REST projection: redact topic before label derivation, but keep the raw
-    // title as the label fallback input and redact the title field separately.
+    // Render from the already-validated stored topic first. Redacting before
+    // `render_from_stored` can expand short credentials past TOPIC_MAX_CHARS and
+    // then null out session_topic/display_label via normalize_topic.
     let label = crate::memory::session_label::render_from_stored(
         Some(workstream.created_at_epoch),
         workstream.session_intent.as_deref(),
-        redacted_topic.as_deref(),
+        workstream.session_topic.as_deref(),
         workstream.session_intent_source.as_deref(),
         Some(&workstream.title),
     );
@@ -32,8 +32,8 @@ pub(crate) fn redact_workstream_for_output(
         completed_at_epoch: workstream.completed_at_epoch,
         mmdd: label.mmdd,
         session_intent: label.session_intent,
-        session_topic: label.session_topic,
-        display_label: label.display_label,
+        session_topic: label.session_topic.as_deref().map(&redact),
+        display_label: label.display_label.as_deref().map(&redact),
         session_intent_source: label.session_intent_source,
     }
 }
@@ -57,7 +57,7 @@ mod tests {
             updated_at_epoch: 1735660800,
             completed_at_epoch: None,
             mmdd: None,
-            session_intent: Some("fix".to_string()),
+            session_intent: Some("FIX".to_string()),
             session_topic: Some(topic.to_string()),
             display_label: None,
             session_intent_source: Some("summary".to_string()),
@@ -65,15 +65,15 @@ mod tests {
     }
 
     fn redact_token_assignments(text: &str) -> String {
-        if text.starts_with("token=") {
-            "token=[REDACTED]".to_string()
-        } else {
-            text.to_string()
-        }
+        text.replace("token=mcp-cli-workstream-secret", "token=[REDACTED]")
+            .replace("token=desc-secret", "token=[REDACTED]")
+            .replace("token=progress-secret", "token=[REDACTED]")
+            .replace("token=next-secret", "token=[REDACTED]")
+            .replace("token=blocker-secret", "token=[REDACTED]")
     }
 
     #[test]
-    fn output_projection_redacts_topic_before_label_and_text_fields() {
+    fn output_projection_redacts_rendered_topic_and_label_fields() {
         let projected = redact_workstream_for_output(
             sample(
                 "token=mcp-cli-workstream-secret",
@@ -93,6 +93,39 @@ mod tests {
         assert_eq!(projected.progress.as_deref(), Some("token=[REDACTED]"));
         assert_eq!(projected.next_action.as_deref(), Some("token=[REDACTED]"));
         assert_eq!(projected.blockers.as_deref(), Some("token=[REDACTED]"));
+    }
+
+    #[test]
+    fn output_projection_keeps_near_limit_topic_after_redaction_expands() {
+        // 72 filler chars + " token=x" (8) = 80 chars — valid at storage time.
+        // Keep a whitespace boundary so inline redaction still sees key `token`.
+        let topic = format!("{} token=x", "n".repeat(72));
+        assert_eq!(
+            topic.chars().count(),
+            crate::memory::session_label::TOPIC_MAX_CHARS
+        );
+        let projected = redact_workstream_for_output(
+            sample(&topic, "Safe listing", "test/proj"),
+            crate::adapter::common::redact_projected_sensitive_text,
+        );
+        let expected_topic = format!("{} token=[REDACTED]", "n".repeat(72));
+        assert_eq!(
+            projected.session_topic.as_deref(),
+            Some(expected_topic.as_str())
+        );
+        assert!(
+            projected.display_label.is_some(),
+            "display_label must stay present after placeholder expansion"
+        );
+        assert!(
+            !projected
+                .display_label
+                .as_deref()
+                .unwrap_or_default()
+                .contains("token=x"),
+            "{:?}",
+            projected.display_label
+        );
     }
 
     #[test]

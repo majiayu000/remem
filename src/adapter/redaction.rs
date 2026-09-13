@@ -170,7 +170,12 @@ fn redact_assignment_keeping_suffix(prefix: &str, value: &str) -> String {
 
 fn strip_redacted_assignment_marker(value: &str) -> Option<&str> {
     if let Some(rest) = value.strip_prefix("[REDACTED]") {
-        return Some(rest);
+        // Only treat whitespace-delimited remainders as benign suffixes. A glued
+        // remainder such as `[REDACTED]"abc123"` is leftover secret material.
+        if rest.is_empty() || rest.starts_with(|ch: char| ch.is_ascii_whitespace()) {
+            return Some(rest);
+        }
+        return None;
     }
     for quote in ['"', '\''] {
         let mut chars = value.chars();
@@ -197,29 +202,36 @@ fn redact_tokens(
 ) -> String {
     let mut previous_was_bearer = false;
     let mut previous_was_sensitive_option = false;
-    split_shell_like_tokens(line)
-        .into_iter()
-        .map(|token| {
-            let redacted = if previous_was_bearer || previous_was_sensitive_option {
-                "[REDACTED]".to_string()
-            } else {
-                redact_token_with_options(&token, preserve_filesystem_paths)
-            };
-            previous_was_sensitive_option =
-                redact_sensitive_options && token_expects_sensitive_argument(&token);
-            previous_was_bearer = token
-                .trim_matches(|ch: char| !ch.is_ascii_alphanumeric())
-                .eq_ignore_ascii_case("bearer");
-            redacted
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    let mut redacted_tokens = Vec::new();
+    let mut rest = line;
+
+    while let Some((token, remaining)) =
+        next_redaction_token(rest, previous_was_bearer || previous_was_sensitive_option)
+    {
+        let redacted = if previous_was_bearer || previous_was_sensitive_option {
+            "[REDACTED]".to_string()
+        } else {
+            redact_token_with_options(&token, preserve_filesystem_paths)
+        };
+        previous_was_sensitive_option =
+            redact_sensitive_options && token_expects_sensitive_argument(&token);
+        previous_was_bearer = token
+            .trim_matches(|ch: char| !ch.is_ascii_alphanumeric())
+            .eq_ignore_ascii_case("bearer");
+        redacted_tokens.push(redacted);
+        rest = remaining;
+    }
+
+    redacted_tokens.join(" ")
 }
 
 fn tokens_contain_sensitive_match(line: &str, redact_sensitive_options: bool) -> bool {
     let mut previous_was_bearer = false;
     let mut previous_was_sensitive_option = false;
-    for token in split_shell_like_tokens(line) {
+    let mut rest = line;
+    while let Some((token, remaining)) =
+        next_redaction_token(rest, previous_was_bearer || previous_was_sensitive_option)
+    {
         if previous_was_bearer || previous_was_sensitive_option || redact_token(&token) != token {
             return true;
         }
@@ -228,44 +240,67 @@ fn tokens_contain_sensitive_match(line: &str, redact_sensitive_options: bool) ->
         previous_was_bearer = token
             .trim_matches(|ch: char| !ch.is_ascii_alphanumeric())
             .eq_ignore_ascii_case("bearer");
+        rest = remaining;
     }
     false
 }
 
-/// Split on whitespace while keeping shell-quoted spans intact so a sensitive
-/// option argument such as `-u "alice:correct horse"` redacts as one value.
-fn split_shell_like_tokens(line: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut chars = line.chars().peekable();
-    let mut in_quote: Option<char> = None;
+/// Take the next token for redaction.
+///
+/// Quote grouping is only enabled while consuming a known sensitive option or
+/// Bearer argument so benign phrases like `Review "phase 2 migration …"` are
+/// not glued into one length-heuristic hit.
+fn next_redaction_token(line: &str, group_quotes: bool) -> Option<(String, &str)> {
+    let trimmed = line.trim_start();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if group_quotes {
+        take_shell_like_argument(trimmed)
+    } else {
+        take_whitespace_token(trimmed)
+    }
+}
 
-    while let Some(ch) = chars.next() {
-        if let Some(quote) = in_quote {
-            current.push(ch);
+fn take_whitespace_token(line: &str) -> Option<(String, &str)> {
+    let end = line
+        .char_indices()
+        .find_map(|(idx, ch)| ch.is_ascii_whitespace().then_some(idx))
+        .unwrap_or(line.len());
+    Some((line[..end].to_string(), &line[end..]))
+}
+
+/// Consume one shell-like argument, keeping a quoted span intact so
+/// `-u "alice:correct horse"` redacts as a single value.
+fn take_shell_like_argument(line: &str) -> Option<(String, &str)> {
+    let mut chars = line.chars();
+    let first = chars.next()?;
+    if matches!(first, '"' | '\'') {
+        let mut token = String::from(first);
+        let quote = first;
+        let mut escaped = false;
+        for ch in chars.by_ref() {
+            token.push(ch);
+            if escaped {
+                escaped = false;
+                continue;
+            }
             if ch == '\\' && quote == '"' {
-                if let Some(next) = chars.next() {
-                    current.push(next);
-                }
-            } else if ch == quote {
-                in_quote = None;
+                escaped = true;
+                continue;
             }
-        } else if ch == '"' || ch == '\'' {
-            current.push(ch);
-            in_quote = Some(ch);
-        } else if ch.is_ascii_whitespace() {
-            if !current.is_empty() {
-                tokens.push(std::mem::take(&mut current));
+            if ch == quote {
+                break;
             }
-        } else {
-            current.push(ch);
         }
+        return Some((token, chars.as_str()));
     }
 
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-    tokens
+    let end = line
+        .char_indices()
+        .find_map(|(idx, ch)| ch.is_ascii_whitespace().then_some(idx))
+        .unwrap_or(line.len());
+    Some((line[..end].to_string(), &line[end..]))
 }
 
 fn redact_inline_sensitive_assignments(line: &str) -> String {
@@ -385,12 +420,33 @@ fn quoted_sensitive_value_end(line: &str, value_start: usize, quote: char) -> us
 }
 
 fn header_sensitive_value_end(line: &str, value_start: usize) -> usize {
-    line[value_start..]
-        .char_indices()
-        .find_map(|(relative, ch)| {
-            matches!(ch, '"' | '\'' | '`' | '\r' | '\n').then_some(value_start + relative)
-        })
-        .unwrap_or(line.len())
+    let mut idx = value_start;
+    while idx < line.len() {
+        let ch = line[idx..].chars().next().expect("idx in bounds");
+        if matches!(ch, '`' | '\r' | '\n') {
+            return idx;
+        }
+        if matches!(ch, '"' | '\'') {
+            // Consume quotes only when they open a parameter value after `=`,
+            // e.g. `Cookie: session="abc123"`. A trailing shell closer such as
+            // `...csrf=short'` must still terminate the header span.
+            let opens_parameter =
+                line[..idx].chars().rev().find(|c| !c.is_ascii_whitespace()) == Some('=');
+            if opens_parameter {
+                let value_body = idx + ch.len_utf8();
+                let close = quoted_sensitive_value_end(line, value_body, ch);
+                idx = if close < line.len() && line[close..].starts_with(ch) {
+                    close + ch.len_utf8()
+                } else {
+                    close
+                };
+                continue;
+            }
+            return idx;
+        }
+        idx += ch.len_utf8();
+    }
+    line.len()
 }
 
 fn skip_ascii_whitespace(line: &str, offset: usize) -> usize {

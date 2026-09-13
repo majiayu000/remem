@@ -401,6 +401,39 @@ fn projected_sensitive_text_redacts_quoted_whitespace_sensitive_option_args() {
 }
 
 #[test]
+fn projected_sensitive_text_preserves_benign_quoted_phrases_with_digits() {
+    let source = "Review \"phase 2 migration acceptance criteria\"";
+    let redacted = redact_projected_sensitive_text(source);
+    assert_eq!(redacted, source);
+    assert!(!redacted.contains("[REDACTED]"), "{redacted}");
+}
+
+#[test]
+fn shared_sensitive_text_preserves_benign_quoted_phrases_with_digits() {
+    let source = "Review \"phase 2 migration acceptance criteria\"";
+    assert_eq!(redact_sensitive_text(source), source);
+}
+
+#[test]
+fn projected_sensitive_text_redacts_quoted_cookie_header_parameters() {
+    let source = "Cookie: session=\"abc123\"";
+    let redacted = redact_projected_sensitive_text(source);
+    assert_eq!(redacted, "Cookie:[REDACTED]");
+    assert!(!redacted.contains("abc123"), "{redacted}");
+    assert!(!redacted.contains("session="), "{redacted}");
+}
+
+#[test]
+fn hook_payload_preview_redacts_quoted_cookie_header_parameters() {
+    let redacted = redact_hook_payload_preview("Cookie: session=\"abc123\"", 1_000);
+    assert!(
+        redacted.contains("Cookie: [REDACTED]") || redacted.contains("Cookie:[REDACTED]"),
+        "{redacted}"
+    );
+    assert!(!redacted.contains("abc123"), "{redacted}");
+}
+
+#[test]
 fn projected_sensitive_text_preserves_benign_long_project_paths() {
     let path = "/home/u/project2abcd1234567890abcdef12";
     assert_eq!(redact_projected_sensitive_text(path), path);
