@@ -230,6 +230,8 @@ fn redact_tokens(
     {
         let redacted = if previous_was_bearer || previous_was_sensitive_option {
             "[REDACTED]".to_string()
+        } else if let Some(attached) = redact_attached_sensitive_short_option(&token) {
+            attached
         } else {
             redact_token_with_options(&token, preserve_filesystem_paths)
         };
@@ -252,7 +254,11 @@ fn tokens_contain_sensitive_match(line: &str, redact_sensitive_options: bool) ->
     while let Some((token, remaining)) =
         next_redaction_token(rest, previous_was_bearer || previous_was_sensitive_option)
     {
-        if previous_was_bearer || previous_was_sensitive_option || redact_token(&token) != token {
+        if previous_was_bearer
+            || previous_was_sensitive_option
+            || redact_attached_sensitive_short_option(&token).is_some()
+            || redact_token(&token) != token
+        {
             return true;
         }
         previous_was_sensitive_option =
@@ -328,6 +334,33 @@ fn extend_glued_shell_word(line: &str, start: usize, token: &mut String) -> usiz
         if is_shell_word_break(ch) {
             break;
         }
+        if ch == '$' {
+            token.push(ch);
+            end += ch.len_utf8();
+            // Command substitutions such as `$(printf %s secret)` are one shell
+            // word; consume the balanced parentheses instead of stopping at the
+            // first whitespace inside `$()`.
+            if line[end..].starts_with('(') {
+                end = consume_balanced_shell_group(line, end, '(', ')', token);
+            } else if line[end..].starts_with('{') {
+                end = consume_balanced_shell_group(line, end, '{', '}', token);
+            }
+            continue;
+        }
+        if ch == '`' {
+            // Backtick command substitution is also one shell word.
+            token.push(ch);
+            end += ch.len_utf8();
+            while end < line.len() {
+                let inner = line[end..].chars().next().expect("end in bounds");
+                token.push(inner);
+                end += inner.len_utf8();
+                if inner == '`' {
+                    break;
+                }
+            }
+            continue;
+        }
         if matches!(ch, '"' | '\'') {
             let quote = ch;
             token.push(ch);
@@ -353,6 +386,53 @@ fn extend_glued_shell_word(line: &str, start: usize, token: &mut String) -> usiz
         }
         token.push(ch);
         end += ch.len_utf8();
+    }
+    end
+}
+
+fn consume_balanced_shell_group(
+    line: &str,
+    start: usize,
+    open: char,
+    close: char,
+    token: &mut String,
+) -> usize {
+    let mut end = start;
+    let mut depth = 0usize;
+    let mut escaped = false;
+    let mut quote: Option<char> = None;
+    while end < line.len() {
+        let ch = line[end..].chars().next().expect("end in bounds");
+        token.push(ch);
+        end += ch.len_utf8();
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' && quote != Some('\'') {
+            escaped = true;
+            continue;
+        }
+        if let Some(q) = quote {
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        if matches!(ch, '"' | '\'') {
+            quote = Some(ch);
+            continue;
+        }
+        if ch == open {
+            depth += 1;
+            continue;
+        }
+        if ch == close {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                break;
+            }
+        }
     }
     end
 }
@@ -560,6 +640,11 @@ fn is_sensitive_option_key(key: &str) -> bool {
 }
 
 fn token_expects_sensitive_argument(token: &str) -> bool {
+    // Attached forms such as `-ualice:pw` already carry the credential; do not
+    // also treat the next whitespace token as a secret argument.
+    if redact_attached_sensitive_short_option(token).is_some() {
+        return false;
+    }
     let option =
         token.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '_');
     let Some(option) = option
@@ -572,6 +657,40 @@ fn token_expects_sensitive_argument(token: &str) -> bool {
         return false;
     }
     !option.contains('=') && is_sensitive_option_key(option)
+}
+
+/// Recognize curl-style attached short options such as `-ualice:pw`.
+///
+/// Only single-letter sensitive options are considered; the remainder of the
+/// token is treated as the credential value.
+fn redact_attached_sensitive_short_option(token: &str) -> Option<String> {
+    let leading_len = token
+        .char_indices()
+        .find(|(_, ch)| !ch.is_whitespace())
+        .map(|(idx, _)| idx)?;
+    let core = &token[leading_len..];
+    if !core.starts_with('-') || core.starts_with("--") {
+        return None;
+    }
+    let after_dash = &core[1..];
+    let mut chars = after_dash.chars();
+    let opt = chars.next()?;
+    if !opt.is_ascii_alphabetic() {
+        return None;
+    }
+    let value = chars.as_str();
+    if value.is_empty() {
+        return None;
+    }
+    // Clustered flags like `-vu` stay untouched; attached credentials usually
+    // contain punctuation (`:`) or are clearly longer than a flag cluster.
+    if value.chars().all(|ch| ch.is_ascii_alphabetic()) && value.chars().count() <= 3 {
+        return None;
+    }
+    if !is_sensitive_option_key(&opt.to_string()) {
+        return None;
+    }
+    Some(format!("{}-{}[REDACTED]", &token[..leading_len], opt))
 }
 
 fn key_owns_header_value(key: &str, separator: char) -> bool {

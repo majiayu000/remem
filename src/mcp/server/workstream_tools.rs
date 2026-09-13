@@ -58,6 +58,7 @@ impl MemoryServer {
                     crate::workstream::redact_workstream_for_output(
                         workstream,
                         crate::adapter::common::redact_projected_sensitive_text,
+                        crate::adapter::common::redact_projected_project_text,
                     )
                 })
                 .collect();

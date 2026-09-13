@@ -548,6 +548,31 @@ fn projected_sensitive_text_redacts_compound_access_key_assignments() {
 }
 
 #[test]
+fn projected_sensitive_text_redacts_command_substitution_assignment_values() {
+    let source = "token=$(printf %s super-secret)";
+    let redacted = redact_projected_sensitive_text(source);
+    assert_eq!(redacted, "token=[REDACTED]");
+    assert!(!redacted.contains("super-secret"), "{redacted}");
+    assert!(!redacted.contains("%s"), "{redacted}");
+}
+
+#[test]
+fn hook_payload_preview_redacts_command_substitution_assignment_values() {
+    let redacted = redact_hook_payload_preview("token=$(printf %s super-secret)", 1_000);
+    assert!(redacted.contains("token=[REDACTED]"), "{redacted}");
+    assert!(!redacted.contains("super-secret"), "{redacted}");
+}
+
+#[test]
+fn projected_sensitive_text_redacts_attached_short_option_credentials() {
+    let source = "Retry curl -ualice:pw";
+    let redacted = redact_projected_sensitive_text(source);
+    assert_eq!(redacted, "Retry curl -u[REDACTED]");
+    assert!(!redacted.contains("alice"), "{redacted}");
+    assert!(!redacted.contains("pw"), "{redacted}");
+}
+
+#[test]
 fn general_sensitive_text_redaction_does_not_treat_bare_words_as_options() {
     let source = "please pass the user value through without changing this phrase\nu value";
 

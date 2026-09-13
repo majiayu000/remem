@@ -51,6 +51,7 @@ fn run_workstream_list(
             workstream::redact_workstream_for_output(
                 item,
                 crate::adapter::common::redact_projected_sensitive_text,
+                crate::adapter::common::redact_projected_project_text,
             )
         })
         .collect::<Vec<_>>();
@@ -249,6 +250,7 @@ mod tests {
                 session_intent_source: Some("summary".to_string()),
             },
             crate::adapter::common::redact_projected_sensitive_text,
+            crate::adapter::common::redact_projected_project_text,
         )];
         let rendered = render_workstream_list(&workstreams);
         assert!(
@@ -285,6 +287,7 @@ mod tests {
                 session_intent_source: Some("summary".to_string()),
             },
             crate::adapter::common::redact_projected_sensitive_text,
+            crate::adapter::common::redact_projected_project_text,
         )];
         let encoded = serde_json::to_string(&workstreams).unwrap();
         assert!(!encoded.contains("abc123"), "{encoded}");
@@ -329,6 +332,7 @@ mod tests {
                 session_intent_source: Some("summary".to_string()),
             },
             crate::adapter::common::redact_projected_sensitive_text,
+            crate::adapter::common::redact_projected_project_text,
         )];
         let encoded = serde_json::to_string(&workstreams).unwrap();
         assert!(!encoded.contains("tiny-token"), "{encoded}");
@@ -360,6 +364,7 @@ mod tests {
                 session_intent_source: Some("summary".to_string()),
             },
             crate::adapter::common::redact_projected_sensitive_text,
+            crate::adapter::common::redact_projected_project_text,
         )];
         let encoded = serde_json::to_string(&workstreams).unwrap();
         assert!(encoded.contains(project), "{encoded}");

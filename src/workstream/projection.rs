@@ -5,12 +5,13 @@ use super::WorkStream;
 /// Keep this out of `map_workstream_row`: matcher identity and context project-scope
 /// checks must continue to see canonical stored values.
 ///
-/// The `project` field uses path-preserving projection redaction so benign project
-/// filesystem identifiers stay readable; every other text field uses the caller
-/// redactor (strict projection redaction in production paths).
+/// Call sites (MCP/CLI) pass both redactors so this module never depends on
+/// `adapter`. Use a path-preserving project redactor for `project` and a strict
+/// projection redactor for every other text field.
 pub(crate) fn redact_workstream_for_output(
     workstream: WorkStream,
     redact: impl Fn(&str) -> String,
+    redact_project: impl Fn(&str) -> String,
 ) -> WorkStream {
     // Render from the already-validated stored topic first. Redacting before
     // `render_from_stored` can expand short credentials past TOPIC_MAX_CHARS and
@@ -24,7 +25,7 @@ pub(crate) fn redact_workstream_for_output(
     );
     WorkStream {
         id: workstream.id,
-        project: crate::adapter::common::redact_projected_project_text(&workstream.project),
+        project: redact_project(&workstream.project),
         title: redact(&workstream.title),
         description: workstream.description.as_deref().map(&redact),
         status: workstream.status,
@@ -85,6 +86,7 @@ mod tests {
                 "test/proj",
             ),
             redact_token_assignments,
+            |text| text.to_string(),
         );
         assert_eq!(projected.session_topic.as_deref(), Some("token=[REDACTED]"));
         assert_eq!(
@@ -111,6 +113,7 @@ mod tests {
         let projected = redact_workstream_for_output(
             sample(&topic, "Safe listing", "test/proj"),
             crate::adapter::common::redact_projected_sensitive_text,
+            crate::adapter::common::redact_projected_project_text,
         );
         let expected_topic = format!("{} token=[REDACTED]", "n".repeat(72));
         assert_eq!(
@@ -139,7 +142,11 @@ mod tests {
             "Repair listing",
             "/home/u/project2abcd",
         );
-        let projected = redact_workstream_for_output(original.clone(), |text| text.to_string());
+        let projected = redact_workstream_for_output(
+            original.clone(),
+            |text| text.to_string(),
+            |text| text.to_string(),
+        );
         assert_eq!(projected.project, original.project);
         assert_eq!(projected.title, original.title);
         assert_eq!(
@@ -154,6 +161,7 @@ mod tests {
         let projected = redact_workstream_for_output(
             sample("Batch text display", "Repair listing", project),
             crate::adapter::common::redact_projected_sensitive_text,
+            crate::adapter::common::redact_projected_project_text,
         );
         assert_eq!(projected.project, project);
     }
@@ -164,8 +172,20 @@ mod tests {
         let projected = redact_workstream_for_output(
             sample("Batch text display", path, "test/proj"),
             crate::adapter::common::redact_projected_sensitive_text,
+            crate::adapter::common::redact_projected_project_text,
         );
         assert_eq!(projected.title, "[REDACTED]");
         assert_eq!(projected.project, "test/proj");
+    }
+
+    #[test]
+    fn output_projection_applies_caller_project_redactor() {
+        let projected = redact_workstream_for_output(
+            sample("Batch text display", "Repair listing", "token=proj-secret"),
+            |text| text.to_string(),
+            |text| text.replace("token=proj-secret", "token=[REDACTED]"),
+        );
+        assert_eq!(projected.project, "token=[REDACTED]");
+        assert_eq!(projected.title, "Repair listing");
     }
 }
