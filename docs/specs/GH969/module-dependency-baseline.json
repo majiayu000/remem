@@ -1347,6 +1347,21 @@
       "workstream"
     ]
   },
-  "exceptions": [],
+  "exceptions": [
+    {
+      "source": "memory",
+      "target": "adapter",
+      "site": {
+        "path": "src/memory/raw_archive/session_labels.rs",
+        "kind": "path",
+        "signature": "crate::adapter",
+        "occurrence": 1
+      },
+      "owner": "security",
+      "rationale": "Raw-archive listing redacts session_topic before display_label projection; shared redaction currently lives in adapter.",
+      "tracking_issue": "#1079",
+      "decision_date": "2026-12-31"
+    }
+  ],
   "scc_exceptions": []
 }
