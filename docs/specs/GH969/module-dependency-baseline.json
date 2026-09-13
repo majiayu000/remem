@@ -733,12 +733,6 @@
           "occurrence": 1
         },
         {
-          "path": "src/memory/procedure/export/render.rs",
-          "kind": "path",
-          "signature": "crate::adapter",
-          "occurrence": 2
-        },
-        {
           "path": "src/memory/retrieval_enrichment.rs",
           "kind": "path",
           "signature": "crate::adapter",
