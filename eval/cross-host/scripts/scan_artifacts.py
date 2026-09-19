@@ -46,12 +46,15 @@ LEAK_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 
 
 def _is_allowed_home_hit(line: str, match: re.Match[str]) -> bool:
-    """A home-shaped path inside an allowed tmp root is an isolated bench HOME."""
-    start = match.start()
-    prefix = line[:start]
-    return any(prefix.endswith(root.rstrip("/")) or match.group(0).startswith(root) for root in ALLOWED_TMP_PREFIXES) or any(
-        root in line[max(0, start - 40) : start + 1] for root in ALLOWED_TMP_PREFIXES
-    )
+    """Exempt only a home-shaped path rooted in the same temporary path token.
+
+    A nearby /tmp/ in another argument or JSON field is not evidence that this
+    match belongs to an isolated HOME. Treat ambiguous parent traversal as a
+    leak rather than resolving an artifact-controlled path on the real host.
+    """
+    prefix = re.split(r"""[\s"'`=,:;|&<>()\[\]{}\\]""", line[: match.start()])[-1]
+    candidate = prefix + match.group(0)
+    return candidate.startswith(ALLOWED_TMP_PREFIXES) and ".." not in candidate.split("/")
 
 
 def scan_text(text: str, private_roots: list[str]) -> list[dict]:
@@ -154,6 +157,67 @@ def self_test() -> int:
             ["windows_home_path"],
         ),
     ]
+    cases.extend(
+        [
+            (
+                "tmp argument must not mask a real linux home",
+                "cache=/tmp/cache source=/home/bob/private/file.txt\n",
+                ["host_home_path"],
+            ),
+            (
+                "tmp JSON field must not mask a real macos home",
+                '{"cache":"/tmp/cache","source":"/Users/alice/private/file.txt"}\n',
+                ["host_home_path"],
+            ),
+            (
+                "parent traversal out of tmp fails closed",
+                "/tmp/../home/bob/private/file.txt\n",
+                ["host_home_path"],
+            ),
+            (
+                "nested parent traversal fails closed",
+                "/private/tmp/run/../../../Users/alice/private/file.txt\n",
+                ["host_home_path"],
+            ),
+            (
+                "tmp substring in an unapproved root is not an exemption",
+                "/opt/tmp/cache/home/bob/private/file.txt\n",
+                ["host_home_path"],
+            ),
+            (
+                "tmp lookalike directory is not an exemption",
+                "/tmp-other/cache/home/bob/private/file.txt\n",
+                ["host_home_path"],
+            ),
+            (
+                "session stores remain forbidden under an isolated HOME",
+                "/tmp/run/home/agent/.codex/sessions/rollout.jsonl\n",
+                ["host_session_store"],
+            ),
+            (
+                "private roots remain forbidden under an isolated HOME",
+                "/tmp/run/home/agent/bench-private/codex-home-1234/config.toml\n",
+                ["benchmark_private_root"],
+            ),
+        ]
+    )
+    for root in ALLOWED_TMP_PREFIXES:
+        for depth in (8, 80):
+            cases.append(
+                (
+                    f"isolated {root} HOME with {depth}-character component passes",
+                    f"HOME={root}{'x' * depth}/home/agent/work\n",
+                    [],
+                )
+            )
+    for separator in (" ", "\t", ",", ";", ":", "|", "&", "=", "(", "[", "\\", "`"):
+        cases.append(
+            (
+                f"tmp path separated by {separator!r} cannot mask a real home",
+                f"/tmp/cache{separator}/home/bob/private/file.txt\n",
+                ["host_home_path"],
+            )
+        )
     failures = 0
     for name, text, expected in cases:
         got = sorted({f["pattern"] for f in scan_text(text, private_roots)})
