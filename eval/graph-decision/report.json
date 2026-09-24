@@ -4,8 +4,8 @@
   "evidence_fingerprint": {
     "algorithm": "sha256-length-prefixed-v1",
     "dataset_sha256": "0af0538c28347f52a8a2bee2a57d85ce07442eb03b2f8eec48c47c0f50b232f8",
-    "implementation_sha256": "4a9385bae564234fdafa4301e5a0268f9e9805cfc3176b745772af6e4d25919f",
-    "combined_sha256": "bc7ac8e732b412289965637bc4f607f2b5238cb201e9a19a4abc556bd70e8929",
+    "implementation_sha256": "d53b1d911d76560fb61c2bde469f9e33b852efaf6a1e8363a86c6fc8bf8e6f62",
+    "combined_sha256": "1e6fb1096196f875a31d3355a8371da31c7c29a421905efbcbac4b6f2147bac9",
     "inputs": [
       {
         "path": "crate::migrate::MIGRATIONS",
@@ -274,8 +274,8 @@
       {
         "path": "src/memory/store/read.rs",
         "role": "implementation",
-        "byte_len": 15380,
-        "sha256": "4d6452ce2a602017099d9cbe83a56a0dd7db9e415c13586d117950e94db9de61"
+        "byte_len": 15527,
+        "sha256": "88e22ad293e8a94711028a697cc391412610d9a32a19e7b448578b4e330a6069"
       },
       {
         "path": "src/memory/store/write.rs",
