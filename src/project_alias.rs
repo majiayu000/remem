@@ -60,6 +60,92 @@ pub struct ProjectAliasResolution {
     pub resolved_via_alias: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct ActiveProjectAlias {
+    pub(crate) alias_path: String,
+    pub(crate) canonical_path: String,
+    pub(crate) actor: String,
+    pub(crate) reason: String,
+    pub(crate) created_at_epoch: i64,
+    pub(crate) updated_at_epoch: i64,
+}
+
+pub(crate) fn active_project_aliases(
+    conn: &Connection,
+    alias_path: Option<&str>,
+) -> Result<Vec<ActiveProjectAlias>> {
+    let mut statement = conn.prepare(
+        "SELECT aliases.alias_path, projects.project_path, events.actor,
+                events.reason, aliases.created_at_epoch, aliases.updated_at_epoch
+         FROM project_identity_aliases aliases
+         JOIN projects ON projects.id = aliases.canonical_project_id
+         JOIN project_identity_alias_events events ON events.id = aliases.last_event_id
+         WHERE aliases.status = 'active'
+           AND (?1 IS NULL OR aliases.alias_path = ?1)
+         ORDER BY aliases.alias_path",
+    )?;
+    let rows = statement.query_map([alias_path], |row| {
+        Ok(ActiveProjectAlias {
+            alias_path: row.get(0)?,
+            canonical_path: row.get(1)?,
+            actor: row.get(2)?,
+            reason: row.get(3)?,
+            created_at_epoch: row.get(4)?,
+            updated_at_epoch: row.get(5)?,
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+pub(crate) fn revoke_project_alias(
+    conn: &Connection,
+    alias_path: &str,
+    actor: &str,
+    reason: &str,
+    now_epoch: i64,
+) -> Result<ActiveProjectAlias> {
+    if actor.trim().is_empty() || reason.trim().is_empty() {
+        bail!("project alias revoke requires a non-empty actor and reason");
+    }
+    let tx = conn.unchecked_transaction()?;
+    let record = active_project_aliases(&tx, Some(alias_path))?
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("active project alias not found: {alias_path}"))?;
+    let event_id: i64 = tx.query_row(
+        "SELECT last_event_id FROM project_identity_aliases
+         WHERE alias_path = ?1 AND status = 'active'",
+        [alias_path],
+        |row| row.get(0),
+    )?;
+    let inserted = tx.execute(
+        "INSERT INTO project_identity_alias_events(
+            alias_path, canonical_project_id, action, proof_kind,
+            proof_payload_json, proof_sha256, source_inventory_sha256,
+            actor, reason, created_at_epoch
+         ) SELECT alias_path, canonical_project_id, 'revoke', proof_kind,
+                  proof_payload_json, proof_sha256, source_inventory_sha256,
+                  ?2, ?3, ?4
+           FROM project_identity_alias_events WHERE id = ?1",
+        params![event_id, actor, reason, now_epoch],
+    )?;
+    if inserted != 1 {
+        bail!("project alias proof event missing for {alias_path}");
+    }
+    let revoke_event_id = tx.last_insert_rowid();
+    let updated = tx.execute(
+        "UPDATE project_identity_aliases
+         SET status = 'revoked', last_event_id = ?2, updated_at_epoch = ?3
+         WHERE alias_path = ?1 AND status = 'active'",
+        params![alias_path, revoke_event_id, now_epoch],
+    )?;
+    if updated != 1 {
+        bail!("active project alias changed during revoke: {alias_path}");
+    }
+    tx.commit()?;
+    Ok(record)
+}
+
 pub fn proof_sha256(payload: &Value) -> Result<String> {
     let encoded = serde_json::to_vec(payload).context("serialize project alias proof payload")?;
     Ok(format!("{:x}", Sha256::digest(encoded)))
@@ -650,6 +736,51 @@ mod tests {
         let top = crate::db::query_top_projects(&conn, 5)?;
         assert_eq!(top[0].project, "/new/repo");
         assert_eq!(top[0].count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn list_and_revoke_preserve_audit_and_restore_search_scope() -> Result<()> {
+        let conn = setup()?;
+        let entries = [entry("/old/repo", "/new/repo")];
+        assert_eq!(
+            preview_project_alias_plan(&conn, &request(&entries))?.inserted,
+            1
+        );
+        assert!(active_project_aliases(&conn, None)?.is_empty());
+
+        apply_project_alias_plan(&conn, &request(&entries))?;
+        let listed = active_project_aliases(&conn, None)?;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].actor, "test");
+        assert_eq!(listed[0].reason, "fixture");
+        assert_eq!(
+            project_filter_values(&conn, "/new/repo")?,
+            vec!["/new/repo".to_string(), "/old/repo".to_string()]
+        );
+
+        let revoked = revoke_project_alias(&conn, "/old/repo", "operator", "retired", 11)?;
+        assert_eq!(revoked.alias_path, "/old/repo");
+        assert!(active_project_aliases(&conn, None)?.is_empty());
+        assert_eq!(
+            project_filter_values(&conn, "/new/repo")?,
+            vec!["/new/repo"]
+        );
+        let events: Vec<(String, String, String)> = conn
+            .prepare(
+                "SELECT action, actor, reason FROM project_identity_alias_events
+                 WHERE alias_path = '/old/repo' ORDER BY id",
+            )?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        assert_eq!(
+            events,
+            vec![
+                ("activate".into(), "test".into(), "fixture".into()),
+                ("revoke".into(), "operator".into(), "retired".into()),
+            ]
+        );
+        assert!(revoke_project_alias(&conn, "/old/repo", "operator", "again", 12).is_err());
         Ok(())
     }
 }

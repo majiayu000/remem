@@ -7,9 +7,9 @@ use super::actions::{
     run_cleanup, run_commit, run_config, run_current_state, run_dream, run_dream_backfill,
     run_embedding, run_encrypt, run_export, run_governance, run_graph_review, run_import,
     run_ingest_sessions_cli, run_memory_action, run_merge_preferences, run_model, run_pending,
-    run_preferences, run_procedures, run_raw, run_reroute, run_review, run_rules, run_search,
-    run_show, run_status, run_timeline, run_usage, run_user, run_why, run_workstreams,
-    GovernanceCliRequest, RerouteCliRequest,
+    run_preferences, run_procedures, run_project_action, run_raw, run_reroute, run_review,
+    run_rules, run_search, run_show, run_status, run_timeline, run_usage, run_user, run_why,
+    run_workstreams, GovernanceCliRequest, RerouteCliRequest,
 };
 #[cfg(feature = "eval")]
 use super::actions::{
@@ -114,6 +114,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         }
         Commands::User { action } => run_user(action)?,
         Commands::Memory { action } => run_memory_action(action)?,
+        Commands::Project { action } => run_project_action(action)?,
         Commands::Pending { action } => run_pending(action)?,
         Commands::Review { action } => run_review(action)?,
         Commands::GraphReview { action } => run_graph_review(action)?,

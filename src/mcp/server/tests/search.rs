@@ -8,6 +8,85 @@ use crate::memory;
 use crate::memory::raw_archive::{insert_raw_message, ROLE_USER, SOURCE_HOOK};
 
 #[test]
+fn search_follows_and_revokes_project_alias() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("mcp-search-project-alias");
+    let conn = crate::db::open_db()?;
+    conn.execute(
+        "INSERT INTO workspaces(root_path, created_at_epoch, updated_at_epoch)
+         VALUES('/main', 1, 1)",
+        [],
+    )?;
+    let workspace_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO projects(workspace_id, project_path, project_key,
+                              created_at_epoch, updated_at_epoch)
+         VALUES(?1, '/main', '/main', 1, 1)",
+        [workspace_id],
+    )?;
+    let memory_id = memory::insert_memory(
+        &conn,
+        Some("session-1"),
+        "/worktree",
+        None,
+        "project alias recall marker",
+        "A memory captured in a Git worktree.",
+        "decision",
+        None,
+    )?;
+    let proof = serde_json::json!({
+        "from_path":"/worktree", "to_path":"/main", "shared_commit_count":1
+    });
+    let entries = [crate::project_alias::ProjectAliasPlanEntry {
+        alias_path: "/worktree".to_string(),
+        canonical_path: "/main".to_string(),
+        proof_kind: crate::project_alias::ProjectAliasProofKind::GitCommitMembership,
+        proof_sha256: crate::project_alias::proof_sha256(&proof)?,
+        proof_payload: proof,
+    }];
+    crate::project_alias::apply_project_alias_plan(
+        &conn,
+        &crate::project_alias::ProjectAliasApplyRequest {
+            source_inventory_sha256: &"a".repeat(64),
+            actor: "test",
+            reason: "same project",
+            now_epoch: 1,
+            entries: &entries,
+        },
+    )?;
+    drop(conn);
+
+    let server = MemoryServer::new()?;
+    let search = || -> anyhow::Result<Value> {
+        let response = server
+            .search(Parameters(SearchParams {
+                query: Some("project alias recall marker".to_string()),
+                limit: Some(5),
+                project: Some("/main".to_string()),
+                r#type: None,
+                offset: Some(0),
+                include_stale: Some(true),
+                include_suppressed: None,
+                branch: None,
+                multi_hop: Some(false),
+                explain: None,
+                task_intent: None,
+                role: None,
+                risk: None,
+                token_budget: None,
+                include_superseded: None,
+            }))
+            .expect("search succeeds");
+        Ok(serde_json::from_str(&response)?)
+    };
+    assert_eq!(search()?["results"][0]["id"], memory_id);
+    let conn = crate::db::open_db()?;
+    crate::project_alias::revoke_project_alias(&conn, "/worktree", "test", "retired", 2)?;
+    drop(conn);
+    assert_eq!(search()?["results"].as_array().unwrap().len(), 0);
+    Ok(())
+}
+
+#[test]
 fn search_reopens_database_after_file_removal() {
     let test_dir = ScopedTestDataDir::new("mcp-search");
     let server = MemoryServer::new().expect("memory server should initialize");

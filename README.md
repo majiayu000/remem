@@ -220,6 +220,29 @@ remem current <state-key>
 diagnostics are written to the log file, not stderr, in normal use. Set
 `REMEM_DEBUG=1` to mirror them to stderr while debugging.
 
+### Project aliases for Git worktrees
+
+When a worktree has its own project key, preview an alias to the main checkout,
+then apply it after checking the paths and Git proof:
+
+```bash
+remem project alias add /path/to/worktree --canonical /path/to/main \
+  --actor you --reason "same project"
+remem project alias add /path/to/worktree --canonical /path/to/main \
+  --actor you --reason "same project" --apply
+remem project alias list
+remem search "decision" --project /path/to/main
+remem project alias revoke /path/to/worktree \
+  --actor you --reason "worktree retired" --apply
+```
+
+The main checkout must already have a project row from normal remem capture.
+The alias keeps historical rows at their recorded paths while CLI and MCP
+project searches include the worktree's memories. `add` and `revoke` preview
+without database writes unless `--apply` is present. Revocation removes the
+worktree from the main project's search scope; `list` reports active aliases
+with the actor and reason from their latest activation.
+
 Agents can use MCP `search` for compact results, then `get_observations` for
 selected details. Use raw recall only when curated memory misses exact
 transcript evidence:

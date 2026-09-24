@@ -317,8 +317,14 @@ pub fn get_memories_by_ids_with_suppressed_policy(
 
     if let Some(project) = project {
         let idx = ids.len() + 1;
-        conditions.push(format!("(project = ?{idx} OR scope = 'global')"));
-        params.push(Box::new(project.to_string()));
+        let (project_clause, _) = crate::project_alias::push_project_value_filter(
+            conn,
+            "project",
+            project,
+            idx,
+            &mut params,
+        )?;
+        conditions.push(format!("({project_clause} OR scope = 'global')"));
     }
     if !include_suppressed {
         conditions.push(crate::memory::suppression::memory_policy_filter_sql(

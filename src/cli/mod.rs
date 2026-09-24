@@ -12,6 +12,7 @@ mod eval_types;
 mod memory_types;
 mod model_types;
 mod procedure_types;
+mod project_types;
 mod query_types;
 mod reranker_types;
 mod review_types;
@@ -30,6 +31,8 @@ mod tests_governance;
 mod tests_maintenance;
 #[cfg(test)]
 mod tests_procedures;
+#[cfg(test)]
+mod tests_project;
 #[cfg(test)]
 mod tests_raw;
 #[cfg(test)]

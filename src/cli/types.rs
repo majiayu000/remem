@@ -12,6 +12,7 @@ pub(in crate::cli) use super::memory_types::{
 };
 pub(in crate::cli) use super::model_types::ModelAction;
 pub(in crate::cli) use super::procedure_types::ProcedureAction;
+pub(in crate::cli) use super::project_types::ProjectAction;
 pub(in crate::cli) use super::query_types::{
     CommitAction, RawAction, RawRole, TimelineAction, UserAction, WorkstreamAction,
     WorkstreamStatusArg,
@@ -183,6 +184,11 @@ pub(super) enum Commands {
     Memory {
         #[command(subcommand)]
         action: MemoryAction,
+    },
+    /// Manage project identity and audited aliases.
+    Project {
+        #[command(subcommand)]
+        action: ProjectAction,
     },
     /// Inspect or repair failed pending observation rows.
     Pending {

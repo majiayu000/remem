@@ -66,6 +66,7 @@ The CI lifecycle guard enforces the highest-risk parts of this flow. See
 
 | Directory | Status | Notes |
 |---|---|---|
+| `GH1086/` | Current contract | Supported CLI for previewing, applying, listing, and revoking audited project identity aliases. Refs #1086. |
 | `associative-multihop-fixtures/` | Implemented evidence contract | Associative entity-hop golden fixtures used by the literal graph decision gate. GH-853 supplies the trusted `graph_edges` arm and same-head production decision. Refs #676, #853. |
 | `cache-stable-injection/` | Current contract | Product and technical contract for a deterministic, prefix-cache-stable context block: byte-identical renders for unchanged memory state, additive prompt-time injection, and churn evals. Refs #673. |
 | `context-budget-config/` | Current contract | SessionStart numeric budgets live in `config.toml` `[context]`; `REMEM_CONTEXT_*` remains an env escape hatch with the previous parse rules. |

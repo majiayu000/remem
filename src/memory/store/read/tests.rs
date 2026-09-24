@@ -6,6 +6,62 @@ use crate::memory::{
 use rusqlite::Connection;
 
 #[test]
+fn id_hydration_includes_active_project_aliases() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    conn.execute(
+        "INSERT INTO workspaces(root_path, created_at_epoch, updated_at_epoch)
+         VALUES('/main', 1, 1)",
+        [],
+    )?;
+    let workspace_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO projects(workspace_id, project_path, project_key,
+                              created_at_epoch, updated_at_epoch)
+         VALUES(?1, '/main', '/main', 1, 1)",
+        [workspace_id],
+    )?;
+    let project_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO memories(project, scope, memory_type, title, content,
+                              status, created_at_epoch, updated_at_epoch)
+         VALUES('/worktree', 'project', 'decision', 'alias marker',
+                'alias marker', 'active', 1, 1)",
+        [],
+    )?;
+    let memory_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO project_identity_alias_events(
+            alias_path, canonical_project_id, action, proof_kind,
+            proof_payload_json, proof_sha256, source_inventory_sha256,
+            actor, reason, created_at_epoch)
+         VALUES('/worktree', ?1, 'activate', 'git_commit_membership', '{}',
+                ?2, ?3, 'test', 'same project', 1)",
+        rusqlite::params![project_id, "a".repeat(64), "b".repeat(64)],
+    )?;
+    let event_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO project_identity_aliases(
+            alias_path, canonical_project_id, status, last_event_id,
+            created_at_epoch, updated_at_epoch)
+         VALUES('/worktree', ?1, 'active', ?2, 1, 1)",
+        rusqlite::params![project_id, event_id],
+    )?;
+
+    assert_eq!(
+        get_memories_by_ids(&conn, &[memory_id], Some("/main"))?.len(),
+        1
+    );
+    conn.execute(
+        "UPDATE project_identity_aliases SET status = 'revoked'
+         WHERE alias_path = '/worktree'",
+        [],
+    )?;
+    assert!(get_memories_by_ids(&conn, &[memory_id], Some("/main"))?.is_empty());
+    Ok(())
+}
+
+#[test]
 fn test_memory_insert_and_query() {
     let conn = Connection::open_in_memory().unwrap();
     setup_memory_schema(&conn);
