@@ -9,6 +9,8 @@ and all Claude JSONL files from the pre-existing frozen local snapshot.
 - 952 files, 290,572 physical records.
 - 33,898 projected user/assistant messages.
 - Zero malformed JSON records; zero role/text/timestamp differences.
+- The frozen private snapshot, detailed usage reports and associated caches were
+  removed after the cross-repository comparisons; original user data was unchanged.
 - Temporary comparison harness removed after execution. No transcript contents
   or original paths were added to Git. Comparison ran read-only, without a DB.
 - This is sampled projection parity, not a claim about every Codex file or
