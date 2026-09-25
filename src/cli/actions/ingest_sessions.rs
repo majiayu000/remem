@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::db;
 use crate::ingest::sessions::{
-    default_scan_roots, run_ingest_sessions, IngestOptions, IngestSummary, ScanRoot,
+    configured_scan_roots, run_ingest_sessions, IngestOptions, IngestSummary, ScanRoot,
 };
 use crate::memory::raw_query::parse_time_lower_bound;
 
@@ -15,7 +15,7 @@ pub(in crate::cli) fn run_ingest_sessions_cli(
     since: Option<&str>,
     json: bool,
 ) -> Result<IngestSummary> {
-    let mut scan_roots = default_scan_roots();
+    let mut scan_roots = configured_scan_roots()?;
     for spec in roots {
         scan_roots.push(ScanRoot::parse(spec)?);
     }

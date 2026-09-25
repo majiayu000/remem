@@ -189,6 +189,21 @@ fn codex_probe_preserves_trusted_session_modes() {
             "subagent",
         ),
         (
+            "exec-precedes-desktop-originator",
+            r#"{"type":"session_meta","payload":{"id":"exec-desktop","source":"exec","originator":"Codex Desktop"}}"#,
+            "unattended",
+        ),
+        (
+            "source-subagent-precedes-exec-originator",
+            r#"{"type":"session_meta","payload":{"id":"nested-agent","source":{"subagent":{"parent_thread_id":"p"}},"originator":"codex_exec"}}"#,
+            "subagent",
+        ),
+        (
+            "vscode-native-source",
+            r#"{"type":"session_meta","payload":{"id":"ide","source":"vscode","originator":"future-origin"}}"#,
+            "interactive",
+        ),
+        (
             "unknown-mode",
             r#"{"type":"session_meta","payload":{"id":"unknown","originator":"future-origin"}}"#,
             "unknown",
@@ -655,4 +670,21 @@ fn unmatched_legacy_aliases_fail_before_canonical_rekey() -> anyhow::Result<()> 
     );
     std::fs::remove_file(path)?;
     Ok(())
+}
+
+// Catches changing the native read_line I/O error into an unclassified UTF-8 error.
+#[test]
+fn probe_preserves_invalid_utf8_io_kind() {
+    let path = temp_transcript("invalid-utf8-probe", "");
+    std::fs::write(&path, b"\xff\n").unwrap();
+    let error = probe_context(&path, None)
+        .err()
+        .expect("invalid UTF-8 must fail");
+    assert_eq!(
+        error
+            .downcast_ref::<std::io::Error>()
+            .map(std::io::Error::kind),
+        Some(std::io::ErrorKind::InvalidData)
+    );
+    std::fs::remove_file(path).unwrap();
 }

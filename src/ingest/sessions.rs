@@ -87,27 +87,41 @@ fn shellexpand_home(path: &str) -> String {
     path.to_string()
 }
 
-/// Default local scan roots: `~/.claude/projects` and `~/.codex/sessions`.
-/// Both are labeled `local` to match the hook-path `source_root` default.
+/// Host-native roots honor CLAUDE_CONFIG_DIR and CODEX_HOME. Preserve the
+/// existing library return type; invalid configuration is logged at error level.
+/// CLI commands use the fallible resolver and return the error to the operator.
 pub fn default_scan_roots() -> Vec<ScanRoot> {
-    let Some(home) = dirs::home_dir() else {
+    match configured_scan_roots() {
+        Ok(roots) => roots,
+        Err(error) => {
+            crate::log::error(
+                "ingest-sessions",
+                &format!("resolve transcript roots failed: {error}"),
+            );
+            Vec::new()
+        }
+    }
+}
+
+pub(crate) fn configured_scan_roots() -> Result<Vec<ScanRoot>> {
+    let roots = agent_sessions::Roots::from_env()?;
+    if roots.claude.is_none() && roots.codex.is_none() {
         crate::log::warn("ingest-sessions", "home directory unavailable");
-        return Vec::new();
-    };
-    vec![
-        ScanRoot {
-            host: InstallHost::ClaudeCode,
-            label: SOURCE_ROOT_LOCAL.to_string(),
-            path: home.join(".claude").join("projects"),
-            required: false,
-        },
-        ScanRoot {
-            host: InstallHost::CodexCli,
-            label: SOURCE_ROOT_LOCAL.to_string(),
-            path: home.join(".codex").join("sessions"),
-            required: false,
-        },
+    }
+    Ok([
+        (InstallHost::ClaudeCode, roots.claude, "projects"),
+        (InstallHost::CodexCli, roots.codex, "sessions"),
     ]
+    .into_iter()
+    .filter_map(|(host, root, suffix)| {
+        root.map(|root| ScanRoot {
+            host,
+            label: SOURCE_ROOT_LOCAL.to_string(),
+            path: root.join(suffix),
+            required: false,
+        })
+    })
+    .collect())
 }
 
 /// Machine-readable batch summary (product invariant 6).
@@ -357,51 +371,63 @@ pub(crate) fn discover_transcript_files(root: &ScanRoot) -> (Vec<PathBuf>, Vec<S
         };
         return (Vec::new(), failures);
     }
-    let mut files = Vec::new();
-    let mut failures = Vec::new();
-    collect_jsonl_files(&root.path, &mut files, &mut failures);
-    files.sort();
-    (files, failures)
-}
-
-/// Recursively collect `*.jsonl` files, excluding `subagents/` directories.
-fn collect_jsonl_files(dir: &Path, out: &mut Vec<PathBuf>, failures: &mut Vec<String>) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(entries) => entries,
-        Err(error) => {
-            failures.push(format!("read scan dir {} failed: {}", dir.display(), error));
-            return;
+    let agent = match root.host {
+        InstallHost::ClaudeCode => agent_sessions::Agent::ClaudeCode,
+        InstallHost::CodexCli => agent_sessions::Agent::Codex,
+        InstallHost::Cursor => {
+            return (
+                Vec::new(),
+                vec!["Cursor filesystem roots are unsupported".into()],
+            )
         }
     };
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
+    // Explicit root aliases were accepted by the existing scanner. Resolve only
+    // the selected root, then restore lexical paths to keep stored identities.
+    let scan_path = if root.path.is_symlink() {
+        match std::fs::canonicalize(&root.path) {
+            Ok(path) => path,
             Err(error) => {
-                failures.push(format!(
-                    "read scan dir entry in {} failed: {}",
-                    dir.display(),
-                    error
-                ));
-                continue;
+                return (
+                    Vec::new(),
+                    vec![format!(
+                        "resolve scan root {} failed: {error}",
+                        root.path.display()
+                    )],
+                )
             }
-        };
-        let path = entry.path();
-        let file_type = match entry.file_type() {
-            Ok(file_type) => file_type,
-            Err(error) => {
-                failures.push(format!("stat {} failed: {}", path.display(), error));
-                continue;
-            }
-        };
-        if file_type.is_dir() {
-            if entry.file_name() == "subagents" {
-                continue;
-            }
-            collect_jsonl_files(&path, out, failures);
-        } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "jsonl") {
-            out.push(path);
         }
-    }
+    } else {
+        root.path.clone()
+    };
+    let discovered = agent_sessions::discover_directory(
+        agent,
+        &scan_path,
+        &agent_sessions::DiscoverFilter {
+            include_subagents: false,
+            ..Default::default()
+        },
+    );
+    let mut files: Vec<_> = discovered
+        .files
+        .into_iter()
+        .map(|file| match file.path.strip_prefix(&scan_path) {
+            Ok(relative) => root.path.join(relative),
+            Err(_) => file.path,
+        })
+        .collect();
+    files.sort();
+    let failures = discovered
+        .errors
+        .into_iter()
+        .map(|error| {
+            format!(
+                "read scan entry {} failed: {}",
+                error.path.display(),
+                error.source
+            )
+        })
+        .collect();
+    (files, failures)
 }
 
 enum PreparedFileResult {

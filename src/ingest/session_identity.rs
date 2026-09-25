@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::io::{BufRead, Read};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -632,49 +632,52 @@ fn probe_context(file: &Path, byte_limit: Option<u64>) -> Result<TranscriptConte
     let mut context = TranscriptContext::default();
     let handle = std::fs::File::open(file)
         .with_context(|| format!("open transcript probe {}", file.display()))?;
-    let mut reader = std::io::BufReader::new(handle);
     let max_bytes = byte_limit.unwrap_or(u64::MAX);
+    let mut reader = agent_sessions::read_raw_from(
+        std::io::BufReader::new(handle.take(max_bytes)),
+        &agent_sessions::RawReadOptions {
+            max_read_bytes: None,
+            max_line_bytes: None,
+            ..Default::default()
+        },
+    )
+    .with_context(|| format!("open transcript probe {}", file.display()))?;
     let mut consumed = 0_u64;
     for _ in 0..CONTEXT_PROBE_LINES {
         if consumed >= max_bytes {
             break;
         }
-        let mut line = String::new();
-        let read = reader
-            .by_ref()
-            .take(max_bytes - consumed)
-            .read_line(&mut line)
-            .with_context(|| format!("read transcript probe {}", file.display()))?;
-        if read == 0 {
+        let Some(record) = reader.next() else {
             if byte_limit.is_some() && consumed < max_bytes {
-                bail!(
-                    "transcript truncated before captured probe boundary: expected {max_bytes} bytes, read {consumed}"
-                );
+                bail!("transcript truncated before captured probe boundary: expected {max_bytes} bytes, read {consumed}");
             }
             break;
-        }
-        consumed = consumed.saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+        };
+        let record = record
+            .map_err(|error| match error {
+                agent_sessions::StreamError::Io(error) => anyhow::Error::new(error),
+                error => anyhow::Error::new(error),
+            })
+            .with_context(|| format!("read transcript probe {}", file.display()))?;
+        consumed = record.byte_end;
+        let line = std::str::from_utf8(&record.bytes)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+            .with_context(|| format!("read transcript probe {}", file.display()))?;
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
         let payload = value.get("payload");
         if value.get("type").and_then(serde_json::Value::as_str) == Some("session_meta") {
-            let observed_mode = match payload
-                .and_then(|payload| payload.get("thread_source"))
-                .and_then(serde_json::Value::as_str)
-            {
-                Some("subagent") => CodexSessionMode::Subagent,
-                Some("automation") => CodexSessionMode::Unattended,
-                _ => match payload
-                    .and_then(|payload| payload.get("originator"))
-                    .and_then(serde_json::Value::as_str)
-                {
-                    Some("codex-tui" | "Codex Desktop" | "codex_cli_rs" | "codex_work_desktop") => {
-                        CodexSessionMode::Interactive
-                    }
-                    Some("codex_exec" | "symphony-orchestrator") => CodexSessionMode::Unattended,
-                    _ => CodexSessionMode::Unknown,
-                },
+            let origin = agent_sessions::project_transcript(agent_sessions::Agent::Codex, &value)
+                .meta
+                .origin;
+            let observed_mode = match origin {
+                Some(agent_sessions::Origin::Subagent) => CodexSessionMode::Subagent,
+                Some(agent_sessions::Origin::Exec) => CodexSessionMode::Unattended,
+                Some(agent_sessions::Origin::Ide | agent_sessions::Origin::Interactive) => {
+                    CodexSessionMode::Interactive
+                }
+                _ => CodexSessionMode::Unknown,
             };
             context.codex_session_mode = context.codex_session_mode.merge(observed_mode);
         }

@@ -209,6 +209,12 @@ remem raw messages --host codex-cli --source-root local \
 remem ingest-sessions --root codex-cli:archive=/path/to/sessions --json
 ```
 
+默认扫描 `$CLAUDE_CONFIG_DIR/projects` 和 `$CODEX_HOME/sessions`；未设置时，
+分别使用 `~/.claude` 和 `~/.codex` 下的对应目录。显式设置为空会报错。
+`--root` 仍支持自选目录，批量扫描会跳过下级 `subagents` 目录。
+Codex 会话模式按原生来源判断：IDE 归入交互，明确的 `exec` 即使来自 Desktop
+也归入 `unattended`，subagent 标记优先。来源标签无法证明会话由谁发起。
+
 把同一条 `raw sessions` 摘要中的 `host`、`source_root`、`project` 和
 `session_id` 原样传给 `raw messages`。旧脚本必须补上必填的 `--host`，并把
 `--root LABEL=PATH` 改成 `--root HOST:LABEL=PATH`；`raw reconcile` 使用相同

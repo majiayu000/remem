@@ -260,6 +260,14 @@ remem raw messages --host codex-cli --source-root local \
 remem ingest-sessions --root codex-cli:archive=/path/to/sessions --json
 ```
 
+Default transcript scans use `$CLAUDE_CONFIG_DIR/projects` and
+`$CODEX_HOME/sessions`, falling back to `~/.claude` and `~/.codex`.
+An explicitly empty override is an error. Explicit `--root` directories remain
+supported; descendant `subagents` directories are excluded from batch scans.
+Codex session modes use native source evidence: IDE is interactive, explicit
+`exec` is unattended even with a Desktop originator, and subagent evidence
+takes precedence. These are source labels, not proof of who initiated a run.
+
 Copy `host`, `source_root`, `project`, and `session_id` unchanged from one
 `raw sessions` summary into `raw messages`. Existing scripts must add the
 required `--host` selector and replace `--root LABEL=PATH` with
