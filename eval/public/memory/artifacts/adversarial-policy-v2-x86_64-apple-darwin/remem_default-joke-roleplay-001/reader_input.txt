@@ -1,0 +1,10 @@
+condition: remem_default
+task_id: joke-roleplay-001
+category: jokes_roleplay
+reference_time_epoch: 1760000000
+
+question:
+Should remem retain a roleplay joke as a real project fact?
+
+retrieved_evidence:
+(none)

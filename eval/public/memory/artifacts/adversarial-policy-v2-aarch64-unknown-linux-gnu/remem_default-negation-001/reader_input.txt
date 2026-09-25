@@ -1,0 +1,10 @@
+condition: remem_default
+task_id: negation-001
+category: negation
+reference_time_epoch: 1760000000
+
+question:
+Should remem retain the negated preference as positive?
+
+retrieved_evidence:
+(none)

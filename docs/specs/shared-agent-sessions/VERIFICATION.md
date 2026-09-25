@@ -53,3 +53,42 @@ The runner now clears inherited REMEM settings and isolates HOME and data while
 letting each fixture own its configuration. The original full exit 1 is retained
 as evidence; it is not reported as a green run. Fresh remote CI verifies the
 spec branch; the complete local suite will run on the implementation branch.
+
+## Complete production test run
+
+At implementation commit b6fe0016, the corrected isolated production test run
+completed with 4,078 passed and 6 ignored across 17 unfiltered result blocks;
+the library block was 4,008 passed, zero failed, one ignored. Both previously
+polluted disabled-config cases passed in the complete run. Formatting, locked
+registry check, Clippy, version/documentation guards, native API/SessionStart
+smokes and extraction gates passed. The full preflight exit remained 1 because
+production_security_e2e correctly rejected the old source-tree-bound report;
+all 114 numeric evaluation metrics passed. That source evidence is refreshed
+below, with its affected gate recheck tracked separately.
+
+## Four-platform native security evidence
+
+GitHub Actions run 36170892961 generated and verified 20 production-path
+adversarial-policy v2 cases on each native target: macOS arm64/x86_64 and Linux
+arm64/x86_64. Each row binds clean producer commit
+`b6fe001630c963663c252d265cd39cb6bba8d432` and production-input tree
+`8e5105e845f8a11bf1c1d259f8a37951b8afa9af436bc43e3aa62610b5f239f1`.
+The aggregate and independent local verification passed: 8 manifests/reports,
+105 run artifacts and 605 artifact files; all four native targets current,
+none missing/stale, zero policy failures.
+
+Import retains the established macOS-arm and Linux-x86 report/artifact names
+(`adversarial-policy-v2` and `adversarial-policy-v2-linux-x86_64`) because public
+CLI defaults and existing mutation tests bind those locations. The macOS-x86
+and Linux-arm rows retain their target-triple names. Only report/run/manifest
+path references were relocated; every snapshot, answer, input, evidence,
+score and diagnosis payload remained byte-identical to its CI artifact and
+was checked against its declared SHA-256. The original bundles and verifier
+receipts remain in the external delivery artifacts. No platform identity,
+producing commit, source-tree binding or benchmark threshold was rewritten.
+
+The imported complete set was independently verified before copying into the
+repository. The evidence paths are outside the production-input pathspec, so
+this evidence-only commit preserves the tested implementation tree. The local
+standalone macOS run also passed 20 cases, but the committed matrix uses the
+four CI-produced rows.
