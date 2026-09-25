@@ -1,6 +1,6 @@
 # Shared agent session parsing implementation
 
-Status: Current contract (implementation in progress)
+Status: Current contract (locally verified; rollout pending)
 
 ## Boundaries
 

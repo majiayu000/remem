@@ -1,6 +1,6 @@
 # Shared agent session parsing
 
-Status: Current contract (implementation in progress)
+Status: Current contract (locally verified; rollout pending)
 Date: 2026-09-25
 
 ## Goal

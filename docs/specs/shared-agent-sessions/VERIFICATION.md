@@ -26,7 +26,8 @@ a human initiated a run. First session ID/cwd/branch and raw identity stay local
 
 ## Delivery gates
 
-Runtime full preflight is in progress. Focused tests passed: 8 raw projection/
+Runtime verification completed with the full-run outcomes and final targeted
+rechecks distinguished below. Focused tests passed: 8 raw projection/
 framing, 42 ingestion/identity, 23 Git evidence, 28 raw archive, 25 reconciliation,
 and 2 isolated CLI root tests (128 total). The CLI tests check both valid native
 root overrides, both empty override errors, and no database creation on invalid
@@ -116,3 +117,23 @@ applied. Independent local verification of the final imported set passed:
 8 manifests, 8 reports, 105 runs, 605 artifact files, four current native targets,
 no missing or stale target. Original earlier and final CI bundles remain
 separate external audit artifacts. No further src changes are required.
+
+## Final affected-gate rechecks
+
+After evidence commit b214c87d, the final eval-gates run exited 0 with all 114
+metrics checked and no regressions. Its local technical ship matrix reported
+command_passed, merge_ready and release_ready true. Default-on, cross-host,
+coding-outcome and public-superiority claim gates remain false; these results
+make no such claims and do not mean a merge or release occurred.
+
+The public-claims checker passed against the final independently verified native
+verdict. The three affected fixture tests were repeated against the final
+committed evidence: fixture inventory (60.65 s), baseline summary (60.21 s),
+and missing-platform negative case (45.47 s), all passed. The earlier full
+production suite was not repeated for fixture-only source/evidence updates;
+its 4,078 passes remain implementation evidence, with fresh remote CI covering
+the final PR head. The original full-preflight exit 1 is preserved in the local
+log; its sole stale-security-evidence failure is resolved by these explicit
+rechecks, rather than relabeled as an originally green full run.
+
+Remote merge and publication remain pending integration-owner authorization.
