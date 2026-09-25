@@ -94,3 +94,25 @@ repository. The evidence paths are outside the production-input pathspec, so
 this evidence-only commit preserves the tested implementation tree. The local
 standalone macOS run also passed 20 cases, but the committed matrix uses the
 four CI-produced rows.
+
+## Final producer after fixture-test alignment
+
+The complete matrix required updating two inventory assertions from the old
+6-report/65-run fixture to 8 reports/105 runs/605 artifact files. The existing
+closed-target test now explicitly removes one platform manifest before asserting
+that release compatibility is unavailable. These three affected tests passed.
+Only test source changed in commit
+`3523c3b26a123abda5ae43de6da5ca4433548526`; the already-tested production
+implementation is unchanged. Because the production-input contract includes
+all src bytes, the native matrix was regenerated instead of reusing the earlier
+source-tree claim.
+
+GitHub Actions run 36176826911 passed all four native jobs and the aggregate.
+The final producer is `3523c3b26a123abda5ae43de6da5ca4433548526`, with tree
+`de3ad30bce8295089fce764ddbe493ac1ed43e1f75739ce6900a165f5d6698fa`.
+Every row has 20 recomputed runs, zero policy failures and a clean-source
+attestation. The same canonical path mapping and payload-byte/hash checks were
+applied. Independent local verification of the final imported set passed:
+8 manifests, 8 reports, 105 runs, 605 artifact files, four current native targets,
+no missing or stale target. Original earlier and final CI bundles remain
+separate external audit artifacts. No further src changes are required.
