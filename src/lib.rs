@@ -55,3 +55,6 @@ pub mod truth;
 pub mod user_context;
 pub mod worker;
 pub mod workstream;
+
+#[cfg(test)]
+mod test_http;

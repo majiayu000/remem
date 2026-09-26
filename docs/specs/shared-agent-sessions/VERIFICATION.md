@@ -2,6 +2,16 @@
 
 ## Current closure status (2026-09-26)
 
+The later full local preflight at 4b981aa4 passed every non-production-test
+gate, including all 114 eval metrics, but its production library run ended
+with 4,011 passed, three failed and one ignored. The three failures were in
+HTTP test servers that treated one TCP read as a complete request. Those mocks
+now consume headers plus Content-Length bytes; their assertions are unchanged.
+Two deterministic fragmented/truncated request regressions, 28 embedding tests
+and 11 context retrieval tests pass after the correction. This source change
+supersedes the receipts below until new source-bound native evidence is imported.
+The corrected full production suite and final-head CI remain required.
+
 The user authorized completing the implementation, merge and release closure.
 The sections below retain earlier validation history; their producer commits
 and test totals do not certify the current head.
