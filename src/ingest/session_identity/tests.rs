@@ -1,6 +1,6 @@
 use super::*;
 
-fn temp_transcript(name: &str, content: &str) -> PathBuf {
+pub(super) fn temp_transcript(name: &str, content: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
         "remem-gh871-{name}-{}-{}.jsonl",
         std::process::id(),
@@ -10,7 +10,7 @@ fn temp_transcript(name: &str, content: &str) -> PathBuf {
     path
 }
 
-fn setup_identity_db() -> Connection {
+pub(super) fn setup_identity_db() -> Connection {
     let conn = Connection::open_in_memory().expect("open fixture database");
     crate::migrate::run_migrations(&conn).expect("migrate fixture database");
     conn

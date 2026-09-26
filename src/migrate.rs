@@ -49,6 +49,8 @@ mod tests_schema_drift;
 #[cfg(test)]
 mod tests_session_intent;
 #[cfg(test)]
+mod tests_session_mode_version;
+#[cfg(test)]
 mod tests_session_summary_poisoning;
 #[cfg(test)]
 mod tests_staleness_index;

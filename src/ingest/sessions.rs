@@ -109,16 +109,21 @@ pub(crate) fn configured_scan_roots() -> Result<Vec<ScanRoot>> {
         crate::log::warn("ingest-sessions", "home directory unavailable");
     }
     Ok([
-        (InstallHost::ClaudeCode, roots.claude, "projects"),
-        (InstallHost::CodexCli, roots.codex, "sessions"),
+        (
+            InstallHost::ClaudeCode,
+            roots.claude,
+            "projects",
+            "CLAUDE_CONFIG_DIR",
+        ),
+        (InstallHost::CodexCli, roots.codex, "sessions", "CODEX_HOME"),
     ]
     .into_iter()
-    .filter_map(|(host, root, suffix)| {
+    .filter_map(|(host, root, suffix, override_key)| {
         root.map(|root| ScanRoot {
             host,
             label: SOURCE_ROOT_LOCAL.to_string(),
             path: root.join(suffix),
-            required: false,
+            required: std::env::var_os(override_key).is_some(),
         })
     })
     .collect())

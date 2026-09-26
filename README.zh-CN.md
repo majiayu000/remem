@@ -210,10 +210,14 @@ remem ingest-sessions --root codex-cli:archive=/path/to/sessions --json
 ```
 
 默认扫描 `$CLAUDE_CONFIG_DIR/projects` 和 `$CODEX_HOME/sessions`；未设置时，
-分别使用 `~/.claude` 和 `~/.codex` 下的对应目录。显式设置为空会报错。
+分别使用 `~/.claude` 和 `~/.codex` 下的对应目录。显式设置为空会报错；
+显式指定的会话目录不存在或不可读也会报错，只有未设置时的默认目录可以缺省。
 `--root` 仍支持自选目录，批量扫描会跳过下级 `subagents` 目录。
 Codex 会话模式按原生来源判断：IDE 归入交互，明确的 `exec` 即使来自 Desktop
 也归入 `unattended`，subagent 标记优先。来源标签无法证明会话由谁发起。
+已保存的旧模式会在核对原有分类证据后升级一次；真实的来源冲突仍使整批失败。
+此次新增 v093 数据库列：升级前保留数据库备份，旧二进制无法打开升级后的 schema。
+原始消息身份和导入游标保持不变。
 
 把同一条 `raw sessions` 摘要中的 `host`、`source_root`、`project` 和
 `session_id` 原样传给 `raw messages`。旧脚本必须补上必填的 `--host`，并把
