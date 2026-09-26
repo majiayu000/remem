@@ -2,15 +2,28 @@
 
 ## Current closure status (2026-09-26)
 
-The later full local preflight at 4b981aa4 passed every non-production-test
-gate, including all 114 eval metrics, but its production library run ended
-with 4,011 passed, three failed and one ignored. The three failures were in
-HTTP test servers that treated one TCP read as a complete request. Those mocks
-now consume headers plus Content-Length bytes; their assertions are unchanged.
-Two deterministic fragmented/truncated request regressions, 28 embedding tests
-and 11 context retrieval tests pass after the correction. This source change
-supersedes the receipts below until new source-bound native evidence is imported.
-The corrected full production suite and final-head CI remain required.
+The local preflight at 4b981aa4 passed every non-production-test gate,
+including all 114 eval metrics, but its production library run ended with
+4,011 passed, three failed and one ignored. The failures were in HTTP test
+servers that treated one TCP read as a complete request. Those mocks now
+consume headers plus Content-Length bytes without changing their assertions.
+Two fragmented/truncated request regressions, 28 embedding tests and 11
+context retrieval tests passed after the correction. The later one-line
+test-only module path declaration lets the dependency guard classify that
+fixture; its focused tests, dependency check, formatting and Clippy passed.
+
+Native Actions run [36252423351](https://github.com/majiayu000/remem/actions/runs/36252423351)
+passed four native targets and its aggregate. Its clean producer
+`7390e44972cb4ca5f29a5cadef99fd6c3d65b9b4` binds production-input tree
+`3ea14ece353a1d8f1ee4b8c3b7d395fc94d2b1524ff35f6add5715f9d5da394a`.
+Every target reports 20 recomputed cases and zero policy failures. Downloaded
+receipts and all 480 payload hashes were checked, and both the raw four-target
+root and the canonically relocated root passed independent verification with
+all four targets current and release.ready true. Only manifest, report and run
+path references changed during relocation; other bytes match the CI bundles.
+These technical evidence results do not constitute a merge or publication.
+The corrected full local preflight, production/eval suites and final-head CI
+remain required.
 
 The user authorized completing the implementation, merge and release closure.
 The sections below retain earlier validation history; their producer commits
