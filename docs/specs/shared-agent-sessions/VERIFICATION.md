@@ -1,5 +1,24 @@
 # Migration verification
 
+## Current closure status (2026-09-26)
+
+The user authorized completing the implementation, merge and release closure.
+The sections below retain earlier validation history; their producer commits
+and test totals do not certify the current head.
+
+The final fixture corrections omit v093 together with its deliberately missing
+v071 dependency, open the isolated encrypted CLI database with its generated
+temporary key, and use an octal Unix permission literal. The temporary key has
+a distinct binding so assertion diagnostics continue to print the host override
+name. No runtime behavior or real memory data changes in these corrections.
+The root-test sandbox also uses an atomic sequence: timestamp-only names can
+collide between parallel tests, allowing one fixture's cleanup to delete another.
+
+The reported SessionStart Cargo exit 101 in the old CI log was the expected
+mocked failure inside a passing runner unit test. The actual CI failure was
+Clippy rejecting the non-octal permission literal. Final isolated preflight and
+fresh source-bound native evidence are required before marking this PR ready.
+
 ## Private snapshot parity
 
 2026-09-25, original projector from remem 7f4e144f versus shared-library adapter
@@ -116,7 +135,8 @@ attestation. The same canonical path mapping and payload-byte/hash checks were
 applied. Independent local verification of the final imported set passed:
 8 manifests, 8 reports, 105 runs, 605 artifact files, four current native targets,
 no missing or stale target. Original earlier and final CI bundles remain
-separate external audit artifacts. No further src changes are required.
+separate external audit artifacts. Later fixture corrections supersede this
+source-tree certification and require fresh native evidence.
 
 ## Final affected-gate rechecks
 
@@ -136,4 +156,5 @@ the final PR head. The original full-preflight exit 1 is preserved in the local
 log; its sole stale-security-evidence failure is resolved by these explicit
 rechecks, rather than relabeled as an originally green full run.
 
-Remote merge and publication remain pending integration-owner authorization.
+The integration owner will merge only after the current closure gates pass;
+authorization has already been given. Publication is a separate observed action.

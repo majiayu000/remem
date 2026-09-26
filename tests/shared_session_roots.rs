@@ -1,12 +1,16 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_SANDBOX: AtomicU64 = AtomicU64::new(0);
 
 struct Sandbox(PathBuf);
 impl Sandbox {
     fn new() -> Self {
         let path = std::env::temp_dir().join(format!(
-            "remem-shared-roots-{}-{}",
+            "remem-shared-roots-{}-{}-{}",
             std::process::id(),
+            NEXT_SANDBOX.fetch_add(1, Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -162,7 +166,7 @@ fn unavailable_explicit_roots_fail_without_importing_other_hosts() {
                         std::fs::create_dir_all(broken.join(suffix)).unwrap();
                         std::fs::set_permissions(
                             broken.join(suffix),
-                            std::fs::Permissions::from_mode(0),
+                            std::fs::Permissions::from_mode(0o0),
                         )
                         .unwrap();
                     }
@@ -199,6 +203,14 @@ fn unavailable_explicit_roots_fail_without_importing_other_hosts() {
             assert!(String::from_utf8_lossy(&output.stderr)
                 .contains(broken.join(suffix).to_string_lossy().as_ref()));
             let conn = rusqlite::Connection::open(sandbox.0.join("data/remem.db")).unwrap();
+            // The CLI created an encrypted fixture; open it with its temporary
+            // generated key, without changing process environment or logging it.
+            let raw_key = std::fs::read_to_string(sandbox.0.join("data/.key")).unwrap();
+            let hex = raw_key.trim().strip_prefix("v2:").expect("fixture raw key");
+            assert!(hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()));
+            conn.execute_batch(&format!("PRAGMA key = \"x'{hex}'\";"))
+                .unwrap();
+
             for table in ["raw_session_identities", "raw_messages", "ingest_cursors"] {
                 assert_eq!(
                     conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r
