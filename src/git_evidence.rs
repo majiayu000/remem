@@ -102,23 +102,18 @@ pub(crate) fn from_codex_transcript(
                 })
             }
         };
-        if value.get("type").and_then(Value::as_str) != Some("response_item") {
-            continue;
-        }
-        let Some(payload) = value.get("payload") else {
-            continue;
-        };
-        match payload.get("type").and_then(Value::as_str) {
-            Some("function_call") => match parse_commit_call(payload, fallback_cwd) {
+        match agent_sessions::project_codex_function(&value) {
+            Some(agent_sessions::CodexFunction::Call {
+                call_id,
+                name,
+                arguments,
+            }) => match parse_commit_call(call_id, name, arguments, fallback_cwd) {
                 Ok(Some(call)) => {
                     calls.insert(call.call_id.clone(), call);
                 }
                 Ok(None) => {}
                 Err(error) => {
-                    let call_id = payload
-                        .get("call_id")
-                        .and_then(Value::as_str)
-                        .unwrap_or("<missing>");
+                    let call_id = call_id.unwrap_or("<missing>");
                     crate::log::error(
                         "git-evidence",
                         &format!(
@@ -128,17 +123,14 @@ pub(crate) fn from_codex_transcript(
                     );
                 }
             },
-            Some("function_call_output") => {
-                let Some(call_id) = payload.get("call_id").and_then(Value::as_str) else {
+            Some(agent_sessions::CodexFunction::Output { call_id, output }) => {
+                let Some(call_id) = call_id else {
                     continue;
                 };
                 let Some(call) = calls.remove(call_id) else {
                     continue;
                 };
-                let output = payload
-                    .get("output")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
+                let output = output.and_then(Value::as_str).unwrap_or_default();
                 if !codex_output_succeeded(output) {
                     continue;
                 }
@@ -192,19 +184,20 @@ struct CommitCall {
     cwd: String,
 }
 
-fn parse_commit_call(payload: &Value, fallback_cwd: &str) -> Result<Option<CommitCall>> {
-    let Some(name) = payload.get("name").and_then(Value::as_str) else {
+fn parse_commit_call(
+    call_id: Option<&str>,
+    name: Option<&str>,
+    arguments: Option<&Value>,
+    fallback_cwd: &str,
+) -> Result<Option<CommitCall>> {
+    let Some(name) = name else {
         return Ok(None);
     };
     if !matches!(name, "exec_command" | "shell" | "shell_command") {
         return Ok(None);
     }
-    let call_id = payload
-        .get("call_id")
-        .and_then(Value::as_str)
-        .context("Codex shell function call omitted call_id")?;
-    let raw_arguments = payload
-        .get("arguments")
+    let call_id = call_id.context("Codex shell function call omitted call_id")?;
+    let raw_arguments = arguments
         .and_then(Value::as_str)
         .context("Codex shell function call omitted string arguments")?;
     let arguments: Value =

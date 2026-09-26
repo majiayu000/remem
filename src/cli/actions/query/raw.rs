@@ -124,7 +124,7 @@ fn run_raw_reconcile(
     root_specs: &[String],
     json: bool,
 ) -> Result<()> {
-    let mut roots = crate::ingest::sessions::default_scan_roots();
+    let mut roots = crate::ingest::sessions::configured_scan_roots()?;
     roots.extend(
         root_specs
             .iter()

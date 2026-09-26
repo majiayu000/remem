@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use super::*;
@@ -537,8 +537,7 @@ fn api_provider_call_failure_uses_configured_feature_hash_fallback() -> Result<(
         let addr = listener.local_addr()?;
         let handle = std::thread::spawn(move || -> Result<()> {
             let (mut stream, _) = listener.accept()?;
-            let mut buffer = [0u8; 8192];
-            let _ = stream.read(&mut buffer)?;
+            let _request = crate::test_http::read_request(&mut stream)?;
             let body = "provider unavailable";
             let response = format!(
                 "HTTP/1.1 500 Internal Server Error\r\ncontent-length: {}\r\n\r\n{}",
@@ -641,9 +640,7 @@ fn backfill_target_uses_provider_returned_profile() -> Result<()> {
         let addr = listener.local_addr()?;
         let handle = std::thread::spawn(move || -> Result<String> {
             let (mut stream, _) = listener.accept()?;
-            let mut buffer = [0u8; 8192];
-            let read = stream.read(&mut buffer)?;
-            let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+            let request = crate::test_http::read_request(&mut stream)?;
             let body = r#"{"data":[{"embedding":[0.1,0.2,0.3,0.4]}],"model":"normalized-model"}"#;
             let response = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
@@ -681,9 +678,7 @@ fn api_provider_status_uses_provider_returned_profile() -> Result<()> {
         let addr = listener.local_addr()?;
         let handle = std::thread::spawn(move || -> Result<String> {
             let (mut stream, _) = listener.accept()?;
-            let mut buffer = [0u8; 8192];
-            let read = stream.read(&mut buffer)?;
-            let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+            let request = crate::test_http::read_request(&mut stream)?;
             let body = r#"{"data":[{"embedding":[0.1,0.2,0.3,0.4]}],"model":"normalized-model"}"#;
             let response = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
@@ -730,9 +725,7 @@ fn openai_provider_calls_configured_embeddings_endpoint() -> Result<()> {
         let addr = listener.local_addr()?;
         let handle = std::thread::spawn(move || -> Result<String> {
             let (mut stream, _) = listener.accept()?;
-            let mut buffer = [0u8; 8192];
-            let read = stream.read(&mut buffer)?;
-            let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+            let request = crate::test_http::read_request(&mut stream)?;
             let body = r#"{"data":[{"embedding":[0.4,0.5,0.6]}],"model":"test-embedding"}"#;
             let response = format!(
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",

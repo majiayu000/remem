@@ -1,6 +1,6 @@
 [package]
 name = "remem-ai"
-version = "0.6.97"
+version = "0.6.98"
 default-run = "remem"
 edition = "2021"
 description = "Local-first coding agent memory for Claude Code and OpenAI Codex"
@@ -33,6 +33,7 @@ name = "remem-hook"
 path = "src/bin/remem_hook.rs"
 
 [dependencies]
+agent-sessions = "0.2.0"
 clap = { version = "4", features = ["derive", "string"] }
 rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl", "backup", "serialize"] }
 sqlite-vec = "0.1.9"

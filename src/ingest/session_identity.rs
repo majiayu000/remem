@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::io::{BufRead, Read};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -8,6 +8,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::identity::InstallHost;
 
+mod mode;
 mod rekey;
 pub(crate) use rekey::{rekey_legacy_rows, RekeyReport};
 
@@ -32,6 +33,7 @@ impl IdentitySource {
 pub(crate) struct TranscriptPlan {
     pub host: Option<InstallHost>,
     pub session_mode: String,
+    legacy_session_mode: String,
     pub source_root: String,
     pub path: PathBuf,
     pub transcript_path: String,
@@ -185,6 +187,12 @@ fn probe_inner(
     Ok(TranscriptPlan {
         host,
         session_mode: session_mode.to_string(),
+        legacy_session_mode: if host == Some(InstallHost::CodexCli) {
+            context.legacy_codex_session_mode.as_str()
+        } else {
+            "unknown"
+        }
+        .to_string(),
         source_root: source_root.to_string(),
         path: file.to_path_buf(),
         transcript_path: file.to_string_lossy().to_string(),
@@ -228,9 +236,9 @@ fn host_from_transcript_path(path: &Path) -> Option<InstallHost> {
 }
 
 pub(crate) fn upsert_claim(conn: &Connection, plan: &TranscriptPlan, now: i64) -> Result<i64> {
-    let existing: Option<(i64, Option<String>, String, i64, i64)> = conn
+    let existing: Option<(Option<String>, String, i64, i64, i64)> = conn
         .query_row(
-            "SELECT id, host, session_mode, observed_mtime_ns, observed_size_bytes
+            "SELECT host, session_mode, session_mode_version, observed_mtime_ns, observed_size_bytes
              FROM raw_session_identities
              WHERE source_root = ?1 AND transcript_path = ?2",
             params![plan.source_root, plan.transcript_path],
@@ -246,7 +254,7 @@ pub(crate) fn upsert_claim(conn: &Connection, plan: &TranscriptPlan, now: i64) -
         )
         .optional()?;
     let proposed_host = plan.host.map(InstallHost::as_db_value);
-    if let Some((_, Some(existing_host), _, _, _)) = existing.as_ref() {
+    if let Some((Some(existing_host), _, _, _, _)) = existing.as_ref() {
         if proposed_host.is_some_and(|host| host != existing_host) {
             bail!(
                 "transcript host provenance conflict for {:?}: stored host is {:?}, proposed host is {:?}",
@@ -256,19 +264,10 @@ pub(crate) fn upsert_claim(conn: &Connection, plan: &TranscriptPlan, now: i64) -
             );
         }
     }
-    if let Some((_, _, existing_mode, _, _)) = existing.as_ref() {
-        if existing_mode != "unknown"
-            && plan.session_mode != "unknown"
-            && existing_mode != &plan.session_mode
-        {
-            bail!(
-                "transcript session-mode provenance conflict for {:?}: stored mode is {:?}, proposed mode is {:?}",
-                plan.transcript_path,
-                existing_mode,
-                plan.session_mode
-            );
-        }
-    }
+    let (session_mode, session_mode_version) = match existing.as_ref() {
+        Some((_, stored_mode, version, _, _)) => mode::resolve(stored_mode, *version, plan)?,
+        None => (plan.session_mode.clone(), 1),
+    };
     let tuple_changed = existing
         .as_ref()
         .map(|(_, _, _, mtime, size)| {
@@ -277,18 +276,15 @@ pub(crate) fn upsert_claim(conn: &Connection, plan: &TranscriptPlan, now: i64) -
         .unwrap_or(true);
     let changed = conn.execute(
         "INSERT INTO raw_session_identities (
-            source_root, transcript_path, host, session_mode, fallback_session_id,
+            source_root, transcript_path, host, session_mode, session_mode_version, fallback_session_id,
             canonical_session_id, project, legacy_project, status,
             contract_version, observed_mtime_ns, observed_size_bytes,
             first_seen_at_epoch, last_seen_at_epoch
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'active', 0, ?9, ?10, ?11, ?11)
+         ) VALUES (?1, ?2, ?3, ?4, ?13, ?5, ?6, ?7, ?8, 'active', 0, ?9, ?10, ?11, ?11)
          ON CONFLICT(source_root, transcript_path) DO UPDATE SET
             host = COALESCE(raw_session_identities.host, excluded.host),
-            session_mode = CASE
-                WHEN raw_session_identities.session_mode = 'unknown'
-                    THEN excluded.session_mode
-                ELSE raw_session_identities.session_mode
-            END,
+            session_mode = excluded.session_mode,
+            session_mode_version = excluded.session_mode_version,
             fallback_session_id = excluded.fallback_session_id,
             project = excluded.project,
             legacy_project = excluded.legacy_project,
@@ -309,7 +305,7 @@ pub(crate) fn upsert_claim(conn: &Connection, plan: &TranscriptPlan, now: i64) -
             plan.source_root,
             plan.transcript_path,
             plan.host.map(InstallHost::as_db_value),
-            plan.session_mode,
+            session_mode,
             plan.fallback_session_id,
             plan.canonical_session_id,
             plan.project,
@@ -317,7 +313,8 @@ pub(crate) fn upsert_claim(conn: &Connection, plan: &TranscriptPlan, now: i64) -
             plan.observed_mtime_ns,
             plan.observed_size_bytes,
             now,
-            tuple_changed
+            tuple_changed,
+            session_mode_version
         ],
     )?;
     if changed != 1 {
@@ -592,6 +589,7 @@ struct TranscriptContext {
     cwd: Option<String>,
     branch: Option<String>,
     codex_session_mode: CodexSessionMode,
+    legacy_codex_session_mode: CodexSessionMode,
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -632,51 +630,57 @@ fn probe_context(file: &Path, byte_limit: Option<u64>) -> Result<TranscriptConte
     let mut context = TranscriptContext::default();
     let handle = std::fs::File::open(file)
         .with_context(|| format!("open transcript probe {}", file.display()))?;
-    let mut reader = std::io::BufReader::new(handle);
     let max_bytes = byte_limit.unwrap_or(u64::MAX);
+    let mut reader = agent_sessions::read_raw_from(
+        std::io::BufReader::new(handle.take(max_bytes)),
+        &agent_sessions::RawReadOptions {
+            max_read_bytes: None,
+            max_line_bytes: None,
+            ..Default::default()
+        },
+    )
+    .with_context(|| format!("open transcript probe {}", file.display()))?;
     let mut consumed = 0_u64;
     for _ in 0..CONTEXT_PROBE_LINES {
         if consumed >= max_bytes {
             break;
         }
-        let mut line = String::new();
-        let read = reader
-            .by_ref()
-            .take(max_bytes - consumed)
-            .read_line(&mut line)
-            .with_context(|| format!("read transcript probe {}", file.display()))?;
-        if read == 0 {
+        let Some(record) = reader.next() else {
             if byte_limit.is_some() && consumed < max_bytes {
-                bail!(
-                    "transcript truncated before captured probe boundary: expected {max_bytes} bytes, read {consumed}"
-                );
+                bail!("transcript truncated before captured probe boundary: expected {max_bytes} bytes, read {consumed}");
             }
             break;
-        }
-        consumed = consumed.saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+        };
+        let record = record
+            .map_err(|error| match error {
+                agent_sessions::StreamError::Io(error) => anyhow::Error::new(error),
+                error => anyhow::Error::new(error),
+            })
+            .with_context(|| format!("read transcript probe {}", file.display()))?;
+        consumed = record.byte_end;
+        let line = std::str::from_utf8(&record.bytes)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+            .with_context(|| format!("read transcript probe {}", file.display()))?;
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
         let payload = value.get("payload");
         if value.get("type").and_then(serde_json::Value::as_str) == Some("session_meta") {
-            let observed_mode = match payload
-                .and_then(|payload| payload.get("thread_source"))
-                .and_then(serde_json::Value::as_str)
-            {
-                Some("subagent") => CodexSessionMode::Subagent,
-                Some("automation") => CodexSessionMode::Unattended,
-                _ => match payload
-                    .and_then(|payload| payload.get("originator"))
-                    .and_then(serde_json::Value::as_str)
-                {
-                    Some("codex-tui" | "Codex Desktop" | "codex_cli_rs" | "codex_work_desktop") => {
-                        CodexSessionMode::Interactive
-                    }
-                    Some("codex_exec" | "symphony-orchestrator") => CodexSessionMode::Unattended,
-                    _ => CodexSessionMode::Unknown,
-                },
+            let origin = agent_sessions::project_transcript(agent_sessions::Agent::Codex, &value)
+                .meta
+                .origin;
+            let observed_mode = match origin {
+                Some(agent_sessions::Origin::Subagent) => CodexSessionMode::Subagent,
+                Some(agent_sessions::Origin::Exec) => CodexSessionMode::Unattended,
+                Some(agent_sessions::Origin::Ide | agent_sessions::Origin::Interactive) => {
+                    CodexSessionMode::Interactive
+                }
+                _ => CodexSessionMode::Unknown,
             };
             context.codex_session_mode = context.codex_session_mode.merge(observed_mode);
+            context.legacy_codex_session_mode = context
+                .legacy_codex_session_mode
+                .merge(mode::legacy(payload));
         }
         context.session_id = context.session_id.or_else(|| {
             value

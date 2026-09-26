@@ -20,7 +20,10 @@ fn verifier_emits_runtime_authority_verdict_with_consumed_byte_hashes() -> Resul
 
 #[test]
 fn authority_verdict_has_closed_four_target_release_set() -> Result<()> {
-    let report = verify_benchmark_artifacts(BenchVerifyOptions::new(PathBuf::from("eval/public"), "eval/claims/registry.json"))?;
+    let root = copy_public_fixture("closed-release-target-set")?;
+    fs::remove_file(root.join("memory/manifests/adversarial-policy-v2.json"))?;
+    let report =
+        verify_benchmark_artifacts(BenchVerifyOptions::new(root, "eval/claims/registry.json"))?;
     let verdict = serde_json::to_value(&report)?;
     assert_eq!(
         verdict["authority_verdict"]["release"]["required_targets"],
@@ -32,6 +35,9 @@ fn authority_verdict_has_closed_four_target_release_set() -> Result<()> {
         ])
     );
     assert_eq!(verdict["authority_verdict"]["release"]["ready"], false);
+    assert!(verdict["authority_verdict"]["release"]["missing_targets"]
+        .as_array()
+        .is_some_and(|targets| targets.contains(&serde_json::json!("aarch64-apple-darwin"))));
     Ok(())
 }
 

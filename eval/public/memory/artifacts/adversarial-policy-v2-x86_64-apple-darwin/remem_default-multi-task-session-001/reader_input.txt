@@ -1,0 +1,10 @@
+condition: remem_default
+task_id: multi-task-session-001
+category: multi_task_sessions
+reference_time_epoch: 1760000000
+
+question:
+Should remem merge two unrelated tasks from one session into one memory?
+
+retrieved_evidence:
+(none)

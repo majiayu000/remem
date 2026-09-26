@@ -23,6 +23,7 @@ mod v089;
 mod v090;
 mod v091;
 mod v092;
+mod v093;
 pub(in crate::migrate) use self::{v079::V079_SCHEMA_INVARIANTS, v080::V080_SCHEMA_INVARIANTS};
 pub(in crate::migrate) use v067::V067_SCHEMA_INVARIANTS;
 pub(in crate::migrate) use v068::V068_SCHEMA_INVARIANTS;
@@ -46,6 +47,7 @@ pub(in crate::migrate) use v089::V089_SCHEMA_INVARIANTS;
 pub(in crate::migrate) use v090::V090_SCHEMA_INVARIANTS;
 pub(in crate::migrate) use v091::V091_SCHEMA_INVARIANTS;
 pub(in crate::migrate) use v092::V092_SCHEMA_INVARIANTS;
+pub(in crate::migrate) use v093::V093_SCHEMA_INVARIANTS;
 pub(in crate::migrate) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
     SchemaInvariant::table(20, "memory_fts_all_status", "memories_fts"),
     SchemaInvariant::trigger(20, "memory_fts_all_status", "memories_ai"),

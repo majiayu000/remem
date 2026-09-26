@@ -1,6 +1,6 @@
 use anyhow::Context;
 use rusqlite::{params, Connection};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
@@ -174,9 +174,7 @@ impl FailingEmbeddingServer {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
                         stream.set_nonblocking(false)?;
-                        let mut buffer = [0u8; 8192];
-                        let read = stream.read(&mut buffer)?;
-                        let request = String::from_utf8_lossy(&buffer[..read]);
+                        let request = crate::test_http::read_request(&mut stream)?;
                         if request.contains(tracked_input) {
                             calls_for_thread.fetch_add(1, Ordering::SeqCst);
                         }

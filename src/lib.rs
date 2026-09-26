@@ -55,3 +55,7 @@ pub mod truth;
 pub mod user_context;
 pub mod worker;
 pub mod workstream;
+
+#[cfg(test)]
+#[path = "test_http.rs"]
+mod test_http;

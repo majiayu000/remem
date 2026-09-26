@@ -106,6 +106,7 @@ const IMPLEMENTATION_INPUTS: &[&str] = &[
     "src/migrate/schema_drift/invariants/v089.rs",
     "src/migrate/schema_drift/invariants/v090.rs",
     "src/migrate/schema_drift/invariants/v091.rs",
+    "src/migrate/schema_drift/invariants/v093.rs",
     "src/migrate/state.rs",
     "src/migrate/transition.rs",
     "src/migrate/types.rs",
@@ -281,6 +282,7 @@ const MIGRATION_SQL_INPUTS: &[&str] = &[
     "src/migrations/v090_scope_cleanup_receipt.sql",
     "src/migrations/v091_raw_session_host.sql",
     "src/migrations/v092_session_intent_display.sql",
+    "src/migrations/v093_raw_session_mode_version.sql",
 ];
 
 #[derive(Debug, Clone, Serialize)]

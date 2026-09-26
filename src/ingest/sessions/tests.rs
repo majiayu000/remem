@@ -1,6 +1,8 @@
 use super::*;
 use rusqlite::Connection;
 
+#[path = "tests/mode_upgrade.rs"]
+mod mode_upgrade;
 #[path = "tests/since.rs"]
 mod since;
 
@@ -774,3 +776,6 @@ fn unreadable_discovery_entry_is_isolated_and_batch_continues() {
 
 #[path = "tests/transactional.rs"]
 mod transactional;
+
+#[path = "tests/discovery.rs"]
+mod discovery;

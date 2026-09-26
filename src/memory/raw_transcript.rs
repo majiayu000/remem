@@ -1,4 +1,4 @@
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufReader, Read};
 
 use serde_json::Value;
 
@@ -124,32 +124,33 @@ fn stream_reader(
     expected_bytes: Option<u64>,
     visit: &mut impl FnMut(&str, bool),
 ) -> std::io::Result<()> {
-    let mut reader = BufReader::new(reader);
+    let options = agent_sessions::RawReadOptions {
+        // The caller already caps the input. Validate length after framing so
+        // an unterminated short tail still releases the preceding pending row.
+        stop_at_byte: None,
+        max_read_bytes: None,
+        max_line_bytes: None,
+        ..Default::default()
+    };
+    let reader = agent_sessions::read_raw_from(BufReader::new(reader), &options)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
     let mut pending = None;
-    let mut total_bytes = 0_u64;
-
-    loop {
-        let mut next = Vec::new();
-        let bytes_read = reader.read_until(b'\n', &mut next)?;
-        if bytes_read == 0 {
-            break;
-        }
-        total_bytes = total_bytes.checked_add(bytes_read as u64).ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, "transcript size overflow")
+    let mut total_bytes = 0;
+    for record in reader {
+        let record = record.map_err(|error| match error {
+            agent_sessions::StreamError::Io(error) => error,
+            error => std::io::Error::new(std::io::ErrorKind::InvalidData, error),
         })?;
-        if let Some(line) = pending.replace(next) {
+        total_bytes = record.byte_end;
+        if let Some(line) = pending.replace(record.bytes) {
             visit_line(&line, false, visit)?;
         }
     }
-
     if let Some(expected) = expected_bytes {
         if total_bytes != expected {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                format!(
-                    "transcript truncated before captured boundary: expected {expected} bytes, read {total_bytes}"
-                ),
-            ));
+            return Err(std::io::Error::new(std::io::ErrorKind::UnexpectedEof, format!(
+                "transcript truncated before captured boundary: expected {expected} bytes, read {total_bytes}"
+            )));
         }
     }
     if let Some(line) = pending {
@@ -177,92 +178,88 @@ fn visit_line(
 }
 
 pub(crate) fn parse_transcript_message(value: &Value) -> Option<ParsedTranscriptMessage> {
-    let created_at_epoch = transcript_timestamp_epoch(value);
-    match value.get("type").and_then(Value::as_str)? {
-        "user" => Some(ParsedTranscriptMessage {
-            role: ROLE_USER,
-            text: extract_content_text(&value["message"]["content"]),
-            created_at_epoch,
-        }),
-        "assistant" => Some(ParsedTranscriptMessage {
-            role: ROLE_ASSISTANT,
-            text: extract_content_text(&value["message"]["content"]),
-            created_at_epoch,
-        }),
-        "response_item" => parse_codex_response_item(value),
-        _ => None,
-    }
-}
-
-fn parse_codex_response_item(value: &Value) -> Option<ParsedTranscriptMessage> {
-    let payload = value.get("payload")?;
-    if payload.get("type").and_then(Value::as_str) != Some("message") {
-        return None;
-    }
+    let message = agent_sessions::project_conversation(value)?;
+    let role = match message.role {
+        agent_sessions::Role::User => ROLE_USER,
+        agent_sessions::Role::Assistant => ROLE_ASSISTANT,
+        _ => return None,
+    };
     Some(ParsedTranscriptMessage {
-        role: transcript_role(payload.get("role").and_then(Value::as_str)?)?,
-        text: extract_content_text(&payload["content"]),
-        created_at_epoch: transcript_timestamp_epoch(value),
+        role,
+        text: message.text,
+        created_at_epoch: message.created_at_epoch,
     })
 }
 
-fn transcript_role(role: &str) -> Option<&'static str> {
-    match role {
-        "user" => Some(ROLE_USER),
-        "assistant" => Some(ROLE_ASSISTANT),
-        _ => None,
-    }
-}
-
-fn extract_content_text(content: &Value) -> String {
-    if let Some(array) = content.as_array() {
-        let parts: Vec<String> = array
-            .iter()
-            .filter_map(|entry| match entry.get("type").and_then(Value::as_str) {
-                Some("text" | "input_text" | "output_text") => entry
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
-                _ => None,
-            })
-            .collect();
-        return parts.join("\n");
-    }
-    if let Some(text) = content.as_str() {
-        return text.to_string();
-    }
-    String::new()
-}
-
 pub(crate) fn transcript_timestamp_epoch(value: &Value) -> Option<i64> {
-    value
-        .get("timestamp")
-        .or_else(|| value.get("created_at"))
-        .or_else(|| value.get("createdAt"))
-        .or_else(|| {
-            value
-                .get("payload")
-                .and_then(|payload| payload.get("timestamp"))
-        })
-        .and_then(parse_timestamp_value)
-}
-
-fn parse_timestamp_value(value: &Value) -> Option<i64> {
-    if let Some(epoch) = value.as_i64() {
-        return Some(epoch);
-    }
-    let text = value.as_str()?.trim();
-    if let Ok(epoch) = text.parse::<i64>() {
-        return Some(epoch);
-    }
-    chrono::DateTime::parse_from_rfc3339(text)
-        .map(|datetime| datetime.timestamp())
-        .ok()
+    agent_sessions::tolerant_timestamp_epoch(value)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Catches eager delivery of the pending final row on short captured reads.
+    #[test]
+    fn short_capture_withholds_pending_record() {
+        let mut rows = Vec::new();
+        let error = stream_reader(&b"one\r\ntwo"[..], Some(20), &mut |line, final_row| {
+            rows.push((line.to_owned(), final_row));
+        })
+        .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+        assert_eq!(
+            error.to_string(),
+            "transcript truncated before captured boundary: expected 20 bytes, read 8"
+        );
+        assert_eq!(rows, vec![("one".to_owned(), false)]);
+    }
+
+    // Catches dropping empty physical rows or accepting invalid UTF-8 lossily.
+    #[test]
+    fn raw_adapter_preserves_empty_rows_and_rejects_invalid_utf8() {
+        let mut rows = Vec::new();
+        stream_reader(&b"\r\nlast\r"[..], None, &mut |line, final_row| {
+            rows.push((line.to_owned(), final_row));
+        })
+        .unwrap();
+        assert_eq!(
+            rows,
+            vec![(String::new(), false), ("last".to_owned(), true)]
+        );
+        let mut rows = Vec::new();
+        let error = stream_reader(&b"ok\n\xff\n"[..], None, &mut |line, final_row| {
+            rows.push((line.to_owned(), final_row));
+        })
+        .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(rows, vec![("ok".to_owned(), false)]);
+    }
+
+    // Catches strict timestamp fallback, ignored metadata or altered block joining.
+    #[test]
+    fn tolerant_projection_retains_native_message_policy() {
+        let value = serde_json::json!({"type":"user", "timestamp":null, "created_at":123,
+            "isMeta":true, "message":{"content":[{"type":"input_text","text":"a"},
+                {"type":"image","text":"ignored"},{"type":"output_text","text":"b"},
+                {"type":"text","text":4}]}});
+        assert_eq!(
+            parse_transcript_message(&value),
+            Some(ParsedTranscriptMessage {
+                role: ROLE_USER,
+                text: "a\nb".into(),
+                created_at_epoch: None,
+            })
+        );
+        assert_eq!(
+            parse_transcript_message(&serde_json::json!({"type":"assistant", "createdAt":" -5 "})),
+            Some(ParsedTranscriptMessage {
+                role: ROLE_ASSISTANT,
+                text: String::new(),
+                created_at_epoch: Some(-5)
+            })
+        );
+    }
 
     #[test]
     fn parses_legacy_claude_message_shape() {
