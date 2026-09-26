@@ -2,36 +2,33 @@
 
 ## Current closure status (2026-09-26)
 
-The local preflight at 4b981aa4 passed every non-production-test gate,
-including all 114 eval metrics, but its production library run ended with
-4,011 passed, three failed and one ignored. The failures were in HTTP test
-servers that treated one TCP read as a complete request. Those mocks now
-consume headers plus Content-Length bytes without changing their assertions.
-Two fragmented/truncated request regressions, 28 embedding tests and 11
-context retrieval tests passed after the correction. The later one-line
-test-only module path declaration lets the dependency guard classify that
-fixture; its focused tests, dependency check, formatting and Clippy passed.
+The full local preflight at `2aac8286` passed all 29 checks, including the
+production Cargo suite (4,016 passed, zero failed, one ignored). Exact-head
+CI run [36253853909](https://github.com/majiayu000/remem/actions/runs/36253853909)
+then found two eval-only stale fingerprint checks: the graph-decision SQL
+bundle omitted registered migration v093, and its checked-in report still
+bound older implementation inputs. Source producer `f97e85e3` adds the v093
+SQL and schema invariant to the fingerprint inputs and regenerates the report.
+All six focused graph-decision fingerprint tests, formatting and all-target
+Clippy passed. Full final preflight, eval tests and exact-head CI remain gates.
 
-Native Actions run [36252423351](https://github.com/majiayu000/remem/actions/runs/36252423351)
+Native Actions run [36260044237](https://github.com/majiayu000/remem/actions/runs/36260044237)
 passed four native targets and its aggregate. Its clean producer
-`7390e44972cb4ca5f29a5cadef99fd6c3d65b9b4` binds production-input tree
-`3ea14ece353a1d8f1ee4b8c3b7d395fc94d2b1524ff35f6add5715f9d5da394a`.
+`f97e85e30619e1be34d980fe4d019415bc7f65fd` binds production-input tree
+`21e90c35def22f407557ba904809d58e7e97b2ae06e6706f21aeef301ce40b1e`.
 Every target reports 20 recomputed cases and zero policy failures. Downloaded
 receipts and all 480 payload hashes were checked, and both the raw four-target
 root and the canonically relocated root passed independent verification with
 all four targets current and release.ready true. Only manifest, report and run
 path references changed during relocation; other bytes match the CI bundles.
 These technical evidence results do not constitute a merge or publication.
-The corrected full local preflight, production/eval suites and final-head CI
-remain required.
-
-The user authorized completing the implementation, merge and release closure.
 The sections below retain earlier validation history; their producer commits
 and test totals do not certify the current head.
 
-The final fixture corrections omit v093 together with its deliberately missing
-v071 dependency, open the isolated encrypted CLI database with its generated
-temporary key, and use an octal Unix permission literal. The temporary key has
+The deliberately broken v071 fixture omits v093 together with its missing
+v071 dependency. Other fixture corrections open the isolated encrypted CLI
+database with its generated temporary key, and use an octal Unix permission
+literal. The temporary key has
 a distinct binding so assertion diagnostics continue to print the host override
 name. No runtime behavior or real memory data changes in these corrections.
 The root-test sandbox also uses an atomic sequence: timestamp-only names can
