@@ -16,8 +16,29 @@ collide between parallel tests, allowing one fixture's cleanup to delete another
 
 The reported SessionStart Cargo exit 101 in the old CI log was the expected
 mocked failure inside a passing runner unit test. The actual CI failure was
-Clippy rejecting the non-octal permission literal. Final isolated preflight and
-fresh source-bound native evidence are required before marking this PR ready.
+Clippy rejecting the non-octal permission literal.
+
+Source producer `f789fee9a9dfc732dcdc78774edbeff74ab282be` passed 160 migration
+checks and all four parallel CLI root checks, plus formatting, locked Cargo
+check, migration-concern and version-sync guards. The current debug executable
+passed isolated install dry-run/install/status/context; doctor reported only the
+expected missing capture heartbeat on a fresh store. SessionStart smoke emitted
+225 bytes on the first invocation and zero on its duplicate.
+
+Native Actions run [36246237376](https://github.com/majiayu000/remem/actions/runs/36246237376)
+passed all four targets and the aggregate. Every target binds that clean source
+producer and production-input tree
+`34175f433c0180c3f7bc959c36de4e3e18b40cc77e483bc1e33ec363754139a0`,
+with 20 recomputed cases and zero policy failures. Import checked each receipt,
+report digest and all 120 payload files per target; canonical path relocation
+preserved payload bytes. Independent local verification of the staged complete
+matrix passed with all four current targets and no missing/stale targets.
+
+The evidence/docs-only import retains that production-input tree. Final full
+preflight, production/eval tests and exact-head CI are separate merge gates;
+use the completed checks on [PR #1091](https://github.com/majiayu000/remem/pull/1091)
+and the integration closure record for their outcomes. Earlier counts below
+remain historical and must not be substituted for those final gates.
 
 ## Private snapshot parity
 
