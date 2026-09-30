@@ -363,7 +363,8 @@
               <button class="copy-command" type="button" data-copy-command>
                 <span data-i18n="copy">Copy</span>
               </button>
-              <pre><code id="install-code">curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | sh</code></pre>
+              <pre><code id="install-code">curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | env REMEM_NO_CONFIG=1 sh
+~/.local/bin/remem install --target codex</code></pre>
             </div>
           </div>
           <aside class="security-panel reveal">
