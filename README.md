@@ -129,11 +129,15 @@ by hand.
 | Need | Built-in files | remem |
 |---|---|---|
 | Stable project rules | Excellent | Supported |
-| Automatic session capture | Manual upkeep | Hook-driven |
+| Evolving context | Handwritten instructions; Claude Code auto memory also writes notes | Hook-driven session capture and background distillation |
 | Search older rationale | Limited by loaded text | Curated and raw search |
 | Branch, time, and staleness handling | Manual | Built in |
 | Provenance and injection audit | Git history | Database-backed audit |
 | Review, suppression, and lifecycle governance | Manual edits | First-class commands |
+
+[Claude Code auto memory](https://code.claude.com/docs/en/memory) already saves
+notes automatically. The distinction is the memory surface and its evidence,
+retrieval, and lifecycle controls, rather than automatic persistence alone.
 
 Use both. Keep concise rules in native files and let remem retain the long tail
 of decisions, failures, evidence, and changing project state.

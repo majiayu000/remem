@@ -54,6 +54,7 @@
             <p class="lead">remem connects to Codex CLI with SessionStart and Stop hooks, then exposes project memory through MCP tools and CLI search.</p>
             <div class="hero-actions">
               <a class="button primary" href="#install">Install for Codex CLI</a>
+              <a class="button ghost" href="#verify">Verify recall</a>
               <a class="button ghost" href="https://github.com/majiayu000/remem/blob/main/docs/installation.md#configure-a-host" rel="noreferrer">Codex setup</a>
             </div>
             <ul class="trust-list">
@@ -105,6 +106,36 @@ remem doctor
 remem search "last decision"</code></pre></div>
         </div>
       </section>
+      <section class="section" id="verify">
+        <div class="shell two-col">
+          <div class="section-head">
+            <p class="eyebrow">First recall</p>
+            <h2>Verify project memory after restarting Codex.</h2>
+            <p>Open a terminal in the repository whose history you want to inspect.
+              Check installation health, then search for a decision you actually
+              made there:</p>
+            <div class="code-card"><pre><code>remem doctor
+remem status
+remem search "deployment decision" --branch main --explain</code></pre></div>
+          </div>
+          <div>
+            <p>Use your relevant branch instead of <code>main</code>. If a result is
+              returned, use its memory ID to inspect the content and evidence:</p>
+            <div class="code-card"><pre><code>remem show &lt;memory-id&gt;
+remem why &lt;memory-id&gt;
+remem doctor truth --cwd .</code></pre></div>
+            <p>Confirm the project, source, and staleness before relying on a
+              result. Search is an inspection surface and may include labeled
+              <code>legacy_unverified</code> memories that default startup context
+              excludes. The truth doctor is a read-only diagnostic.</p>
+            <p>An empty search does not establish a broken install or a healthy
+              capture pipeline. Check the reported executable paths, hook/MCP
+              registration, database health, and worker state in
+              <a href="https://github.com/majiayu000/remem/blob/main/docs/installation.md#verify-an-installation" rel="noreferrer">installation verification</a>.
+              Capture and background distillation are separate stages.</p>
+          </div>
+        </div>
+      </section>
       <section class="section band">
         <div class="shell two-col">
           <div class="section-head">
@@ -112,10 +143,22 @@ remem search "last decision"</code></pre></div>
             <h2>Common Codex CLI memory questions.</h2>
           </div>
           <div class="flow">
-            <div class="flow-row"><span>Scope</span><strong>Project</strong><p>Memory is project-scoped so unrelated repositories do not leak into recall.</p></div>
-            <div class="flow-row"><span>Tools</span><strong>MCP</strong><p>Codex can retrieve memories mid-session through remem MCP tools.</p></div>
-            <div class="flow-row"><span>Noise</span><strong>Gated</strong><p>Codex uses strict duplicate-injection gating to avoid repeated startup output.</p></div>
+            <div class="flow-row"><span>Scope</span><strong>Which project is searched?</strong><p>Run the walkthrough from the intended repository. Project scope and branch filters matter when checking a missing decision; inspect a result before treating it as current truth.</p></div>
+            <div class="flow-row"><span>Files</span><strong>Do I keep AGENTS.md?</strong><p>Yes. Keep stable project instructions in native files. remem adds searchable engineering history; see <a href="../compare/built-in-memory/#native-memory">native memory and remem</a> and the <a href="../mcp-memory-server/">MCP interface</a>.</p></div>
+            <div class="flow-row"><span>Startup</span><strong>Why is startup quiet?</strong><p>Duplicate-injection gating can suppress repeated context. Use explicit search and the memory evidence view instead of treating silence as proof that history is absent.</p></div>
           </div>
+        </div>
+      </section>
+      <section class="section">
+        <div class="shell">
+          <p>Use the <a href="https://github.com/majiayu000/remem/releases/latest" rel="noreferrer">current release</a>
+            and <a href="https://github.com/majiayu000/remem/blob/main/docs/README.md" rel="noreferrer">documentation index</a>
+            for supported commands. Report reproducible installation problems through
+            <a href="https://github.com/majiayu000/remem/issues" rel="noreferrer">GitHub issues</a>
+            with the version and redacted diagnostics. Read the
+            <a href="https://github.com/majiayu000/remem/blob/main/SECURITY.md" rel="noreferrer">security policy</a>
+            for sensitive reports and the <a href="https://github.com/majiayu000/remem/blob/main/LICENSE" rel="noreferrer">MIT license</a>
+            for reuse.</p>
         </div>
       </section>
     </main>
