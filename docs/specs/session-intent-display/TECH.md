@@ -145,7 +145,10 @@ Parse rules:
 - Memory candidate promotion remains independent.
 - Parse and persist through `src/session_rollup/{parse,persist}.rs`, retaining
   `session_row_id` so API and host-bound raw-session lists see the same label.
-- Every new range inherits the latest summary's explicit `override` label,
+- Every new range selects the latest eligible summary with
+  `LABEL_ROW_ELIGIBLE_SQL`, ordered by
+  `COALESCE(session_intent_updated_at_epoch, created_at_epoch) DESC, id DESC`,
+  and inherits its explicit `override` label,
   including NULL intent/topic, source, and original override timestamp. The
   lookup and insert share a transaction; later model output cannot undo a
   correction or explicit clear. Absent or invalid model fields otherwise
@@ -248,7 +251,14 @@ Asia/Shanghai midnight. Bind these filters into continuation cursors.
 
 Add native authenticated API preview/apply endpoints for a bounded batch of
 canonical session/workstream IDs. Preview validates and redacts fields using
-the shared intent/topic contract. Apply requires its preview token, explicit
+the shared intent/topic contract. After joining shell line continuations,
+each sensitive option or `Bearer` prefix must share a line with its value in
+both `session_topic` and `reason`. Otherwise preview returns HTTP 400
+`session_intent_cross_line_sensitive_argument` before writing a preview audit
+snapshot, issuing a token, or changing labels. The error response contains
+only the code and an instruction to put each option and value on the same line;
+it does not echo the rejected value. Same-line values are redacted, with
+unrelated rationale preserved. Apply requires its preview token, explicit
 confirmation, and reason; recheck the full before-state within the write
 transaction and reject stale or missing targets atomically. Existing
 `events` records preview snapshots and applied before/after values with reason

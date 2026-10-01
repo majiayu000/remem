@@ -684,6 +684,18 @@ Authenticated `POST /api/v1/session-intent/preview` accepts 1–50 canonical
 `session_intent` / `session_topic`, and a nonempty reason. It returns
 `preview_token`, `changes` with Before/After fields, and `expires_at_epoch`.
 Preview records a redacted audit snapshot without changing labels.
+After shell line continuations are joined, sensitive options or `Bearer`
+prefixes must share a line with their values in both `session_topic` and
+`reason`. For example, a topic containing `curl --oauth2-bearer\nexample-value`
+returns HTTP 400:
+
+```json
+{"error":{"code":"session_intent_cross_line_sensitive_argument","message":"Put each sensitive option and its value on the same line before previewing."}}
+```
+
+This rejection does not echo the submitted value, issue a preview token,
+write an audit entry, or change labels. Put the option and value on one line
+before retrying; same-line sensitive values are redacted before preview.
 `POST /api/v1/session-intent/apply` accepts only that token and `confirm: true`,
 rechecks the reviewed state, updates atomically, and returns `audit_id`.
 Tokens expire after 15 minutes and can apply once. Missing summaries, hidden

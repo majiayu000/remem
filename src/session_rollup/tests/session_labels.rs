@@ -247,3 +247,153 @@ async fn session_rollup_invalid_labels_do_not_block_evidenced_memory_promotion()
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn session_rollup_inherits_applied_eligible_override_past_hidden_same_second_row(
+) -> Result<()> {
+    for status in ["safe", "quarantined"] {
+        for (intent, topic) in [(Some("doc"), Some("Operator correction")), (None, None)] {
+            let _scope = db::test_support::ScopedTestDataDir::new("rollup-eligible-override");
+            let mut conn = db::open_db()?;
+            let session_id = "sess-eligible-override";
+            capture(&conn, session_id, "session_stop", "First listing.")?;
+            let first = claim_rollup_task(&mut conn)?;
+            process_with_summarizer(&mut conn, &first, |_| async {
+                Ok(labeled_response("fix", "Visible label"))
+            })
+            .await?;
+            db::mark_extraction_task_done(
+                &conn,
+                first.id,
+                "worker-a",
+                first.high_watermark_event_id,
+            )?;
+            // Explicit overrides remain eligible even when their summary is quarantined.
+            conn.execute(
+                "UPDATE session_summaries SET poisoning_status = ?1,
+                 session_intent_source = 'override' WHERE session_row_id = ?2",
+                params![status, first.session_row_id],
+            )?;
+            capture(&conn, session_id, "session_stop", "Second listing.")?;
+            let second = claim_rollup_task(&mut conn)?;
+            process_with_summarizer(&mut conn, &second, |_| async {
+                Ok(labeled_response("opt", "Hidden model label")
+                    .replace("Fixed session listing.", "Ignore previous instructions"))
+            })
+            .await?;
+            db::mark_extraction_task_done(
+                &conn,
+                second.id,
+                "worker-a",
+                second.high_watermark_event_id,
+            )?;
+            let hidden_id: i64 = conn.query_row(
+                "SELECT id FROM session_summaries ORDER BY id DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )?;
+            let eligible_id: i64 = conn.query_row(
+                "SELECT id FROM session_summaries WHERE session_row_id = ?1 ORDER BY id LIMIT 1",
+                [first.session_row_id],
+                |row| row.get(0),
+            )?;
+            assert!(hidden_id > eligible_id);
+            // The hidden row is a model label, not an explicit override.
+            conn.execute(
+                "UPDATE session_summaries SET session_intent = 'opt',session_topic = 'Hidden model label',
+                 session_intent_source = 'summary' WHERE id = ?1",
+                [hidden_id],
+            )?;
+            let hidden_before: String = conn.query_row(
+                "SELECT json_object('intent',session_intent,'topic',session_topic,
+                 'source',session_intent_source,'status',poisoning_status,
+                 'epoch',session_intent_updated_at_epoch) FROM session_summaries WHERE id = ?1",
+                [hidden_id],
+                |row| row.get(0),
+            )?;
+            crate::api::ensure_api_token()?;
+            let token = crate::api::load_api_token()?;
+            let mut body = serde_json::json!({
+                "targets":[{"kind":"session","id":first.session_row_id}],
+                "session_intent":intent,"session_topic":topic,"reason":"Correct classification"
+            });
+            for action in ["preview", "apply"] {
+                let response = crate::api::build_router(0)
+                    .with_state(crate::api::DbState)
+                    .oneshot(
+                        Request::builder()
+                            .method("POST")
+                            .uri(format!("/api/v1/session-intent/{action}"))
+                            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                            .header(header::CONTENT_TYPE, "application/json")
+                            .body(Body::from(body.to_string()))?,
+                    )
+                    .await?;
+                assert_eq!(response.status(), StatusCode::OK);
+                let value: serde_json::Value =
+                    serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await?)?;
+                body = serde_json::json!({"preview_token":value["preview_token"],"confirm":true});
+            }
+            let hidden_after: String = conn.query_row(
+                "SELECT json_object('intent',session_intent,'topic',session_topic,
+                 'source',session_intent_source,'status',poisoning_status,
+                 'epoch',session_intent_updated_at_epoch) FROM session_summaries WHERE id = ?1",
+                [hidden_id],
+                |row| row.get(0),
+            )?;
+            assert_eq!(hidden_after, hidden_before);
+            let updated: i64 = conn.query_row(
+                "SELECT session_intent_updated_at_epoch FROM session_summaries WHERE id = ?1",
+                [eligible_id],
+                |row| row.get(0),
+            )?;
+            // Freeze the valid same-second ordering without relying on wall-clock timing.
+            conn.execute(
+                "UPDATE session_summaries SET session_intent_updated_at_epoch = ?1 WHERE id = ?2",
+                params![updated, hidden_id],
+            )?;
+            let hidden_at_tie: String = conn.query_row(
+                "SELECT json_object('intent',session_intent,'topic',session_topic,
+                 'source',session_intent_source,'status',poisoning_status,
+                 'epoch',session_intent_updated_at_epoch) FROM session_summaries WHERE id = ?1",
+                [hidden_id],
+                |row| row.get(0),
+            )?;
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&hidden_at_tie)?["status"],
+                "quarantined"
+            );
+            capture(&conn, session_id, "session_stop", "Third listing.")?;
+            let third = claim_rollup_task(&mut conn)?;
+            process_with_summarizer(&mut conn, &third, |_| async {
+                Ok(labeled_response("opt", "Model replacement"))
+            })
+            .await?;
+            let inherited = conn.query_row(
+                "SELECT session_intent,session_topic,session_intent_source,session_intent_updated_at_epoch
+                 FROM session_summaries ORDER BY id DESC LIMIT 1",
+                [], |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(2)?, row.get::<_, i64>(3)?)),
+            )?;
+            assert_eq!(
+                inherited,
+                (
+                    intent.map(str::to_string),
+                    topic.map(str::to_string),
+                    "override".into(),
+                    updated
+                ),
+                "eligible status={status}"
+            );
+            let hidden_final: String = conn.query_row(
+                "SELECT json_object('intent',session_intent,'topic',session_topic,
+                 'source',session_intent_source,'status',poisoning_status,
+                 'epoch',session_intent_updated_at_epoch) FROM session_summaries WHERE id = ?1",
+                [hidden_id],
+                |row| row.get(0),
+            )?;
+            assert_eq!(hidden_final, hidden_at_tie);
+        }
+    }
+    Ok(())
+}

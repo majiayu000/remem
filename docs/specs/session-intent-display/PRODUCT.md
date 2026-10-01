@@ -204,3 +204,9 @@ Before/After table, then explicitly confirms Apply. Editing the proposal
 invalidates the preview. A changed target rejects the whole apply as stale.
 The transaction preserves workstream identity and aliases and records its
 before/after values and reason in the existing governance audit.
+
+Keep sensitive options or `Bearer` prefixes with their values on the same
+logical line in a proposed topic or reason. A cross-line value rejects preview
+with HTTP 400 `session_intent_cross_line_sensitive_argument`, without a preview
+token, audit entry, or label change. Put each option and value on one line and
+preview again; same-line sensitive values are redacted.

@@ -204,6 +204,15 @@ memory types or workstream identity. See the
 [session intent contract](docs/specs/session-intent-display/PRODUCT.md) and
 [implementation epic #1065](https://github.com/majiayu000/remem/issues/1065).
 
+Session/workstream label corrections use authenticated
+`POST /api/v1/session-intent/preview`, then explicit confirmation through
+`POST /api/v1/session-intent/apply`. Keep each sensitive option or `Bearer`
+prefix and its value on the same logical line in the proposed topic and reason.
+For example, `curl --oauth2-bearer\nexample-value` is rejected with HTTP 400
+`session_intent_cross_line_sensitive_argument`; put the option and value on one
+line before retrying. Rejection creates no preview token or audit entry and
+changes no labels. Same-line sensitive values are redacted before preview.
+
 ## Everyday workflows
 
 ### Recall and inspect

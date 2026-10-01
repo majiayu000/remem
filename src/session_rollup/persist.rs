@@ -2,6 +2,7 @@ use anyhow::{ensure, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db;
+use crate::db::summary_poisoning::LABEL_ROW_ELIGIBLE_SQL;
 use crate::memory::poisoning::{scan_generated_surfaces, scan_source_events, SurfacePatternMatch};
 
 use super::parse::RollupOutput;
@@ -101,11 +102,13 @@ pub(super) fn persist_session_rollup(
     let tx = conn.transaction()?;
     let previous_label = tx
         .query_row(
-            "SELECT session_intent, session_topic, session_intent_source,
+            &format!(
+                "SELECT session_intent, session_topic, session_intent_source,
                     session_intent_updated_at_epoch
-             FROM session_summaries WHERE session_row_id = ?1
+             FROM session_summaries WHERE session_row_id = ?1 AND {LABEL_ROW_ELIGIBLE_SQL}
              ORDER BY COALESCE(session_intent_updated_at_epoch, created_at_epoch) DESC, id DESC
-             LIMIT 1",
+             LIMIT 1"
+            ),
             [session_row_id],
             |row| {
                 Ok((
