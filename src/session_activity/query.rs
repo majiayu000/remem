@@ -232,13 +232,14 @@ fn load_raw_session_activity(
     if !is_visible(&visible) {
         return Ok(None);
     }
-    let safe_topic = safe_optional_text(raw_topic.map(str::to_owned));
-    let label = crate::memory::session_label::render_from_stored(
-        Some(created_epoch),
-        summary.as_ref().and_then(|s| s.0.as_deref()),
-        safe_topic.as_deref(),
-        summary.as_ref().and_then(|s| s.2.as_deref()),
-        None,
+    let label = crate::adapter::common::redact_session_label(
+        crate::memory::session_label::render_from_stored(
+            Some(created_epoch),
+            summary.as_ref().and_then(|s| s.0.as_deref()),
+            raw_topic,
+            summary.as_ref().and_then(|s| s.2.as_deref()),
+            None,
+        ),
     );
     let item = conn.query_row(
         "WITH bounded AS MATERIALIZED (
@@ -466,7 +467,11 @@ fn bounded_visible_text(value: String) -> String {
 }
 
 fn safe_optional_text(value: Option<String>) -> Option<String> {
-    value.map(|text| crate::adapter::common::redact_sensitive_text(&text))
+    value.map(|text| safe_text(&text))
+}
+
+fn safe_text(text: &str) -> String {
+    crate::adapter::common::redact_sensitive_text(text)
 }
 
 fn load_actions(conn: &Connection, turn_id: i64) -> Result<(Vec<TurnAction>, bool)> {
@@ -500,7 +505,7 @@ fn load_actions(conn: &Connection, turn_id: i64) -> Result<(Vec<TurnAction>, boo
                     index,
                     kind,
                     tool_name: safe_optional_text(tool_name),
-                    summary: crate::adapter::common::redact_sensitive_text(&summary),
+                    summary: safe_text(&summary),
                     event_row_id,
                     files,
                     outcome,

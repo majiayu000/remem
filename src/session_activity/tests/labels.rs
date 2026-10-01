@@ -128,6 +128,70 @@ fn activity_label_redacts_before_render_and_suppresses_before_filter() -> Result
 }
 
 #[test]
+fn activity_labels_redact_projected_topics_and_keep_expansion_out_of_abstain() -> Result<()> {
+    for (topic, expected) in [
+        (
+            "Investigate token=abc123".to_string(),
+            "Investigate token=[REDACTED]".to_string(),
+        ),
+        (
+            "curl --oauth2-bearer tiny-token".to_string(),
+            "curl --oauth2-bearer [REDACTED]".to_string(),
+        ),
+        (
+            "--oauth2-bearer tiny-token".to_string(),
+            "--oauth2-bearer [REDACTED]".to_string(),
+        ),
+        ("-u alice:pw".to_string(), "-u [REDACTED]".to_string()),
+        (
+            format!("{} token=x", ("Review label ".repeat(5) + "results")),
+            format!(
+                "{} token=[REDACTED]",
+                ("Review label ".repeat(5) + "results")
+            ),
+        ),
+    ] {
+        let conn = setup()?;
+        insert_message(&conn, 1, "user", "request", 1_735_660_800)?;
+        conn.execute(
+            "INSERT INTO session_summaries
+             (memory_session_id, project, session_row_id, created_at_epoch,
+              session_intent, session_topic, session_intent_source)
+             VALUES ('session-1', '/repo', 1, 1735660800, 'fix', ?1, 'summary')",
+            [topic],
+        )?;
+        let page =
+            list_activity_sessions(&conn, None, Some("fix"), None, None, None, 10, |_| true)?;
+        assert_eq!(page.data.len(), 1);
+        assert_eq!(
+            page.data[0].session_topic.as_deref(),
+            Some(expected.as_str())
+        );
+        assert_eq!(
+            page.data[0].display_label.as_deref(),
+            Some(format!("0101｜fix｜{expected}").as_str())
+        );
+        let encoded = serde_json::to_string(&page)?;
+        for secret in ["abc123", "tiny-token", "token=x", "alice:pw"] {
+            assert!(!encoded.contains(secret), "{encoded}");
+        }
+        assert!(list_activity_sessions(
+            &conn,
+            None,
+            Some("abstain"),
+            None,
+            None,
+            None,
+            10,
+            |_| true
+        )?
+        .data
+        .is_empty());
+    }
+    Ok(())
+}
+
+#[test]
 fn activity_labels_skip_quarantined_model_rows_and_keep_override() -> Result<()> {
     let conn = setup()?;
     let created = 1_735_660_800;

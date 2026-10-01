@@ -17,6 +17,28 @@ use crate::observe::short_path;
 #[cfg(test)]
 mod tests;
 
+/// Project a rendered label without revalidating expanded redaction markers.
+pub(crate) fn redact_session_label(
+    mut label: crate::memory::session_label::SessionLabelView,
+) -> crate::memory::session_label::SessionLabelView {
+    if let Some(topic) = label.session_topic.as_deref() {
+        // Preserve whole-line assignment redaction before applying the stricter
+        // inline/option redactor. Rendered labels already passed topic validation.
+        let safe_topic = redact_projected_sensitive_text(&redact_sensitive_text(topic));
+        label.display_label = label
+            .display_label
+            .map(|text| text.replacen(topic, &safe_topic, 1));
+        label.display_title = label.display_title.replacen(topic, &safe_topic, 1);
+        label.session_topic = Some(safe_topic);
+    }
+    label.display_label = label
+        .display_label
+        .as_deref()
+        .map(redact_projected_sensitive_text);
+    label.display_title = redact_projected_sensitive_text(&label.display_title);
+    label
+}
+
 const ACTION_TOOLS: &[&str] = &[
     "Write",
     "Edit",

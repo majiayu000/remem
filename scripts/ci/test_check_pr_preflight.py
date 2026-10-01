@@ -1,8 +1,10 @@
 import contextlib
 import io
 import sys
+import tempfile
 import unittest
 from unittest import mock
+from pathlib import Path
 
 import check_pr_preflight
 
@@ -35,9 +37,11 @@ def assert_sessionstart_smoke_registration(commands: list[list[str]]) -> None:
 class PreflightCargoTestThreadsTests(unittest.TestCase):
     def run_main(self, *arguments: str) -> list[list[str]]:
         commands: list[list[str]] = []
+        self.calls: list[tuple[str, list[str], object]] = []
 
-        def fake_run(name: str, command: list[str], **_: object) -> check_pr_preflight.StepResult:
+        def fake_run(name: str, command: list[str], **kwargs: object) -> check_pr_preflight.StepResult:
             commands.append(command)
+            self.calls.append((name, command, kwargs.get("cwd", check_pr_preflight.ROOT)))
             return check_pr_preflight.StepResult(name, "PASS")
 
         def fake_expected_failure(
@@ -45,8 +49,10 @@ class PreflightCargoTestThreadsTests(unittest.TestCase):
             command: list[str],
             expected_text: str,
             log_path: object,
+            **kwargs: object,
         ) -> check_pr_preflight.StepResult:
             commands.append(command)
+            self.calls.append((name, command, kwargs.get("cwd", check_pr_preflight.ROOT)))
             return check_pr_preflight.StepResult(name, "PASS")
 
         with (
@@ -58,9 +64,75 @@ class PreflightCargoTestThreadsTests(unittest.TestCase):
                 side_effect=fake_expected_failure,
             ),
             mock.patch.object(check_pr_preflight, "add_pr_body_steps"),
+            mock.patch("check_pr_preflight.shutil.copytree"),
         ):
             self.assertEqual(check_pr_preflight.main(), 0)
         return commands
+
+    def test_all_three_eval_gates_use_generated_ignored_workspace(self) -> None:
+        self.run_main()
+
+        generators = [call for call in self.calls if call[1][:5] == ["cargo", "run", "--locked", "--", "bench"]]
+        gates = [call for call in self.calls if call[1][:4] == ["cargo", "run", "--", "eval-gates"]]
+        self.assertEqual(len(generators), 1)
+        self.assertEqual(len(gates), 3)
+        workspace = generators[0][2]
+        self.assertTrue(workspace.is_relative_to(check_pr_preflight.ROOT / "target"))
+        self.assertTrue(all(call[2] == workspace for call in gates))
+        other_calls = [call for call in self.calls if call not in generators + gates]
+        self.assertTrue(all(call[2] == check_pr_preflight.ROOT for call in other_calls))
+
+    def test_benchmark_failure_prevents_using_stale_evidence(self) -> None:
+        commands: list[list[str]] = []
+        def fake_run(name: str, command: list[str], **kwargs: object) -> check_pr_preflight.StepResult:
+            commands.append(command)
+            status = "FAIL" if command[:5] == ["cargo", "run", "--locked", "--", "bench"] else "PASS"
+            return check_pr_preflight.StepResult(name, status)
+        with (
+            mock.patch.object(sys, "argv", ["check_pr_preflight.py"]),
+            mock.patch.object(check_pr_preflight, "run", side_effect=fake_run),
+            mock.patch.object(check_pr_preflight, "run_expected_failure") as negative,
+            mock.patch.object(check_pr_preflight, "add_pr_body_steps"),
+            mock.patch("check_pr_preflight.shutil.copytree"),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(check_pr_preflight.main(), 1)
+        self.assertFalse(any(command[:4] == ["cargo", "run", "--", "eval-gates"] for command in commands))
+        self.assertTrue(any(command[:2] == ["cargo", "test"] for command in commands))
+        negative.assert_not_called()
+
+    def test_missing_repository_target_is_created_for_custom_cargo_target(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_tmp:
+            root = Path(raw_tmp)
+            with (
+                mock.patch.object(check_pr_preflight, "ROOT", root),
+                mock.patch.dict("os.environ", {"CARGO_TARGET_DIR": str(root / "elsewhere")}),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                self.run_main()
+            self.assertTrue((root / "target").is_dir())
+
+    def test_unknown_platform_reports_failure_and_runs_independent_tests(self) -> None:
+        commands: list[list[str]] = []
+        output = io.StringIO()
+        def fake_run(name: str, command: list[str], **kwargs: object) -> check_pr_preflight.StepResult:
+            commands.append(command)
+            return check_pr_preflight.StepResult(name, "PASS")
+        with (
+            mock.patch.object(sys, "argv", ["check_pr_preflight.py"]),
+            mock.patch.object(sys, "platform", "linux"),
+            mock.patch("check_pr_preflight.platform.machine", return_value="riscv64"),
+            mock.patch.object(check_pr_preflight, "run", side_effect=fake_run),
+            mock.patch.object(check_pr_preflight, "run_expected_failure") as negative,
+            mock.patch.object(check_pr_preflight, "add_pr_body_steps"),
+            mock.patch("check_pr_preflight.shutil.copytree"),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(check_pr_preflight.main(), 1)
+        self.assertIn("unsupported platform: linux/riscv64", output.getvalue())
+        self.assertTrue(any(command[:2] == ["cargo", "test"] for command in commands))
+        self.assertFalse(any(command[:5] == ["cargo", "run", "--locked", "--", "bench"] for command in commands))
+        negative.assert_not_called()
 
     def test_default_command_caps_rust_test_harness_at_four_threads(self) -> None:
         commands = self.run_main()

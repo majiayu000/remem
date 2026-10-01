@@ -260,6 +260,70 @@ fn list_sessions_redacts_secret_topics_before_deriving_display_label() {
 }
 
 #[test]
+fn list_sessions_redacts_projected_labels_without_losing_expanded_topics() {
+    for (topic, expected) in [
+        (
+            "Investigate token=abc123".to_string(),
+            "Investigate token=[REDACTED]".to_string(),
+        ),
+        (
+            "curl --oauth2-bearer tiny-token".to_string(),
+            "curl --oauth2-bearer [REDACTED]".to_string(),
+        ),
+        (
+            "--oauth2-bearer tiny-token".to_string(),
+            "--oauth2-bearer [REDACTED]".to_string(),
+        ),
+        ("-u alice:pw".to_string(), "-u [REDACTED]".to_string()),
+        (
+            format!("{} token=x", ("Review label ".repeat(5) + "results")),
+            format!(
+                "{} token=[REDACTED]",
+                ("Review label ".repeat(5) + "results")
+            ),
+        ),
+    ] {
+        let conn = setup_conn();
+        insert_at_epoch(
+            &conn,
+            "s-projected",
+            "/proj",
+            "repair listing",
+            SHANGHAI_NEW_YEAR,
+        );
+        identify_raw_sessions(&conn, "codex-cli");
+        let session_row_id = seed_host_project_session(
+            &conn,
+            "codex-cli",
+            "/proj",
+            "s-projected",
+            SHANGHAI_NEW_YEAR,
+        );
+        conn.execute(
+            "INSERT INTO session_summaries
+             (memory_session_id, project, session_row_id, created_at_epoch,
+              session_intent, session_topic, session_intent_source)
+             VALUES ('s-projected', '/proj', ?1, ?2, 'fix', ?3, 'summary')",
+            params![session_row_id, SHANGHAI_NEW_YEAR, topic],
+        )
+        .unwrap();
+        let sessions = list_project(&conn, "/proj");
+        assert_eq!(
+            sessions[0].session_topic.as_deref(),
+            Some(expected.as_str())
+        );
+        assert_eq!(
+            sessions[0].display_label.as_deref(),
+            Some(format!("0101｜fix｜{expected}").as_str())
+        );
+        let encoded = serde_json::to_string(&sessions).unwrap();
+        for secret in ["abc123", "tiny-token", "token=x", "alice:pw"] {
+            assert!(!encoded.contains(secret), "{encoded}");
+        }
+    }
+}
+
+#[test]
 fn list_sessions_does_not_attach_summary_from_another_host() {
     let conn = setup_conn();
     insert_at_epoch(

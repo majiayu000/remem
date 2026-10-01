@@ -1,6 +1,112 @@
 use super::*;
 
 #[tokio::test]
+async fn activity_rest_labels_redact_projected_topics_and_preserve_intent_filter(
+) -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-activity-label-redaction");
+    let conn = db::open_db()?;
+    let capture = db::record_captured_event(
+        &conn,
+        &db::CaptureEventInput {
+            host: "codex-cli",
+            session_id: "label-read",
+            project: "/label-read",
+            cwd: None,
+            event_type: "message",
+            role: Some("user"),
+            tool_name: None,
+            content: "repair labels",
+            task_kind: None,
+        },
+    )?;
+    let session_row_id: i64 = conn.query_row(
+        "SELECT session_row_id FROM captured_events WHERE id = ?1",
+        [capture.event_row_id],
+        |row| row.get(0),
+    )?;
+    conn.execute(
+        "INSERT INTO raw_session_identities
+         (source_root, transcript_path, host, fallback_session_id, canonical_session_id,
+          project, legacy_project, status, observed_mtime_ns, observed_size_bytes,
+          first_seen_at_epoch, last_seen_at_epoch)
+         VALUES ('local', '/tmp/label-read.jsonl', 'codex-cli', 'label-read', 'label-read',
+                 '/label-read', 'label-read', 'active', 1, 1, 1, 1)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO raw_messages
+         (session_id, project, role, content, content_hash, source, created_at_epoch,
+          source_root, transcript_identity_id, transcript_record_ordinal)
+         VALUES ('label-read', '/label-read', 'user', 'repair labels', 'label-read-hash',
+                 'transcript', 1735660800, 'local', ?1, 1)",
+        [conn.last_insert_rowid()],
+    )?;
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, session_row_id, created_at_epoch,
+          session_intent, session_topic, session_intent_source)
+         VALUES ('label-read', '/label-read', ?1, 1735660800, 'fix', 'Safe topic', 'summary')",
+        [session_row_id],
+    )?;
+    crate::api::ensure_api_token()?;
+    let token = crate::api::load_api_token()?;
+    let app = crate::api::build_router(0).with_state(DbState);
+    for (topic, expected) in [
+        (
+            "Investigate token=abc123".to_string(),
+            "Investigate token=[REDACTED]".to_string(),
+        ),
+        (
+            "curl --oauth2-bearer tiny-token".to_string(),
+            "curl --oauth2-bearer [REDACTED]".to_string(),
+        ),
+        (
+            "--oauth2-bearer tiny-token".to_string(),
+            "--oauth2-bearer [REDACTED]".to_string(),
+        ),
+        ("-u alice:pw".to_string(), "-u [REDACTED]".to_string()),
+        (
+            format!("{} token=x", ("Review label ".repeat(5) + "results")),
+            format!(
+                "{} token=[REDACTED]",
+                ("Review label ".repeat(5) + "results")
+            ),
+        ),
+    ] {
+        conn.execute("UPDATE session_summaries SET session_topic = ?1", [&topic])?;
+        for filter in ["fix", "abstain"] {
+            let response = app
+                .clone()
+                .oneshot(authorized_request(
+                    Method::GET,
+                    &format!("/api/v1/session-activity/sessions?session_intent={filter}"),
+                    &token,
+                    Body::empty(),
+                ))
+                .await?;
+            assert_eq!(response.status(), StatusCode::OK);
+            let payload: Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await?)?;
+            if filter == "abstain" {
+                assert_eq!(payload["data"], serde_json::json!([]));
+                continue;
+            }
+            assert_eq!(payload["data"].as_array().unwrap().len(), 1);
+            assert_eq!(payload["data"][0]["session_topic"], expected);
+            assert_eq!(
+                payload["data"][0]["display_label"],
+                format!("0101｜fix｜{expected}")
+            );
+            let encoded = payload.to_string();
+            for secret in ["abc123", "tiny-token", "token=x", "alice:pw"] {
+                assert!(!encoded.contains(secret), "{encoded}");
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn session_activity_routes_project_list_detail_and_report_stats() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("api-session-activity");
     let conn = db::open_db()?;

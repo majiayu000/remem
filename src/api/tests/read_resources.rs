@@ -91,48 +91,83 @@ async fn every_resource_returns_real_safe_list_and_detail_projection() -> anyhow
 }
 
 #[tokio::test]
-async fn session_intent_labels_redact_topics_before_deriving_display_fields() -> anyhow::Result<()>
-{
+async fn session_intent_labels_redact_projected_topics_after_rendering() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("api-session-intent-redaction");
     let fixture = insert_fixture("intent-redaction")?;
     let conn = db::open_db()?;
-    let topic = "token=label-secret-token contact label-private@example.com";
     conn.execute(
         "INSERT INTO session_summaries
          (memory_session_id, project, session_row_id, request, created_at_epoch,
           session_intent, session_topic, session_intent_source)
          VALUES ('intent-redaction', 'intent-redaction-project', ?1, 'safe',
                  1735660800, 'fix', ?2, 'summary')",
-        params![fixture.session_id, topic],
-    )?;
-    conn.execute(
-        "UPDATE workstreams SET session_intent = 'fix', session_topic = ?2,
-         session_intent_source = 'summary' WHERE id = ?1",
-        params![fixture.workstream_id, topic],
+        params![fixture.session_id, "Safe topic"],
     )?;
     crate::api::ensure_api_token()?;
     let token = crate::api::load_api_token()?;
     let app = super::super::build_router(0).with_state(DbState);
-    for (route, id) in [
-        ("/api/v1/sessions", fixture.session_id),
-        ("/api/v1/workstreams", fixture.workstream_id),
+    for (topic, expected) in [
+        (
+            "Investigate token=abc123".to_string(),
+            "Investigate token=[REDACTED]".to_string(),
+        ),
+        (
+            "curl --oauth2-bearer tiny-token".to_string(),
+            "curl --oauth2-bearer [REDACTED]".to_string(),
+        ),
+        (
+            "--oauth2-bearer tiny-token".to_string(),
+            "--oauth2-bearer [REDACTED]".to_string(),
+        ),
+        ("-u alice:pw".to_string(), "-u [REDACTED]".to_string()),
+        (
+            format!("{} token=x", ("Review label ".repeat(5) + "results")),
+            format!(
+                "{} token=[REDACTED]",
+                ("Review label ".repeat(5) + "results")
+            ),
+        ),
+        (
+            "token=label-secret-token contact label-private@example.com".to_string(),
+            "token=[REDACTED]".to_string(),
+        ),
     ] {
-        for uri in [route.to_owned(), format!("{route}/{id}")] {
-            let (status, response) = get_json(&app, &uri, &token).await?;
-            assert_eq!(status, StatusCode::OK);
-            let encoded = response.to_string();
-            assert!(!encoded.contains("label-secret-token"), "{uri}: {encoded}");
-            assert!(
-                !encoded.contains("label-private@example.com"),
-                "{uri}: {encoded}"
-            );
-            let item = if response["data"].is_array() {
-                &response["data"][0]
-            } else {
-                &response["data"]
-            };
-            assert_eq!(item["session_intent"], "fix");
-            assert!(item["display_label"].is_string());
+        conn.execute("UPDATE session_summaries SET session_topic = ?1", [&topic])?;
+        conn.execute(
+            "UPDATE workstreams SET session_intent = 'fix', session_topic = ?2,
+         session_intent_source = 'summary', title = ?2 WHERE id = ?1",
+            params![fixture.workstream_id, topic],
+        )?;
+        for (route, id) in [
+            ("/api/v1/sessions", fixture.session_id),
+            ("/api/v1/workstreams", fixture.workstream_id),
+        ] {
+            for uri in [route.to_owned(), format!("{route}/{id}")] {
+                let (status, response) = get_json(&app, &uri, &token).await?;
+                assert_eq!(status, StatusCode::OK);
+                let encoded = response.to_string();
+                let item = if response["data"].is_array() {
+                    &response["data"][0]
+                } else {
+                    &response["data"]
+                };
+                assert_eq!(item["session_intent"], "fix");
+                assert_eq!(item["session_topic"], expected);
+                assert!(item["display_label"]
+                    .as_str()
+                    .unwrap()
+                    .ends_with(&format!("｜fix｜{expected}")));
+                for secret in [
+                    "abc123",
+                    "tiny-token",
+                    "token=x",
+                    "alice:pw",
+                    "label-secret-token",
+                    "label-private@example.com",
+                ] {
+                    assert!(!encoded.contains(secret), "{uri}: {encoded}");
+                }
+            }
         }
     }
     Ok(())

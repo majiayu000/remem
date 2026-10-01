@@ -5,7 +5,7 @@ use super::keys::{
 };
 use super::redact_token;
 
-pub(super) fn redact_tokens(
+pub(crate) fn redact_tokens(
     line: &str,
     redact_sensitive_options: bool,
     preserve_filesystem_paths: bool,

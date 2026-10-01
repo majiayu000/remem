@@ -4,6 +4,8 @@
 
 ### Added
 - Staged source version `0.6.100` binds session-intent preview and apply to the eligible summary shown by session listings, leaving hidden quarantined summaries unchanged.
+- Staged source version `0.6.99` redacts embedded credentials in raw session, REST session/workstream, and activity labels after rendering, preserving valid topics when redaction expands their length.
+- Staged source version `0.6.99` redacts embedded secrets in session intent preview topics and reasons before audit and apply (#1093).
 - Staged source version `0.6.98` uses shared agent-sessions framing and native projections while preserving raw archive identity, captured boundaries and commit evidence policy; transcript scanning honors `CLAUDE_CONFIG_DIR` and `CODEX_HOME`.
 - Staged source version `0.6.97` exposes audited project identity aliases through `remem project alias` preview, apply, list, and revoke commands so a worktree's saved memories can be found from its main checkout.
 - Staged source version `0.6.96` redacts workstream secrets on the MCP/CLI query path, including list JSON envelopes, short inline credential assignments, and space-separated sensitive options, while preserving ordinary filesystem project paths so projected topics and labels never expose raw credential-like values.

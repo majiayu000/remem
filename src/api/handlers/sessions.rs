@@ -7,10 +7,11 @@ use serde::Serialize;
 
 use super::super::cursor::CursorKind;
 use super::super::read_resources::{
-    detail_resource, list_resource, redact_bounded, redact_optional, ReadResourceParams,
-    ReadResourceSpec, ResourceProjectionPolicy, SafeResourceRef,
+    detail_resource, list_resource, redact_bounded, ReadResourceParams, ReadResourceSpec,
+    ResourceProjectionPolicy, SafeResourceRef,
 };
 use super::super::types::DbState;
+use crate::adapter::common::redact_session_label;
 use crate::db::summary_poisoning::LABEL_ROW_ELIGIBLE_SQL;
 
 pub(in crate::api) async fn handle_list_sessions(
@@ -132,17 +133,16 @@ impl ReadResourceSpec for Sessions {
         let host = redact_bounded(&row.host);
         let project = redact_bounded(&row.project);
         let status = redact_bounded(&row.status);
-        let session_topic = redact_optional(row.session_topic);
-        let label = crate::memory::session_label::render_from_stored(
+        let label = redact_session_label(crate::memory::session_label::render_from_stored(
             row.started_at_epoch,
             row.session_intent.as_deref(),
-            session_topic.as_deref(),
+            row.session_topic.as_deref(),
             row.session_intent_source.as_deref(),
             Some(&format!("Session on {host}")),
-        );
+        ));
         Ok(Some(SessionItem {
             id: row.id,
-            summary: label.display_title.clone(),
+            summary: label.display_title,
             host: host.clone(),
             project: project.clone(),
             status,

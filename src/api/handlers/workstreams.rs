@@ -11,6 +11,7 @@ use super::super::read_resources::{
     ReadResourceParams, ReadResourceSpec, ResourceProjectionPolicy, SafeResourceRef,
 };
 use super::super::types::DbState;
+use crate::adapter::common::{redact_projected_sensitive_text, redact_session_label};
 
 pub(in crate::api) async fn handle_list_workstreams(
     State(_state): State<DbState>,
@@ -143,18 +144,17 @@ impl ReadResourceSpec for Workstreams {
         if policy.suppresses(&visible, &relations) {
             return Ok(None);
         }
-        let session_topic = redact_optional(row.session_topic);
-        let label = crate::memory::session_label::render_from_stored(
+        let label = redact_session_label(crate::memory::session_label::render_from_stored(
             Some(row.created_at_epoch),
             row.session_intent.as_deref(),
-            session_topic.as_deref(),
+            row.session_topic.as_deref(),
             row.session_intent_source.as_deref(),
             Some(&row.title),
-        );
+        ));
         Ok(Some(WorkstreamItem {
             id: row.id,
             project: redact_bounded(&row.project),
-            title: redact_bounded(&row.title),
+            title: redact_bounded(&redact_projected_sensitive_text(&row.title)),
             description: redact_optional(row.description),
             status: redact_bounded(&row.status),
             progress: redact_optional(row.progress),

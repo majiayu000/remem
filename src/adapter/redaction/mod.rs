@@ -5,9 +5,11 @@ use crate::db;
 mod keys;
 mod tokens;
 
+pub(crate) use tokens::redact_tokens;
+
 use keys::{is_sensitive_key, looks_like_filesystem_path};
 use tokens::{
-    contains_inline_sensitive_assignment, redact_inline_sensitive_assignments, redact_tokens,
+    contains_inline_sensitive_assignment, redact_inline_sensitive_assignments,
     split_sensitive_assignment, tokens_contain_sensitive_match,
 };
 

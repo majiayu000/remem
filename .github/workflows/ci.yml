@@ -75,9 +75,21 @@ jobs:
         run: scripts/smoke_native_web_api.sh
       - name: Run extraction baseline gate
         run: cargo run -- eval-extraction --json --check-baseline > /tmp/remem-extraction-eval.json
+      - name: Generate current security evidence in ignored eval workspace
+        run: |
+          mkdir -p target/ci-eval
+          rm -rf target/ci-eval/eval
+          cp -R eval target/ci-eval/eval
+          cd target/ci-eval
+          cargo run --locked -- bench memory --suite adversarial-policy --condition remem_default \
+            --root eval/public \
+            --artifact-prefix memory/artifacts/adversarial-policy-v2-linux-x86_64 \
+            --json-out eval/public/memory/reports/adversarial-policy-v2-linux-x86_64.json
       - name: Run eval regression gates
+        working-directory: target/ci-eval
         run: cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json
       - name: Prove eval gate blocks constructed regression
+        working-directory: target/ci-eval
         run: |
           set +e
           cargo run -- eval-gates --simulate-golden-regression --json-out /tmp/remem-eval-gates-regression.json > /tmp/remem-eval-gates-regression.log 2>&1
@@ -90,6 +102,7 @@ jobs:
           fi
           grep -q "golden.slice.temporal.hit_at_k regressed" /tmp/remem-eval-gates-regression.log
       - name: Prove capacity gate blocks constructed regression
+        working-directory: target/ci-eval
         run: |
           set +e
           cargo run -- eval-gates --simulate-capacity-regression --json-out /tmp/remem-eval-gates-capacity-regression.json > /tmp/remem-eval-gates-capacity-regression.log 2>&1

@@ -47,25 +47,18 @@ fn apply_label(
     source: Option<&str>,
 ) {
     let fallback = session.user_message_samples.first().map(String::as_str);
-    let redacted_topic = redact_optional_topic(topic);
-    let view = render_from_stored(
+    let view = crate::adapter::common::redact_session_label(render_from_stored(
         Some(session.first_epoch),
         intent,
-        redacted_topic.as_deref(),
+        topic,
         source,
         fallback,
-    );
+    ));
     session.mmdd = view.mmdd;
     session.session_intent = view.session_intent;
     session.session_topic = view.session_topic;
     session.display_label = view.display_label;
     session.session_intent_source = view.session_intent_source;
-}
-
-fn redact_optional_topic(topic: Option<&str>) -> Option<String> {
-    topic
-        .map(crate::adapter::common::redact_sensitive_text)
-        .filter(|value| !value.is_empty())
 }
 
 fn load_summary_labels(

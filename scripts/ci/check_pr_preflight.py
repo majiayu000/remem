@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -36,13 +38,14 @@ def run(
     command: list[str],
     *,
     env: dict[str, str] | None = None,
+    cwd: Path = ROOT,
 ) -> StepResult:
     print(f"\n==> {name}", flush=True)
     print("+ " + " ".join(command), flush=True)
     merged_env = os.environ.copy()
     if env:
         merged_env.update(env)
-    result = subprocess.run(command, cwd=ROOT, env=merged_env, check=False)
+    result = subprocess.run(command, cwd=cwd, env=merged_env, check=False)
     if result.returncode == 0:
         return StepResult(name, "PASS")
     return StepResult(name, "FAIL", f"exit {result.returncode}")
@@ -53,13 +56,15 @@ def run_expected_failure(
     command: list[str],
     expected_text: str,
     log_path: Path,
+    *,
+    cwd: Path = ROOT,
 ) -> StepResult:
     print(f"\n==> {name}", flush=True)
     print("+ " + " ".join(command), flush=True)
     with log_path.open("w", encoding="utf-8") as handle:
         result = subprocess.run(
             command,
-            cwd=ROOT,
+            cwd=cwd,
             stdout=handle,
             stderr=subprocess.STDOUT,
             text=True,
@@ -194,10 +199,6 @@ def full_steps() -> list[tuple[str, list[str]]]:
             "Run extraction baseline gate",
             ["cargo", "run", "--", "eval-extraction", "--json", "--check-baseline"],
         ),
-        (
-            "Run eval regression gates",
-            ["cargo", "run", "--", "eval-gates", "--json-out", "/tmp/remem-eval-gates.json"],
-        ),
     ]
 
 
@@ -289,8 +290,50 @@ def main() -> int:
     if not args.fast:
         for name, command in full_steps():
             results.append(run(name, command))
-        with tempfile.TemporaryDirectory(prefix="remem-preflight-") as raw_tmp:
+        (ROOT / "target").mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix="remem-preflight-", dir=ROOT / "target"
+        ) as raw_tmp:
             tmp = Path(raw_tmp)
+            shutil.copytree(ROOT / "eval", tmp / "eval")
+            platform_key = (sys.platform, platform.machine())
+            report_suffix = {
+                ("darwin", "arm64"): "",
+                ("darwin", "x86_64"): "-x86_64-apple-darwin",
+                ("linux", "x86_64"): "-linux-x86_64",
+                ("linux", "aarch64"): "-aarch64-unknown-linux-gnu",
+            }.get(platform_key)
+            evidence = StepResult(
+                "Generate current security evidence in ignored eval workspace",
+                "FAIL",
+                f"unsupported platform: {platform_key[0]}/{platform_key[1]}",
+            ) if report_suffix is None else run(
+                "Generate current security evidence in ignored eval workspace",
+                [
+                    "cargo", "run", "--locked", "--", "bench", "memory",
+                    "--suite", "adversarial-policy", "--condition", "remem_default",
+                    "--root", "eval/public",
+                    "--artifact-prefix", f"memory/artifacts/adversarial-policy-v2{report_suffix}",
+                    "--json-out", f"eval/public/memory/reports/adversarial-policy-v2{report_suffix}.json",
+                ],
+                cwd=tmp,
+            )
+            results.append(evidence)
+            if evidence.status != "PASS":
+                results.append(
+                    run(
+                        "Run production cargo tests without eval",
+                        cargo_test_command(args.cargo_test_threads),
+                    )
+                )
+                return print_summary(results)
+            results.append(
+                run(
+                    "Run eval regression gates",
+                    ["cargo", "run", "--", "eval-gates", "--json-out", "/tmp/remem-eval-gates.json"],
+                    cwd=tmp,
+                )
+            )
             results.append(
                 run_expected_failure(
                     "Prove eval gate blocks constructed regression",
@@ -305,6 +348,7 @@ def main() -> int:
                     ],
                     "golden.slice.temporal.hit_at_k regressed",
                     tmp / "eval-gates-regression.log",
+                    cwd=tmp,
                 )
             )
             results.append(
@@ -321,6 +365,7 @@ def main() -> int:
                     ],
                     "capacity.degradation.fused.recall_at_k_loss increased",
                     tmp / "eval-gates-capacity-regression.log",
+                    cwd=tmp,
                 )
             )
         results.append(
