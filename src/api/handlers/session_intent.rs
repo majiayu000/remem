@@ -11,6 +11,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use super::super::read_resources::redact_bounded;
+use crate::db::summary_poisoning::LABEL_ROW_ELIGIBLE_SQL;
 use crate::memory::session_label::{normalize_topic, SessionIntent};
 
 const PREVIEW_EVENT: &str = "session_intent_preview";
@@ -160,15 +161,15 @@ fn load(conn: &Connection, target: &Target) -> Result<Current> {
         return Err(Failure(StatusCode::NOT_FOUND, "target_not_found"));
     }
     let sql = match target.kind {
-        Kind::Session => "SELECT id, session_intent, session_topic, session_intent_source,
+        Kind::Session => format!("SELECT id, session_intent, session_topic, session_intent_source,
             session_intent_updated_at_epoch, COALESCE(project,''), NULL FROM session_summaries
-            WHERE session_row_id=?1
-            ORDER BY COALESCE(session_intent_updated_at_epoch,created_at_epoch) DESC,id DESC LIMIT 1",
+            WHERE session_row_id=?1 AND {LABEL_ROW_ELIGIBLE_SQL}
+            ORDER BY COALESCE(session_intent_updated_at_epoch,created_at_epoch) DESC,id DESC LIMIT 1"),
         Kind::Workstream => "SELECT id, session_intent, session_topic, session_intent_source,
             session_intent_updated_at_epoch, project, title FROM workstreams
-            WHERE id=?1 AND merged_into_workstream_id IS NULL",
+            WHERE id=?1 AND merged_into_workstream_id IS NULL".to_owned(),
     };
-    conn.query_row(sql, [target.id], |row| {
+    conn.query_row(&sql, [target.id], |row| {
         Ok(Current {
             row_id: row.get(0)?,
             fields: Fields {
@@ -359,6 +360,10 @@ fn apply(conn: &mut Connection, request: ApplyRequest) -> Result<serde_json::Val
     tx.commit().map_err(internal)?;
     Ok(json!({"audit_id":audit_id,"changes":snapshot.changes,"applied":true}))
 }
+
+#[cfg(test)]
+#[path = "session_intent/tests/eligible.rs"]
+mod eligible_tests;
 
 #[cfg(test)]
 mod tests {
