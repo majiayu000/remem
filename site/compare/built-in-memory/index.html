@@ -14,7 +14,7 @@
     <meta property="og:image" content="https://majiayu000.github.io/remem/assets/remem-demo.gif">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="remem vs built-in coding-agent memory">
-    <meta name="twitter:description" content="When local searchable memory is better than hand-maintained memory files or concise built-in preferences.">
+    <meta name="twitter:description" content="Choose native instructions, automatic notes, or searchable project history according to the task.">
     <meta name="twitter:image" content="https://majiayu000.github.io/remem/assets/remem-demo.gif">
     <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="../../assets/styles.css">
@@ -49,7 +49,7 @@
               <span>Built-in memory works well</span>
               <span>CLAUDE.md works well</span>
               <span>Searchable bug rationale</span>
-              <span>remem is stronger</span>
+              <span>Query remem evidence</span>
             </div>
             <div class="formula">Use both for different memory shapes</div>
             <div class="result">Less re-explaining, better audit trail</div>
@@ -65,7 +65,7 @@
           </div>
           <div class="card-grid four">
             <article class="info-card"><span class="card-icon">01</span><h3>Built-in memory</h3><p>Best for concise user preferences and recurring workflow hints.</p></article>
-            <article class="info-card"><span class="card-icon">02</span><h3>CLAUDE.md / AGENTS.md</h3><p>Best for mandatory repository instructions that every agent must read.</p></article>
+            <article class="info-card"><span class="card-icon">02</span><h3>CLAUDE.md / AGENTS.md</h3><p>Checked-in project conventions and team guidance loaded by the host.</p></article>
             <article class="info-card"><span class="card-icon">03</span><h3>remem search</h3><p>Best for decisions, bug-fix rationale, timelines, and project history.</p></article>
             <article class="info-card"><span class="card-icon">04</span><h3>remem why</h3><p>Best when you need to inspect why a memory was injected.</p></article>
           </div>
@@ -83,6 +83,23 @@
             <div class="flow-row"><span>Audit</span><strong>remem why</strong><p>Inspect why memory was visible or injected.</p></div>
             <div class="flow-row"><span>Local</span><strong>SQLCipher</strong><p>Keep project memory in a local SQLite/SQLCipher store.</p></div>
             <div class="flow-row"><span>API</span><strong>MCP + REST</strong><p>Expose memory to coding agents and local tooling.</p></div>
+          </div>
+        </div>
+      </section>
+      <section class="section" id="native-memory">
+        <div class="shell two-col">
+          <div class="section-head">
+            <p class="eyebrow">Native memory</p>
+            <h2>Claude Code can already save notes automatically.</h2>
+            <p>Its <a href="https://code.claude.com/docs/en/memory" rel="noreferrer">official memory guide</a>
+              distinguishes project instructions from auto memory. Both can carry
+              context across sessions. Automatic persistence alone is not a reason
+              to add another memory system.</p>
+          </div>
+          <div class="flow">
+            <div class="flow-row"><span>Start</span><strong>Native files</strong><p>Keep concise project conventions and preferences in the host's instruction and memory files.</p></div>
+            <div class="flow-row"><span>Inspect</span><strong>remem history</strong><p>Add remem when you need queryable project decisions, raw evidence, staleness labels, review queues, or injection audits from its local store.</p></div>
+            <div class="flow-row"><span>Verify</span><strong>Try a real task</strong><p>Search for one earlier decision, open its source, and check its project and branch before relying on it. Follow the <a href="../../codex-memory/#verify">Codex verification walkthrough</a> or <a href="../../claude-code-memory/">Claude Code setup</a>.</p></div>
           </div>
         </div>
       </section>
