@@ -2,6 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Result;
+use sha2::Digest;
 
 use super::fixture::{
     load_suite, load_suite_file_with_content_identity, validate_suite, validate_suite_selection,
@@ -292,13 +293,15 @@ async fn remem_default_memory_bench_writes_verifiable_public_artifacts() -> Resu
 async fn adversarial_policy_bench_reports_zero_policy_leaks() -> Result<()> {
     let root = unique_temp_dir("remem-adversarial-policy-public")?;
     copy_dir_all(std::path::Path::new(DEFAULT_PUBLIC_ROOT), &root)?;
-    let report_path = root.join("memory/reports/adversarial-policy-v2.json");
+    let report_path = root.join("memory/reports/adversarial-policy-v2-aarch64-apple-darwin.json");
     let report = run_memory_bench(MemoryBenchOptions {
         suite: ADVERSARIAL_POLICY_SUITE.to_string(),
         condition: Some("remem_default".to_string()),
         json_out: report_path.to_string_lossy().to_string(),
         root: root.to_string_lossy().to_string(),
-        artifact_prefix: Some("memory/artifacts/adversarial-policy-v2".to_string()),
+        artifact_prefix: Some(
+            "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin".to_string(),
+        ),
     })
     .await?;
 
@@ -376,10 +379,29 @@ async fn adversarial_policy_bench_reports_zero_policy_leaks() -> Result<()> {
     assert_eq!(opaque["metrics"]["policy"]["policy_failure_count"], 0);
 
     let verify = crate::eval::bench_artifact::verify_benchmark_artifacts(
-        crate::eval::bench_artifact::BenchVerifyOptions::new(root, "eval/claims/registry.json"),
+        crate::eval::bench_artifact::BenchVerifyOptions::new(
+            root.clone(),
+            "eval/claims/registry.json",
+        ),
     )?;
     assert!(verify.passed, "{:#?}", verify.failures);
     assert!(verify.run_artifacts_checked >= 25);
+    let relative_report = report_path
+        .strip_prefix(&root)?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let consumed = verify
+        .verified_artifacts
+        .reports
+        .iter()
+        .find(|artifact| artifact.path == relative_report)
+        .expect("the generated security report must be consumed through its active manifest");
+    assert_eq!(consumed.value.run_artifacts, report.run_artifacts);
+    assert_eq!(
+        consumed.sha256,
+        format!("{:x}", sha2::Sha256::digest(fs::read(&report_path)?)),
+        "verification must consume the exact report just generated"
+    );
     Ok(())
 }
 

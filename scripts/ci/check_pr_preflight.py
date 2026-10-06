@@ -298,9 +298,9 @@ def main() -> int:
             shutil.copytree(ROOT / "eval", tmp / "eval")
             platform_key = (sys.platform, platform.machine())
             report_suffix = {
-                ("darwin", "arm64"): "",
+                ("darwin", "arm64"): "-aarch64-apple-darwin",
                 ("darwin", "x86_64"): "-x86_64-apple-darwin",
-                ("linux", "x86_64"): "-linux-x86_64",
+                ("linux", "x86_64"): "-x86_64-unknown-linux-gnu",
                 ("linux", "aarch64"): "-aarch64-unknown-linux-gnu",
             }.get(platform_key)
             evidence = StepResult(

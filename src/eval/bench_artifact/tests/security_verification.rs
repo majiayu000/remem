@@ -13,7 +13,7 @@ use crate::eval::bench_artifact::{
 fn verifier_rejects_placeholder_security_snapshot() -> Result<()> {
     let root = copy_public_fixture("placeholder-security-snapshot")?;
     let snapshot = root.join(
-        "memory/artifacts/adversarial-policy-v2/\
+        "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/\
          remem_default-secrets-api-key-001/remem.db.snapshot.sqlite3",
     );
     fs::write(&snapshot, b"fixture placeholder\n")?;
@@ -34,7 +34,7 @@ fn verifier_rejects_placeholder_security_snapshot() -> Result<()> {
 fn verifier_rejects_hash_valid_snapshot_with_mutated_security_semantics() -> Result<()> {
     let root = copy_public_fixture("mutated-security-semantics")?;
     let run_path = root.join(
-        "memory/artifacts/adversarial-policy-v2/\
+        "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/\
          remem_default-secrets-api-key-001/run.json",
     );
     let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;
@@ -76,7 +76,7 @@ fn verifier_binds_referenced_score_and_diagnosis_semantics() -> Result<()> {
     ] {
         let root = copy_public_fixture(&format!("security-{key}-semantic-mismatch"))?;
         let run_path = root.join(
-            "memory/artifacts/adversarial-policy-v2/\
+            "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/\
              remem_default-secrets-api-key-001/run.json",
         );
         let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;
@@ -104,7 +104,7 @@ fn verifier_binds_referenced_score_and_diagnosis_semantics() -> Result<()> {
 fn verifier_binds_declared_retrieval_to_trusted_replay() -> Result<()> {
     let root = copy_public_fixture("security-retrieval-replay-mismatch")?;
     let run_path = root.join(
-        "memory/artifacts/adversarial-policy-v2/\
+        "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/\
          remem_default-approved-external-source-001/run.json",
     );
     let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;
@@ -148,7 +148,7 @@ fn verifier_privacy_scans_declared_coding_text_artifacts() -> Result<()> {
 #[test]
 fn tampered_security_report_aggregate_fails_closed_against_exact_verified_shape() -> Result<()> {
     let root = copy_public_fixture("security-report-aggregate-mismatch")?;
-    let report_path = root.join("memory/reports/adversarial-policy-v2.json");
+    let report_path = root.join("memory/reports/adversarial-policy-v2-aarch64-apple-darwin.json");
     mutate_json(&report_path, |json| {
         json["aggregate_metrics"]["overall"]["answer_score"] = Value::from(0.123);
     })?;
@@ -166,7 +166,7 @@ fn tampered_security_report_aggregate_fails_closed_against_exact_verified_shape(
 fn tampered_run_policy_declarations_cannot_authorize_security_pass() -> Result<()> {
     let root = copy_public_fixture("security-run-policy-mismatch")?;
     let run_path = root.join(
-        "memory/artifacts/adversarial-policy-v2/\
+        "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/\
          remem_default-secrets-api-key-001/run.json",
     );
     mutate_json(&run_path, |json| {
@@ -192,7 +192,7 @@ fn tampered_run_policy_declarations_cannot_authorize_security_pass() -> Result<(
 fn mixed_security_reader_model_identity_fails_closed() -> Result<()> {
     let root = copy_public_fixture("security-report-mixed-reader-model")?;
     let run_path = root.join(
-        "memory/artifacts/adversarial-policy-v2/\
+        "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/\
          remem_default-secrets-api-key-001/run.json",
     );
     mutate_json(&run_path, |json| {
@@ -206,7 +206,9 @@ fn mixed_security_reader_model_identity_fails_closed() -> Result<()> {
         .security
         .reports
         .iter()
-        .find(|report| report.report_path == "memory/reports/adversarial-policy-v2.json")
+        .find(|report| {
+            report.report_path == "memory/reports/adversarial-policy-v2-aarch64-apple-darwin.json"
+        })
         .context("default adversarial-policy v2 authority")?;
 
     assert_eq!(authority.status, AuthorityStatus::Fail);
@@ -220,7 +222,7 @@ fn mixed_security_reader_model_identity_fails_closed() -> Result<()> {
 fn security_run_prompt_hash_must_match_registered_task_prompt() -> Result<()> {
     let root = copy_public_fixture("security-run-prompt-hash")?;
     let run_path = root.join(
-        "memory/artifacts/adversarial-policy-v2/\
+        "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/\
          remem_default-secrets-api-key-001/run.json",
     );
     mutate_json(&run_path, |json| {
@@ -245,8 +247,10 @@ fn security_authority_rejects_semantically_identical_unregistered_suite_bytes() 
     let suite_identity = format!("sha256-raw-suite-v1:{:x}", Sha256::digest(&suite_bytes));
 
     for report_relative in [
-        "memory/reports/adversarial-policy-v2.json",
-        "memory/reports/adversarial-policy-v2-linux-x86_64.json",
+        "memory/reports/adversarial-policy-v2-aarch64-apple-darwin.json",
+        "memory/reports/adversarial-policy-v2-x86_64-unknown-linux-gnu.json",
+        "memory/reports/adversarial-policy-v2-x86_64-apple-darwin.json",
+        "memory/reports/adversarial-policy-v2-aarch64-unknown-linux-gnu.json",
     ] {
         let report_path = root.join(report_relative);
         let report: Value = serde_json::from_slice(&fs::read(&report_path)?)?;
@@ -287,7 +291,7 @@ fn verifier_rejects_artifact_symlink_that_escapes_public_root() -> Result<()> {
 
     let root = copy_public_fixture("security-artifact-symlink-escape")?;
     let run_path = root.join(
-        "memory/artifacts/adversarial-policy-v2/\
+        "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/\
          remem_default-secrets-api-key-001/run.json",
     );
     let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;
@@ -312,7 +316,7 @@ fn verifier_rejects_artifact_symlink_that_escapes_public_root() -> Result<()> {
 fn oversized_security_snapshot_is_rejected_before_consumption() -> Result<()> {
     let root = copy_public_fixture("oversized-security-snapshot")?;
     let run_path = root.join(
-        "memory/artifacts/adversarial-policy-v2/\
+        "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/\
          remem_default-secrets-api-key-001/run.json",
     );
     let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;
@@ -333,7 +337,7 @@ fn oversized_security_snapshot_is_rejected_before_consumption() -> Result<()> {
 fn security_snapshot_rejects_payload_hidden_in_unallocated_page_bytes() -> Result<()> {
     let root = copy_public_fixture("security-snapshot-hidden-page-payload")?;
     let run_path = root.join(
-        "memory/artifacts/adversarial-policy-v2/\
+        "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/\
          remem_default-secrets-api-key-001/run.json",
     );
     let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;
@@ -396,7 +400,8 @@ fn inject_unallocated_page_payload(bytes: &mut [u8], payload: &[u8]) -> Result<(
 fn security_report_requires_exact_suite_task_coverage_under_remem_default() -> Result<()> {
     for mutation in ["omitted", "duplicate", "extra", "wrong-condition"] {
         let root = copy_public_fixture(&format!("security-report-coverage-{mutation}"))?;
-        let report_path = root.join("memory/reports/adversarial-policy-v2.json");
+        let report_path =
+            root.join("memory/reports/adversarial-policy-v2-aarch64-apple-darwin.json");
         let report: Value = serde_json::from_slice(&fs::read(&report_path)?)?;
         let run_paths = report["run_artifacts"]
             .as_array()
@@ -449,7 +454,7 @@ fn security_report_requires_exact_declared_remem_default_condition() -> Result<(
     let root = copy_public_fixture("security-report-declared-condition")?;
     for path in [
         "memory/manifests/adversarial-policy-v2.json",
-        "memory/reports/adversarial-policy-v2.json",
+        "memory/reports/adversarial-policy-v2-aarch64-apple-darwin.json",
     ] {
         mutate_json(&root.join(path), |json| {
             json["conditions"] = serde_json::json!(["remem_default", "no_memory"]);
@@ -463,7 +468,9 @@ fn security_report_requires_exact_declared_remem_default_condition() -> Result<(
         .security
         .reports
         .iter()
-        .find(|report| report.report_path == "memory/reports/adversarial-policy-v2.json")
+        .find(|report| {
+            report.report_path == "memory/reports/adversarial-policy-v2-aarch64-apple-darwin.json"
+        })
         .context("adversarial-policy v2 authority")?;
 
     assert!(!verified.passed);
@@ -519,7 +526,7 @@ fn referenced_answer_text_must_match_typed_run_answer_text() -> Result<()> {
 fn leaked_protected_answer_text_fails_recomputed_security_policy() -> Result<()> {
     let root = copy_public_fixture("security-answer-text-leak")?;
     let run_path = root.join(
-        "memory/artifacts/adversarial-policy-v2/\
+        "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/\
          remem_default-secrets-api-key-001/run.json",
     );
     let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;
@@ -553,7 +560,7 @@ fn mutate_security_answer_text(
     typed_text: Option<&str>,
 ) -> Result<()> {
     let run_path = root.join(format!(
-        "memory/artifacts/adversarial-policy-v2/remem_default-{task_id}/run.json"
+        "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-{task_id}/run.json"
     ));
     let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;
     let answer_relative = run["artifacts"]["answer"]
@@ -577,7 +584,7 @@ fn mutate_security_answer_text(
 fn verifier_rejects_snapshot_with_unrelated_captured_event() -> Result<()> {
     let root = copy_public_fixture("unrelated-security-event")?;
     let run_path = root.join(
-        "memory/artifacts/adversarial-policy-v2/\
+        "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/\
          remem_default-secrets-api-key-001/run.json",
     );
     let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;
@@ -622,7 +629,7 @@ fn verifier_rejects_snapshot_with_unrelated_captured_event() -> Result<()> {
 fn verifier_rejects_snapshot_with_trailing_bytes() -> Result<()> {
     let root = copy_public_fixture("security-snapshot-trailing-bytes")?;
     let run_path = root.join(
-        "memory/artifacts/adversarial-policy-v2/\
+        "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/\
          remem_default-secrets-api-key-001/run.json",
     );
     let run: Value = serde_json::from_slice(&fs::read(&run_path)?)?;

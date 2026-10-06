@@ -145,7 +145,10 @@ fn selected_security_row_uses_report_local_model_and_platform() {
         .security
         .reports
         .iter()
-        .find(|authority| authority.report_path == "memory/reports/adversarial-policy-v2.json")
+        .find(|authority| {
+            authority.report_path
+                == "memory/reports/adversarial-policy-v2-aarch64-apple-darwin.json"
+        })
         .expect("selected security authority");
 
     let row =

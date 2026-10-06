@@ -8,9 +8,9 @@ use std::fs::OpenOptions;
 use super::{copy_public_fixture, failure_text, mutate_json};
 use crate::eval::bench_artifact::{verify_benchmark_artifacts, BenchVerifyOptions};
 
-const SECURITY_RUN: &str = "memory/artifacts/adversarial-policy-v2/\
+const SECURITY_RUN: &str = "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/\
     remem_default-instruction-injection-001/run.json";
-const RELATED_RUN: &str = "memory/artifacts/adversarial-policy-v2/\
+const RELATED_RUN: &str = "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/\
     remem_default-approved-external-source-001/run.json";
 
 #[test]
@@ -126,7 +126,7 @@ fn verifier_rejects_non_utf8_declared_text_artifacts() -> Result<()> {
 fn verifier_binds_security_report_suite_identity_to_suite_bytes() -> Result<()> {
     let root = copy_public_fixture("security-report-suite-identity")?;
     mutate_json(
-        &root.join("memory/reports/adversarial-policy-v2.json"),
+        &root.join("memory/reports/adversarial-policy-v2-aarch64-apple-darwin.json"),
         |report| {
             report["aggregate_metrics"]["suite_content_identity"] =
                 Value::String(format!("sha256-raw-suite-v1:{}", "f".repeat(64)));

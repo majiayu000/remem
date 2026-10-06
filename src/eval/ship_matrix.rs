@@ -20,9 +20,10 @@ mod rows;
 mod scorecard;
 
 pub const DEFAULT_PUBLIC_ROOT: &str = "eval/public";
-pub const DEFAULT_SECURITY_REPORT: &str = "eval/public/memory/reports/adversarial-policy-v2.json";
+pub const DEFAULT_SECURITY_REPORT: &str =
+    "eval/public/memory/reports/adversarial-policy-v2-aarch64-apple-darwin.json";
 pub const LINUX_X86_64_SECURITY_REPORT: &str =
-    "eval/public/memory/reports/adversarial-policy-v2-linux-x86_64.json";
+    "eval/public/memory/reports/adversarial-policy-v2-x86_64-unknown-linux-gnu.json";
 pub const DEFAULT_CROSS_HOST_CHARTER: &str = "eval/cross-host/benchmark-charter.json";
 pub const DEFAULT_CLAIM_REGISTRY: &str = "eval/claims/registry.json";
 

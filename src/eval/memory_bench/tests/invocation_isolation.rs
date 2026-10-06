@@ -11,9 +11,9 @@ use crate::eval::bench_artifact::{
     verify_benchmark_artifacts, BenchVerifyOptions, BenchVerifyReport,
 };
 
-const RUN_RELATIVE: &str = "memory/artifacts/adversarial-policy-v2/\
+const RUN_RELATIVE: &str = "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/\
     remem_default-approved-external-source-001/run.json";
-const SNAPSHOT_RELATIVE: &str = "memory/artifacts/adversarial-policy-v2/\
+const SNAPSHOT_RELATIVE: &str = "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/\
     remem_default-approved-external-source-001/remem.db.snapshot.sqlite3";
 
 struct PublicSecurityFixture {
@@ -153,17 +153,17 @@ async fn build_fixture(
     )?;
 
     let mut report = read_json(Path::new(
-        "eval/public/memory/reports/adversarial-policy-v2.json",
+        "eval/public/memory/reports/adversarial-policy-v2-aarch64-apple-darwin.json",
     ))?;
     report["run_artifacts"] = serde_json::json!([RUN_RELATIVE]);
     report["aggregate_metrics"]["run_count"] = Value::from(1);
 
     let base_artifact = Path::new(
-        "eval/public/memory/artifacts/adversarial-policy-v2/\
+        "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/\
          remem_default-approved-external-source-001",
     );
     let artifact_dir = root.join(
-        "memory/artifacts/adversarial-policy-v2/\
+        "memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/\
          remem_default-approved-external-source-001",
     );
     super::copy_dir_all(base_artifact, &artifact_dir)?;
@@ -224,7 +224,7 @@ async fn build_fixture(
         serde_json::to_value(super::super::summarize_verified_security_policy(&[policy]))?;
     write_json(&run_path, &run)?;
     write_json(
-        &root.join("memory/reports/adversarial-policy-v2.json"),
+        &root.join("memory/reports/adversarial-policy-v2-aarch64-apple-darwin.json"),
         &report,
     )?;
 

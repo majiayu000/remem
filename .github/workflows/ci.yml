@@ -93,8 +93,8 @@ jobs:
           cd target/ci-eval
           cargo run --locked -- bench memory --suite adversarial-policy --condition remem_default \
             --root eval/public \
-            --artifact-prefix memory/artifacts/adversarial-policy-v2-linux-x86_64 \
-            --json-out eval/public/memory/reports/adversarial-policy-v2-linux-x86_64.json
+            --artifact-prefix memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu \
+            --json-out eval/public/memory/reports/adversarial-policy-v2-x86_64-unknown-linux-gnu.json
       - name: Run eval regression gates
         working-directory: target/ci-eval
         run: cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json

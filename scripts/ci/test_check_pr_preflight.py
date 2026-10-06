@@ -1,5 +1,7 @@
 import contextlib
 import io
+import json
+import re
 import sys
 import tempfile
 import unittest
@@ -81,6 +83,47 @@ class PreflightCargoTestThreadsTests(unittest.TestCase):
         self.assertTrue(all(call[2] == workspace for call in gates))
         other_calls = [call for call in self.calls if call not in generators + gates]
         self.assertTrue(all(call[2] == check_pr_preflight.ROOT for call in other_calls))
+
+    def test_native_security_generators_replace_actively_registered_reports(self) -> None:
+        public_root = check_pr_preflight.ROOT / "eval/public"
+        registered: dict[str, set[str]] = {}
+        for path in (public_root / "memory/manifests").glob("adversarial-policy-v2*.json"):
+            manifest = json.loads(path.read_text(encoding="utf-8"))
+            for report_path in manifest["reports"]:
+                report = json.loads((public_root / report_path).read_text(encoding="utf-8"))
+                registered[f"eval/public/{report_path}"] = {
+                    run_path.rsplit("/", 2)[0] for run_path in report["run_artifacts"]
+                }
+        self.assertEqual(len(registered), 4)
+        for os_name, arch in [
+            ("darwin", "arm64"), ("darwin", "x86_64"),
+            ("linux", "aarch64"), ("linux", "x86_64"),
+        ]:
+            with (
+                self.subTest(os=os_name, arch=arch),
+                mock.patch.object(sys, "platform", os_name),
+                mock.patch("check_pr_preflight.platform.machine", return_value=arch),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                commands = self.run_main()
+                generator = next(command for command in commands
+                                 if command[:5] == ["cargo", "run", "--locked", "--", "bench"])
+                report_path = generator[generator.index("--json-out") + 1]
+                artifact_prefix = generator[generator.index("--artifact-prefix") + 1]
+                self.assertIn(report_path, registered)
+                self.assertEqual(registered[report_path], {artifact_prefix})
+
+        workflow = (check_pr_preflight.ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        generator = workflow.split(
+            "- name: Generate current security evidence in ignored eval workspace", 1
+        )[1].split("\n      - name:", 1)[0]
+        report = re.search(r"--json-out\s+(\S+)", generator)
+        artifacts = re.search(r"--artifact-prefix\s+(\S+)", generator)
+        self.assertIsNotNone(report)
+        self.assertIsNotNone(artifacts)
+        assert report is not None and artifacts is not None
+        self.assertIn(report[1], registered)
+        self.assertEqual(registered[report[1]], {artifacts[1]})
 
     def test_benchmark_failure_prevents_using_stale_evidence(self) -> None:
         commands: list[list[str]] = []

@@ -530,6 +530,16 @@ and each v2 run directory is closed against unreferenced files. The native
 aggregate consumes four unique row-verifier receipts from its four required
 native jobs and binds each receipt to the exact target, report hash, clean head,
 and production-input tree before evaluating the four-target release structure.
+Active security reports and artifact directories use the native producer's
+complete target names: `aarch64-apple-darwin`, `x86_64-apple-darwin`,
+`aarch64-unknown-linux-gnu`, and `x86_64-unknown-linux-gnu`. The generic
+`adversarial-policy-v2.json` manifest remains the producer template and points
+to the macOS ARM64 full-target report; it is not a generic report alias.
+Platform defaults, ordinary CI and local preflight select those registered
+report paths. Mutation fixtures target the same consumed report/run paths,
+so retained historical payloads cannot silently absorb an intended mutation.
+These path checks do not relax exact path/hash/source authority checks or
+replace fresh native evidence after a production-input change.
 Repository-local coding JSON never authenticates scorer causal labels or
 supervisor-timed maintenance by itself; without governed external receipts the
 GH931 verdict remains `INSUFFICIENT`.

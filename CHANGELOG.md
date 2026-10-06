@@ -354,6 +354,7 @@
   rather than something inferable from task text.
 
 ### Fixed
+- Native security report consumers and mutation fixtures use the complete target filenames emitted by the native producer. Local preflight and ordinary CI replace the actively registered report and artifact prefix; the generic manifest remains a template, while obsolete report aliases cannot stand in for verified evidence. Refs #1105.
 - Embedding backfill verifies the current index-passage hash before publishing each prepared vector. Late batches cannot overwrite foreground edits or enrichment; pending work includes hash mismatches even when source timestamps are equal or older than embedding completion. Refs #1105.
 - Staged source version `0.6.71` for GH-942: Codex Stop capture now
   materializes timestamped conversation turns as first-class captured
