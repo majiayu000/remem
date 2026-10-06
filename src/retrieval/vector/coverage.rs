@@ -59,27 +59,8 @@ pub fn active_embedding_coverage_for_status(
             mixed_profile_count: embedding_profile_count(conn)?,
         });
     };
-    let embedded = match status.active_dimensions {
-        Some(dimensions) => conn.query_row(
-            "SELECT COUNT(DISTINCT m.id)
-             FROM memories m
-             JOIN memory_embeddings e ON e.memory_id = m.id
-             WHERE m.status IN ('active', 'stale', 'archived')
-               AND e.model = ?1
-               AND e.dimensions = ?2",
-            params![model, dimensions as i64],
-            |row| row.get(0),
-        )?,
-        None => conn.query_row(
-            "SELECT COUNT(DISTINCT m.id)
-             FROM memories m
-             JOIN memory_embeddings e ON e.memory_id = m.id
-             WHERE m.status IN ('active', 'stale', 'archived')
-               AND e.model = ?1",
-            [model],
-            |row| row.get(0),
-        )?,
-    };
+    let (total, embedded) =
+        super::reindex::memory_embedding_source_counts(conn, model, status.active_dimensions)?;
     Ok(ActiveEmbeddingCoverage {
         embedded,
         total,
@@ -159,7 +140,7 @@ fn prune_inactive_memory_embeddings_pinned(
     let coverage = active_embedding_coverage_for_target(conn, target)?;
     if coverage.embedded < coverage.total {
         bail!(
-            "refusing to prune inactive embedding profiles before active coverage reaches 100%: {}/{} ({:.1}%)",
+            "refusing to prune inactive embedding profiles before active coverage reaches 100%: {}/{} ({:.1}%); active profile has missing or stale rows; run embedding backfill before pruning",
             coverage.embedded,
             coverage.total,
             coverage.percent
@@ -212,15 +193,10 @@ pub fn active_embedding_coverage_for_target(
             mixed_profile_count: embedding_profile_count(conn)?,
         });
     }
-    let embedded = conn.query_row(
-        "SELECT COUNT(DISTINCT m.id)
-         FROM memories m
-         JOIN memory_embeddings e ON e.memory_id = m.id
-         WHERE m.status IN ('active', 'stale', 'archived')
-           AND e.model = ?1
-           AND e.dimensions = ?2",
-        params![target.model.as_str(), target.dimensions as i64],
-        |row| row.get(0),
+    let (total, embedded) = super::reindex::memory_embedding_source_counts(
+        conn,
+        &target.model,
+        Some(target.dimensions),
     )?;
     Ok(ActiveEmbeddingCoverage {
         embedded,

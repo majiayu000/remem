@@ -118,12 +118,12 @@ fn run_embedding_backfill_with_connection(
                 report.dimensions
             );
         }
-        if report.processed == 0 {
+        if report.selected == 0 {
             break;
         }
 
         backfilled += report.processed;
-        remaining_limit -= report.processed as i64;
+        remaining_limit -= report.selected as i64;
         let remaining = count_missing_embeddings(conn, &target)?;
         let elapsed_ms = report
             .timings
@@ -145,7 +145,7 @@ fn run_embedding_backfill_with_connection(
                 crate::perf::format_phase_timings(&report.timings)
             );
         }
-        if report.processed < batch_limit as usize {
+        if report.selected < batch_limit as usize {
             break;
         }
     }

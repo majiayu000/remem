@@ -24,7 +24,6 @@ fn prepare_pending(conn: &Connection, limit: i64) -> Result<Vec<PreparedMemoryEm
         select_memory_embedding_reindex_candidates(conn, &target(), limit)?
             .into_iter()
             .map(|source| PreparedMemoryEmbedding {
-                memory_id: source.id,
                 model: target().model,
                 content_hash: crate::retrieval::embedding::memory_index_hash(
                     &source.title,
@@ -33,6 +32,7 @@ fn prepare_pending(conn: &Connection, limit: i64) -> Result<Vec<PreparedMemoryEm
                     source.topic_key.as_deref(),
                     &source.search_context,
                 ),
+                source,
                 values: vec![1.0, 0.0],
                 // A later completion must not make an older passage authoritative.
                 updated_at_epoch: 200,
@@ -229,7 +229,7 @@ fn mixed_batch_skips_changed_deleted_and_ineligible_sources() -> Result<()> {
     )?;
     let pending = prepare_pending(&conn, 1)?;
     assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].memory_id, 1);
+    assert_eq!(pending[0].source.id, 1);
     assert_eq!(
         upsert_prepared_memory_embedding_batch(&conn, &pending, &mut vec![])?,
         1

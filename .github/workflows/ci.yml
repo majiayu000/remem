@@ -15,7 +15,7 @@ jobs:
         run: cargo test --locked --no-default-features --lib db::worker -- --test-threads=1
       - name: Verify selected Codex profile paths
         run: cargo test --locked --no-default-features --test install_status -- --test-threads=1
-  check:
+  runtime_checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.2
@@ -64,10 +64,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build current remem and prove isolated SessionStart smoke
         run: python3 scripts/ci/run_sessionstart_context_gate_smoke.py
-      - name: Generate public benchmark authority verdict
-        run: cargo run --locked -- bench verify --root eval/public --json-out "$RUNNER_TEMP/remem-public-bench-verify.json"
-      - name: Check public benchmark claims
-        run: python3 scripts/ci/check_public_claims.py --verdict "$RUNNER_TEMP/remem-public-bench-verify.json"
       - name: Check public and lifecycle surfaces
         run: python3 scripts/ci/check_public_surface.py
       - name: Check published surface baseline
@@ -83,6 +79,25 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - name: Run native web API smoke
         run: scripts/smoke_native_web_api.sh
+      - name: Run production tests without eval
+        run: cargo test --no-default-features --features local-onnx
+      - name: Run eval tests
+        run: cargo test --features eval --lib eval --test e2e_eval
+
+  benchmark_evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Install Python CI dependencies
+        run: python3 -m pip install --requirement scripts/ci/requirements.txt
+      - uses: dtolnay/rust-toolchain@1.97.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Generate public benchmark authority verdict
+        run: cargo run --locked -- bench verify --root eval/public --json-out "$RUNNER_TEMP/remem-public-bench-verify.json"
+      - name: Check public benchmark claims
+        run: python3 scripts/ci/check_public_claims.py --verdict "$RUNNER_TEMP/remem-public-bench-verify.json"
       - name: Run extraction baseline gate
         run: cargo run -- eval-extraction --json --check-baseline > /tmp/remem-extraction-eval.json
       - name: Generate current security evidence in ignored eval workspace
@@ -136,10 +151,6 @@ jobs:
             /tmp/remem-eval-gates-regression.log
             /tmp/remem-eval-gates-capacity-regression.json
             /tmp/remem-eval-gates-capacity-regression.log
-      - name: Run production tests without eval
-        run: cargo test --no-default-features --features local-onnx
-      - name: Run eval tests
-        run: cargo test --features eval --lib eval --test e2e_eval
 
   windows_local_embedding_security:
     runs-on: windows-latest
@@ -151,3 +162,22 @@ jobs:
         run: cargo check --locked --all-targets
       - name: Test Windows local embedding filesystem security
         run: cargo test --locked --lib retrieval::embedding::local_semantic
+
+  check:
+    name: check
+    if: ${{ always() }}
+    needs: [runtime_checks, benchmark_evidence, windows_local_embedding_security, windows_runtime_regressions]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every CI job to succeed
+        shell: bash
+        env:
+          RUNTIME_RESULT: ${{ needs.runtime_checks.result }}
+          EVIDENCE_RESULT: ${{ needs.benchmark_evidence.result }}
+          WINDOWS_SECURITY_RESULT: ${{ needs.windows_local_embedding_security.result }}
+          WINDOWS_RUNTIME_RESULT: ${{ needs.windows_runtime_regressions.result }}
+        run: |
+          test "$RUNTIME_RESULT" = success
+          test "$EVIDENCE_RESULT" = success
+          test "$WINDOWS_SECURITY_RESULT" = success
+          test "$WINDOWS_RUNTIME_RESULT" = success

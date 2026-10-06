@@ -140,6 +140,21 @@ plausibly durable user context that is safe to persist for human review.
 
 ## User Stories
 
+### Explicit preventive constraints (2026-10-06)
+
+An explicit user constraint such as "never bypass authentication" or
+"不要绕过认证" is durable protective intent, even though it names a harmful
+action. A narrow, complete-sentence allowlist may retain these user-supported
+prohibitions and prevention requirements as pending-review candidates. It must
+not enable automatic promotion or relax secret-value rejection.
+
+The exception requires matching user-authored evidence. Quoted, attributed,
+conditional, double-negative, mixed-intent, and externally sourced text does not
+qualify. Dangerous positive instructions still create no candidate. Ambiguous
+research descriptions such as "malware analysis" retain the existing
+non-retention behavior; this change does not add a semantic intent classifier or
+make a research label a safety exemption.
+
 ### Profile Snapshot
 
 As a user, I can run a command and see the current user profile remem would use,

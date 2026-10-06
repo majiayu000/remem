@@ -72,21 +72,30 @@ semantic match older than 4,096 newer rows. No model/default/weight changes or
 live host/API runs are required. This bounded correction does not complete the
 parked retrieval-router or broader shared-engine work.
 
-### Backfill source freshness (Refs #1105)
+## Backfill source consistency (Refs #1105)
 
-A backfill result may publish only while its memory still has the exact index
-passage that was selected before embedding. A foreground edit, enrichment
-change, deletion, or move outside searchable lifecycle states must prevent a
-late batch from replacing the newer vector. Embedding completion time is
-not evidence of source freshness, including when edits share one timestamp.
+A completed backfill result may publish only while the exact canonical passage
+and effective enrichment selected before embedding are still current and the
+memory remains in a searchable lifecycle state. Foreground edits, enrichment
+changes, deletion, and quarantine discard the old result; it cannot replace a
+newer foreground vector or update the derived profile mirror. Rejected results
+do not count as processed. A changed passage without a matching vector remains
+pending for a later bounded batch.
 
-Missing or stale work is determined by the versioned index-passage hash for
-the pinned model and dimensions. A changed passage remains pending until that
-passage has a matching vector. Rejected stale results do not count as processed,
-do not update the derived mirror, and are visible through the remaining-work
-count; backfill may be run again to process the current passage. Provider work
-stays outside the database write transaction. No model download or schema
-migration is required.
+Pending work and fresh coverage compare the stored vector's versioned input hash
+with the current passage for the pinned model and dimensions. Equal or newer
+completion timestamps do not establish consistency, including same-second
+source edits. Existing incorrect or unknown hashes are repaired through explicit
+backfill limits, with no model calls or source rewrites during status inspection
+or schema migration. Provider work stays outside the database write transaction;
+no model download or schema migration is required for this correction.
+
+Acceptance includes two-connection SQLite ordering of old selection, foreground
+memory/vector update, and old-result commit; same-second and enrichment changes;
+deletion/quarantine; mixed accepted/skipped batches; idempotent current passages;
+profile-mirror preservation; and legacy mismatches repaired in bounded batches.
+Skipped work consumes the selected-work budget and must not prevent a later
+batch from advancing past deleted or quarantined candidates.
 
 ## Non-Goals
 

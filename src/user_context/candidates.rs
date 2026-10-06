@@ -124,9 +124,17 @@ pub(crate) fn create_candidate_with_policy(
         bail!("user-context candidate blocked by non-retention policy: {reason}");
     }
     let now = chrono::Utc::now().timestamp();
-    let allowed = auto_promote_allowed(req, source_kind, policy);
+    let preventive_constraint =
+        crate::user_context::non_retention::prevention::matches_claim_and_preview(
+            text,
+            source_preview,
+            source_kind,
+        );
+    let allowed = auto_promote_allowed(req, source_kind, policy) && !preventive_constraint;
     let block_reason = if allowed {
         None
+    } else if preventive_constraint {
+        Some("preventive_security_constraint_requires_review".to_string())
     } else {
         Some(
             normalized_optional(req.auto_promote_block_reason)

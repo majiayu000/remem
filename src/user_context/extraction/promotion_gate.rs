@@ -15,6 +15,7 @@ pub(super) fn is_auto_promote_allowed(
         && candidate.sensitivity == super::super::claims::UserContextSensitivity::Normal
         && candidate.confidence >= policy.min_confidence
         && policy.allows_source_kind(&candidate.source_kind)
+        && !super::preventive_constraints::is_supported(candidate, batch)
         && !super::requires_third_party_framing(candidate)
         && candidate
             .source_event_ids
@@ -29,6 +30,9 @@ pub(super) fn blocked_reason(
     batch: &CandidateSourceBatch,
     policy: &AutoPromotePolicy,
 ) -> &'static str {
+    if super::preventive_constraints::is_supported(candidate, batch) {
+        return super::preventive_constraints::REVIEW_REASON;
+    }
     if super::requires_third_party_framing(candidate) {
         return "third_party_requires_review";
     }

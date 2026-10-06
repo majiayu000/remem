@@ -1,20 +1,21 @@
 import os
-import re
 import subprocess
 import tempfile
 import unittest
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import check_documentation_contracts
+from documentation_contract_ci_workflow_tests import (
+    EXPECTED_WORKFLOW_RUNNER_TEST_COMMAND,
+    EXPECTED_WORKFLOW_SMOKE_COMMAND,
+    RepositoryCiGateTests,
+    workflow_job_with_command,
+    workflow_smoke_registration_violations,
+)
 from documentation_contract_markdown_edge_tests import MarkdownEdgeContractTests
 from documentation_contract_spec_handoff_tests import CurrentSpecHandoffContractTests
 
 
-EXPECTED_WORKFLOW_SMOKE_COMMAND = "python3 scripts/ci/run_sessionstart_context_gate_smoke.py"
-EXPECTED_WORKFLOW_RUNNER_TEST_COMMAND = "python3 scripts/ci/test_run_sessionstart_context_gate_smoke.py"
-SAFE_SHELLS = {"", "bash"}
-SAFE_WORKING_DIRECTORIES = {"", ".", "${{ github.workspace }}"}
 VALID_BILINGUAL_SURFACE = """
 brew install majiayu000/tap/remem
 curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh
@@ -36,137 +37,6 @@ The encrypted database remains in the configured `REMEM_DATA_DIR`.
 directional_only_no_public_claim does not support public benchmark claims 不能用于对外 benchmark 声明
 ![Recall demo](assets/remem-recall-demo.gif)
 """
-
-
-@dataclass
-class WorkflowJob:
-    fields: dict[str, str] = field(default_factory=dict)
-    inherited_execution_fields: dict[str, str] = field(default_factory=dict)
-    steps: list[dict[str, str]] = field(default_factory=list)
-
-
-def yaml_scalar(raw: str) -> str:
-    value = raw.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-        return value[1:-1]
-    return value
-
-
-def workflow_jobs(text: str) -> list[WorkflowJob]:
-    """Narrowly parse job and step execution fields without production constants."""
-    jobs: list[WorkflowJob] = []
-    current_job: WorkflowJob | None = None
-    current_step: dict[str, str] | None = None
-    in_jobs = False
-    for line in text.splitlines():
-        if line == "jobs:":
-            in_jobs = True
-            continue
-        if not in_jobs:
-            continue
-        if re.fullmatch(r"  [A-Za-z0-9_-]+:\s*", line):
-            current_job = WorkflowJob()
-            jobs.append(current_job)
-            current_step = None
-            continue
-        if current_job is None:
-            continue
-        step_match = re.match(r"^      -\s+(.+)$", line)
-        if step_match:
-            current_step = {}
-            current_job.steps.append(current_step)
-            field_text = step_match.group(1)
-            if ":" in field_text:
-                key, value = field_text.split(":", maxsplit=1)
-                current_step[key.strip()] = yaml_scalar(value)
-            continue
-        job_field = re.match(r"^    ([A-Za-z0-9_-]+):\s*(.*)$", line)
-        if job_field:
-            current_step = None
-            current_job.fields[job_field.group(1)] = yaml_scalar(job_field.group(2))
-            continue
-        step_field = re.match(r"^        ([A-Za-z0-9_-]+):\s*(.*)$", line)
-        if current_step is not None and step_field:
-            current_step[step_field.group(1)] = yaml_scalar(step_field.group(2))
-            continue
-        inherited = re.match(
-            r"^\s{6,}((?:shell|working-directory)):\s*(.*)$", line
-        )
-        if current_step is None and inherited:
-            current_job.inherited_execution_fields[inherited.group(1)] = yaml_scalar(
-                inherited.group(2)
-            )
-    return jobs
-
-
-def execution_violations(
-    label: str,
-    fields: dict[str, str],
-    inherited: dict[str, str],
-) -> list[str]:
-    violations: list[str] = []
-    if "if" in fields:
-        violations.append(f"{label} must be unconditional")
-    if fields.get("continue-on-error", "").lower() not in {"", "false"}:
-        violations.append(f"{label} must fail CI on error")
-    shell = fields.get("shell", inherited.get("shell", ""))
-    if shell not in SAFE_SHELLS:
-        violations.append(f"{label} must use the default or standard bash shell")
-    working_directory = fields.get(
-        "working-directory", inherited.get("working-directory", "")
-    )
-    if working_directory not in SAFE_WORKING_DIRECTORIES:
-        violations.append(f"{label} must run from the repository root")
-    if "timeout-minutes" in fields:
-        violations.append(f"{label} must not be disabled by a local timeout")
-    return violations
-
-
-def workflow_smoke_registration_violations(text: str) -> list[str]:
-    """Independently enforce an executable build followed by an isolated smoke."""
-    matches: list[tuple[WorkflowJob, int, dict[str, str]]] = []
-    for job in workflow_jobs(text):
-        for index, step in enumerate(job.steps):
-            if step.get("run") == EXPECTED_WORKFLOW_SMOKE_COMMAND:
-                matches.append((job, index, step))
-    violations: list[str] = []
-    if len(matches) != 1:
-        violations.append("CI must execute the exact SessionStart smoke command once")
-    if len(matches) == 1:
-        smoke_job, _, smoke_step = matches[0]
-        violations.extend(execution_violations("SessionStart smoke job", smoke_job.fields, {}))
-        violations.extend(
-            execution_violations(
-                "SessionStart smoke step",
-                smoke_step,
-                smoke_job.inherited_execution_fields,
-            )
-        )
-    if text.count(EXPECTED_WORKFLOW_SMOKE_COMMAND) != 1:
-        violations.append("SessionStart smoke command must appear exactly once")
-    runner_test_matches = [
-        (job, step)
-        for job in workflow_jobs(text)
-        for step in job.steps
-        if step.get("run") == EXPECTED_WORKFLOW_RUNNER_TEST_COMMAND
-    ]
-    if len(runner_test_matches) != 1:
-        violations.append("CI must execute the exact SessionStart runner tests once")
-    if len(runner_test_matches) == 1:
-        test_job, test_step = runner_test_matches[0]
-        violations.extend(
-            execution_violations("SessionStart runner test job", test_job.fields, {})
-        )
-        violations.extend(
-            execution_violations(
-                "SessionStart runner test step",
-                test_step,
-                test_job.inherited_execution_fields,
-            )
-        )
-    if text.count(EXPECTED_WORKFLOW_RUNNER_TEST_COMMAND) != 1:
-        violations.append("SessionStart runner test command must appear exactly once")
-    return violations
 
 
 class DocumentationContractTests(unittest.TestCase):
@@ -701,7 +571,12 @@ class RepositoryDocumentationContractTests(unittest.TestCase):
     def test_ci_registration_rejects_job_level_disable(self) -> None:
         root = Path(__file__).resolve().parents[2]
         workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        mutated = workflow.replace("  check:\n", "  check:\n    if: ${{ false }}\n")
+        smoke_job = workflow_job_with_command(workflow, EXPECTED_WORKFLOW_SMOKE_COMMAND)
+        mutated = workflow.replace(
+            f"  {smoke_job.job_id}:\n",
+            f"  {smoke_job.job_id}:\n" "    if: ${{ false }}\n",
+            1,
+        )
 
         self.assertIn(
             "SessionStart smoke job must be unconditional",
@@ -711,9 +586,11 @@ class RepositoryDocumentationContractTests(unittest.TestCase):
     def test_ci_registration_rejects_trailing_job_level_disable(self) -> None:
         root = Path(__file__).resolve().parents[2]
         workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        smoke_job = workflow_job_with_command(workflow, EXPECTED_WORKFLOW_SMOKE_COMMAND)
         mutated = workflow.replace(
-            "\n  windows_local_embedding_security:",
-            "\n    if: ${{ false }}\n  windows_local_embedding_security:",
+            smoke_job.source,
+            smoke_job.source.rstrip("\n") + "\n    if: ${{ false }}\n\n",
+            1,
         )
 
         self.assertIn(

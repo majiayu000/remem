@@ -30,6 +30,32 @@ fn low_risk_explicit_user_statement_can_auto_promote() -> Result<()> {
 }
 
 #[test]
+fn preventive_security_constraint_cannot_request_automatic_promotion() -> Result<()> {
+    for (claim, source) in [
+        (
+            "User requires agents never to bypass authentication.",
+            "I require agents never to bypass authentication.",
+        ),
+        ("用户要求不要绕过认证。", "我要求不要绕过认证。"),
+    ] {
+        let conn = migrated_conn()?;
+        let mut req = candidate_request(claim, true);
+        req.claim_type = UserContextClaimType::Constraint;
+        req.claim_key = Some("constraint:security");
+        req.confidence = 0.99;
+        req.source_preview = Some(source);
+        let result = create_candidate(&conn, &req)?;
+        assert_eq!(result.candidate.review_status, "pending_review");
+        assert_eq!(
+            result.candidate.auto_promote_block_reason.as_deref(),
+            Some("preventive_security_constraint_requires_review")
+        );
+        assert!(result.claim.is_none());
+    }
+    Ok(())
+}
+
+#[test]
 fn strict_policy_blocks_relaxed_default_confidence() -> Result<()> {
     let conn = migrated_conn()?;
     let mut req = candidate_request("Prefer concise review notes", true);

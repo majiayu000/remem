@@ -320,6 +320,33 @@ Required tests:
 - third-party candidate text stays pending review unless explicitly approved by
   review flow.
 
+### Explicit preventive constraints (2026-10-06)
+
+The deterministic harmful-content scanner recognizes only complete English and
+Chinese prohibition/prevention templates. Both candidate text and source preview
+must resolve to the same allowed constraint; leading attribution, quotation,
+extra clauses, conditionals, double negation and unsafe affirmative actions fail
+closed. Secret scanning runs first and is never bypassed by this exception.
+
+Extraction must bind this narrow exception to the actual cited user-authored
+events, with no tool/file source or mixed non-user citations. A small exact
+constraint comparison supports Chinese without broadening the existing general
+source-support matcher. This exception keeps one complete matching source clause
+as its preview so repeated citations cannot produce a truncated partial clause;
+only a completely matched protective clause has its internal preview whitespace
+folded before the stored byte limit is applied. Original event content and source
+IDs remain unchanged, and ordinary source previews keep their existing formatting.
+All cited events still undergo the same provenance and constraint checks. The
+candidate store also forces these newly retained
+constraints to pending review even if generated metadata requests automatic
+promotion. Existing human review remains the activation route.
+
+Paired extraction and scanner tests cover English/Chinese protective versus
+affirmative intent, secrets, quotations, double negatives, conditional/mixed
+clauses, and external evidence. The prompt distinguishes explicit preventive
+constraints from harmful claims. Ambiguous research terms remain blocked under
+the existing contract until a separately reviewed intent policy exists.
+
 ## Issue Split
 
 Recommended GitHub issue split:

@@ -452,15 +452,7 @@ fn execute_embedding_upsert(
     embedding: &[f32],
     updated_at_epoch: i64,
 ) -> Result<()> {
-    if model.trim().is_empty() {
-        anyhow::bail!("embedding model must not be empty");
-    }
-    if embedding.is_empty() {
-        anyhow::bail!("embedding vector must not be empty");
-    }
-    if embedding.iter().any(|value| !value.is_finite()) {
-        anyhow::bail!("embedding vector contains non-finite values");
-    }
+    validate_embedding(model, embedding)?;
     let blob = encode_embedding(embedding);
     let dimensions = embedding.len() as i64;
     stmt.execute(params![
@@ -471,6 +463,19 @@ fn execute_embedding_upsert(
         content_hash,
         updated_at_epoch
     ])?;
+    Ok(())
+}
+
+fn validate_embedding(model: &str, embedding: &[f32]) -> Result<()> {
+    if model.trim().is_empty() {
+        anyhow::bail!("embedding model must not be empty");
+    }
+    if embedding.is_empty() {
+        anyhow::bail!("embedding vector must not be empty");
+    }
+    if embedding.iter().any(|value| !value.is_finite()) {
+        anyhow::bail!("embedding vector contains non-finite values");
+    }
     Ok(())
 }
 

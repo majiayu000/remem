@@ -103,6 +103,34 @@ in-scope result; deleted/suppressed/excluded rows; exact-vs-KNN rankings; and an
 automatic context semantic target older than 4,096 eligible newer memories.
 Tests use fabricated vectors or feature-hash in isolated temporary databases.
 
+## Backfill source consistency (2026-10-06)
+
+Reuse `memory_index_hash` and `memory_embeddings.content_hash`; do not add a
+second source version or migration. Selection streams eligible memories and the
+target profile's stored hash, recomputes the canonical passage plus the effective
+`search_context` (only when its source hash is present), and retains at most the
+requested number of mismatches. Pending counts and fresh coverage use the same
+comparison. These read-only checks may scan all eligible source rows and hash
+their passage bytes; this is an explicit linear consistency cost, not a query
+performance optimization. The application retains one scanned row plus the
+selected batch; embedding generation and writes remain bounded by batch/limit.
+
+Model calls finish outside the write transaction. The prepared batch retains its
+exact input fields. An atomic `INSERT ... SELECT ... ON CONFLICT DO UPDATE`
+checks those fields, effective enrichment and searchable status before each
+write, inside the existing batch savepoint. Only successful CAS rows synchronize
+their derived profile index and count as processed. A mismatch is a discarded
+calculation, not successful indexing; the source hash comparison keeps any
+remaining inconsistency pending. Empty selection ends a run, while selected but
+skipped work counts against the attempt limit so concurrent edits cannot create
+an infinite retry loop or make a deleted batch strand later eligible rows.
+
+Existing incorrect/empty hashes require no eager upgrade-time work: explicit
+backfill discovers them even when vector timestamps are newer than source
+timestamps and repairs only the caller's bounded selection. Regression tests use
+real migrated SQLite connections, barriers, and fabricated or feature-hash
+vectors; no live provider is required.
+
 ## Phase 1: Provider Contract
 
 ### Config
@@ -270,31 +298,19 @@ non-off provider is selected.
   prunes other-model vectors only after coverage reaches 100% for that same
   searchable set and only with an explicit `--prune` flag.
 
-Backfill selects and counts pending rows by comparing the stored
-`memory_embeddings.content_hash` with the current `memory_index_hash` of the
-canonical fields and enrichment-ready search-context passage, for the pinned
-`(model, dimensions)` profile. A streaming scan checks every eligible row until
-the requested number of stale candidates is collected; timestamp order only
-prioritizes work and cannot exclude a hash mismatch. Counting holds only one
-row at a time. This costs O(eligible passage bytes) without a schema migration;
-there is no timestamp or recent-row shortcut that can miss stale sources.
+The source-consistency contract above also applies to this command: coverage
+counts only vectors with the current passage hash for the pinned profile, and
+pruning requires that fresh coverage is complete and pending work is zero.
+Completion timestamps remain diagnostic metadata. The atomic source check,
+source-vector write, and profile mirror synchronization share the batch
+savepoint; only accepted rows update the mirror or processed count. Discarded
+results are logged, and a source that still needs a current vector stays pending.
+A conflicting SQLite writer returns the transaction error rather than committing
+an unchecked result.
 
-After embedding outside the transaction, the batch savepoint re-reads each
-selected memory's current eligible passage and compares its hash with the
-prepared hash before upsert. The check, source-vector write, and profile mirror
-write share that transaction. A changed, deleted, or ineligible source is
-skipped and cannot overwrite a foreground vector. A conflicting concurrent
-writer that invalidates SQLite's read snapshot fails the batch transaction;
-it never commits an unchecked result. Only accepted rows enter profile mirror
-updates and the processed count. Completion timestamps remain diagnostic
-metadata. Existing coverage counts vector presence; the separate hash-based
-pending check must also reach zero before inactive profiles can be pruned.
-
-Regressions cover an old prepared batch finishing after a foreground edit and
-correct vector, equal-second source changes, enrichment changes without a
-canonical timestamp change, deleted/ineligible sources, mixed accepted/skipped
-batches, idempotent current results, and preservation of profile-specific
-mirrors. Test vectors are synthetic and need no model/API call.
+Regressions additionally preserve mixed accepted/skipped batches, idempotent
+current passages, and profile-specific mirrors. Test vectors are synthetic and
+need no model/API call.
 
 ### Tests
 

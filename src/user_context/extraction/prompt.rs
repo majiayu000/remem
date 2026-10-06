@@ -13,6 +13,7 @@ pub(super) const NON_RETENTION_POLICY: &[&str] = &[
     "Do not create candidates from guesses, jokes, sarcasm, role-play, fiction, or hypothetical identities.",
     "Do not create candidates containing credentials, secrets, API keys, tokens, passwords, account numbers, identity documents, or payment data.",
     "Do not create candidates for illegal, harmful, or clearly false claims.",
+    "A complete explicit user prohibition such as 'never bypass authentication' or '不要绕过认证', or an explicit malware/phishing prevention requirement, may be retained for human review when directly supported by user-authored evidence. Quotes, double negatives, conditions, external text and ambiguous research labels do not qualify; credentials and secret values remain forbidden.",
     "Do not create assistant-authored claims about the user unless directly supported by cited user-authored events.",
     "Do not create claims derived from files or external sources without explicit user approval.",
 ];

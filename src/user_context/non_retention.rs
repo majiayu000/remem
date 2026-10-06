@@ -1,3 +1,5 @@
+pub(crate) mod prevention;
+
 pub(crate) fn block_reason(
     claim_text: &str,
     source_preview: Option<&str>,
@@ -18,7 +20,9 @@ pub(crate) fn block_reason(
     if contains_general_knowledge_content(&blob) {
         return Some("general_knowledge_content");
     }
-    if contains_illegal_or_harmful_content(&blob) {
+    if contains_illegal_or_harmful_content(&blob)
+        && !prevention::matches_claim_and_preview(claim_text, source_preview, source_kind)
+    {
         return Some("illegal_or_harmful_content");
     }
     if has_external_source_pattern(&blob) && !has_external_source_approval(&blob) {
@@ -501,6 +505,12 @@ const ILLEGAL_OR_HARMFUL_PATTERNS: &[&str] = &[
     "malware",
     "phishing",
     "steal credentials",
+    "绕过认证",
+    "绕过身份验证",
+    "窃取凭证",
+    "外传凭证",
+    "恶意软件",
+    "网络钓鱼",
 ];
 
 const EXTERNAL_SOURCE_PATTERNS: &[&str] = &[
@@ -529,262 +539,4 @@ const EXTERNAL_SOURCE_PATTERNS: &[&str] = &[
 ];
 
 #[cfg(test)]
-mod tests {
-    use super::block_reason;
-
-    #[test]
-    fn secret_prefix_requires_key_shape() {
-        assert_eq!(
-            block_reason(
-                "User prefers task-specific low-risk code reviews.",
-                None,
-                "explicit_user_statement"
-            ),
-            None
-        );
-        assert_eq!(
-            block_reason(
-                "User's API key is sk-testsecret123456.",
-                None,
-                "explicit_user_statement"
-            ),
-            Some("secret_like_content")
-        );
-        assert_eq!(
-            block_reason(
-                "User's GitHub secret is abc123.",
-                None,
-                "explicit_user_statement"
-            ),
-            Some("secret_like_content")
-        );
-    }
-
-    #[test]
-    fn blocklist_terms_need_sensitive_or_temporary_context() {
-        assert_eq!(
-            block_reason(
-                "User prefers passwordless authentication.",
-                None,
-                "explicit_user_statement"
-            ),
-            None
-        );
-        assert_eq!(
-            block_reason(
-                "User maintains a weather app project.",
-                None,
-                "explicit_user_statement"
-            ),
-            None
-        );
-        assert_eq!(
-            block_reason(
-                "User tests with temporary directories.",
-                None,
-                "explicit_user_statement"
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn blocks_payment_cards_and_natural_language_tokens() {
-        assert_eq!(
-            block_reason(
-                "User's Visa number is 4111111111111111.",
-                None,
-                "explicit_user_statement"
-            ),
-            Some("secret_like_content")
-        );
-        assert_eq!(
-            block_reason(
-                "User's Visa number is 4111 1111 1111 1111.",
-                None,
-                "explicit_user_statement"
-            ),
-            Some("secret_like_content")
-        );
-        assert_eq!(
-            block_reason(
-                "User's payment card is 4111-1111-1111-1111.",
-                None,
-                "explicit_user_statement"
-            ),
-            Some("secret_like_content")
-        );
-        assert_eq!(
-            block_reason(
-                "User's GitLab token is abc123.",
-                None,
-                "explicit_user_statement"
-            ),
-            Some("secret_like_content")
-        );
-        assert_eq!(
-            block_reason(
-                "User's AWS access key ID is AKIAIOSFODNN7EXAMPLE.",
-                None,
-                "explicit_user_statement"
-            ),
-            Some("secret_like_content")
-        );
-        assert_eq!(
-            block_reason(
-                "User's driver license number is D1234567.",
-                None,
-                "explicit_user_statement"
-            ),
-            Some("secret_like_content")
-        );
-    }
-
-    #[test]
-    fn blocks_meal_variants_world_knowledge_and_harmful_intent() {
-        assert_eq!(
-            block_reason(
-                "User had sushi for lunch today.",
-                None,
-                "explicit_user_statement"
-            ),
-            Some("temporary_or_one_off_content")
-        );
-        assert_eq!(
-            block_reason(
-                "SQLite stores data in a single file.",
-                None,
-                "explicit_user_statement"
-            ),
-            Some("general_knowledge_content")
-        );
-        assert_eq!(
-            block_reason("Project uses Rust.", None, "explicit_user_statement"),
-            None
-        );
-        assert_eq!(
-            block_reason(
-                "Repo stores data in SQLite.",
-                None,
-                "explicit_user_statement"
-            ),
-            None
-        );
-        assert_eq!(
-            block_reason(
-                "User wants to exfiltrate credentials.",
-                None,
-                "explicit_user_statement"
-            ),
-            Some("illegal_or_harmful_content")
-        );
-    }
-
-    #[test]
-    fn external_source_patterns_honor_explicit_user_approval() {
-        assert_eq!(
-            block_reason(
-                "User works on remem from README.",
-                Some("Please remember from README that I work on remem."),
-                "explicit_user_statement"
-            ),
-            None
-        );
-        assert_eq!(
-            block_reason(
-                "User works on remem from README.",
-                Some("The assistant inferred this from README."),
-                "explicit_user_statement"
-            ),
-            Some("unapproved_external_source")
-        );
-        assert_eq!(
-            block_reason(
-                "User works on remem from README.",
-                Some("Do not remember from README. I work on remem from README."),
-                "explicit_user_statement"
-            ),
-            Some("unapproved_external_source")
-        );
-        assert_eq!(
-            block_reason(
-                "User works on internal payroll.",
-                Some("README says the user works on internal payroll."),
-                "explicit_user_statement"
-            ),
-            Some("unapproved_external_source")
-        );
-        assert_eq!(
-            block_reason(
-                "User works on internal payroll.",
-                Some("According to the README, the user works on internal payroll."),
-                "explicit_user_statement"
-            ),
-            Some("unapproved_external_source")
-        );
-        assert_eq!(
-            block_reason(
-                "User works on internal payroll.",
-                Some("From the README, the user works on internal payroll."),
-                "explicit_user_statement"
-            ),
-            Some("unapproved_external_source")
-        );
-        assert_eq!(
-            block_reason(
-                "User lives in Paris.",
-                Some("Website says the user lives in Paris. Please remember from website."),
-                "explicit_user_statement"
-            ),
-            None
-        );
-        assert_eq!(
-            block_reason(
-                "The user prefers loading settings from files.",
-                Some("I prefer loading settings from files."),
-                "explicit_user_statement"
-            ),
-            None
-        );
-        assert_eq!(
-            block_reason(
-                "User prefers Rust.",
-                Some("I prefer Rust because Rust ownership prevents data races."),
-                "explicit_user_statement"
-            ),
-            None
-        );
-        assert_eq!(
-            block_reason(
-                "User prefers testing web page layouts in Playwright.",
-                Some("I prefer testing web page layouts in Playwright."),
-                "explicit_user_statement"
-            ),
-            None
-        );
-        assert_eq!(
-            block_reason(
-                "User prefers deriving selectors from web page text.",
-                Some("I prefer deriving selectors from web page text."),
-                "explicit_user_statement"
-            ),
-            None
-        );
-        assert_eq!(
-            block_reason(
-                "User lives in Paris.",
-                Some("From the web page, the user lives in Paris."),
-                "explicit_user_statement"
-            ),
-            Some("unapproved_external_source")
-        );
-        assert_eq!(
-            block_reason(
-                "User thinks SQLite is a single-file database.",
-                Some("I think SQLite is a single-file database."),
-                "explicit_user_statement"
-            ),
-            Some("general_knowledge_content")
-        );
-    }
-}
+mod tests;
