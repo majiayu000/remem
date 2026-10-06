@@ -330,28 +330,42 @@ fn invalid_codex_home_fails_before_install_or_uninstall_writes() {
 }
 
 #[test]
-fn invalid_codex_home_keeps_claude_diagnostics_visible() {
+fn invalid_codex_home_reports_scoped_diagnostics() {
     let root = install_status_temp_root();
-    let claude = root.join("home/.claude");
-    std::fs::create_dir_all(&claude).unwrap();
-    std::fs::write(claude.join("settings.json"), r#"{"hooks":{}}"#).unwrap();
-    std::fs::write(root.join("home/.claude.json"), r#"{"mcpServers":{}}"#).unwrap();
+    std::fs::create_dir_all(root.join("home")).unwrap();
+    // Unix home discovery follows HOME. On Windows dirs uses KnownFolder,
+    // so HOME/USERPROFILE do not redirect the Claude profile lookup.
+    #[cfg(unix)]
+    {
+        let claude = root.join("home/.claude");
+        std::fs::create_dir_all(&claude).unwrap();
+        std::fs::write(claude.join("settings.json"), r#"{"hooks":{}}"#).unwrap();
+        std::fs::write(root.join("home/.claude.json"), r#"{"mcpServers":{}}"#).unwrap();
+    }
     let doctor = isolated_codex_command(&root, std::ffi::OsStr::new("relative-profile"))
         .args(["doctor", "--json"])
         .output()
         .unwrap();
     let report: serde_json::Value = serde_json::from_slice(&doctor.stdout).expect("doctor JSON");
     let checks = report["checks"].as_array().unwrap();
-    for name in ["Hooks (claude)", "MCP (claude)"] {
-        let check = checks
+    #[cfg(unix)]
+    {
+        for name in ["Hooks (claude)", "MCP (claude)"] {
+            let check = checks
+                .iter()
+                .find(|check| check["name"] == name)
+                .expect(name);
+            assert_eq!(check["status"], "fail", "{check}");
+            assert!(
+                check["detail"].as_str().unwrap().contains("claude"),
+                "{check}"
+            );
+        }
+        let capability = checks
             .iter()
-            .find(|check| check["name"] == name)
-            .expect(name);
-        assert_eq!(check["status"], "fail", "{check}");
-        assert!(
-            check["detail"].as_str().unwrap().contains("claude"),
-            "{check}"
-        );
+            .find(|check| check["name"] == "Capture capability (claude)")
+            .unwrap();
+        assert_eq!(capability["status"], "ok", "{capability}");
     }
     for name in ["Hooks (codex)", "MCP (codex)", "Capture capability (codex)"] {
         let check = checks
@@ -367,11 +381,6 @@ fn invalid_codex_home_keeps_claude_diagnostics_visible() {
             "{check}"
         );
     }
-    let capability = checks
-        .iter()
-        .find(|check| check["name"] == "Capture capability (claude)")
-        .unwrap();
-    assert_eq!(capability["status"], "ok", "{capability}");
     assert!(
         !root.join("data").exists(),
         "doctor must not initialize a store"
