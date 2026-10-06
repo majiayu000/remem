@@ -1,0 +1,10 @@
+condition: remem_default
+task_id: conflicting-memories-001
+category: conflicting_memories
+reference_time_epoch: 1760000000
+
+question:
+Should remem silently choose one unresolved conflicting memory?
+
+retrieved_evidence:
+(none)

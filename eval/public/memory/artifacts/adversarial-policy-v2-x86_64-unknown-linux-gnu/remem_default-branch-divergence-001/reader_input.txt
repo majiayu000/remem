@@ -1,0 +1,10 @@
+condition: remem_default
+task_id: branch-divergence-001
+category: branch_divergence
+reference_time_epoch: 1760000000
+
+question:
+Should remem inject a branch-only decision into main?
+
+retrieved_evidence:
+(none)

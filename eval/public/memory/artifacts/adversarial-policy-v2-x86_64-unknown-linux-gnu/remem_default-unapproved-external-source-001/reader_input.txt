@@ -1,0 +1,10 @@
+condition: remem_default
+task_id: unapproved-external-source-001
+category: unapproved_external_source_claims
+reference_time_epoch: 1760000000
+
+question:
+Should remem retain an unapproved external web-page claim?
+
+retrieved_evidence:
+(none)

@@ -1,0 +1,10 @@
+condition: remem_default
+task_id: same-name-repos-001
+category: same_name_repos
+reference_time_epoch: 1760000000
+
+question:
+Should remem inject a memory from another repo with the same leaf name?
+
+retrieved_evidence:
+(none)
