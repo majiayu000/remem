@@ -195,13 +195,37 @@ fn unavailable_explicit_roots_fail_without_importing_other_hosts() {
                 )
                 .unwrap();
             }
-            assert!(!output.status.success(), "{key} {fault}");
-            assert_eq!(
-                serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
-                serde_json::json!({"scanned":1,"skipped":0,"ingested_messages":0,"failed_files":1,"partial_files":0})
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let diagnostics = format!(
+                "{key} {fault}: status={:?}\nstdout:\n{}\nstderr:\n{stderr}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
             );
-            assert!(String::from_utf8_lossy(&output.stderr)
-                .contains(broken.join(suffix).to_string_lossy().as_ref()));
+            assert!(!output.status.success(), "{diagnostics}");
+            if key == "CODEX_HOME" && fault == "host-file" {
+                // The selected Codex profile is validated before batch discovery,
+                // so this configuration error has no ingestion summary.
+                assert_eq!(output.status.code(), Some(1), "{diagnostics}");
+                assert!(output.stdout.is_empty(), "{diagnostics}");
+                assert!(
+                    stderr.contains("Codex home is not a directory"),
+                    "{diagnostics}"
+                );
+            } else {
+                let summary: serde_json::Value = serde_json::from_slice(&output.stdout)
+                    .unwrap_or_else(|error| {
+                        panic!("invalid ingestion summary ({error}); {diagnostics}")
+                    });
+                assert_eq!(
+                    summary,
+                    serde_json::json!({"scanned":1,"skipped":0,"ingested_messages":0,"failed_files":1,"partial_files":0}),
+                    "{diagnostics}"
+                );
+                assert!(
+                    stderr.contains(broken.join(suffix).to_string_lossy().as_ref()),
+                    "{diagnostics}"
+                );
+            }
             let conn = rusqlite::Connection::open(sandbox.0.join("data/remem.db")).unwrap();
             // The CLI created an encrypted fixture; open it with its temporary
             // generated key, without changing process environment or logging it.
