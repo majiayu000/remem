@@ -330,7 +330,7 @@ def main() -> int:
             results.append(
                 run(
                     "Run eval regression gates",
-                    ["cargo", "run", "--", "eval-gates", "--json-out", "/tmp/remem-eval-gates.json"],
+                    ["cargo", "run", "--", "eval-gates", "--json-out", str(tmp / "eval-gates.json")],
                     cwd=tmp,
                 )
             )

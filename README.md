@@ -96,6 +96,8 @@ SessionStart and queues durable session distillation at Stop. Codex also uses
 `UserPromptSubmit` to capture each prompt and surface compact optional memory
 candidates. `remem doctor` checks the schema, encryption key, database, hooks,
 MCP registration, worker, and common install-path drift.
+Its diagnostics do not create the data directory or write or rotate log files;
+findings and stderr warnings remain visible, and existing log health is inspected.
 
 Repository contributors can verify duplicate SessionStart suppression with the
 [isolated executable smoke fixture](scripts/ci/smoke_sessionstart_context_gate.sh).

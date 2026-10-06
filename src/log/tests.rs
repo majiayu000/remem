@@ -6,7 +6,7 @@ use fs2::FileExt;
 
 use super::config::{
     log_lock_path, log_max_bytes, log_path, log_policy, log_rotation_issue_path, rotated_log_path,
-    with_log_dir, DEFAULT_LOG_LOCK_TIMEOUT_MS, DEFAULT_LOG_MAX_BYTES,
+    with_log_dir, without_file_logging, DEFAULT_LOG_LOCK_TIMEOUT_MS, DEFAULT_LOG_MAX_BYTES,
     DEFAULT_LOG_MAX_ROTATED_FILES, MAX_LOG_ROTATED_FILES,
 };
 use super::test_support::{with_log_envs, with_log_test_data_dir};
@@ -151,6 +151,162 @@ fn with_log_dir_overrides_log_path_for_current_thread() {
 
     assert_eq!(path, dir.join("remem.log"));
     std::fs::remove_dir_all(dir).expect("log override dir should remove");
+}
+
+#[test]
+fn without_file_logging_keeps_missing_directory_absent() {
+    let dir = unique_temp_dir("log-read-only-missing");
+    assert!(!dir.exists());
+    with_log_dir(&dir, || {
+        without_file_logging(|| {
+            super::error("doctor", "visible-error-without-file-write");
+            super::warn("doctor", "visible-warning-without-file-write");
+            assert!(open_log_append().is_none());
+            let health = super::log_health_snapshot().expect("log health should remain available");
+            assert_eq!(health.path, dir.join("remem.log"));
+            assert_eq!(health.active_bytes, 0);
+        });
+        assert!(
+            !dir.exists(),
+            "read-only logging must not create the data directory"
+        );
+        info("log-scope", "ordinary-logging-restored");
+    });
+    let log = std::fs::read_to_string(dir.join("remem.log")).expect("ordinary log should exist");
+    assert!(log.contains("ordinary-logging-restored"));
+    assert!(!log.contains("without-file-write"));
+    std::fs::remove_dir_all(dir).expect("log directory should remove");
+}
+
+#[test]
+fn without_file_logging_preserves_existing_files() {
+    let dir = unique_temp_dir("log-read-only-existing");
+    std::fs::create_dir_all(&dir).expect("fixture directory should create");
+    let path = dir.join("remem.log");
+    for (file, contents) in [
+        (path.clone(), "active-log-sentinel"),
+        (rotated_log_path(&path, 1), "retained-log-sentinel"),
+        (rotated_log_path(&path, 2), "above-retention-sentinel"),
+        (log_lock_path(&path), "lock-sentinel"),
+    ] {
+        std::fs::write(file, contents).expect("fixture file should write");
+    }
+    write_issue(
+        &log_rotation_issue_path(&path),
+        &LogRotationIssue {
+            kind: "lock_timeout".to_string(),
+            message: "existing issue".to_string(),
+            path: path.display().to_string(),
+            at_epoch: 1,
+        },
+    );
+    let before: Vec<_> = std::fs::read_dir(&dir)
+        .expect("fixture should list")
+        .map(|entry| {
+            let path = entry.expect("fixture entry should read").path();
+            let bytes = std::fs::read(&path).expect("fixture bytes should read");
+            (path, bytes)
+        })
+        .collect();
+    with_log_envs(
+        &[
+            ("REMEM_LOG_MAX_BYTES", Some("1")),
+            ("REMEM_LOG_MAX_ROTATED_FILES", Some("1")),
+        ],
+        || {
+            with_log_dir(&dir, || {
+                without_file_logging(|| {
+                    info("doctor", "must-not-append-or-rotate");
+                    assert!(open_log_append().is_none());
+                    let health =
+                        super::log_health_snapshot().expect("existing log health should read");
+                    assert_eq!(health.path, path);
+                    assert_eq!(health.active_bytes, b"active-log-sentinel".len() as u64);
+                    assert_eq!(
+                        health
+                            .issue
+                            .expect("existing issue should remain visible")
+                            .message,
+                        "existing issue"
+                    );
+                })
+            });
+        },
+    );
+    assert_eq!(
+        std::fs::read_dir(&dir)
+            .expect("fixture should list")
+            .count(),
+        before.len()
+    );
+    for (path, bytes) in before {
+        assert_eq!(
+            std::fs::read(path).expect("fixture bytes should remain readable"),
+            bytes
+        );
+    }
+    std::fs::remove_dir_all(dir).expect("fixture directory should remove");
+}
+
+#[test]
+fn without_file_logging_restores_after_nested_error_and_unwind() {
+    let dir = unique_temp_dir("log-read-only-restoration");
+    with_log_envs(&[("REMEM_LOG_MAX_BYTES", Some("10485760"))], || {
+        with_log_dir(&dir, || {
+            let result: Result<(), &str> = without_file_logging(|| {
+                without_file_logging(|| info("doctor", "inner-scope"));
+                info("doctor", "outer-scope-after-inner-return");
+                assert!(open_log_append().is_none());
+                assert!(!dir.exists());
+                Err("expected error")
+            });
+            assert_eq!(result, Err("expected error"));
+            info("log-scope", "after-error");
+            let path = dir.join("remem.log");
+            let before = std::fs::read(&path).expect("logging should resume after an error result");
+            let unwind = std::panic::catch_unwind(|| {
+                without_file_logging(|| {
+                    info("doctor", "must-not-write-before-panic");
+                    panic!("expected scope unwind");
+                })
+            });
+            assert!(unwind.is_err());
+            assert_eq!(
+                std::fs::read(&path).expect("existing log should read"),
+                before
+            );
+            info("log-scope", "after-unwind");
+            let log = std::fs::read_to_string(path).expect("logging should resume after unwinding");
+            assert!(log.contains("after-error"));
+            assert!(log.contains("after-unwind"));
+            assert!(!log.contains("must-not-write-before-panic"));
+        });
+    });
+    std::fs::remove_dir_all(dir).expect("fixture directory should remove");
+}
+
+#[test]
+fn without_file_logging_is_confined_to_current_thread() {
+    let root = unique_temp_dir("log-read-only-thread");
+    let parent = root.join("suppressed");
+    let other = root.join("other-thread");
+    with_log_dir(&parent, || {
+        without_file_logging(|| {
+            let other = other.clone();
+            std::thread::spawn(move || {
+                with_log_dir(&other, || info("log-scope", "other-thread-write"))
+            })
+            .join()
+            .expect("independent writer should finish");
+            info("doctor", "current-thread-suppressed");
+            assert!(open_log_append().is_none());
+        })
+    });
+    assert!(!parent.exists());
+    assert!(std::fs::read_to_string(other.join("remem.log"))
+        .expect("other thread should keep normal logging")
+        .contains("other-thread-write"));
+    std::fs::remove_dir_all(root).expect("fixture directory should remove");
 }
 
 #[test]

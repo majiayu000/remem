@@ -2,20 +2,20 @@ use anyhow::{Context, Result};
 use std::path::PathBuf;
 
 pub(in crate::install) fn settings_path() -> PathBuf {
-    dirs::home_dir()
+    crate::host_roots::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".claude")
         .join("settings.json")
 }
 
 pub(in crate::install) fn claude_json_path() -> PathBuf {
-    dirs::home_dir()
+    crate::host_roots::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".claude.json")
 }
 
 pub(in crate::install) fn claude_desktop_config_path() -> PathBuf {
-    dirs::home_dir()
+    crate::host_roots::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".claude")
         .join("claude_desktop_config.json")
@@ -26,7 +26,7 @@ pub(crate) fn claude_mcp_paths() -> Vec<PathBuf> {
 }
 
 pub(in crate::install) fn old_hooks_path() -> PathBuf {
-    dirs::home_dir()
+    crate::host_roots::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".claude")
         .join("hooks.json")

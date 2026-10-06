@@ -7,7 +7,8 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 use super::config::{
-    log_lock_path, log_policy, log_rotation_issue_path, rotated_log_path, InvalidLogEnv, LogPolicy,
+    file_logging_suppressed, log_lock_path, log_policy, log_rotation_issue_path, rotated_log_path,
+    InvalidLogEnv, LogPolicy,
 };
 
 const ROTATION_ISSUE_FRESH_SECS: i64 = 24 * 60 * 60;
@@ -127,6 +128,9 @@ fn with_prepared_log<T>(
     policy: &LogPolicy,
     action: impl FnOnce(File) -> std::io::Result<Option<T>>,
 ) -> std::io::Result<Option<T>> {
+    if file_logging_suppressed() {
+        return Ok(None);
+    }
     let prepare_started_epoch = now_epoch();
     create_parent_dir(policy)?;
     let lock_path = log_lock_path(&policy.path);

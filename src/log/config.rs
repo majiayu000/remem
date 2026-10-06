@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 
 pub(crate) const DEFAULT_LOG_MAX_BYTES: u64 = 10 * 1024 * 1024;
@@ -8,6 +8,7 @@ pub(crate) const MAX_LOG_ROTATED_FILES: usize = 100;
 
 thread_local! {
     static LOG_DIR_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    static FILE_LOGGING_SUPPRESSED: Cell<bool> = const { Cell::new(false) };
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -29,6 +30,18 @@ pub(crate) struct LogPolicy {
 pub(crate) fn with_log_dir<T>(dir: &Path, f: impl FnOnce() -> T) -> T {
     let _guard = LogDirOverrideGuard::set(dir.to_path_buf());
     f()
+}
+
+/// Suppress file logging for synchronous work on the current thread.
+pub(crate) fn without_file_logging<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = FileLoggingSuppressionGuard {
+        previous: FILE_LOGGING_SUPPRESSED.with(|slot| slot.replace(true)),
+    };
+    f()
+}
+
+pub(super) fn file_logging_suppressed() -> bool {
+    FILE_LOGGING_SUPPRESSED.with(Cell::get)
 }
 
 pub(crate) fn log_path() -> Option<PathBuf> {
@@ -136,6 +149,16 @@ fn parse_non_negative_usize_env(
 
 struct LogDirOverrideGuard {
     previous: Option<PathBuf>,
+}
+
+struct FileLoggingSuppressionGuard {
+    previous: bool,
+}
+
+impl Drop for FileLoggingSuppressionGuard {
+    fn drop(&mut self) {
+        FILE_LOGGING_SUPPRESSED.with(|slot| slot.set(self.previous));
+    }
 }
 
 impl LogDirOverrideGuard {

@@ -81,6 +81,9 @@ class PreflightCargoTestThreadsTests(unittest.TestCase):
         workspace = generators[0][2]
         self.assertTrue(workspace.is_relative_to(check_pr_preflight.ROOT / "target"))
         self.assertTrue(all(call[2] == workspace for call in gates))
+        outputs = [Path(call[1][call[1].index("--json-out") + 1]) for call in gates]
+        self.assertTrue(all(output.parent == workspace for output in outputs))
+        self.assertEqual(len(set(outputs)), 3)
         other_calls = [call for call in self.calls if call not in generators + gates]
         self.assertTrue(all(call[2] == check_pr_preflight.ROOT for call in other_calls))
 

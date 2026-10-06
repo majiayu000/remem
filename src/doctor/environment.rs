@@ -71,7 +71,7 @@ struct HostDiscovery {
 }
 
 fn known_hosts() -> HostDiscovery {
-    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let home = crate::host_roots::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let mut probes = vec![HostProbe {
         name: "claude",
         hooks_path: home.join(".claude").join("settings.json"),

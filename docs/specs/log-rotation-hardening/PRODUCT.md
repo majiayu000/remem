@@ -10,8 +10,8 @@ Tracking:
 ## Problem
 
 `remem` writes operational diagnostics to `REMEM_DATA_DIR/remem.log` from many
-short-lived processes: SessionStart/Stop hooks, MCP/API commands, install and
-doctor commands, and detached background workers. The current log rotation
+short-lived processes: SessionStart/Stop hooks, MCP/API commands, install
+commands, and detached background workers. The current log rotation
 policy caps ordinary disk usage, but it is not reliable for this process model.
 
 Current user-visible failure modes:
@@ -57,6 +57,9 @@ prepare/rotate/open/write path concurrency-aware and diagnosable:
 - Report log health in `remem doctor`: active path, active bytes, total bytes
   across retained logs, configured retention, lock timeout, invalid env
   fallbacks, and the most recent rotation issue.
+- Keep ordinary `remem doctor` diagnostics read-only, including degraded
+  embedding and slow-check warnings. Preserve report findings and stderr
+  mirroring without creating or changing file-log artifacts.
 
 ## Goals
 
@@ -125,6 +128,11 @@ prepare/rotate/open/write path concurrency-aware and diagnosable:
    survives the failing process.
 8. No recursive logging: logger-internal diagnostics do not recursively call
    the same logger path while it is holding or waiting for the log lock.
+9. Read-only doctor: the synchronous ordinary doctor run must not create the
+   data directory, open an append handle, append or rotate logs, or create or
+   change log locks and rotation-issue sidecars. Existing log-health metadata
+   remains available. Leaving this scope restores normal logging on that
+   thread, including after nested scopes, returned errors, or unwinding.
 
 ## Acceptance Criteria
 
@@ -144,6 +152,9 @@ prepare/rotate/open/write path concurrency-aware and diagnosable:
       files are created with `0600`.
 - [ ] Documentation update covers the new env vars and the inherited worker
       stderr file-descriptor limitation.
+- [ ] Doctor regressions preserve the missing-data-directory assertion during
+      a visible embedding degradation. Logging-scope tests preserve existing
+      files and prove nesting, error/unwind restoration, and thread isolation.
 
 ## Risks
 

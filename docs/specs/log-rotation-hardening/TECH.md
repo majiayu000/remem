@@ -199,6 +199,25 @@ The existing `Disk usage` check should count rotated logs as part of log bytes,
 or the new log-health check should make the distinction explicit so disk usage
 does not under-report retained logs.
 
+The synchronous `run_doctor_with_writer` entry point runs inside an internal
+thread-local scope that suppresses file logging. The scope reuses the logger's
+existing RAII override pattern and restores the previous state after normal
+return, an error result, or panic unwinding; nested scopes remain suppressed
+until the outer scope ends. It does not affect other threads or other commands.
+
+`with_prepared_log` returns `Ok(None)` before any filesystem preparation while
+this scope is active. This covers both ordinary log writes and
+`open_log_append`, including lock creation, rotation, permission changes, and
+fallback sidecars. `write_log` retains its existing stderr mirroring before
+that gate. Provider degradation remains in the doctor report and error-level
+stderr diagnostics; there is no silent provider fallback.
+
+Do not suppress `log_path` or the policy/health reader: doctor still inspects
+the actual configured path, retained files, and existing issue metadata without
+writing them. This scope covers ordinary doctor human, JSON, and quiet output,
+including observability collection; the independent `doctor truth` entry point
+is unchanged.
+
 ### 6. Documentation
 
 Implementation PRs update:
@@ -222,6 +241,7 @@ Implementation PRs update:
 | P6 invalid configuration | policy parser, doctor check | env parsing tests and doctor warning test |
 | P7 failure visibility | sidecar diagnostic, doctor check | lock-timeout and rotate-failure fallback fixtures |
 | P8 no recursive logging | sidecar writer | unit test or code structure proving it does not call `crate::log::*` |
+| P9 read-only doctor | synchronous doctor scope and shared log prepare gate | missing/existing-file fixtures, nested/error/unwind/thread restoration, and real degraded-doctor CLI regression |
 
 ## Data Flow
 

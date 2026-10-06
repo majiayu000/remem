@@ -25,7 +25,7 @@ impl InstallHost for ClaudeHost {
         // Treat Claude as available if either of its config files exists.
         // (Fresh installs may have ~/.claude/ but no ~/.claude.json yet.)
         claude_json_path().exists()
-            || dirs::home_dir()
+            || crate::host_roots::home_dir()
                 .map(|h| h.join(".claude").exists())
                 .unwrap_or(false)
     }

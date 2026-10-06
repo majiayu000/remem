@@ -59,6 +59,10 @@ pub(crate) fn run_doctor_with_writer<W: Write>(
     opts: DoctorOptions,
     out: &mut W,
 ) -> Result<DoctorOutcome> {
+    crate::log::without_file_logging(|| run_doctor_report(opts, out))
+}
+
+fn run_doctor_report<W: Write>(opts: DoctorOptions, out: &mut W) -> Result<DoctorOutcome> {
     let started = Instant::now();
     if !opts.json && !opts.quiet {
         write_human_header(out)?;
