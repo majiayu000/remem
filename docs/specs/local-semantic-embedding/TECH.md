@@ -270,6 +270,32 @@ non-off provider is selected.
   prunes other-model vectors only after coverage reaches 100% for that same
   searchable set and only with an explicit `--prune` flag.
 
+Backfill selects and counts pending rows by comparing the stored
+`memory_embeddings.content_hash` with the current `memory_index_hash` of the
+canonical fields and enrichment-ready search-context passage, for the pinned
+`(model, dimensions)` profile. A streaming scan checks every eligible row until
+the requested number of stale candidates is collected; timestamp order only
+prioritizes work and cannot exclude a hash mismatch. Counting holds only one
+row at a time. This costs O(eligible passage bytes) without a schema migration;
+there is no timestamp or recent-row shortcut that can miss stale sources.
+
+After embedding outside the transaction, the batch savepoint re-reads each
+selected memory's current eligible passage and compares its hash with the
+prepared hash before upsert. The check, source-vector write, and profile mirror
+write share that transaction. A changed, deleted, or ineligible source is
+skipped and cannot overwrite a foreground vector. A conflicting concurrent
+writer that invalidates SQLite's read snapshot fails the batch transaction;
+it never commits an unchecked result. Only accepted rows enter profile mirror
+updates and the processed count. Completion timestamps remain diagnostic
+metadata. Existing coverage counts vector presence; the separate hash-based
+pending check must also reach zero before inactive profiles can be pruned.
+
+Regressions cover an old prepared batch finishing after a foreground edit and
+correct vector, equal-second source changes, enrichment changes without a
+canonical timestamp change, deleted/ineligible sources, mixed accepted/skipped
+batches, idempotent current results, and preservation of profile-specific
+mirrors. Test vectors are synthetic and need no model/API call.
+
 ### Tests
 
 - Same-model-id guard test: mixed-model store never cross-scores.

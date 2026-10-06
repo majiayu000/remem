@@ -339,9 +339,10 @@
   `JobTransitionOutcome` must handle `TerminalFailure`; AI usage aggregate and
   latest-session spend struct literals must supply the new coverage fields.
   Use query-returned coverage for historical rows instead of assuming complete
-  zero cost. The failure-lifecycle and pricing-config specs document migration;
-  replacement surface fingerprints remain staged and no release baseline is
-  advanced. REST usage coverage fields are additive.
+  zero cost. The failure-lifecycle spec documents persisted terminal-failure
+  meaning and caller migration; pricing-config documents coverage migration.
+  Replacement surface fingerprints remain staged and no published release
+  baseline is advanced. REST usage coverage fields are additive.
 - GH-932/GH-934: one plan type instead of two. `ContextPlan` and the
   `context_bundle` planner are removed; `RetrievalPlan` now carries both the
   retrieval-source side (`channel_plans`) and the output-section side
@@ -353,6 +354,7 @@
   rather than something inferable from task text.
 
 ### Fixed
+- Embedding backfill verifies the current index-passage hash before publishing each prepared vector. Late batches cannot overwrite foreground edits or enrichment; pending work includes hash mismatches even when source timestamps are equal or older than embedding completion. Refs #1105.
 - Staged source version `0.6.71` for GH-942: Codex Stop capture now
   materializes timestamped conversation turns as first-class captured
   `message` events before the `session_stop` row. Genuine user turns retain

@@ -72,6 +72,22 @@ semantic match older than 4,096 newer rows. No model/default/weight changes or
 live host/API runs are required. This bounded correction does not complete the
 parked retrieval-router or broader shared-engine work.
 
+### Backfill source freshness (Refs #1105)
+
+A backfill result may publish only while its memory still has the exact index
+passage that was selected before embedding. A foreground edit, enrichment
+change, deletion, or move outside searchable lifecycle states must prevent a
+late batch from replacing the newer vector. Embedding completion time is
+not evidence of source freshness, including when edits share one timestamp.
+
+Missing or stale work is determined by the versioned index-passage hash for
+the pinned model and dimensions. A changed passage remains pending until that
+passage has a matching vector. Rejected stale results do not count as processed,
+do not update the derived mirror, and are visible through the remaining-work
+count; backfill may be run again to process the current passage. Provider work
+stays outside the database write transaction. No model download or schema
+migration is required.
+
 ## Non-Goals
 
 - No approximate ANN index. The shipped sqlite-vec exact index and portable

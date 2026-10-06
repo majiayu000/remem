@@ -241,11 +241,18 @@ fn pinned_pending_and_coverage_ignore_other_profiles() -> Result<()> {
     conn.execute(
         "INSERT INTO memory_embeddings
          (memory_id, embedding, dimensions, model, content_hash, updated_at_epoch)
-         VALUES (1, ?1, ?2, ?3, 'active-hash', 1)",
+         VALUES (1, ?1, ?2, ?3, ?4, 1)",
         params![
             &active_blob,
             EMBEDDING_DIMENSIONS as i64,
-            DEFAULT_EMBEDDING_MODEL
+            DEFAULT_EMBEDDING_MODEL,
+            crate::retrieval::embedding::memory_index_hash(
+                "Credential store",
+                "SQLCipher encrypts secrets at rest.",
+                "architecture",
+                None,
+                "",
+            )
         ],
     )?;
     conn.execute(
