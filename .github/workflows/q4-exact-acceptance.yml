@@ -1,0 +1,105 @@
+name: Exact Q4 acceptance on isolated runners
+
+on:
+  push:
+    branches: [audit/acceptance-runner-20261007-e6735b11]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: remem-exact-q4-e6735b11-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    name: Exact Q4 / ${{ matrix.group }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        group: [eval, other]
+    env:
+      ACCEPTANCE_GROUP: ${{ matrix.group }}
+      PYTHONDONTWRITEBYTECODE: "1"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout orchestration R only for its reviewed support files
+        uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          path: orchestration
+          fetch-depth: 2
+          persist-credentials: false
+          sparse-checkout: |
+            .github/acceptance/e6735b11
+            .github/workflows
+      - name: Checkout the exact immutable candidate Q
+        uses: actions/checkout@v6.0.2
+        with:
+          ref: e6735b1165bd92e47333ad7b322640791ecbe689
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Bind original inputs and environment-only configuration
+        run: /usr/bin/python3 -B orchestration/.github/acceptance/e6735b11/bootstrap.py initialize
+      - name: Install the repository Rust toolchain
+        uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          components: clippy, rustfmt
+      - name: Install pinned Python and ONNX dependencies and fetch locked Cargo dependencies
+        run: /usr/bin/python3 -B orchestration/.github/acceptance/e6735b11/bootstrap.py dependencies
+      - name: Execute the unchanged exact-Q gate group
+        timeout-minutes: 330
+        run: /usr/bin/python3 -B orchestration/.github/acceptance/e6735b11/run_group.py --group "${{ matrix.group }}"
+      - name: Collect original output and final identity even after failure
+        if: ${{ always() }}
+        run: /usr/bin/python3 -B orchestration/.github/acceptance/e6735b11/bootstrap.py collect
+      - name: Preserve complete gate ledgers, logs, outputs and execution bindings
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: remem-q4-acceptance-e6735b11-${{ matrix.group }}-attempt-${{ github.run_attempt }}
+          path: /home/runner/work/remem/remem/acceptance/results/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 30
+
+  aggregate:
+    name: Verify all eight exact-Q acceptance gates
+    if: ${{ always() }}
+    needs: acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout the same orchestration revision
+        uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ github.sha }}
+          path: orchestration
+          persist-credentials: false
+          sparse-checkout: .github/acceptance/e6735b11
+      - name: Download both original runner artifacts from this run attempt
+        uses: actions/download-artifact@v4
+        with:
+          pattern: remem-q4-acceptance-e6735b11-*-attempt-${{ github.run_attempt }}
+          path: evidence
+          merge-multiple: false
+      - name: Require complete coverage, actual test activity and identical execution bindings
+        if: ${{ always() }}
+        env:
+          MATRIX_RESULT: ${{ needs.acceptance.result }}
+        run: |
+          /usr/bin/python3 -B orchestration/.github/acceptance/e6735b11/verify_results.py \
+            --artifacts evidence --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" \
+            --support-sha "$GITHUB_SHA" --job-result "$MATRIX_RESULT" --output union-verdict.json
+      - name: Preserve the actual aggregate verdict including failure
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: remem-q4-acceptance-e6735b11-union-attempt-${{ github.run_attempt }}
+          path: union-verdict.json
+          if-no-files-found: error
+          retention-days: 30

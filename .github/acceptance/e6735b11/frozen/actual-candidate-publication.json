@@ -1,0 +1,417 @@
+{
+  "actual_candidate_sha": "e6735b1165bd92e47333ad7b322640791ecbe689",
+  "actual_tree": "9ab4b0e7b337d5cf088a3a2a633ae51cf8b62357",
+  "ordered_parents": [
+    "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+    "70b2de0d414a1adeaf2623e00843bdf1ee6d35dd"
+  ],
+  "branch": "audit/evidence-review-20261007-e6735b11",
+  "manifest_sha256": "b9a134122de23269f7d30c10505c48ed85286d0d1896969f22b23225e29213df",
+  "body_sha256": "4ab1ccdc4ada142ca0a480e7450b26f99ee4ed4ec21e9a528fc212c3f5665c73",
+  "epic_draft_sha256": "3d5c4a6b99e9366d17f26969186c1ccf2dd17a14eb248422c0c82993e9058051",
+  "binary_blobs_created_and_verified": [
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-approved-external-source-001/remem.db.snapshot.sqlite3",
+      "sha": "452fa65bde813bbe5f7302a75cb136bc91b94926",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-assistant-authored-unsupported-001/remem.db.snapshot.sqlite3",
+      "sha": "9eca8f9ae6184c63253bd6adcbd8aa54af24a78a",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-authority-claim-001/remem.db.snapshot.sqlite3",
+      "sha": "4d5cd3ce2be64d70127a80c02de85861f914035b",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-benign-quoted-instruction-001/remem.db.snapshot.sqlite3",
+      "sha": "ec040133301de470dd35b8f1ae6ff63cff811eeb",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-branch-divergence-001/remem.db.snapshot.sqlite3",
+      "sha": "093c58c3451eea3a5c494a6d150650d112ec7bcb",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-conflicting-memories-001/remem.db.snapshot.sqlite3",
+      "sha": "14c8b94778dc58ef957cb4e3e8732114c4cf686a",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-credentials-password-001/remem.db.snapshot.sqlite3",
+      "sha": "195da9e52580eb8e14e04d9c8836ddf0da59ce53",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-cross-sentence-splicing-001/remem.db.snapshot.sqlite3",
+      "sha": "74102fd82c2d709f05bb2eba0c0a6b0ccbf128dd",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-instruction-injection-001/remem.db.snapshot.sqlite3",
+      "sha": "a49b9babcab218ecf6c48eaa4d70d89dc2475591",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-instruction-injection-zh-001/remem.db.snapshot.sqlite3",
+      "sha": "f7ca024a2b452ce888c636cf474901382199e8b0",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-joke-roleplay-001/remem.db.snapshot.sqlite3",
+      "sha": "2cb3bd3f1fb139f0f47b93f9ab4559ff64d6117a",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-multi-task-session-001/remem.db.snapshot.sqlite3",
+      "sha": "0bec001da31b846a6113c5fe5b4603b13840e5db",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-negation-001/remem.db.snapshot.sqlite3",
+      "sha": "7b99ba2d316ee21bf4490e88287ba79f50b8c2ca",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-opaque-payload-001/remem.db.snapshot.sqlite3",
+      "sha": "527a2db3ce4faf7cf32c67f77e062f15b7d6cc2b",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-payments-account-001/remem.db.snapshot.sqlite3",
+      "sha": "03d561eb84e87043710c93fd48b6b3ab0f722b34",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-same-name-repos-001/remem.db.snapshot.sqlite3",
+      "sha": "0413eb994673b6cef1d0e99edb2b2b8f478e8fa8",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-secrets-api-key-001/remem.db.snapshot.sqlite3",
+      "sha": "5cf16d3cf3f941ff6856ea3686cb9bdd04be403e",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-stale-file-anchor-001/remem.db.snapshot.sqlite3",
+      "sha": "9f6795a89641f544357cd830f16fb6eaf700cccc",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-third-party-personal-001/remem.db.snapshot.sqlite3",
+      "sha": "7ac5abf2b0fe5f64f4b369e4ee6606bbd4d2f2d4",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-apple-darwin/remem_default-unapproved-external-source-001/remem.db.snapshot.sqlite3",
+      "sha": "445c0b0b9889571724dc3a00e2a77f1f7a97cd38",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-approved-external-source-001/remem.db.snapshot.sqlite3",
+      "sha": "fa6f0d0ee1fe9d36d1caefb49012e7b731ea6d34",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-assistant-authored-unsupported-001/remem.db.snapshot.sqlite3",
+      "sha": "32f5aad1b4f27d01fcc65e927bd763a39fbd89bd",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-authority-claim-001/remem.db.snapshot.sqlite3",
+      "sha": "78939ef43cc8608b6908bd8e8378deaab9acb178",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-benign-quoted-instruction-001/remem.db.snapshot.sqlite3",
+      "sha": "f9ef46a3505b57747bed092ae5ab2ad3dac77d11",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-branch-divergence-001/remem.db.snapshot.sqlite3",
+      "sha": "230a8a64da933f7943af328bba484df929399b3a",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-conflicting-memories-001/remem.db.snapshot.sqlite3",
+      "sha": "1433c2e2bed9a70a79943b6233276878deed530f",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-credentials-password-001/remem.db.snapshot.sqlite3",
+      "sha": "f5155b73f2195228dc71d73637ed52edde0ad4e3",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-cross-sentence-splicing-001/remem.db.snapshot.sqlite3",
+      "sha": "7ef21ab0ff23125a94f3829a5d6097e88dd03cd5",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-instruction-injection-001/remem.db.snapshot.sqlite3",
+      "sha": "f08a842252679653bd48fcaf9c09f41cece8f40b",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-instruction-injection-zh-001/remem.db.snapshot.sqlite3",
+      "sha": "6fec7bbcd586244bb548c79f52d6d11164ef2ecf",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-joke-roleplay-001/remem.db.snapshot.sqlite3",
+      "sha": "9a6228d7ae650a1b0d2c4890fb525f9fc761c294",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-multi-task-session-001/remem.db.snapshot.sqlite3",
+      "sha": "e023d41b9abed12c5e161ff69cb8858d39ca4d1a",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-negation-001/remem.db.snapshot.sqlite3",
+      "sha": "4d3c9e98c78ec16e2811af251d2afa6e69c753c6",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-opaque-payload-001/remem.db.snapshot.sqlite3",
+      "sha": "6681014de63a9ba7ab12ac343dafd3c44e64b94f",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-payments-account-001/remem.db.snapshot.sqlite3",
+      "sha": "52497d5e780558e5c5611f1542950cf5992465cd",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-same-name-repos-001/remem.db.snapshot.sqlite3",
+      "sha": "69e6b710d14d86c7d3390d4a8407c6ec60e76d54",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-secrets-api-key-001/remem.db.snapshot.sqlite3",
+      "sha": "5510fb2f386a82b37111ada10219c64e60e5ce97",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-stale-file-anchor-001/remem.db.snapshot.sqlite3",
+      "sha": "b3ad0b2e5ae76a0b3d184868817f318f7de2715e",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-third-party-personal-001/remem.db.snapshot.sqlite3",
+      "sha": "1901bb0307e106b3681bc91747506b06e3172b7e",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-aarch64-unknown-linux-gnu/remem_default-unapproved-external-source-001/remem.db.snapshot.sqlite3",
+      "sha": "5b6cbd479b071ef131344aeeb16e72a38ee523a4",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-approved-external-source-001/remem.db.snapshot.sqlite3",
+      "sha": "242fe07d39e03ba59731242179f662a5d2365b1d",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-assistant-authored-unsupported-001/remem.db.snapshot.sqlite3",
+      "sha": "066b01acf45d73e7c78df1da1c8efa9f8c3d37d2",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-authority-claim-001/remem.db.snapshot.sqlite3",
+      "sha": "d82e7bcef977f5886f4ab977ff0bb65d14c38a9e",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-benign-quoted-instruction-001/remem.db.snapshot.sqlite3",
+      "sha": "06d297b619d9cfbc3c86a69ce3b8b399a76c8c54",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-branch-divergence-001/remem.db.snapshot.sqlite3",
+      "sha": "08a53435b806704d4321a1a7395d6790a48caed8",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-conflicting-memories-001/remem.db.snapshot.sqlite3",
+      "sha": "0cd805c629fa95f9a2e1960f711f11662a8f6210",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-credentials-password-001/remem.db.snapshot.sqlite3",
+      "sha": "7e071606052ffef81a30bd0c651803f73eb792ca",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-cross-sentence-splicing-001/remem.db.snapshot.sqlite3",
+      "sha": "f3ea5f42c92b452d3c19272950f176e209aa2566",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-instruction-injection-001/remem.db.snapshot.sqlite3",
+      "sha": "318bed321ef5dfafd42799564bb2412c95d693f0",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-instruction-injection-zh-001/remem.db.snapshot.sqlite3",
+      "sha": "1a1d98031c425a79ec81ccf3dbee8af9b19fc783",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-joke-roleplay-001/remem.db.snapshot.sqlite3",
+      "sha": "8ca46ec7d12435f1c1bced1bdf218fdf19744a51",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-multi-task-session-001/remem.db.snapshot.sqlite3",
+      "sha": "a68a6e87bc393fa289af8627f898f6fb6fc1c835",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-negation-001/remem.db.snapshot.sqlite3",
+      "sha": "4946b48435430c37ef44d43c0d1a590ee9808629",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-opaque-payload-001/remem.db.snapshot.sqlite3",
+      "sha": "63d2caedff82490dad9028ddd5d4689c7a6526c9",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-payments-account-001/remem.db.snapshot.sqlite3",
+      "sha": "847f9f96a963df3f676c22a584b2612b7f461126",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-same-name-repos-001/remem.db.snapshot.sqlite3",
+      "sha": "a74045410383e2441d623047971ecab82e725ef9",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-secrets-api-key-001/remem.db.snapshot.sqlite3",
+      "sha": "4ea6d2b4fa2b9ae15d0cc8903ae1f6684dad80b7",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-stale-file-anchor-001/remem.db.snapshot.sqlite3",
+      "sha": "327a0f9a23dfef1fc2c72e8f15e41e447932ae2e",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-third-party-personal-001/remem.db.snapshot.sqlite3",
+      "sha": "661dfb04d770126527ba83c2e5261af69757bb84",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-apple-darwin/remem_default-unapproved-external-source-001/remem.db.snapshot.sqlite3",
+      "sha": "cf792bd247fd95d9725aad52337925defdc0a471",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-approved-external-source-001/remem.db.snapshot.sqlite3",
+      "sha": "af08598de97d55b22825e9156c39dc76e2c82468",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-assistant-authored-unsupported-001/remem.db.snapshot.sqlite3",
+      "sha": "0b2d45e12b5d1be1cc6fec6aab80cfb9586531d7",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-authority-claim-001/remem.db.snapshot.sqlite3",
+      "sha": "24b5756a1d1d8527c22b41a6d0b230bbd7cd141f",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-benign-quoted-instruction-001/remem.db.snapshot.sqlite3",
+      "sha": "0c957b0be4524423edfd09a44feaca7b5991701f",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-branch-divergence-001/remem.db.snapshot.sqlite3",
+      "sha": "f7cf8e64b9ef3e0c4ccbc620a9966e62806e1f10",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-conflicting-memories-001/remem.db.snapshot.sqlite3",
+      "sha": "1c2a6e109d44a48d6820d1ffcad526e0995a022a",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-credentials-password-001/remem.db.snapshot.sqlite3",
+      "sha": "8fc6664a4357b982f4d0ff8a26ad68f44940ff63",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-cross-sentence-splicing-001/remem.db.snapshot.sqlite3",
+      "sha": "01e9748529dd3ef0d22b22202634e29c7db6a13c",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-instruction-injection-001/remem.db.snapshot.sqlite3",
+      "sha": "b815928616a0aad06b67707b96549f297e0ff09c",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-instruction-injection-zh-001/remem.db.snapshot.sqlite3",
+      "sha": "25c358e3fd02874d55826ba20d73aa5099c16421",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-joke-roleplay-001/remem.db.snapshot.sqlite3",
+      "sha": "dd328bc6d4acdb9c2277f7834eb083960d2eedb8",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-multi-task-session-001/remem.db.snapshot.sqlite3",
+      "sha": "ba054ffcfc62d6f6bd39ae72c1c6efc9a9f33872",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-negation-001/remem.db.snapshot.sqlite3",
+      "sha": "4ea5c36c168933b01d6404b5f1088960cd8efc72",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-opaque-payload-001/remem.db.snapshot.sqlite3",
+      "sha": "72f9a44430f641177874abe7a06444777cbe16e2",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-payments-account-001/remem.db.snapshot.sqlite3",
+      "sha": "0cf93d5f0b8ccf5f256ae2390f2193517a50e53e",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-same-name-repos-001/remem.db.snapshot.sqlite3",
+      "sha": "3d5779adfc7ecb5a661eab0268609e37a551693d",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-secrets-api-key-001/remem.db.snapshot.sqlite3",
+      "sha": "dd2a0db9294416004714be06e4d6ea0c54bc5fb9",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-stale-file-anchor-001/remem.db.snapshot.sqlite3",
+      "sha": "db41fc4505ee818c1d78e6d813de258f6bfa012b",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-third-party-personal-001/remem.db.snapshot.sqlite3",
+      "sha": "7ef39c4da98fb6bb8928113e8976846e42003052",
+      "verified": true
+    },
+    {
+      "path": "eval/public/memory/artifacts/adversarial-policy-v2-x86_64-unknown-linux-gnu/remem_default-unapproved-external-source-001/remem.db.snapshot.sqlite3",
+      "sha": "64d260edbcbee4a08fa7bb131f84e44a3a702b45",
+      "verified": true
+    }
+  ],
+  "candidate_gates_run": 0,
+  "review_ref_moved": false,
+  "plan": "Execute unchanged actual-candidate gates on isolated GitHub runners because the shared local volume cannot hold the full suite's cumulative temporary fixtures."
+}

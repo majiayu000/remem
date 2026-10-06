@@ -1,0 +1,11 @@
+{
+  "file": "/workspace/scratch/cec0cc9f355d/fixes/remem-q4-pr-body.md",
+  "bytes": 43321,
+  "sha256": "4ab1ccdc4ada142ca0a480e7450b26f99ee4ed4ec21e9a528fc212c3f5665c73",
+  "producer_sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+  "workflow_run_id": 37539811793,
+  "workflow_run_attempt": 1,
+  "candidate_acceptance": "recorded separately after the actual candidate exists",
+  "later_results_recorded_in_epic_only": true,
+  "epic_execution_anchor": "2026-10-06-utc-final-integration-and-acceptance"
+}
