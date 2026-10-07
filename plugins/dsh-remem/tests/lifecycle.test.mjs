@@ -75,6 +75,7 @@ test('real AgentLoop captures human/tool/assistant, injects once and flushes in 
     assert.equal(capture[1].payload.tool_name, 'fixture_probe')
     assert.equal(capture[2].payload.tool_name, 'assistant/message')
     assert.equal(capture[3].payload.last_assistant_message, 'Verified the DSH fixture result.')
+    assert.deepEqual(capture[3].payload.reason, { kind: 'completed' })
     assert(capture.every(c => c.payload.host === 'deepseek-harness'))
     assert(model.requests[0].messages.some(m => m.source.kind === 'remem'))
     await handle.dispose()
@@ -181,4 +182,43 @@ test('a post-commit orphan tool result remains a visible flush error', async () 
     await assert.rejects(ctx.parallel('session/flush', session), error =>
       error instanceof AggregateError && error.errors.some(e => /has no live call/.test(e.message)))
   } finally { await fiber.dispose().catch(() => {}); await ctx.fiber.dispose().catch(() => {}); await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('context injection preserves a downstream request-series declaration', async () => {
+  const f = await fixture()
+  const { ctx, fiber } = await harness(f.executable)
+  let observed
+  ctx.on('agent/pre-step', async (_, next) => {
+    const decision = await next()
+    return decision.kind === 'enter' ? { ...decision, startsRequestSeries: true } : decision
+  })
+  ctx.on('agent/pre-step', async (_, next) => {
+    const decision = await next()
+    if (decision.kind === 'enter' && decision.messages.some(m => m.source.kind === 'remem')) observed = decision
+    return decision
+  }, { prepend: true })
+  try {
+    const handle = await runTurn(ctx, 'request-series-fixture')
+    await ctx.parallel('session/flush', handle.agent.session)
+    assert.equal(observed?.startsRequestSeries, true)
+    await handle.dispose()
+  } finally { await fiber.dispose(); await ctx.fiber.dispose(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('turn-end reasons survive capture when no assistant answer was produced', async () => {
+  const f = await fixture()
+  const { ctx, fiber } = await harness(f.executable)
+  const reasons = [{ kind: 'blocked' }, { kind: 'aborted', reason: { kind: 'user' } },
+    { kind: 'error', error: { message: 'fixture failure', code: 'UNKNOWN' } }]
+  try {
+    const session = ctx.sessions.create(SessionId('turn-reason-fixture'), { meta: { cwd: tmpdir() } })
+    for (const [index, reason] of reasons.entries()) {
+      session.append('turn/start', { turn: index + 1 })
+      session.append('turn/end', { turn: index + 1, reason })
+    }
+    await ctx.parallel('session/flush', session)
+    const summaries = (await f.calls()).filter(c => c.args[0] === 'summarize')
+    assert.deepEqual(summaries.map(c => c.payload.reason), reasons)
+    assert(summaries.every(c => c.payload.last_assistant_message === undefined))
+  } finally { await fiber.dispose(); await ctx.fiber.dispose(); await rm(f.root, { recursive: true, force: true }) }
 })

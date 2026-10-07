@@ -550,3 +550,17 @@ fn fingerprint_ignores_generated_debug_trace() {
 
     assert_eq!(context_fingerprint(&a), context_fingerprint(&b));
 }
+
+#[test]
+fn dsh_auto_gate_suppresses_repeated_session_snapshots() {
+    let _data_dir = crate::db::test_support::ScopedTestDataDir::new("context-gate-dsh");
+    let mut invocation = gate_invocation(Some("dsh-gate-session"));
+    invocation.host = HostKind::DeepSeekHarness;
+    invocation.gate_mode = Some("auto".to_string());
+    let output = "# [/tmp/remem] context now\nBody\n".to_string();
+    let first = apply_test_context_gate(&invocation, output.clone());
+    assert_eq!(first.action, ContextGateAction::EmittedFull);
+    let second = apply_test_context_gate(&invocation, output);
+    assert_eq!(second.action, ContextGateAction::Suppressed);
+    assert!(second.output.is_empty());
+}
