@@ -51,6 +51,24 @@ fn success(output: &Output) {
     );
 }
 
+fn failure_context(key: &str, fault: &str, output: &Output) -> String {
+    format!(
+        "{key} {fault}: status={}\nstdout={}\nstderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+}
+
+fn assert_codex_home_file_rejected(output: &Output, context: &str) {
+    assert_eq!(output.status.code(), Some(1), "{context}");
+    assert!(output.stdout.is_empty(), "{context}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("Codex home is not a directory"),
+        "{context}"
+    );
+}
+
 // Catches fixed home paths, cross-host override confusion and changed ingest counts.
 #[test]
 fn ingest_uses_both_native_root_overrides() {
@@ -178,6 +196,22 @@ fn unavailable_explicit_roots_fail_without_importing_other_hosts() {
                 &healthy.join(other_suffix).join("s.jsonl"),
                 serde_json::json!({"type":"user","message":{"content":"must stay unimported"}}),
             );
+            let invalid_codex_home = key == "CODEX_HOME" && fault == "host-file";
+            if invalid_codex_home {
+                // Invalid profile configuration fails before opening the store,
+                // rather than producing a discovery summary.
+                let output = sandbox
+                    .command()
+                    .args(["ingest-sessions", "--json"])
+                    .env(key, &broken)
+                    .env(other_key, &healthy)
+                    .output()
+                    .unwrap();
+                let context = failure_context(key, fault, &output);
+                assert_codex_home_file_rejected(&output, &context);
+                assert!(!sandbox.0.join("data").exists(), "{context}");
+                assert!(!sandbox.0.join("data/remem.db").exists(), "{context}");
+            }
             success(&sandbox.command().arg("encrypt").output().unwrap());
             let output = sandbox
                 .command()
@@ -195,35 +229,22 @@ fn unavailable_explicit_roots_fail_without_importing_other_hosts() {
                 )
                 .unwrap();
             }
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let diagnostics = format!(
-                "{key} {fault}: status={:?}\nstdout:\n{}\nstderr:\n{stderr}",
-                output.status,
-                String::from_utf8_lossy(&output.stdout),
-            );
-            assert!(!output.status.success(), "{diagnostics}");
-            if key == "CODEX_HOME" && fault == "host-file" {
-                // The selected Codex profile is validated before batch discovery,
-                // so this configuration error has no ingestion summary.
-                assert_eq!(output.status.code(), Some(1), "{diagnostics}");
-                assert!(output.stdout.is_empty(), "{diagnostics}");
-                assert!(
-                    stderr.contains("Codex home is not a directory"),
-                    "{diagnostics}"
-                );
+            let context = failure_context(key, fault, &output);
+            assert!(!output.status.success(), "{context}");
+            if invalid_codex_home {
+                assert_codex_home_file_rejected(&output, &context);
             } else {
-                let summary: serde_json::Value = serde_json::from_slice(&output.stdout)
-                    .unwrap_or_else(|error| {
-                        panic!("invalid ingestion summary ({error}); {diagnostics}")
-                    });
+                let summary = serde_json::from_slice::<serde_json::Value>(&output.stdout)
+                    .unwrap_or_else(|error| panic!("invalid JSON: {error}; {context}"));
                 assert_eq!(
                     summary,
                     serde_json::json!({"scanned":1,"skipped":0,"ingested_messages":0,"failed_files":1,"partial_files":0}),
-                    "{diagnostics}"
+                    "{context}"
                 );
                 assert!(
-                    stderr.contains(broken.join(suffix).to_string_lossy().as_ref()),
-                    "{diagnostics}"
+                    String::from_utf8_lossy(&output.stderr)
+                        .contains(broken.join(suffix).to_string_lossy().as_ref()),
+                    "{context}"
                 );
             }
             let conn = rusqlite::Connection::open(sandbox.0.join("data/remem.db")).unwrap();
@@ -241,7 +262,7 @@ fn unavailable_explicit_roots_fail_without_importing_other_hosts() {
                         .get::<_, i64>(0))
                         .unwrap(),
                     0,
-                    "{key} {fault} {table}"
+                    "{context}\ntable={table}"
                 );
             }
         }

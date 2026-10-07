@@ -1,0 +1,981 @@
+{
+  "schema_version": 1,
+  "repository": "majiayu000/remem",
+  "producer_sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+  "producer_tree": "76bdccdb80050e46aab6e64accfda68aa1212e92",
+  "production_input_tree_sha256": "162894304341909c4822a28126e73ab39ec022ab8379426834137850a78bf794",
+  "production_pathspec_sha256": "d3b28d78b492388f5e01ebf51519f8d5d35775e0db89d1e2f3306f9343875c20",
+  "suite_sha256": "56dad240cc175fb3d3900875f05351b9541f9ef845aa54eddfc460151f3e257d",
+  "workflow_run_id": 37539811793,
+  "workflow_run_attempt": 1,
+  "workflow_path": ".github/workflows/native-benchmark-evidence.yml",
+  "workflow_url": "https://github.com/majiayu000/remem/actions/runs/37539811793",
+  "counts": {
+    "mapped_public_files": 568,
+    "runs": 80,
+    "payloads": 480,
+    "sqlite_snapshots": 80,
+    "original_receipts": 5
+  },
+  "targets": [
+    {
+      "target": "x86_64-unknown-linux-gnu",
+      "artifact": {
+        "id": 11447844084,
+        "node_id": "MDg6QXJ0aWZhY3QxMTQ0Nzg0NDA4NA==",
+        "name": "native-adversarial-policy-v2-x86_64-unknown-linux-gnu",
+        "size_in_bytes": 928321,
+        "url": "https://api.github.com/repos/majiayu000/remem/actions/artifacts/11447844084",
+        "archive_download_url": "https://api.github.com/repos/majiayu000/remem/actions/artifacts/11447844084/zip",
+        "expired": false,
+        "digest": "sha256:13592f8df2954d51fd2f9cd3398ea752be45f3f2fb9a39375f494a0a72b67e64",
+        "created_at": "2026-10-06T22:22:34Z",
+        "updated_at": "2026-10-06T22:22:34Z",
+        "expires_at": "2026-10-13T22:22:33Z",
+        "workflow_run": {
+          "id": 37539811793,
+          "repository_id": 1162785678,
+          "head_repository_id": 1162785678,
+          "head_branch": "audit/native-evidence-20261007-c144b36a",
+          "head_sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10"
+        }
+      },
+      "job": {
+        "id": 112529768639,
+        "run_id": 37539811793,
+        "workflow_name": "Native benchmark evidence",
+        "head_branch": "audit/native-evidence-20261007-c144b36a",
+        "run_url": "https://api.github.com/repos/majiayu000/remem/actions/runs/37539811793",
+        "run_attempt": 1,
+        "node_id": "CR_kwDORU6zjs8AAAAaM0wAvw",
+        "head_sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+        "url": "https://api.github.com/repos/majiayu000/remem/actions/jobs/112529768639",
+        "html_url": "https://github.com/majiayu000/remem/actions/runs/37539811793/job/112529768639",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-06T22:19:09Z",
+        "started_at": "2026-10-06T22:19:12Z",
+        "completed_at": "2026-10-06T22:22:43Z",
+        "name": "Native evidence (x86_64-unknown-linux-gnu)",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-06T22:19:13Z",
+            "completed_at": "2026-10-06T22:19:15Z"
+          },
+          {
+            "name": "Run actions/checkout@v6.0.2",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-06T22:19:15Z",
+            "completed_at": "2026-10-06T22:19:21Z"
+          },
+          {
+            "name": "Run dtolnay/rust-toolchain@1.97.0",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-06T22:19:21Z",
+            "completed_at": "2026-10-06T22:19:27Z"
+          },
+          {
+            "name": "Run Swatinem/rust-cache@v2",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-06T22:19:27Z",
+            "completed_at": "2026-10-06T22:19:28Z"
+          },
+          {
+            "name": "Assert native host and clean PR head",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-06T22:19:28Z",
+            "completed_at": "2026-10-06T22:19:29Z"
+          },
+          {
+            "name": "Prepare target-specific temporary public root",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-06T22:19:29Z",
+            "completed_at": "2026-10-06T22:19:29Z"
+          },
+          {
+            "name": "Run adversarial-policy v2 benchmark",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-06T22:19:29Z",
+            "completed_at": "2026-10-06T22:21:48Z"
+          },
+          {
+            "name": "Generate target-specific manifest",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-06T22:21:48Z",
+            "completed_at": "2026-10-06T22:21:49Z"
+          },
+          {
+            "name": "Verify target evidence in complete temporary public root",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 9,
+            "started_at": "2026-10-06T22:21:49Z",
+            "completed_at": "2026-10-06T22:22:33Z"
+          },
+          {
+            "name": "Assert row authority and exact artifact bindings",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 10,
+            "started_at": "2026-10-06T22:22:33Z",
+            "completed_at": "2026-10-06T22:22:33Z"
+          },
+          {
+            "name": "Replace runner-local receipt paths with logical labels",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 11,
+            "started_at": "2026-10-06T22:22:33Z",
+            "completed_at": "2026-10-06T22:22:33Z"
+          },
+          {
+            "name": "Package generated target evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 12,
+            "started_at": "2026-10-06T22:22:33Z",
+            "completed_at": "2026-10-06T22:22:33Z"
+          },
+          {
+            "name": "Upload generated target evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 13,
+            "started_at": "2026-10-06T22:22:33Z",
+            "completed_at": "2026-10-06T22:22:34Z"
+          },
+          {
+            "name": "Post Run Swatinem/rust-cache@v2",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 25,
+            "started_at": "2026-10-06T22:22:34Z",
+            "completed_at": "2026-10-06T22:22:41Z"
+          },
+          {
+            "name": "Post Run actions/checkout@v6.0.2",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 26,
+            "started_at": "2026-10-06T22:22:41Z",
+            "completed_at": "2026-10-06T22:22:41Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 27,
+            "started_at": "2026-10-06T22:22:41Z",
+            "completed_at": "2026-10-06T22:22:41Z"
+          }
+        ],
+        "check_run_url": "https://api.github.com/repos/majiayu000/remem/check-runs/112529768639",
+        "labels": [
+          "ubuntu-24.04"
+        ],
+        "runner_id": 1000153630,
+        "runner_name": "GitHub Actions 1000153630",
+        "runner_group_id": 0,
+        "runner_group_name": "GitHub Actions"
+      },
+      "zip_sha256": "13592f8df2954d51fd2f9cd3398ea752be45f3f2fb9a39375f494a0a72b67e64",
+      "tar_sha256": "5135a8e4a7bf3a58b4f50401f11548819260355120d45186c3588b774b42423b",
+      "runs": 20,
+      "payloads": 120,
+      "manifest_destination": "eval/public/memory/manifests/adversarial-policy-v2-x86_64-unknown-linux-gnu.json",
+      "row_receipt_sha256": "dc9d18fdc7e1918853865dd6e9217b45b1aa018028b1118f78dc2bf5a889dec9"
+    },
+    {
+      "target": "aarch64-unknown-linux-gnu",
+      "artifact": {
+        "id": 11447564052,
+        "node_id": "MDg6QXJ0aWZhY3QxMTQ0NzU2NDA1Mg==",
+        "name": "native-adversarial-policy-v2-aarch64-unknown-linux-gnu",
+        "size_in_bytes": 929299,
+        "url": "https://api.github.com/repos/majiayu000/remem/actions/artifacts/11447564052",
+        "archive_download_url": "https://api.github.com/repos/majiayu000/remem/actions/artifacts/11447564052/zip",
+        "expired": false,
+        "digest": "sha256:e8da3b7127c7397efba73b6aafe5b05a27e69f8fff46e4aebcb8c778416f3a41",
+        "created_at": "2026-10-06T22:24:21Z",
+        "updated_at": "2026-10-06T22:24:21Z",
+        "expires_at": "2026-10-13T22:24:20Z",
+        "workflow_run": {
+          "id": 37539811793,
+          "repository_id": 1162785678,
+          "head_repository_id": 1162785678,
+          "head_branch": "audit/native-evidence-20261007-c144b36a",
+          "head_sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10"
+        }
+      },
+      "job": {
+        "id": 112529768389,
+        "run_id": 37539811793,
+        "workflow_name": "Native benchmark evidence",
+        "head_branch": "audit/native-evidence-20261007-c144b36a",
+        "run_url": "https://api.github.com/repos/majiayu000/remem/actions/runs/37539811793",
+        "run_attempt": 1,
+        "node_id": "CR_kwDORU6zjs8AAAAaM0v_xQ",
+        "head_sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+        "url": "https://api.github.com/repos/majiayu000/remem/actions/jobs/112529768389",
+        "html_url": "https://github.com/majiayu000/remem/actions/runs/37539811793/job/112529768389",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-06T22:19:09Z",
+        "started_at": "2026-10-06T22:19:15Z",
+        "completed_at": "2026-10-06T22:24:30Z",
+        "name": "Native evidence (aarch64-unknown-linux-gnu)",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-06T22:19:16Z",
+            "completed_at": "2026-10-06T22:19:17Z"
+          },
+          {
+            "name": "Run actions/checkout@v6.0.2",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-06T22:19:17Z",
+            "completed_at": "2026-10-06T22:19:24Z"
+          },
+          {
+            "name": "Run dtolnay/rust-toolchain@1.97.0",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-06T22:19:24Z",
+            "completed_at": "2026-10-06T22:19:29Z"
+          },
+          {
+            "name": "Run Swatinem/rust-cache@v2",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-06T22:19:29Z",
+            "completed_at": "2026-10-06T22:19:30Z"
+          },
+          {
+            "name": "Assert native host and clean PR head",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-06T22:19:30Z",
+            "completed_at": "2026-10-06T22:19:31Z"
+          },
+          {
+            "name": "Prepare target-specific temporary public root",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-06T22:19:31Z",
+            "completed_at": "2026-10-06T22:19:31Z"
+          },
+          {
+            "name": "Run adversarial-policy v2 benchmark",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-06T22:19:31Z",
+            "completed_at": "2026-10-06T22:22:48Z"
+          },
+          {
+            "name": "Generate target-specific manifest",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-06T22:22:48Z",
+            "completed_at": "2026-10-06T22:22:48Z"
+          },
+          {
+            "name": "Verify target evidence in complete temporary public root",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 9,
+            "started_at": "2026-10-06T22:22:48Z",
+            "completed_at": "2026-10-06T22:24:20Z"
+          },
+          {
+            "name": "Assert row authority and exact artifact bindings",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 10,
+            "started_at": "2026-10-06T22:24:20Z",
+            "completed_at": "2026-10-06T22:24:20Z"
+          },
+          {
+            "name": "Replace runner-local receipt paths with logical labels",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 11,
+            "started_at": "2026-10-06T22:24:20Z",
+            "completed_at": "2026-10-06T22:24:20Z"
+          },
+          {
+            "name": "Package generated target evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 12,
+            "started_at": "2026-10-06T22:24:20Z",
+            "completed_at": "2026-10-06T22:24:20Z"
+          },
+          {
+            "name": "Upload generated target evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 13,
+            "started_at": "2026-10-06T22:24:20Z",
+            "completed_at": "2026-10-06T22:24:21Z"
+          },
+          {
+            "name": "Post Run Swatinem/rust-cache@v2",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 25,
+            "started_at": "2026-10-06T22:24:21Z",
+            "completed_at": "2026-10-06T22:24:28Z"
+          },
+          {
+            "name": "Post Run actions/checkout@v6.0.2",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 26,
+            "started_at": "2026-10-06T22:24:28Z",
+            "completed_at": "2026-10-06T22:24:29Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 27,
+            "started_at": "2026-10-06T22:24:29Z",
+            "completed_at": "2026-10-06T22:24:29Z"
+          }
+        ],
+        "check_run_url": "https://api.github.com/repos/majiayu000/remem/check-runs/112529768389",
+        "labels": [
+          "ubuntu-24.04-arm"
+        ],
+        "runner_id": 1000153632,
+        "runner_name": "GitHub Actions 1000153632",
+        "runner_group_id": 0,
+        "runner_group_name": "GitHub Actions"
+      },
+      "zip_sha256": "e8da3b7127c7397efba73b6aafe5b05a27e69f8fff46e4aebcb8c778416f3a41",
+      "tar_sha256": "6ab4939189bf04f70a80f140993465a24f25c24b4fb9f4abe4ce83ca6a7eaeee",
+      "runs": 20,
+      "payloads": 120,
+      "manifest_destination": "eval/public/memory/manifests/adversarial-policy-v2-aarch64-unknown-linux-gnu.json",
+      "row_receipt_sha256": "ee68902738f7da1e2dfe39e217f62bd0d905cc2ebbf4265d424edf8223dbd21c"
+    },
+    {
+      "target": "aarch64-apple-darwin",
+      "artifact": {
+        "id": 11447734570,
+        "node_id": "MDg6QXJ0aWZhY3QxMTQ0NzczNDU3MA==",
+        "name": "native-adversarial-policy-v2-aarch64-apple-darwin",
+        "size_in_bytes": 919850,
+        "url": "https://api.github.com/repos/majiayu000/remem/actions/artifacts/11447734570",
+        "archive_download_url": "https://api.github.com/repos/majiayu000/remem/actions/artifacts/11447734570/zip",
+        "expired": false,
+        "digest": "sha256:fb67169cae66cdd3b3b00222e693efdd5c56dcbf7067f3cbacd834ae64204a51",
+        "created_at": "2026-10-06T22:25:59Z",
+        "updated_at": "2026-10-06T22:25:59Z",
+        "expires_at": "2026-10-13T22:25:57Z",
+        "workflow_run": {
+          "id": 37539811793,
+          "repository_id": 1162785678,
+          "head_repository_id": 1162785678,
+          "head_branch": "audit/native-evidence-20261007-c144b36a",
+          "head_sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10"
+        }
+      },
+      "job": {
+        "id": 112529768815,
+        "run_id": 37539811793,
+        "workflow_name": "Native benchmark evidence",
+        "head_branch": "audit/native-evidence-20261007-c144b36a",
+        "run_url": "https://api.github.com/repos/majiayu000/remem/actions/runs/37539811793",
+        "run_attempt": 1,
+        "node_id": "CR_kwDORU6zjs8AAAAaM0wBbw",
+        "head_sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+        "url": "https://api.github.com/repos/majiayu000/remem/actions/jobs/112529768815",
+        "html_url": "https://github.com/majiayu000/remem/actions/runs/37539811793/job/112529768815",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-06T22:19:09Z",
+        "started_at": "2026-10-06T22:19:18Z",
+        "completed_at": "2026-10-06T22:26:23Z",
+        "name": "Native evidence (aarch64-apple-darwin)",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-06T22:19:19Z",
+            "completed_at": "2026-10-06T22:19:22Z"
+          },
+          {
+            "name": "Run actions/checkout@v6.0.2",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-06T22:19:22Z",
+            "completed_at": "2026-10-06T22:19:29Z"
+          },
+          {
+            "name": "Run dtolnay/rust-toolchain@1.97.0",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-06T22:19:29Z",
+            "completed_at": "2026-10-06T22:19:38Z"
+          },
+          {
+            "name": "Run Swatinem/rust-cache@v2",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-06T22:19:38Z",
+            "completed_at": "2026-10-06T22:19:40Z"
+          },
+          {
+            "name": "Assert native host and clean PR head",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-06T22:19:40Z",
+            "completed_at": "2026-10-06T22:19:41Z"
+          },
+          {
+            "name": "Prepare target-specific temporary public root",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-06T22:19:41Z",
+            "completed_at": "2026-10-06T22:19:41Z"
+          },
+          {
+            "name": "Run adversarial-policy v2 benchmark",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-06T22:19:41Z",
+            "completed_at": "2026-10-06T22:23:59Z"
+          },
+          {
+            "name": "Generate target-specific manifest",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-06T22:23:59Z",
+            "completed_at": "2026-10-06T22:24:00Z"
+          },
+          {
+            "name": "Verify target evidence in complete temporary public root",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 9,
+            "started_at": "2026-10-06T22:24:00Z",
+            "completed_at": "2026-10-06T22:25:56Z"
+          },
+          {
+            "name": "Assert row authority and exact artifact bindings",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 10,
+            "started_at": "2026-10-06T22:25:56Z",
+            "completed_at": "2026-10-06T22:25:56Z"
+          },
+          {
+            "name": "Replace runner-local receipt paths with logical labels",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 11,
+            "started_at": "2026-10-06T22:25:56Z",
+            "completed_at": "2026-10-06T22:25:56Z"
+          },
+          {
+            "name": "Package generated target evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 12,
+            "started_at": "2026-10-06T22:25:56Z",
+            "completed_at": "2026-10-06T22:25:57Z"
+          },
+          {
+            "name": "Upload generated target evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 13,
+            "started_at": "2026-10-06T22:25:57Z",
+            "completed_at": "2026-10-06T22:25:58Z"
+          },
+          {
+            "name": "Post Run Swatinem/rust-cache@v2",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 25,
+            "started_at": "2026-10-06T22:25:58Z",
+            "completed_at": "2026-10-06T22:26:18Z"
+          },
+          {
+            "name": "Post Run actions/checkout@v6.0.2",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 26,
+            "started_at": "2026-10-06T22:26:18Z",
+            "completed_at": "2026-10-06T22:26:19Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 27,
+            "started_at": "2026-10-06T22:26:19Z",
+            "completed_at": "2026-10-06T22:26:21Z"
+          }
+        ],
+        "check_run_url": "https://api.github.com/repos/majiayu000/remem/check-runs/112529768815",
+        "labels": [
+          "macos-15"
+        ],
+        "runner_id": 1000153631,
+        "runner_name": "GitHub Actions 1000153631",
+        "runner_group_id": 0,
+        "runner_group_name": "GitHub Actions"
+      },
+      "zip_sha256": "fb67169cae66cdd3b3b00222e693efdd5c56dcbf7067f3cbacd834ae64204a51",
+      "tar_sha256": "c737d1ba172f8a2b481178ccc5e99a702b532bdbbff5e0e6566acd514bcc8aaf",
+      "runs": 20,
+      "payloads": 120,
+      "manifest_destination": "eval/public/memory/manifests/adversarial-policy-v2.json",
+      "row_receipt_sha256": "3ca6760e34aefc2c5dd1f241810c69b7f3b9fac0fd84d37dc5a52ca4825c1611"
+    },
+    {
+      "target": "x86_64-apple-darwin",
+      "artifact": {
+        "id": 11448565310,
+        "node_id": "MDg6QXJ0aWZhY3QxMTQ0ODU2NTMxMA==",
+        "name": "native-adversarial-policy-v2-x86_64-apple-darwin",
+        "size_in_bytes": 920492,
+        "url": "https://api.github.com/repos/majiayu000/remem/actions/artifacts/11448565310",
+        "archive_download_url": "https://api.github.com/repos/majiayu000/remem/actions/artifacts/11448565310/zip",
+        "expired": false,
+        "digest": "sha256:039d67cabd2eea21730107c3001e41b108a5a09c006b3d57335ca8e17922f7a5",
+        "created_at": "2026-10-06T22:29:50Z",
+        "updated_at": "2026-10-06T22:29:50Z",
+        "expires_at": "2026-10-13T22:29:48Z",
+        "workflow_run": {
+          "id": 37539811793,
+          "repository_id": 1162785678,
+          "head_repository_id": 1162785678,
+          "head_branch": "audit/native-evidence-20261007-c144b36a",
+          "head_sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10"
+        }
+      },
+      "job": {
+        "id": 112529768525,
+        "run_id": 37539811793,
+        "workflow_name": "Native benchmark evidence",
+        "head_branch": "audit/native-evidence-20261007-c144b36a",
+        "run_url": "https://api.github.com/repos/majiayu000/remem/actions/runs/37539811793",
+        "run_attempt": 1,
+        "node_id": "CR_kwDORU6zjs8AAAAaM0wATQ",
+        "head_sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+        "url": "https://api.github.com/repos/majiayu000/remem/actions/jobs/112529768525",
+        "html_url": "https://github.com/majiayu000/remem/actions/runs/37539811793/job/112529768525",
+        "status": "completed",
+        "conclusion": "success",
+        "created_at": "2026-10-06T22:19:09Z",
+        "started_at": "2026-10-06T22:19:15Z",
+        "completed_at": "2026-10-06T22:31:07Z",
+        "name": "Native evidence (x86_64-apple-darwin)",
+        "steps": [
+          {
+            "name": "Set up job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 1,
+            "started_at": "2026-10-06T22:19:16Z",
+            "completed_at": "2026-10-06T22:19:18Z"
+          },
+          {
+            "name": "Run actions/checkout@v6.0.2",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 2,
+            "started_at": "2026-10-06T22:19:18Z",
+            "completed_at": "2026-10-06T22:19:50Z"
+          },
+          {
+            "name": "Run dtolnay/rust-toolchain@1.97.0",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 3,
+            "started_at": "2026-10-06T22:19:50Z",
+            "completed_at": "2026-10-06T22:20:07Z"
+          },
+          {
+            "name": "Run Swatinem/rust-cache@v2",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 4,
+            "started_at": "2026-10-06T22:20:07Z",
+            "completed_at": "2026-10-06T22:20:09Z"
+          },
+          {
+            "name": "Assert native host and clean PR head",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 5,
+            "started_at": "2026-10-06T22:20:09Z",
+            "completed_at": "2026-10-06T22:20:10Z"
+          },
+          {
+            "name": "Prepare target-specific temporary public root",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 6,
+            "started_at": "2026-10-06T22:20:10Z",
+            "completed_at": "2026-10-06T22:20:11Z"
+          },
+          {
+            "name": "Run adversarial-policy v2 benchmark",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 7,
+            "started_at": "2026-10-06T22:20:11Z",
+            "completed_at": "2026-10-06T22:26:42Z"
+          },
+          {
+            "name": "Generate target-specific manifest",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 8,
+            "started_at": "2026-10-06T22:26:42Z",
+            "completed_at": "2026-10-06T22:26:42Z"
+          },
+          {
+            "name": "Verify target evidence in complete temporary public root",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 9,
+            "started_at": "2026-10-06T22:26:42Z",
+            "completed_at": "2026-10-06T22:29:46Z"
+          },
+          {
+            "name": "Assert row authority and exact artifact bindings",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 10,
+            "started_at": "2026-10-06T22:29:46Z",
+            "completed_at": "2026-10-06T22:29:47Z"
+          },
+          {
+            "name": "Replace runner-local receipt paths with logical labels",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 11,
+            "started_at": "2026-10-06T22:29:47Z",
+            "completed_at": "2026-10-06T22:29:47Z"
+          },
+          {
+            "name": "Package generated target evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 12,
+            "started_at": "2026-10-06T22:29:47Z",
+            "completed_at": "2026-10-06T22:29:48Z"
+          },
+          {
+            "name": "Upload generated target evidence",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 13,
+            "started_at": "2026-10-06T22:29:48Z",
+            "completed_at": "2026-10-06T22:29:50Z"
+          },
+          {
+            "name": "Post Run Swatinem/rust-cache@v2",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 25,
+            "started_at": "2026-10-06T22:29:50Z",
+            "completed_at": "2026-10-06T22:31:02Z"
+          },
+          {
+            "name": "Post Run actions/checkout@v6.0.2",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 26,
+            "started_at": "2026-10-06T22:31:02Z",
+            "completed_at": "2026-10-06T22:31:04Z"
+          },
+          {
+            "name": "Complete job",
+            "status": "completed",
+            "conclusion": "success",
+            "number": 27,
+            "started_at": "2026-10-06T22:31:04Z",
+            "completed_at": "2026-10-06T22:31:04Z"
+          }
+        ],
+        "check_run_url": "https://api.github.com/repos/majiayu000/remem/check-runs/112529768525",
+        "labels": [
+          "macos-15-intel"
+        ],
+        "runner_id": 1000153633,
+        "runner_name": "GitHub Actions 1000153633",
+        "runner_group_id": 0,
+        "runner_group_name": "GitHub Actions"
+      },
+      "zip_sha256": "039d67cabd2eea21730107c3001e41b108a5a09c006b3d57335ca8e17922f7a5",
+      "tar_sha256": "ae36a7e9a0bd1794b6959c685b67a12bacfa4095111999b8f41a34978cd3ef80",
+      "runs": 20,
+      "payloads": 120,
+      "manifest_destination": "eval/public/memory/manifests/adversarial-policy-v2-x86_64-apple-darwin.json",
+      "row_receipt_sha256": "6020022a5c10ba644d31c076e8c0bf052d5286d934701ae711053903dab7cf41"
+    }
+  ],
+  "aggregate": {
+    "artifact": {
+      "id": 11448413711,
+      "node_id": "MDg6QXJ0aWZhY3QxMTQ0ODQxMzcxMQ==",
+      "name": "native-adversarial-policy-v2-authority-verdict",
+      "size_in_bytes": 20089,
+      "url": "https://api.github.com/repos/majiayu000/remem/actions/artifacts/11448413711",
+      "archive_download_url": "https://api.github.com/repos/majiayu000/remem/actions/artifacts/11448413711/zip",
+      "expired": false,
+      "digest": "sha256:438384725ada34affb08a05c3ef415d3e9e217561404385a85f14b60c7394d38",
+      "created_at": "2026-10-06T22:36:05Z",
+      "updated_at": "2026-10-06T22:36:05Z",
+      "expires_at": "2026-10-13T22:36:04Z",
+      "workflow_run": {
+        "id": 37539811793,
+        "repository_id": 1162785678,
+        "head_repository_id": 1162785678,
+        "head_branch": "audit/native-evidence-20261007-c144b36a",
+        "head_sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10"
+      }
+    },
+    "job": {
+      "id": 112533973818,
+      "run_id": 37539811793,
+      "workflow_name": "Native benchmark evidence",
+      "head_branch": "audit/native-evidence-20261007-c144b36a",
+      "run_url": "https://api.github.com/repos/majiayu000/remem/actions/runs/37539811793",
+      "run_attempt": 1,
+      "node_id": "CR_kwDORU6zjs8AAAAaM4wrOg",
+      "head_sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+      "url": "https://api.github.com/repos/majiayu000/remem/actions/jobs/112533973818",
+      "html_url": "https://github.com/majiayu000/remem/actions/runs/37539811793/job/112533973818",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-10-06T22:31:08Z",
+      "started_at": "2026-10-06T22:31:11Z",
+      "completed_at": "2026-10-06T22:36:15Z",
+      "name": "Aggregate native evidence verdict",
+      "steps": [
+        {
+          "name": "Set up job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 1,
+          "started_at": "2026-10-06T22:31:12Z",
+          "completed_at": "2026-10-06T22:31:14Z"
+        },
+        {
+          "name": "Run actions/checkout@v6.0.2",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 2,
+          "started_at": "2026-10-06T22:31:14Z",
+          "completed_at": "2026-10-06T22:31:22Z"
+        },
+        {
+          "name": "Run dtolnay/rust-toolchain@1.97.0",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 3,
+          "started_at": "2026-10-06T22:31:22Z",
+          "completed_at": "2026-10-06T22:31:31Z"
+        },
+        {
+          "name": "Run Swatinem/rust-cache@v2",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 4,
+          "started_at": "2026-10-06T22:31:31Z",
+          "completed_at": "2026-10-06T22:31:32Z"
+        },
+        {
+          "name": "Download all native evidence bundles",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 5,
+          "started_at": "2026-10-06T22:31:32Z",
+          "completed_at": "2026-10-06T22:31:33Z"
+        },
+        {
+          "name": "Assemble temporary four-target public root",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 6,
+          "started_at": "2026-10-06T22:31:33Z",
+          "completed_at": "2026-10-06T22:31:34Z"
+        },
+        {
+          "name": "Authenticate downloaded native row receipts",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 7,
+          "started_at": "2026-10-06T22:31:34Z",
+          "completed_at": "2026-10-06T22:31:34Z"
+        },
+        {
+          "name": "Verify aggregate four-target evidence once",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 8,
+          "started_at": "2026-10-06T22:31:34Z",
+          "completed_at": "2026-10-06T22:36:04Z"
+        },
+        {
+          "name": "Assert closed release verdict",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 9,
+          "started_at": "2026-10-06T22:36:04Z",
+          "completed_at": "2026-10-06T22:36:04Z"
+        },
+        {
+          "name": "Upload aggregate authority verdict",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 10,
+          "started_at": "2026-10-06T22:36:04Z",
+          "completed_at": "2026-10-06T22:36:05Z"
+        },
+        {
+          "name": "Post Run Swatinem/rust-cache@v2",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 19,
+          "started_at": "2026-10-06T22:36:05Z",
+          "completed_at": "2026-10-06T22:36:13Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v6.0.2",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 20,
+          "started_at": "2026-10-06T22:36:13Z",
+          "completed_at": "2026-10-06T22:36:13Z"
+        },
+        {
+          "name": "Complete job",
+          "status": "completed",
+          "conclusion": "success",
+          "number": 21,
+          "started_at": "2026-10-06T22:36:13Z",
+          "completed_at": "2026-10-06T22:36:13Z"
+        }
+      ],
+      "check_run_url": "https://api.github.com/repos/majiayu000/remem/check-runs/112533973818",
+      "labels": [
+        "ubuntu-24.04"
+      ],
+      "runner_id": 1000153634,
+      "runner_name": "GitHub Actions 1000153634",
+      "runner_group_id": 0,
+      "runner_group_name": "GitHub Actions"
+    },
+    "sha256": "52b5187269c2f5193bd0f567700313e3a6911d232cb8ffab61e850f19aae8d0d",
+    "consumed_paths_verified": 734,
+    "runs_recomputed": 80,
+    "release_ready": true,
+    "gh931_status": "INSUFFICIENT"
+  },
+  "original_receipts": [
+    {
+      "target": "x86_64-unknown-linux-gnu",
+      "filename": "row-verifier-x86_64-unknown-linux-gnu.json",
+      "sha256": "dc9d18fdc7e1918853865dd6e9217b45b1aa018028b1118f78dc2bf5a889dec9",
+      "bytes": 66839
+    },
+    {
+      "target": "aarch64-unknown-linux-gnu",
+      "filename": "row-verifier-aarch64-unknown-linux-gnu.json",
+      "sha256": "ee68902738f7da1e2dfe39e217f62bd0d905cc2ebbf4265d424edf8223dbd21c",
+      "bytes": 66983
+    },
+    {
+      "target": "aarch64-apple-darwin",
+      "filename": "row-verifier-aarch64-apple-darwin.json",
+      "sha256": "3ca6760e34aefc2c5dd1f241810c69b7f3b9fac0fd84d37dc5a52ca4825c1611",
+      "bytes": 66268
+    },
+    {
+      "target": "x86_64-apple-darwin",
+      "filename": "row-verifier-x86_64-apple-darwin.json",
+      "sha256": "6020022a5c10ba644d31c076e8c0bf052d5286d934701ae711053903dab7cf41",
+      "bytes": 66124
+    },
+    {
+      "target": "aggregate",
+      "filename": "authority-verdict.json",
+      "sha256": "52b5187269c2f5193bd0f567700313e3a6911d232cb8ffab61e850f19aae8d0d",
+      "bytes": 167716
+    }
+  ],
+  "manifest_mapping": [
+    {
+      "target": "x86_64-unknown-linux-gnu",
+      "destination": "eval/public/memory/manifests/adversarial-policy-v2-x86_64-unknown-linux-gnu.json",
+      "sha256": "e6ccee89851d79daf40460f975fead814e371674361cd84ab052ec0fbf048973",
+      "bytes": 442
+    },
+    {
+      "target": "aarch64-unknown-linux-gnu",
+      "destination": "eval/public/memory/manifests/adversarial-policy-v2-aarch64-unknown-linux-gnu.json",
+      "sha256": "efa47634b0f9da7f88fc1808951b886b5a64fef61770c320160c84cc85add941",
+      "bytes": 443
+    },
+    {
+      "target": "aarch64-apple-darwin",
+      "destination": "eval/public/memory/manifests/adversarial-policy-v2.json",
+      "sha256": "eff14224b31643be1bfaaff7b1cc0d3b245f9e4b019d892e8700ff1846f68c60",
+      "bytes": 438
+    },
+    {
+      "target": "x86_64-apple-darwin",
+      "destination": "eval/public/memory/manifests/adversarial-policy-v2-x86_64-apple-darwin.json",
+      "sha256": "b2d605420f679c87cec07d7ea036fba6cc430b59f7ac7d3733c64e7bff7e1f19",
+      "bytes": 437
+    }
+  ],
+  "import_contract": "Original generated bytes are preserved. The macOS ARM64 target manifest is stored at the required generic template filename. Original verifier receipt paths are not relabelled. Earlier run provenance remains unchanged. Candidate acceptance is recorded separately on the exact published candidate SHA.",
+  "claim_scope": "80 offline security cases and native platform execution; GH931 remains INSUFFICIENT. This record does not establish full candidate acceptance, live-model quality, merge approval or general release readiness."
+}
