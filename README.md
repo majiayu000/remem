@@ -26,8 +26,8 @@ TODO with memory citations and no re-explaining.*
 
 The optional [DSH adapter](plugins/dsh-remem/README.md) injects project context
 and captures live prompts, assistant text, and tools using the existing CLI.
-It targets published DSH 0.2.0-rc.2; the npm adapter is not yet published.
-Build the DSH-enabled remem 0.6.102 source before installing the adapter.
+It targets published DSH 0.2.0-rc.2 and requires the DSH-enabled remem 0.6.103
+runtime. Install `@remem-ai/dsh-remem@0.1.0` using the adapter guide.
 
 ## What remem gives you
 

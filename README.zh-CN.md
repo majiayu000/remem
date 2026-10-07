@@ -22,7 +22,7 @@ CLI 与本机 REST API 持续回到后续会话。
 
 可选的 [DSH 薄适配插件](plugins/dsh-remem/README.md) 调用现有 CLI 注入项目
 记忆并捕获实时提示、助手文本与工具结果。验证目标为已发布 DSH 0.2.0-rc.2，
-插件 npm 包尚未发布。安装前需构建包含宿主适配的 remem 0.6.102 源码。
+需要包含宿主适配的 remem 0.6.103。按插件指南安装 `@remem-ai/dsh-remem@0.1.0`。
 
 ## remem 能带来什么
 

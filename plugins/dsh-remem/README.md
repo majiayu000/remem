@@ -6,14 +6,20 @@
 注入项目记忆，记录用户提示、助手文本与工具结果，轮次结束排队自动提炼。
 记忆提取、来源治理、加密与检索都沿用 remem。
 
-当前包为发布准备版本，尚未上传 npm。验证目标：DSH `0.2.0-rc.2` 与 Cordis
-`4.0.4`。DSH 主线 API 与该 npm 版本不同；本插件不宣称已验证主线兼容。
-需要 Node.js 22.19+ 和包含 DSH 宿主适配的 remem 0.6.103（此分支，未发布）。旧 remem 会在
+验证目标：DSH `0.2.0-rc.2` 与 Cordis `4.0.4`。DSH 主线 API 与该 npm 版本
+不同；本插件不宣称已验证主线兼容。
+需要 Node.js 22.19+ 和包含 DSH 宿主适配的 remem 0.6.103。旧 remem 会在
 首次真实 CLI 请求返回可见错误。
 
-## 本地安装
+## 安装
 
-从 remem 仓库执行：
+先安装 remem 0.6.103，再向已有 DSH profile 安装插件：
+
+```bash
+dsh plugin --profile headless add @remem-ai/dsh-remem@0.1.0
+```
+
+本地开发可从 remem 仓库构建并安装 tarball：
 
 ```bash
 cargo build --bin remem
@@ -30,13 +36,13 @@ dsh plugin --profile headless add /absolute/path/remem-ai-dsh-remem-0.1.0.tgz
 ```
 
 `dsh.bundle` 指向随包发布的 `cordis.patch.yml`，CLI 将其注册为 profile layer。
-在该 profile 的用户 patch 中设置 `config.executable` 为构建出的 remem
-**绝对路径**。发布后可使用包名安装；本地验收不依赖已发布的 npm 包。
+在该 profile 的用户 patch 中设置 `config.executable` 为 remem 的
+**绝对路径**。
 
 ```yaml
 - id: remem
   config:
-    executable: /absolute/path/remem/target/debug/remem
+    executable: /absolute/path/to/remem
     # 可选：已有 remem memory_ai profile，不在插件里配置凭证
     # profile: codex
 ```
@@ -70,13 +76,15 @@ project memory at the first step of each turn, captures live human prompts,
 assistant text and completed tools, and queues remem's existing distillation at
 turn end. Retrieval, storage, redaction and governance stay in remem.
 
-The package is prepared for publication and is not yet on npm. Tested APIs target
-DSH 0.2.0-rc.2 and Cordis 4.0.4; the current upstream source uses a different API.
-Use Node.js 22.19+ and the remem binary built from this branch, run `npm ci`,
-`npm test`, `npm pack`, then run `dsh plugin --profile headless add /absolute/path/to/the.tgz`.
+Tested APIs target DSH 0.2.0-rc.2 and Cordis 4.0.4; the current upstream source
+uses a different API.
+Use Node.js 22.19+ and remem 0.6.103, then install with
+`dsh plugin --profile headless add @remem-ai/dsh-remem@0.1.0`.
+For local development, build remem, run `npm ci`, `npm test`, `npm pack`,
+then run `dsh plugin --profile headless add /absolute/path/to/the.tgz`.
 The bundle is registered as a profile layer. Override the `remem` entry with the
 executable's absolute path using the user patch above. Configure memory AI in
-remem 0.6.103 from this branch (not yet released). Old binaries fail visibly on the first real DSH CLI request.
+remem. Old binaries fail visibly on the first real DSH CLI request.
 
 Live sessions require an absolute project cwd. Capture runs in order and is
 awaited at session flush and plugin disposal. Errors remain visible without
