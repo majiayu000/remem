@@ -1,0 +1,469 @@
+{
+  "recorded_at": "2026-10-07 00:49:34 UTC",
+  "actual_candidate_sha": "4ec561b35932f4317b1c794c7364aad13c90b42f",
+  "actual_tree": "6645e15dd6086ba2a9e568f8befafbaacfc6f7f9",
+  "ordered_parents": [
+    "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+    "9e40361d9346d09270864da675d3ef17aebd6ad7",
+    "2619eb5ee28f7d63978fb1457be533656f122cd4"
+  ],
+  "branch": "audit/integration-review-20261007-4ec561b3",
+  "native_producer_sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+  "integration_manifest_sha256": "5181852c7d9f07ac9f164726f4d9352e6fcf36e9c83dfe528f8f966508b9f1b8",
+  "prepublication_binding_sha256": "39295590b482dc5ac5beb6322898f41815c063caa933dd896fecc087d7df072f",
+  "body_sha256": "11c5c26867b1023e423d8716b573806487d0f75038f519542b5fde2f7e75b1ed",
+  "body_bytes": 57023,
+  "actual_git_commit": {
+    "sha": "4ec561b35932f4317b1c794c7364aad13c90b42f",
+    "node_id": "C_kwDORU6zjtoAKDRlYzU2MWIzNTkzMmY0MzE3YjFjNzk0YzczNjRhYWQxM2M5MGI0MmY",
+    "url": "https://api.github.com/repos/majiayu000/remem/git/commits/4ec561b35932f4317b1c794c7364aad13c90b42f",
+    "html_url": "https://github.com/majiayu000/remem/commit/4ec561b35932f4317b1c794c7364aad13c90b42f",
+    "author": {
+      "name": "lif",
+      "email": "1835304752@qq.com",
+      "date": "2026-10-07T00:48:57Z"
+    },
+    "committer": {
+      "name": "lif",
+      "email": "1835304752@qq.com",
+      "date": "2026-10-07T00:48:57Z"
+    },
+    "tree": {
+      "sha": "6645e15dd6086ba2a9e568f8befafbaacfc6f7f9",
+      "url": "https://api.github.com/repos/majiayu000/remem/git/trees/6645e15dd6086ba2a9e568f8befafbaacfc6f7f9"
+    },
+    "message": "test: retain concurrent vector backfill phases and exact fallback regression",
+    "parents": [
+      {
+        "sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+        "url": "https://api.github.com/repos/majiayu000/remem/git/commits/c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+        "html_url": "https://github.com/majiayu000/remem/commit/c144b36a39415a28cd761d48b5ff78c88a6dfb10"
+      },
+      {
+        "sha": "9e40361d9346d09270864da675d3ef17aebd6ad7",
+        "url": "https://api.github.com/repos/majiayu000/remem/git/commits/9e40361d9346d09270864da675d3ef17aebd6ad7",
+        "html_url": "https://github.com/majiayu000/remem/commit/9e40361d9346d09270864da675d3ef17aebd6ad7"
+      },
+      {
+        "sha": "2619eb5ee28f7d63978fb1457be533656f122cd4",
+        "url": "https://api.github.com/repos/majiayu000/remem/git/commits/2619eb5ee28f7d63978fb1457be533656f122cd4",
+        "html_url": "https://github.com/majiayu000/remem/commit/2619eb5ee28f7d63978fb1457be533656f122cd4"
+      }
+    ],
+    "verification": {
+      "verified": false,
+      "reason": "unsigned",
+      "signature": null,
+      "payload": null,
+      "verified_at": null
+    }
+  },
+  "actual_branch": {
+    "ref": "refs/heads/audit/integration-review-20261007-4ec561b3",
+    "node_id": "REF_kwDORU6zjtoANXJlZnMvaGVhZHMvYXVkaXQvaW50ZWdyYXRpb24tcmV2aWV3LTIwMjYxMDA3LTRlYzU2MWIz",
+    "url": "https://api.github.com/repos/majiayu000/remem/git/refs/heads/audit/integration-review-20261007-4ec561b3",
+    "object": {
+      "sha": "4ec561b35932f4317b1c794c7364aad13c90b42f",
+      "type": "commit",
+      "url": "https://api.github.com/repos/majiayu000/remem/git/commits/4ec561b35932f4317b1c794c7364aad13c90b42f"
+    }
+  },
+  "actual_compare_from_q5": {
+    "url": "https://api.github.com/repos/majiayu000/remem/compare/9e40361d9346d09270864da675d3ef17aebd6ad7...4ec561b35932f4317b1c794c7364aad13c90b42f",
+    "html_url": "https://github.com/majiayu000/remem/compare/9e40361d9346d09270864da675d3ef17aebd6ad7...4ec561b35932f4317b1c794c7364aad13c90b42f",
+    "permalink_url": "https://github.com/majiayu000/remem/compare/majiayu000:9e40361...majiayu000:4ec561b",
+    "diff_url": "https://github.com/majiayu000/remem/compare/9e40361d9346d09270864da675d3ef17aebd6ad7...4ec561b35932f4317b1c794c7364aad13c90b42f.diff",
+    "patch_url": "https://github.com/majiayu000/remem/compare/9e40361d9346d09270864da675d3ef17aebd6ad7...4ec561b35932f4317b1c794c7364aad13c90b42f.patch",
+    "base_commit": {
+      "sha": "9e40361d9346d09270864da675d3ef17aebd6ad7",
+      "node_id": "C_kwDORU6zjtoAKDllNDAzNjFkOTM0NmQwOTI3MDg2NGRhNjc1ZDNlZjE3YWViZDZhZDc",
+      "commit": {
+        "author": {
+          "name": "lif",
+          "email": "1835304752@qq.com",
+          "date": "2026-10-07T00:09:51Z"
+        },
+        "committer": {
+          "name": "lif",
+          "email": "1835304752@qq.com",
+          "date": "2026-10-07T00:09:51Z"
+        },
+        "message": "test: preserve concurrent root rejection before store initialization",
+        "tree": {
+          "sha": "2e538e34d86001005ba2cb0c77ff16755711b544",
+          "url": "https://api.github.com/repos/majiayu000/remem/git/trees/2e538e34d86001005ba2cb0c77ff16755711b544"
+        },
+        "url": "https://api.github.com/repos/majiayu000/remem/git/commits/9e40361d9346d09270864da675d3ef17aebd6ad7",
+        "comment_count": 0,
+        "verification": {
+          "verified": false,
+          "reason": "unsigned",
+          "signature": null,
+          "payload": null,
+          "verified_at": null
+        }
+      },
+      "url": "https://api.github.com/repos/majiayu000/remem/commits/9e40361d9346d09270864da675d3ef17aebd6ad7",
+      "html_url": "https://github.com/majiayu000/remem/commit/9e40361d9346d09270864da675d3ef17aebd6ad7",
+      "comments_url": "https://api.github.com/repos/majiayu000/remem/commits/9e40361d9346d09270864da675d3ef17aebd6ad7/comments",
+      "author": {
+        "login": "majiayu000",
+        "id": 19658300,
+        "node_id": "MDQ6VXNlcjE5NjU4MzAw",
+        "avatar_url": "https://avatars.githubusercontent.com/u/19658300?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/majiayu000",
+        "html_url": "https://github.com/majiayu000",
+        "followers_url": "https://api.github.com/users/majiayu000/followers",
+        "following_url": "https://api.github.com/users/majiayu000/following{/other_user}",
+        "gists_url": "https://api.github.com/users/majiayu000/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/majiayu000/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/majiayu000/subscriptions",
+        "organizations_url": "https://api.github.com/users/majiayu000/orgs",
+        "repos_url": "https://api.github.com/users/majiayu000/repos",
+        "events_url": "https://api.github.com/users/majiayu000/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/majiayu000/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "committer": {
+        "login": "majiayu000",
+        "id": 19658300,
+        "node_id": "MDQ6VXNlcjE5NjU4MzAw",
+        "avatar_url": "https://avatars.githubusercontent.com/u/19658300?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/majiayu000",
+        "html_url": "https://github.com/majiayu000",
+        "followers_url": "https://api.github.com/users/majiayu000/followers",
+        "following_url": "https://api.github.com/users/majiayu000/following{/other_user}",
+        "gists_url": "https://api.github.com/users/majiayu000/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/majiayu000/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/majiayu000/subscriptions",
+        "organizations_url": "https://api.github.com/users/majiayu000/orgs",
+        "repos_url": "https://api.github.com/users/majiayu000/repos",
+        "events_url": "https://api.github.com/users/majiayu000/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/majiayu000/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "parents": [
+        {
+          "sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+          "url": "https://api.github.com/repos/majiayu000/remem/commits/c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+          "html_url": "https://github.com/majiayu000/remem/commit/c144b36a39415a28cd761d48b5ff78c88a6dfb10"
+        },
+        {
+          "sha": "e6735b1165bd92e47333ad7b322640791ecbe689",
+          "url": "https://api.github.com/repos/majiayu000/remem/commits/e6735b1165bd92e47333ad7b322640791ecbe689",
+          "html_url": "https://github.com/majiayu000/remem/commit/e6735b1165bd92e47333ad7b322640791ecbe689"
+        },
+        {
+          "sha": "049fbcba7b8f0d2e700159aedde197f6575a565e",
+          "url": "https://api.github.com/repos/majiayu000/remem/commits/049fbcba7b8f0d2e700159aedde197f6575a565e",
+          "html_url": "https://github.com/majiayu000/remem/commit/049fbcba7b8f0d2e700159aedde197f6575a565e"
+        }
+      ]
+    },
+    "merge_base_commit": {
+      "sha": "9e40361d9346d09270864da675d3ef17aebd6ad7",
+      "node_id": "C_kwDORU6zjtoAKDllNDAzNjFkOTM0NmQwOTI3MDg2NGRhNjc1ZDNlZjE3YWViZDZhZDc",
+      "commit": {
+        "author": {
+          "name": "lif",
+          "email": "1835304752@qq.com",
+          "date": "2026-10-07T00:09:51Z"
+        },
+        "committer": {
+          "name": "lif",
+          "email": "1835304752@qq.com",
+          "date": "2026-10-07T00:09:51Z"
+        },
+        "message": "test: preserve concurrent root rejection before store initialization",
+        "tree": {
+          "sha": "2e538e34d86001005ba2cb0c77ff16755711b544",
+          "url": "https://api.github.com/repos/majiayu000/remem/git/trees/2e538e34d86001005ba2cb0c77ff16755711b544"
+        },
+        "url": "https://api.github.com/repos/majiayu000/remem/git/commits/9e40361d9346d09270864da675d3ef17aebd6ad7",
+        "comment_count": 0,
+        "verification": {
+          "verified": false,
+          "reason": "unsigned",
+          "signature": null,
+          "payload": null,
+          "verified_at": null
+        }
+      },
+      "url": "https://api.github.com/repos/majiayu000/remem/commits/9e40361d9346d09270864da675d3ef17aebd6ad7",
+      "html_url": "https://github.com/majiayu000/remem/commit/9e40361d9346d09270864da675d3ef17aebd6ad7",
+      "comments_url": "https://api.github.com/repos/majiayu000/remem/commits/9e40361d9346d09270864da675d3ef17aebd6ad7/comments",
+      "author": {
+        "login": "majiayu000",
+        "id": 19658300,
+        "node_id": "MDQ6VXNlcjE5NjU4MzAw",
+        "avatar_url": "https://avatars.githubusercontent.com/u/19658300?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/majiayu000",
+        "html_url": "https://github.com/majiayu000",
+        "followers_url": "https://api.github.com/users/majiayu000/followers",
+        "following_url": "https://api.github.com/users/majiayu000/following{/other_user}",
+        "gists_url": "https://api.github.com/users/majiayu000/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/majiayu000/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/majiayu000/subscriptions",
+        "organizations_url": "https://api.github.com/users/majiayu000/orgs",
+        "repos_url": "https://api.github.com/users/majiayu000/repos",
+        "events_url": "https://api.github.com/users/majiayu000/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/majiayu000/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "committer": {
+        "login": "majiayu000",
+        "id": 19658300,
+        "node_id": "MDQ6VXNlcjE5NjU4MzAw",
+        "avatar_url": "https://avatars.githubusercontent.com/u/19658300?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/majiayu000",
+        "html_url": "https://github.com/majiayu000",
+        "followers_url": "https://api.github.com/users/majiayu000/followers",
+        "following_url": "https://api.github.com/users/majiayu000/following{/other_user}",
+        "gists_url": "https://api.github.com/users/majiayu000/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/majiayu000/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/majiayu000/subscriptions",
+        "organizations_url": "https://api.github.com/users/majiayu000/orgs",
+        "repos_url": "https://api.github.com/users/majiayu000/repos",
+        "events_url": "https://api.github.com/users/majiayu000/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/majiayu000/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "parents": [
+        {
+          "sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+          "url": "https://api.github.com/repos/majiayu000/remem/commits/c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+          "html_url": "https://github.com/majiayu000/remem/commit/c144b36a39415a28cd761d48b5ff78c88a6dfb10"
+        },
+        {
+          "sha": "e6735b1165bd92e47333ad7b322640791ecbe689",
+          "url": "https://api.github.com/repos/majiayu000/remem/commits/e6735b1165bd92e47333ad7b322640791ecbe689",
+          "html_url": "https://github.com/majiayu000/remem/commit/e6735b1165bd92e47333ad7b322640791ecbe689"
+        },
+        {
+          "sha": "049fbcba7b8f0d2e700159aedde197f6575a565e",
+          "url": "https://api.github.com/repos/majiayu000/remem/commits/049fbcba7b8f0d2e700159aedde197f6575a565e",
+          "html_url": "https://github.com/majiayu000/remem/commit/049fbcba7b8f0d2e700159aedde197f6575a565e"
+        }
+      ]
+    },
+    "status": "ahead",
+    "ahead_by": 2,
+    "behind_by": 0,
+    "total_commits": 2,
+    "commits": [
+      {
+        "sha": "2619eb5ee28f7d63978fb1457be533656f122cd4",
+        "node_id": "C_kwDORU6zjtoAKDI2MTllYjVlZTI4ZjdkNjM5NzhmYjE0NTdiZTUzMzY1NmYxMjJjZDQ",
+        "commit": {
+          "author": {
+            "name": "lif",
+            "email": "1835304752@qq.com",
+            "date": "2026-10-07T00:21:02Z"
+          },
+          "committer": {
+            "name": "lif",
+            "email": "1835304752@qq.com",
+            "date": "2026-10-07T00:21:02Z"
+          },
+          "message": "test: exercise exact and indexed vector retrieval contracts\n\nVerify complete fallback retrieval before an index exists, then build the same profile through real bounded database opens and retain the indexed candidate limits. Isolate the integration fixture in a child process without changing production inputs or authenticated evidence.",
+          "tree": {
+            "sha": "a67c75bafec2d554aa472dafd2bd0046975f571c",
+            "url": "https://api.github.com/repos/majiayu000/remem/git/trees/a67c75bafec2d554aa472dafd2bd0046975f571c"
+          },
+          "url": "https://api.github.com/repos/majiayu000/remem/git/commits/2619eb5ee28f7d63978fb1457be533656f122cd4",
+          "comment_count": 0,
+          "verification": {
+            "verified": false,
+            "reason": "unsigned",
+            "signature": null,
+            "payload": null,
+            "verified_at": null
+          }
+        },
+        "url": "https://api.github.com/repos/majiayu000/remem/commits/2619eb5ee28f7d63978fb1457be533656f122cd4",
+        "html_url": "https://github.com/majiayu000/remem/commit/2619eb5ee28f7d63978fb1457be533656f122cd4",
+        "comments_url": "https://api.github.com/repos/majiayu000/remem/commits/2619eb5ee28f7d63978fb1457be533656f122cd4/comments",
+        "author": {
+          "login": "majiayu000",
+          "id": 19658300,
+          "node_id": "MDQ6VXNlcjE5NjU4MzAw",
+          "avatar_url": "https://avatars.githubusercontent.com/u/19658300?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/majiayu000",
+          "html_url": "https://github.com/majiayu000",
+          "followers_url": "https://api.github.com/users/majiayu000/followers",
+          "following_url": "https://api.github.com/users/majiayu000/following{/other_user}",
+          "gists_url": "https://api.github.com/users/majiayu000/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/majiayu000/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/majiayu000/subscriptions",
+          "organizations_url": "https://api.github.com/users/majiayu000/orgs",
+          "repos_url": "https://api.github.com/users/majiayu000/repos",
+          "events_url": "https://api.github.com/users/majiayu000/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/majiayu000/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "committer": {
+          "login": "majiayu000",
+          "id": 19658300,
+          "node_id": "MDQ6VXNlcjE5NjU4MzAw",
+          "avatar_url": "https://avatars.githubusercontent.com/u/19658300?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/majiayu000",
+          "html_url": "https://github.com/majiayu000",
+          "followers_url": "https://api.github.com/users/majiayu000/followers",
+          "following_url": "https://api.github.com/users/majiayu000/following{/other_user}",
+          "gists_url": "https://api.github.com/users/majiayu000/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/majiayu000/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/majiayu000/subscriptions",
+          "organizations_url": "https://api.github.com/users/majiayu000/orgs",
+          "repos_url": "https://api.github.com/users/majiayu000/repos",
+          "events_url": "https://api.github.com/users/majiayu000/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/majiayu000/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "parents": [
+          {
+            "sha": "049fbcba7b8f0d2e700159aedde197f6575a565e",
+            "url": "https://api.github.com/repos/majiayu000/remem/commits/049fbcba7b8f0d2e700159aedde197f6575a565e",
+            "html_url": "https://github.com/majiayu000/remem/commit/049fbcba7b8f0d2e700159aedde197f6575a565e"
+          }
+        ]
+      },
+      {
+        "sha": "4ec561b35932f4317b1c794c7364aad13c90b42f",
+        "node_id": "C_kwDORU6zjtoAKDRlYzU2MWIzNTkzMmY0MzE3YjFjNzk0YzczNjRhYWQxM2M5MGI0MmY",
+        "commit": {
+          "author": {
+            "name": "lif",
+            "email": "1835304752@qq.com",
+            "date": "2026-10-07T00:48:57Z"
+          },
+          "committer": {
+            "name": "lif",
+            "email": "1835304752@qq.com",
+            "date": "2026-10-07T00:48:57Z"
+          },
+          "message": "test: retain concurrent vector backfill phases and exact fallback regression",
+          "tree": {
+            "sha": "6645e15dd6086ba2a9e568f8befafbaacfc6f7f9",
+            "url": "https://api.github.com/repos/majiayu000/remem/git/trees/6645e15dd6086ba2a9e568f8befafbaacfc6f7f9"
+          },
+          "url": "https://api.github.com/repos/majiayu000/remem/git/commits/4ec561b35932f4317b1c794c7364aad13c90b42f",
+          "comment_count": 0,
+          "verification": {
+            "verified": false,
+            "reason": "unsigned",
+            "signature": null,
+            "payload": null,
+            "verified_at": null
+          }
+        },
+        "url": "https://api.github.com/repos/majiayu000/remem/commits/4ec561b35932f4317b1c794c7364aad13c90b42f",
+        "html_url": "https://github.com/majiayu000/remem/commit/4ec561b35932f4317b1c794c7364aad13c90b42f",
+        "comments_url": "https://api.github.com/repos/majiayu000/remem/commits/4ec561b35932f4317b1c794c7364aad13c90b42f/comments",
+        "author": {
+          "login": "majiayu000",
+          "id": 19658300,
+          "node_id": "MDQ6VXNlcjE5NjU4MzAw",
+          "avatar_url": "https://avatars.githubusercontent.com/u/19658300?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/majiayu000",
+          "html_url": "https://github.com/majiayu000",
+          "followers_url": "https://api.github.com/users/majiayu000/followers",
+          "following_url": "https://api.github.com/users/majiayu000/following{/other_user}",
+          "gists_url": "https://api.github.com/users/majiayu000/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/majiayu000/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/majiayu000/subscriptions",
+          "organizations_url": "https://api.github.com/users/majiayu000/orgs",
+          "repos_url": "https://api.github.com/users/majiayu000/repos",
+          "events_url": "https://api.github.com/users/majiayu000/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/majiayu000/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "committer": {
+          "login": "majiayu000",
+          "id": 19658300,
+          "node_id": "MDQ6VXNlcjE5NjU4MzAw",
+          "avatar_url": "https://avatars.githubusercontent.com/u/19658300?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/majiayu000",
+          "html_url": "https://github.com/majiayu000",
+          "followers_url": "https://api.github.com/users/majiayu000/followers",
+          "following_url": "https://api.github.com/users/majiayu000/following{/other_user}",
+          "gists_url": "https://api.github.com/users/majiayu000/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/majiayu000/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/majiayu000/subscriptions",
+          "organizations_url": "https://api.github.com/users/majiayu000/orgs",
+          "repos_url": "https://api.github.com/users/majiayu000/repos",
+          "events_url": "https://api.github.com/users/majiayu000/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/majiayu000/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "parents": [
+          {
+            "sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+            "url": "https://api.github.com/repos/majiayu000/remem/commits/c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+            "html_url": "https://github.com/majiayu000/remem/commit/c144b36a39415a28cd761d48b5ff78c88a6dfb10"
+          },
+          {
+            "sha": "9e40361d9346d09270864da675d3ef17aebd6ad7",
+            "url": "https://api.github.com/repos/majiayu000/remem/commits/9e40361d9346d09270864da675d3ef17aebd6ad7",
+            "html_url": "https://github.com/majiayu000/remem/commit/9e40361d9346d09270864da675d3ef17aebd6ad7"
+          },
+          {
+            "sha": "2619eb5ee28f7d63978fb1457be533656f122cd4",
+            "url": "https://api.github.com/repos/majiayu000/remem/commits/2619eb5ee28f7d63978fb1457be533656f122cd4",
+            "html_url": "https://github.com/majiayu000/remem/commit/2619eb5ee28f7d63978fb1457be533656f122cd4"
+          }
+        ]
+      }
+    ],
+    "files": [
+      {
+        "sha": "c2a79bc325180a2fe56909844a4eb11cc023652b",
+        "filename": "tests/vector_benchmark.rs",
+        "status": "modified",
+        "additions": 243,
+        "deletions": 2,
+        "changes": 245,
+        "blob_url": "https://github.com/majiayu000/remem/blob/4ec561b35932f4317b1c794c7364aad13c90b42f/tests%2Fvector_benchmark.rs",
+        "raw_url": "https://github.com/majiayu000/remem/raw/4ec561b35932f4317b1c794c7364aad13c90b42f/tests%2Fvector_benchmark.rs",
+        "contents_url": "https://api.github.com/repos/majiayu000/remem/contents/tests%2Fvector_benchmark.rs?ref=4ec561b35932f4317b1c794c7364aad13c90b42f",
+        "patch": "@@ -1,7 +1,248 @@\n-use anyhow::Result;\n+use std::path::{Path, PathBuf};\n+use std::process::Command;\n+use std::time::{Instant, SystemTime, UNIX_EPOCH};\n+\n+use anyhow::{ensure, Context, Result};\n use rusqlite::{params, Connection};\n \n-use remem::{migrate, retrieval::vector};\n+use remem::{db, migrate, retrieval::vector};\n+\n+const CHILD_ROOT_ENV: &str = \"REMEM_VECTOR_BENCHMARK_CHILD_ROOT\";\n+\n+struct Sandbox(PathBuf);\n+\n+impl Sandbox {\n+    fn new() -> Result<Self> {\n+        let root = std::env::temp_dir().join(format!(\n+            \"remem-vector-benchmark-{}-{}\",\n+            std::process::id(),\n+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()\n+        ));\n+        // Claim a new directory before acquiring cleanup ownership.\n+        std::fs::create_dir(&root)?;\n+        let mut sandbox = Self(root);\n+        sandbox.0 = std::fs::canonicalize(&sandbox.0)?;\n+        for name in [\"home\", \"data\", \"tmp\"] {\n+            std::fs::create_dir(sandbox.0.join(name))?;\n+        }\n+        Ok(sandbox)\n+    }\n+\n+    fn command(&self) -> Result<Command> {\n+        let mut command = Command::new(std::env::current_exe()?);\n+        command\n+            .args([\n+                \"--exact\",\n+                \"vector_search_10k_candidate_gate\",\n+                \"--nocapture\",\n+                \"--test-threads=1\",\n+            ])\n+            .env_clear()\n+            .env(CHILD_ROOT_ENV, &self.0)\n+            .env(\"HOME\", self.0.join(\"home\"))\n+            .env(\"USERPROFILE\", self.0.join(\"home\"))\n+            .env(\"XDG_CONFIG_HOME\", self.0.join(\"home/config\"))\n+            .env(\"XDG_CACHE_HOME\", self.0.join(\"home/cache\"))\n+            .env(\"XDG_DATA_HOME\", self.0.join(\"home/data\"))\n+            .env(\"APPDATA\", self.0.join(\"home/appdata\"))\n+            .env(\"LOCALAPPDATA\", self.0.join(\"home/localappdata\"))\n+            .env(\"REMEM_DATA_DIR\", self.0.join(\"data\"))\n+            .env(\"REMEM_CONFIG\", self.0.join(\"config.toml\"))\n+            .env(\"REMEM_ALLOW_PLAINTEXT_DB\", \"1\")\n+            .env(\"REMEM_EMBEDDINGS_PROVIDER\", \"feature-hash\")\n+            .env(\"TEMP\", self.0.join(\"tmp\"))\n+            .env(\"TMP\", self.0.join(\"tmp\"))\n+            .env(\"TMPDIR\", self.0.join(\"tmp\"))\n+            .current_dir(&self.0);\n+        // Retain only process-loader settings needed by the compiled test binary.\n+        for key in [\n+            \"PATH\",\n+            \"SystemRoot\",\n+            \"WINDIR\",\n+            \"LD_LIBRARY_PATH\",\n+            \"DYLD_LIBRARY_PATH\",\n+            \"DYLD_FALLBACK_LIBRARY_PATH\",\n+        ] {\n+            if let Some(value) = std::env::var_os(key) {\n+                command.env(key, value);\n+            }\n+        }\n+        Ok(command)\n+    }\n+}\n+\n+impl Drop for Sandbox {\n+    fn drop(&mut self) {\n+        let _ = std::fs::remove_dir_all(&self.0);\n+    }\n+}\n+\n+#[test]\n+fn vector_search_10k_candidate_gate() -> Result<()> {\n+    if let Some(root) = std::env::var_os(CHILD_ROOT_ENV) {\n+        return run_candidate_gate(Path::new(&root));\n+    }\n+\n+    let sandbox = Sandbox::new()?;\n+    let output = sandbox\n+        .command()?\n+        .output()\n+        .context(\"run vector benchmark child\")?;\n+    let stdout = String::from_utf8_lossy(&output.stdout);\n+    let stderr = String::from_utf8_lossy(&output.stderr);\n+    let diagnostics: Vec<&str> = stdout\n+        .lines()\n+        .chain(stderr.lines())\n+        .filter(|line| line.starts_with(\"[VectorBound]\"))\n+        .collect();\n+    ensure!(\n+        output.status.success()\n+            && diagnostics.len() == 2\n+            && diagnostics\n+                .iter()\n+                .any(|line| line.starts_with(\"[VectorBound] phase=exact \"))\n+            && diagnostics\n+                .iter()\n+                .any(|line| line.starts_with(\"[VectorBound] phase=knn \")),\n+        \"vector benchmark child failed: {}\\nstdout:\\n{stdout}\\nstderr:\\n{stderr}\",\n+        output.status\n+    );\n+    // Forward benchmark diagnostics, without duplicating the child's libtest totals.\n+    for line in diagnostics {\n+        eprintln!(\"{line}\");\n+    }\n+    Ok(())\n+}\n+\n+fn assert_oldest_unique_match(outcome: &vector::VectorSearchOutcome) {\n+    assert_eq!(outcome.disabled_reason, None);\n+    assert_eq!(outcome.hits.len(), 10);\n+    assert_eq!(outcome.hits[0].memory_id, 1);\n+    assert_eq!(outcome.hits[0].distance, 0.0);\n+    assert!(outcome.hits.iter().skip(1).all(|hit| hit.distance > 0.0));\n+}\n+\n+fn run_candidate_gate(root: &Path) -> Result<()> {\n+    ensure!(\n+        std::fs::canonicalize(std::env::current_dir()?)? == root,\n+        \"child must run in its sandbox\"\n+    );\n+    let db_path = db::try_db_path()?;\n+    ensure!(\n+        db_path == root.join(\"data/remem.db\"),\n+        \"child database escaped its sandbox\"\n+    );\n+\n+    // A plain connection deliberately has no sqlite-vec mirror. The same source\n+    // rows must remain fully searchable before the real DB opener builds it.\n+    let conn = Connection::open(&db_path)?;\n+    migrate::run_migrations(&conn)?;\n+    let mut query = vec![0.0_f32; vector::EMBEDDING_DIMENSIONS];\n+    query[0] = 1.0;\n+    let mut decoy = vec![0.0_f32; vector::EMBEDDING_DIMENSIONS];\n+    decoy[1] = 1.0;\n+\n+    conn.execute(\"BEGIN IMMEDIATE\", [])?;\n+    for id in 1..=10_000_i64 {\n+        conn.execute(\n+            \"INSERT INTO memories\n+             (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status)\n+             VALUES (?1, '/repo', 'Vector bench', 'Bounded vector scan candidate', 'decision', ?1, ?1, 'active')\",\n+            params![id],\n+        )?;\n+        let embedding = if id == 1 { &query } else { &decoy };\n+        vector::upsert_embedding(&conn, id, embedding)?;\n+    }\n+    conn.execute(\"COMMIT\", [])?;\n+\n+    let search = |conn: &Connection| {\n+        vector::vector_search_filtered(\n+            conn,\n+            &query,\n+            vector::VectorSearchFilters {\n+                project: Some(\"/repo\"),\n+                ..vector::VectorSearchFilters::default()\n+            },\n+            10,\n+        )\n+    };\n+    let start = Instant::now();\n+    let fallback = search(&conn)?;\n+    eprintln!(\n+        \"[VectorBound] phase=exact corpus=10000 scanned={} returned={} elapsed_ms={}\",\n+        fallback.candidates_scanned,\n+        fallback.hits.len(),\n+        start.elapsed().as_millis()\n+    );\n+    assert!(fallback\n+        .timings\n+        .iter()\n+        .any(|timing| timing.phase == \"vector_exact_scan\"));\n+    assert_eq!(fallback.candidates_scanned, 10_000);\n+    assert_oldest_unique_match(&fallback);\n+    drop(conn);\n+\n+    // Each real open advances one bounded batch. Read state only to observe\n+    // progress; do not manufacture a mirror or mark an incomplete one ready.\n+    let mut previous_cursor = 0_i64;\n+    let mut ready = None;\n+    for opens in 1..=32 {\n+        let conn = db::open_db_no_migrate().with_context(|| format!(\"backfill open {opens}\"))?;\n+        let (cursor, done): (i64, i64) = conn\n+            .query_row(\n+                \"SELECT last_memory_id, done FROM memory_embedding_vec_state_v2\n+             WHERE model = ?1 AND dimensions = ?2\",\n+                params![\n+                    vector::DEFAULT_EMBEDDING_MODEL,\n+                    vector::EMBEDDING_DIMENSIONS as i64\n+                ],\n+                |row| Ok((row.get(0)?, row.get(1)?)),\n+            )\n+            .with_context(|| format!(\"read backfill state after open {opens}\"))?;\n+        ensure!(\n+            (0..=10_000).contains(&cursor),\n+            \"invalid backfill cursor {cursor}\"\n+        );\n+        ensure!(done == 0 || done == 1, \"invalid backfill done value {done}\");\n+        if done == 1 {\n+            assert_eq!(\n+                cursor, 10_000,\n+                \"backfill completed before the last source row\"\n+            );\n+            ready = Some((conn, opens));\n+            break;\n+        }\n+        ensure!(cursor > previous_cursor,\n+            \"backfill did not progress on open {opens}: previous={previous_cursor}, cursor={cursor}\");\n+        previous_cursor = cursor;\n+    }\n+    let (conn, opens) = ready.with_context(|| {\n+        format!(\"backfill did not finish within 32 real opens; last cursor={previous_cursor}\")\n+    })?;\n+\n+    let start = Instant::now();\n+    let outcome = search(&conn)?;\n+    eprintln!(\n+        \"[VectorBound] phase=knn corpus=10000 scanned={} returned={} opens={} elapsed_ms={}\",\n+        outcome.candidates_scanned,\n+        outcome.hits.len(),\n+        opens,\n+        start.elapsed().as_millis()\n+    );\n+    assert!(outcome\n+        .timings\n+        .iter()\n+        .any(|timing| timing.phase == \"vector_knn_index\"));\n+    assert!(outcome\n+        .timings\n+        .iter()\n+        .all(|timing| timing.phase != \"vector_exact_scan\"));\n+    assert!(outcome.candidates_scanned <= vector::VECTOR_SEARCH_CANDIDATE_LIMIT);\n+    assert!(outcome.candidates_scanned < 10_000);\n+    assert!(outcome.hits.len() <= 10);\n+    assert_oldest_unique_match(&outcome);\n+    Ok(())\n+}\n \n #[test]\n fn vector_search_10k_exact_fallback_preserves_oldest_best_match() -> Result<()> {"
+      }
+    ]
+  },
+  "actual_remote_tree_matches_independently_reviewed_tree": true,
+  "new_tree_entries_from_q5": [
+    {
+      "path": "tests/vector_benchmark.rs",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c2a79bc325180a2fe56909844a4eb11cc023652b"
+    }
+  ],
+  "runtime_manifest_status": "Awaiting actual-Q6 input authentication and frozen Epic input; no old runtime metadata is relabelled",
+  "candidate_acceptance": "All eight actual Q6 gates pending",
+  "review_pr_updated": false,
+  "review_ref_updated": false
+}
