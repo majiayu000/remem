@@ -16,11 +16,12 @@ const plugin = await import(process.env.REMEM_DSH_PLUGIN_MODULE ?? '../dist/inde
 
 class ScriptedModel extends LlmAdapter {
   requests = []
+  arguments = '{}'
   async *stream(options) {
     this.requests.push(options)
     const id = ToolCallId('fixture-call')
     const block = this.requests.length === 1
-      ? { type: 'tool-call', id, name: 'fixture_probe', arguments: '{}' }
+      ? { type: 'tool-call', id, name: 'fixture_probe', arguments: this.arguments }
       : { type: 'text', text: 'Verified the DSH fixture result.' }
     yield { type: 'block-start', index: 0, blockType: block.type }
     yield { type: 'block-end', index: 0, block }
@@ -73,6 +74,7 @@ test('real AgentLoop captures human/tool/assistant, injects once and flushes in 
     assert.deepEqual(capture.map(c => c.args[0]), ['session-init', 'observe', 'observe', 'summarize'])
     assert.equal(capture[0].payload.prompt, 'Check the fixture probe.')
     assert.equal(capture[1].payload.tool_name, 'fixture_probe')
+    assert.deepEqual(capture[1].payload.tool_input.arguments, {})
     assert.equal(capture[2].payload.tool_name, 'assistant/message')
     assert.equal(capture[3].payload.last_assistant_message, 'Verified the DSH fixture result.')
     assert.deepEqual(capture[3].payload.reason, { kind: 'completed' })
@@ -142,6 +144,7 @@ test('real remem binary captures distinct DSH host and queues turn distillation'
   // No provider credentials: the smoke verifies capture/queueing, not AI promotion.
   execFileSync(executable, ['cleanup', '--dry-run'], { stdio: 'ignore' })
   const { ctx, fiber, model } = await harness(executable)
+  model.arguments = JSON.stringify({ a: 1, password: 'hunter2' })
   try {
     let cancelFirst = true
     ctx.on('agent/pre-step', async ({ agent }, next) => {
@@ -177,7 +180,7 @@ c=sqlite3.connect(sys.argv[1])
 e=c.execute("SELECT h.name,e.event_type,e.tool_name,e.content_text FROM captured_events e JOIN hosts h ON h.id=e.host_id WHERE e.session_id='live-remem-smoke' ORDER BY e.id").fetchall()
 t=c.execute("SELECT h.name,t.task_kind FROM extraction_tasks t JOIN hosts h ON h.id=t.host_id JOIN sessions s ON s.id=t.session_row_id WHERE s.session_id='live-remem-smoke'").fetchall()
 a=c.execute("SELECT content_text FROM captured_events WHERE session_id='live-attachments' ORDER BY id").fetchall()
-i=c.execute("SELECT COUNT(*) FROM context_injection_items WHERE session_id IN ('live-remem-smoke','live-attachments') AND channel='prompt_submit'").fetchone()[0]
+i=c.execute("SELECT COUNT(*) FROM context_injection_items WHERE session_id IN ('live-remem-smoke','live-attachments')").fetchone()[0]
 g=c.execute("SELECT COUNT(*) FROM context_injections WHERE session_id='live-remem-smoke'").fetchone()[0]
 print(json.dumps({'events':e,'tasks':t,'attachments':a,'prompt_injections':i,'persisted_gates':g}))`, join(root, 'remem.db')], { encoding: 'utf8' }))
     assert.equal(report.attachments.length, 2)
@@ -187,6 +190,7 @@ print(json.dumps({'events':e,'tasks':t,'attachments':a,'prompt_injections':i,'pe
     assert.equal(report.prompt_injections, 0)
     assert.equal(report.persisted_gates, 0)
     assert(report.events.every(row => row[0] === 'deepseek-harness'))
+    assert(report.events.every(row => !row[3].includes('hunter2')))
     assert(report.events.some(row => row[1] === 'user_prompt_submit' && row[3].includes('Retry the fixture probe.')))
     assert(report.events.some(row => row[2] === 'fixture_probe' && row[3].includes('fixture probe succeeded')))
     assert(report.events.some(row => row[2] === 'assistant/message' && row[3].includes('Verified the DSH fixture result.')))
@@ -319,4 +323,35 @@ test('cancelled preparation retries; only committed unchanged snapshots suppress
       await handle.dispose()
     } finally { await replacement.dispose() }
   } finally { await fiber.dispose(); await ctx.fiber.dispose(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+
+test('structured JSON arguments reach key redaction instead of an opaque string', async () => {
+  const f = await fixture()
+  const { ctx, fiber, model } = await harness(f.executable)
+  model.arguments = JSON.stringify({ a: 1, password: 'fixture-secret' })
+  try {
+    const handle = await runTurn(ctx, 'structured-arguments')
+    await ctx.parallel('session/flush', handle.agent.session)
+    const call = (await f.calls()).find(c => c.payload?.tool_name === 'fixture_probe')
+    assert.deepEqual(call.payload.tool_input.arguments, { a: 1, password: 'fixture-secret' })
+    await handle.dispose()
+  } finally { await fiber.dispose(); await ctx.fiber.dispose(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('invalid JSON arguments fail visibly without copying argument text', async () => {
+  const f = await fixture()
+  const { ctx, fiber } = await harness(f.executable)
+  try {
+    const session = ctx.sessions.create(SessionId('invalid-arguments'), { meta: { cwd: tmpdir() } })
+    const callId = ToolCallId('invalid-call')
+    session.append('tool/call', { turn: 1, step: 1, callId, name: 'fixture_probe', arguments: '{"password":"fixture-secret"' })
+    session.append('tool/result', { turn: 1, step: 1, message: createToolResultMessage({
+      callId, content: [{ type: 'text', text: 'ordinary result' }], isError: false,
+    }) }, { surfaceOp: 'append' })
+    await assert.rejects(ctx.parallel('session/flush', session), error =>
+      error instanceof AggregateError && error.errors.some(e => e.message === 'remem: DSH tool arguments are invalid JSON; capture rejected'))
+    assert(!(await readFile(f.log, 'utf8')).includes('fixture-secret'))
+    assert(!(await f.calls()).some(c => c.args[0] === 'observe'))
+  } finally { await fiber.dispose().catch(() => {}); await ctx.fiber.dispose().catch(() => {}); await rm(f.root, { recursive: true, force: true }) }
 })
