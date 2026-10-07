@@ -23,6 +23,10 @@ paths and a generic tool-result summary. The context profile reports no MCP
 registration. Summaries consume the existing capture ledger; no DSH log parser,
 new schema, host migration, or extraction implementation is added.
 
+The existing InstallHost variants retain their identities. Adding DeepSeekHarness
+requires downstream exhaustive Rust matches on InstallHost to handle the new variant.
+The changed enum signatures remain staged until release verification.
+
 Subprocesses use argv and stdin, never a shell. Output and runtime are bounded.
 Captured payloads go through remem's redaction and governance; subprocess stderr
 is not copied into plugin diagnostics (it can contain provider secrets).
