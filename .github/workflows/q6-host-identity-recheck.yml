@@ -1,0 +1,43 @@
+name: Recheck original Q6 hosted-runner identity
+on:
+  push:
+    branches:
+      - audit/acceptance-recheck-20261007-4ec561b3
+permissions:
+  contents: read
+  actions: read
+jobs:
+  aggregate_only:
+    name: Recheck original Q6 evidence without rerunning gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout reviewed aggregation support
+        uses: actions/checkout@v6.0.2
+        with:
+          path: recheck
+          fetch-depth: 2
+          persist-credentials: false
+          sparse-checkout: .github/acceptance-recheck/4ec561b3
+      - name: Checkout original immutable R3 verifier and inputs
+        uses: actions/checkout@v6.0.2
+        with:
+          ref: 54a9d1a9da509bd2f94a4a86b4677aefb51493fc
+          path: orchestration
+          persist-credentials: false
+          sparse-checkout: |
+            .github/acceptance/4ec561b3
+            .github/workflows/q6-exact-acceptance.yml
+          sparse-checkout-cone-mode: false
+      - name: Authenticate original evidence and verify hosted-runner identity
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: /usr/bin/python3 -B recheck/.github/acceptance-recheck/4ec561b3/recheck.py
+      - name: Preserve original evidence and separate recheck verdict even after failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: remem-q6-host-identity-recheck-4ec561b3-attempt-${{ github.run_attempt }}
+          path: host-identity-recheck-results
+          if-no-files-found: error
+          retention-days: 30

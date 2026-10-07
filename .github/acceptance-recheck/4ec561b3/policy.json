@@ -1,0 +1,168 @@
+{
+  "policy_version": "q6-r3-authenticated-hosted-runner-identity-v1",
+  "repo": "majiayu000/remem",
+  "repository_id": 1162785678,
+  "run_id": 37558506971,
+  "attempt": 1,
+  "original_support_sha": "54a9d1a9da509bd2f94a4a86b4677aefb51493fc",
+  "original_support_tree": "2f560731313fab2f030b0ad7048e82189165664c",
+  "original_branch": "audit/acceptance-runner-20261007-4ec561b3",
+  "recheck_branch": "audit/acceptance-recheck-20261007-4ec561b3",
+  "candidate_sha": "4ec561b35932f4317b1c794c7364aad13c90b42f",
+  "candidate_tree": "6645e15dd6086ba2a9e568f8befafbaacfc6f7f9",
+  "candidate_parents": [
+    "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+    "9e40361d9346d09270864da675d3ef17aebd6ad7",
+    "2619eb5ee28f7d63978fb1457be533656f122cd4"
+  ],
+  "original_unique_error": "ValueError('two independent execution hosts were not demonstrated')",
+  "expected_hostname": "runnervm8df0l",
+  "image": "ubuntu24",
+  "image_version": "20260927.320.1",
+  "original_union_sha256": "6c3ba8fd02e74b0e60b0db5dfec0741af3e0ad3c5f6f405e7dff61759a883349",
+  "original_support_files": [
+    {
+      "path": ".github/acceptance/4ec561b3/README.md",
+      "bytes": 7797,
+      "sha256": "0070a1b4a621275f7fc87a247f6c7ed35020f636f3a28a413077f9dd8ca4d986",
+      "sha": "49c7a4fb24337d8a5915eec5c6ca38e7c73eba09"
+    },
+    {
+      "path": ".github/acceptance/4ec561b3/bootstrap.py",
+      "bytes": 16628,
+      "sha256": "6bb20354fadd6e6b04d857966bfaa59902181f7aff372064fed018daa6887e24",
+      "sha": "ffaf7d374766af8975f2ee193997c70102e41105"
+    },
+    {
+      "path": ".github/acceptance/4ec561b3/frozen/actual-candidate-publication.json",
+      "bytes": 33774,
+      "sha256": "98bdd61dd840da0b2e33c3e1d82afc52389484c35ad827b3af801154e0199fe8",
+      "sha": "5eb970d6070e4eeb0756e91f7e26f30a1b3fe39e"
+    },
+    {
+      "path": ".github/acceptance/4ec561b3/frozen/body-freeze.json",
+      "bytes": 1553,
+      "sha256": "5057e73f1f08a4ad34df718b5e3ebfe9bad8e44450637ff7d9bd7ff1b4053979",
+      "sha": "f95d4c46bab383320054a2ea8ae55c34fe3aa054"
+    },
+    {
+      "path": ".github/acceptance/4ec561b3/frozen/body.md",
+      "bytes": 57023,
+      "sha256": "11c5c26867b1023e423d8716b573806487d0f75038f519542b5fde2f7e75b1ed",
+      "sha": "0cd18e1abc05c09e5217d0be6659c0ce3191b019"
+    },
+    {
+      "path": ".github/acceptance/4ec561b3/frozen/common.py",
+      "bytes": 5230,
+      "sha256": "f70c400db9c7281002b49f3650587124018aba43fd3777dfe32679af242e13ce",
+      "sha": "afa3c0589badbeaafc9fb39b592be6b28137f568"
+    },
+    {
+      "path": ".github/acceptance/4ec561b3/frozen/config-original.json",
+      "bytes": 2780,
+      "sha256": "2ff0d610f89901bd821b8e561ca711455906753cd5e80c11a3ffeea2a5a12fd2",
+      "sha": "19dbc95cb56e1f23975d78b974d1412259d9ffde"
+    },
+    {
+      "path": ".github/acceptance/4ec561b3/frozen/epic-body.md",
+      "bytes": 64719,
+      "sha256": "0739c48aa64e8bb07a29bf749dc73fe9231d49d58cf120b60990d4c9b2c82a15",
+      "sha": "5c6396b84f11c4b2f875dc89eb600ca523502b01"
+    },
+    {
+      "path": ".github/acceptance/4ec561b3/frozen/prepare_target_layout.py",
+      "bytes": 3964,
+      "sha256": "07938c8a97f3fc83257c1da54555ce7745c5511a2420ae3fc4a5ab7c51a906e9",
+      "sha": "0e650ad6fc2ae83eef196fc3d68ac5b2c8cf7623"
+    },
+    {
+      "path": ".github/acceptance/4ec561b3/frozen/publication.json",
+      "bytes": 553001,
+      "sha256": "d0ca870c6381c475935e325c8e6b85fb9f530d83dd4b890d68adf44ec5a08767",
+      "sha": "012a03fee08442fee0380eb7ba59482c9d7eee36"
+    },
+    {
+      "path": ".github/acceptance/4ec561b3/frozen/run_acceptance.py",
+      "bytes": 9455,
+      "sha256": "9868313ffad4ad27f913779a5b1d69510ae7500efae883d0ccc053d6fa641727",
+      "sha": "3c36fb6664f3af926f5a9626e9c3498871d36edb"
+    },
+    {
+      "path": ".github/acceptance/4ec561b3/input-hashes.json",
+      "bytes": 2481,
+      "sha256": "e7026ff33bc9f19ce3804a99b47e2537c7c74fcdf31214d87ad704ac6d2e89a0",
+      "sha": "b2d111dde1a8923208e637e5dc324a70532a549a"
+    },
+    {
+      "path": ".github/acceptance/4ec561b3/ort_system.py",
+      "bytes": 10193,
+      "sha256": "2d3bfde720ae599d2bb4adb3a9e4f7de40dda3412d11356f7bb74903e5a58da8",
+      "sha": "dc35913d0de5791601722676f66b08e76d994f45"
+    },
+    {
+      "path": ".github/acceptance/4ec561b3/run_group.py",
+      "bytes": 3095,
+      "sha256": "3ad53a241257907ad8a9ed438de7114f25b7230a39b28aa3794f5ca51498594b",
+      "sha": "29094d89bc22bb0409d1b470a02c2ff3d34dbf87"
+    },
+    {
+      "path": ".github/acceptance/4ec561b3/verify_results.py",
+      "bytes": 18797,
+      "sha256": "3390b7577a35150e2b6ae1ee97ec249a9e3352a085f865b633971bb9c42c64d0",
+      "sha": "ca794015f595e69dc836c4a984228e65f0ccfaf8"
+    },
+    {
+      "path": ".github/workflows/q6-exact-acceptance.yml",
+      "bytes": 4078,
+      "sha256": "d6cb52bee6a68a7bea4d93abc7b166f4c35e931b504384020cfd5d703bc8ceca",
+      "sha": "99fb9361861e9aa593325d3ea74c44d38ea8d51d"
+    }
+  ],
+  "jobs": {
+    "eval": {
+      "id": 112590192481,
+      "name": "Exact Q6 / eval",
+      "runner_id": 1000153699,
+      "runner_name": "GitHub Actions 1000153699",
+      "worker_uuid": "5f107937-2113-4f4e-a76e-d721dfd1b822",
+      "log_text_canonical_sha256": "0233c207fd294af123ff97b24ad1505008eee04f75b9ee6b7691f6915ab918b2"
+    },
+    "other": {
+      "id": 112590192825,
+      "name": "Exact Q6 / other",
+      "runner_id": 1000153700,
+      "runner_name": "GitHub Actions 1000153700",
+      "worker_uuid": "0ed75f7a-d306-416c-abe0-e9349379c976",
+      "log_text_canonical_sha256": "2e0ccf560352cf48c50646cd0b887274ad2e10b5e88f386bd5e0674d3d8cd731"
+    },
+    "union": {
+      "id": 112618422322,
+      "name": "Verify all eight exact-Q acceptance gates"
+    }
+  },
+  "artifacts": {
+    "eval": {
+      "id": 11459820571,
+      "name": "remem-q6-acceptance-4ec561b3-eval-attempt-1",
+      "bytes": 274958,
+      "sha256": "a7edfc5a373fae092fcd17aca4d89e3265b84375acddce004dc9e90de82fcd29"
+    },
+    "other": {
+      "id": 11457983833,
+      "name": "remem-q6-acceptance-4ec561b3-other-attempt-1",
+      "bytes": 441123,
+      "sha256": "0eac1e87f102dc34b2ebaf252090a277525a181a3e337977e357548005c96b0e"
+    },
+    "union": {
+      "id": 11459520900,
+      "name": "remem-q6-acceptance-4ec561b3-union-attempt-1",
+      "bytes": 4235,
+      "sha256": "b205e1641a3402794f265065a0284054e646298e9e9d1977db840fb003f165ce"
+    }
+  },
+  "documentation": [
+    "https://docs.github.com/en/actions/concepts/runners/github-hosted-runners",
+    "https://docs.github.com/en/actions/reference/runners/github-hosted-runners"
+  ],
+  "rationale": "Standard ubuntu-24.04 jobs were assigned distinct GitHub-hosted runners and report distinct Hosted Compute Agent Worker UUIDs, with overlapping execution intervals; OS hostname text is not a unique runner identity. Keep all original tool versions including gh strictly equal."
+}
