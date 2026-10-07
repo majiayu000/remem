@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "candidate_sha": "9e40361d9346d09270864da675d3ef17aebd6ad7",
+  "candidate_tree": "2e538e34d86001005ba2cb0c77ff16755711b544",
+  "candidate_parents": [
+    "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+    "e6735b1165bd92e47333ad7b322640791ecbe689",
+    "049fbcba7b8f0d2e700159aedde197f6575a565e"
+  ],
+  "frozen_files": {
+    "config-original.json": {
+      "sha256": "d6f74b2bc65d6091121613f152e31e1e9f772dfe05fb540fc8f069d4d01aa827",
+      "bytes": 2772,
+      "original_source": "/workspace/scratch/cec0cc9f355d/fixes/remem-q5-tools/config-Q5.json"
+    },
+    "common.py": {
+      "sha256": "f70c400db9c7281002b49f3650587124018aba43fd3777dfe32679af242e13ce",
+      "bytes": 5230,
+      "original_source": "/workspace/scratch/cec0cc9f355d/fixes/remem-q5-tools/common.py"
+    },
+    "run_acceptance.py": {
+      "sha256": "9868313ffad4ad27f913779a5b1d69510ae7500efae883d0ccc053d6fa641727",
+      "bytes": 9455,
+      "original_source": "/workspace/scratch/cec0cc9f355d/fixes/remem-q5-tools/run_acceptance.py"
+    },
+    "prepare_target_layout.py": {
+      "sha256": "07938c8a97f3fc83257c1da54555ce7745c5511a2420ae3fc4a5ab7c51a906e9",
+      "bytes": 3964,
+      "original_source": "/workspace/scratch/cec0cc9f355d/fixes/remem-q5-tools/prepare_target_layout.py"
+    },
+    "body.md": {
+      "sha256": "bc87a2fbb163ff386ca22e03c58d85ef8365a8042067891f63fe706add323929",
+      "bytes": 50965,
+      "original_source": "/workspace/scratch/cec0cc9f355d/fixes/remem-q5-pr-body.md"
+    },
+    "epic-body.md": {
+      "sha256": "0b01b9a8a88dc1f5cc00ef3c59d8b69c8dc3d83f874cb2e595129ffad2bd1feb",
+      "bytes": 64041,
+      "original_source": "/workspace/scratch/cec0cc9f355d/fixes/remem-q5-epic-body.md"
+    },
+    "publication.json": {
+      "sha256": "36802d221b750ff090dc63932ae5cfdcbdd753b1af5b6136264af4863e484fdb",
+      "bytes": 552294,
+      "original_source": "/workspace/scratch/cec0cc9f355d/fixes/remem-q5-results/publication.json"
+    },
+    "body-freeze.json": {
+      "sha256": "e8bd5ea6005a601aa18eb2bb909b92431f9bcdd93f0acff4a8b2db469de6a3fa",
+      "bytes": 1553,
+      "original_source": "/workspace/scratch/cec0cc9f355d/fixes/remem-q5-results/body-freeze.json"
+    },
+    "actual-candidate-publication.json": {
+      "sha256": "df0605e27d0338ee8ae8a41608112868b37582982a3d5dda47a2617a53912fed",
+      "bytes": 28625,
+      "original_source": "/workspace/scratch/cec0cc9f355d/fixes/remem-q5-results/actual-candidate-publication.json"
+    }
+  }
+}

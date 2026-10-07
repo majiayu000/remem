@@ -1,0 +1,457 @@
+{
+  "recorded_at": "2026-10-07 00:10:39 UTC",
+  "actual_candidate_sha": "9e40361d9346d09270864da675d3ef17aebd6ad7",
+  "actual_tree": "2e538e34d86001005ba2cb0c77ff16755711b544",
+  "ordered_parents": [
+    "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+    "e6735b1165bd92e47333ad7b322640791ecbe689",
+    "049fbcba7b8f0d2e700159aedde197f6575a565e"
+  ],
+  "branch": "audit/integration-review-20261007-9e40361d",
+  "native_producer_sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+  "integration_manifest_sha256": "33909aae9642bedabc4127cdbb095da4adf5067e3bf66e0400f556397c84df66",
+  "prepublication_binding_sha256": "35359a1d349a85bb63e647a05c41ab0f6bb5fbacc536daaa2e291d0d3689b20d",
+  "body_sha256": "bc87a2fbb163ff386ca22e03c58d85ef8365a8042067891f63fe706add323929",
+  "body_bytes": 50965,
+  "actual_git_commit": {
+    "sha": "9e40361d9346d09270864da675d3ef17aebd6ad7",
+    "node_id": "C_kwDORU6zjtoAKDllNDAzNjFkOTM0NmQwOTI3MDg2NGRhNjc1ZDNlZjE3YWViZDZhZDc",
+    "url": "https://api.github.com/repos/majiayu000/remem/git/commits/9e40361d9346d09270864da675d3ef17aebd6ad7",
+    "html_url": "https://github.com/majiayu000/remem/commit/9e40361d9346d09270864da675d3ef17aebd6ad7",
+    "author": {
+      "name": "lif",
+      "email": "1835304752@qq.com",
+      "date": "2026-10-07T00:09:51Z"
+    },
+    "committer": {
+      "name": "lif",
+      "email": "1835304752@qq.com",
+      "date": "2026-10-07T00:09:51Z"
+    },
+    "tree": {
+      "sha": "2e538e34d86001005ba2cb0c77ff16755711b544",
+      "url": "https://api.github.com/repos/majiayu000/remem/git/trees/2e538e34d86001005ba2cb0c77ff16755711b544"
+    },
+    "message": "test: preserve concurrent root rejection before store initialization",
+    "parents": [
+      {
+        "sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+        "url": "https://api.github.com/repos/majiayu000/remem/git/commits/c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+        "html_url": "https://github.com/majiayu000/remem/commit/c144b36a39415a28cd761d48b5ff78c88a6dfb10"
+      },
+      {
+        "sha": "e6735b1165bd92e47333ad7b322640791ecbe689",
+        "url": "https://api.github.com/repos/majiayu000/remem/git/commits/e6735b1165bd92e47333ad7b322640791ecbe689",
+        "html_url": "https://github.com/majiayu000/remem/commit/e6735b1165bd92e47333ad7b322640791ecbe689"
+      },
+      {
+        "sha": "049fbcba7b8f0d2e700159aedde197f6575a565e",
+        "url": "https://api.github.com/repos/majiayu000/remem/git/commits/049fbcba7b8f0d2e700159aedde197f6575a565e",
+        "html_url": "https://github.com/majiayu000/remem/commit/049fbcba7b8f0d2e700159aedde197f6575a565e"
+      }
+    ],
+    "verification": {
+      "verified": false,
+      "reason": "unsigned",
+      "signature": null,
+      "payload": null,
+      "verified_at": null
+    }
+  },
+  "actual_branch": {
+    "ref": "refs/heads/audit/integration-review-20261007-9e40361d",
+    "node_id": "REF_kwDORU6zjtoANXJlZnMvaGVhZHMvYXVkaXQvaW50ZWdyYXRpb24tcmV2aWV3LTIwMjYxMDA3LTllNDAzNjFk",
+    "url": "https://api.github.com/repos/majiayu000/remem/git/refs/heads/audit/integration-review-20261007-9e40361d",
+    "object": {
+      "sha": "9e40361d9346d09270864da675d3ef17aebd6ad7",
+      "type": "commit",
+      "url": "https://api.github.com/repos/majiayu000/remem/git/commits/9e40361d9346d09270864da675d3ef17aebd6ad7"
+    }
+  },
+  "actual_compare_from_q4": {
+    "url": "https://api.github.com/repos/majiayu000/remem/compare/e6735b1165bd92e47333ad7b322640791ecbe689...9e40361d9346d09270864da675d3ef17aebd6ad7",
+    "html_url": "https://github.com/majiayu000/remem/compare/e6735b1165bd92e47333ad7b322640791ecbe689...9e40361d9346d09270864da675d3ef17aebd6ad7",
+    "permalink_url": "https://github.com/majiayu000/remem/compare/majiayu000:e6735b1...majiayu000:9e40361",
+    "diff_url": "https://github.com/majiayu000/remem/compare/e6735b1165bd92e47333ad7b322640791ecbe689...9e40361d9346d09270864da675d3ef17aebd6ad7.diff",
+    "patch_url": "https://github.com/majiayu000/remem/compare/e6735b1165bd92e47333ad7b322640791ecbe689...9e40361d9346d09270864da675d3ef17aebd6ad7.patch",
+    "base_commit": {
+      "sha": "e6735b1165bd92e47333ad7b322640791ecbe689",
+      "node_id": "C_kwDORU6zjtoAKGU2NzM1YjExNjViZDkyZTQ3MzMzYWQ3YjMyMjY0MDc5MWVjYmU2ODk",
+      "commit": {
+        "author": {
+          "name": "lif",
+          "email": "1835304752@qq.com",
+          "date": "2026-10-06T23:01:34Z"
+        },
+        "committer": {
+          "name": "lif",
+          "email": "1835304752@qq.com",
+          "date": "2026-10-06T23:01:34Z"
+        },
+        "message": "test(eval): import current native evidence and preserve concurrent evidence history",
+        "tree": {
+          "sha": "9ab4b0e7b337d5cf088a3a2a633ae51cf8b62357",
+          "url": "https://api.github.com/repos/majiayu000/remem/git/trees/9ab4b0e7b337d5cf088a3a2a633ae51cf8b62357"
+        },
+        "url": "https://api.github.com/repos/majiayu000/remem/git/commits/e6735b1165bd92e47333ad7b322640791ecbe689",
+        "comment_count": 0,
+        "verification": {
+          "verified": false,
+          "reason": "unsigned",
+          "signature": null,
+          "payload": null,
+          "verified_at": null
+        }
+      },
+      "url": "https://api.github.com/repos/majiayu000/remem/commits/e6735b1165bd92e47333ad7b322640791ecbe689",
+      "html_url": "https://github.com/majiayu000/remem/commit/e6735b1165bd92e47333ad7b322640791ecbe689",
+      "comments_url": "https://api.github.com/repos/majiayu000/remem/commits/e6735b1165bd92e47333ad7b322640791ecbe689/comments",
+      "author": {
+        "login": "majiayu000",
+        "id": 19658300,
+        "node_id": "MDQ6VXNlcjE5NjU4MzAw",
+        "avatar_url": "https://avatars.githubusercontent.com/u/19658300?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/majiayu000",
+        "html_url": "https://github.com/majiayu000",
+        "followers_url": "https://api.github.com/users/majiayu000/followers",
+        "following_url": "https://api.github.com/users/majiayu000/following{/other_user}",
+        "gists_url": "https://api.github.com/users/majiayu000/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/majiayu000/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/majiayu000/subscriptions",
+        "organizations_url": "https://api.github.com/users/majiayu000/orgs",
+        "repos_url": "https://api.github.com/users/majiayu000/repos",
+        "events_url": "https://api.github.com/users/majiayu000/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/majiayu000/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "committer": {
+        "login": "majiayu000",
+        "id": 19658300,
+        "node_id": "MDQ6VXNlcjE5NjU4MzAw",
+        "avatar_url": "https://avatars.githubusercontent.com/u/19658300?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/majiayu000",
+        "html_url": "https://github.com/majiayu000",
+        "followers_url": "https://api.github.com/users/majiayu000/followers",
+        "following_url": "https://api.github.com/users/majiayu000/following{/other_user}",
+        "gists_url": "https://api.github.com/users/majiayu000/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/majiayu000/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/majiayu000/subscriptions",
+        "organizations_url": "https://api.github.com/users/majiayu000/orgs",
+        "repos_url": "https://api.github.com/users/majiayu000/repos",
+        "events_url": "https://api.github.com/users/majiayu000/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/majiayu000/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "parents": [
+        {
+          "sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+          "url": "https://api.github.com/repos/majiayu000/remem/commits/c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+          "html_url": "https://github.com/majiayu000/remem/commit/c144b36a39415a28cd761d48b5ff78c88a6dfb10"
+        },
+        {
+          "sha": "70b2de0d414a1adeaf2623e00843bdf1ee6d35dd",
+          "url": "https://api.github.com/repos/majiayu000/remem/commits/70b2de0d414a1adeaf2623e00843bdf1ee6d35dd",
+          "html_url": "https://github.com/majiayu000/remem/commit/70b2de0d414a1adeaf2623e00843bdf1ee6d35dd"
+        }
+      ]
+    },
+    "merge_base_commit": {
+      "sha": "e6735b1165bd92e47333ad7b322640791ecbe689",
+      "node_id": "C_kwDORU6zjtoAKGU2NzM1YjExNjViZDkyZTQ3MzMzYWQ3YjMyMjY0MDc5MWVjYmU2ODk",
+      "commit": {
+        "author": {
+          "name": "lif",
+          "email": "1835304752@qq.com",
+          "date": "2026-10-06T23:01:34Z"
+        },
+        "committer": {
+          "name": "lif",
+          "email": "1835304752@qq.com",
+          "date": "2026-10-06T23:01:34Z"
+        },
+        "message": "test(eval): import current native evidence and preserve concurrent evidence history",
+        "tree": {
+          "sha": "9ab4b0e7b337d5cf088a3a2a633ae51cf8b62357",
+          "url": "https://api.github.com/repos/majiayu000/remem/git/trees/9ab4b0e7b337d5cf088a3a2a633ae51cf8b62357"
+        },
+        "url": "https://api.github.com/repos/majiayu000/remem/git/commits/e6735b1165bd92e47333ad7b322640791ecbe689",
+        "comment_count": 0,
+        "verification": {
+          "verified": false,
+          "reason": "unsigned",
+          "signature": null,
+          "payload": null,
+          "verified_at": null
+        }
+      },
+      "url": "https://api.github.com/repos/majiayu000/remem/commits/e6735b1165bd92e47333ad7b322640791ecbe689",
+      "html_url": "https://github.com/majiayu000/remem/commit/e6735b1165bd92e47333ad7b322640791ecbe689",
+      "comments_url": "https://api.github.com/repos/majiayu000/remem/commits/e6735b1165bd92e47333ad7b322640791ecbe689/comments",
+      "author": {
+        "login": "majiayu000",
+        "id": 19658300,
+        "node_id": "MDQ6VXNlcjE5NjU4MzAw",
+        "avatar_url": "https://avatars.githubusercontent.com/u/19658300?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/majiayu000",
+        "html_url": "https://github.com/majiayu000",
+        "followers_url": "https://api.github.com/users/majiayu000/followers",
+        "following_url": "https://api.github.com/users/majiayu000/following{/other_user}",
+        "gists_url": "https://api.github.com/users/majiayu000/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/majiayu000/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/majiayu000/subscriptions",
+        "organizations_url": "https://api.github.com/users/majiayu000/orgs",
+        "repos_url": "https://api.github.com/users/majiayu000/repos",
+        "events_url": "https://api.github.com/users/majiayu000/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/majiayu000/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "committer": {
+        "login": "majiayu000",
+        "id": 19658300,
+        "node_id": "MDQ6VXNlcjE5NjU4MzAw",
+        "avatar_url": "https://avatars.githubusercontent.com/u/19658300?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/majiayu000",
+        "html_url": "https://github.com/majiayu000",
+        "followers_url": "https://api.github.com/users/majiayu000/followers",
+        "following_url": "https://api.github.com/users/majiayu000/following{/other_user}",
+        "gists_url": "https://api.github.com/users/majiayu000/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/majiayu000/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/majiayu000/subscriptions",
+        "organizations_url": "https://api.github.com/users/majiayu000/orgs",
+        "repos_url": "https://api.github.com/users/majiayu000/repos",
+        "events_url": "https://api.github.com/users/majiayu000/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/majiayu000/received_events",
+        "type": "User",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "parents": [
+        {
+          "sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+          "url": "https://api.github.com/repos/majiayu000/remem/commits/c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+          "html_url": "https://github.com/majiayu000/remem/commit/c144b36a39415a28cd761d48b5ff78c88a6dfb10"
+        },
+        {
+          "sha": "70b2de0d414a1adeaf2623e00843bdf1ee6d35dd",
+          "url": "https://api.github.com/repos/majiayu000/remem/commits/70b2de0d414a1adeaf2623e00843bdf1ee6d35dd",
+          "html_url": "https://github.com/majiayu000/remem/commit/70b2de0d414a1adeaf2623e00843bdf1ee6d35dd"
+        }
+      ]
+    },
+    "status": "ahead",
+    "ahead_by": 2,
+    "behind_by": 0,
+    "total_commits": 2,
+    "commits": [
+      {
+        "sha": "049fbcba7b8f0d2e700159aedde197f6575a565e",
+        "node_id": "C_kwDORU6zjtoAKDA0OWZiY2JhN2I4ZjBkMmU3MDAxNTlhZWRkZTE5N2Y2NTc1YTU2NWU",
+        "commit": {
+          "author": {
+            "name": "lif",
+            "email": "1835304752@qq.com",
+            "date": "2026-10-06T23:24:21Z"
+          },
+          "committer": {
+            "name": "lif",
+            "email": "1835304752@qq.com",
+            "date": "2026-10-06T23:24:21Z"
+          },
+          "message": "test: distinguish invalid Codex home from scan failures\n\nKeep the selected-profile guard fail-closed and verify it runs before store creation. Preserve exact discovery summaries and zero archive mutations for every other root-failure case.",
+          "tree": {
+            "sha": "e8d04c3b01a63c20f950cd80ddae27fc375d44fd",
+            "url": "https://api.github.com/repos/majiayu000/remem/git/trees/e8d04c3b01a63c20f950cd80ddae27fc375d44fd"
+          },
+          "url": "https://api.github.com/repos/majiayu000/remem/git/commits/049fbcba7b8f0d2e700159aedde197f6575a565e",
+          "comment_count": 0,
+          "verification": {
+            "verified": false,
+            "reason": "unsigned",
+            "signature": null,
+            "payload": null,
+            "verified_at": null
+          }
+        },
+        "url": "https://api.github.com/repos/majiayu000/remem/commits/049fbcba7b8f0d2e700159aedde197f6575a565e",
+        "html_url": "https://github.com/majiayu000/remem/commit/049fbcba7b8f0d2e700159aedde197f6575a565e",
+        "comments_url": "https://api.github.com/repos/majiayu000/remem/commits/049fbcba7b8f0d2e700159aedde197f6575a565e/comments",
+        "author": {
+          "login": "majiayu000",
+          "id": 19658300,
+          "node_id": "MDQ6VXNlcjE5NjU4MzAw",
+          "avatar_url": "https://avatars.githubusercontent.com/u/19658300?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/majiayu000",
+          "html_url": "https://github.com/majiayu000",
+          "followers_url": "https://api.github.com/users/majiayu000/followers",
+          "following_url": "https://api.github.com/users/majiayu000/following{/other_user}",
+          "gists_url": "https://api.github.com/users/majiayu000/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/majiayu000/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/majiayu000/subscriptions",
+          "organizations_url": "https://api.github.com/users/majiayu000/orgs",
+          "repos_url": "https://api.github.com/users/majiayu000/repos",
+          "events_url": "https://api.github.com/users/majiayu000/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/majiayu000/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "committer": {
+          "login": "majiayu000",
+          "id": 19658300,
+          "node_id": "MDQ6VXNlcjE5NjU4MzAw",
+          "avatar_url": "https://avatars.githubusercontent.com/u/19658300?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/majiayu000",
+          "html_url": "https://github.com/majiayu000",
+          "followers_url": "https://api.github.com/users/majiayu000/followers",
+          "following_url": "https://api.github.com/users/majiayu000/following{/other_user}",
+          "gists_url": "https://api.github.com/users/majiayu000/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/majiayu000/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/majiayu000/subscriptions",
+          "organizations_url": "https://api.github.com/users/majiayu000/orgs",
+          "repos_url": "https://api.github.com/users/majiayu000/repos",
+          "events_url": "https://api.github.com/users/majiayu000/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/majiayu000/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "parents": [
+          {
+            "sha": "70b2de0d414a1adeaf2623e00843bdf1ee6d35dd",
+            "url": "https://api.github.com/repos/majiayu000/remem/commits/70b2de0d414a1adeaf2623e00843bdf1ee6d35dd",
+            "html_url": "https://github.com/majiayu000/remem/commit/70b2de0d414a1adeaf2623e00843bdf1ee6d35dd"
+          }
+        ]
+      },
+      {
+        "sha": "9e40361d9346d09270864da675d3ef17aebd6ad7",
+        "node_id": "C_kwDORU6zjtoAKDllNDAzNjFkOTM0NmQwOTI3MDg2NGRhNjc1ZDNlZjE3YWViZDZhZDc",
+        "commit": {
+          "author": {
+            "name": "lif",
+            "email": "1835304752@qq.com",
+            "date": "2026-10-07T00:09:51Z"
+          },
+          "committer": {
+            "name": "lif",
+            "email": "1835304752@qq.com",
+            "date": "2026-10-07T00:09:51Z"
+          },
+          "message": "test: preserve concurrent root rejection before store initialization",
+          "tree": {
+            "sha": "2e538e34d86001005ba2cb0c77ff16755711b544",
+            "url": "https://api.github.com/repos/majiayu000/remem/git/trees/2e538e34d86001005ba2cb0c77ff16755711b544"
+          },
+          "url": "https://api.github.com/repos/majiayu000/remem/git/commits/9e40361d9346d09270864da675d3ef17aebd6ad7",
+          "comment_count": 0,
+          "verification": {
+            "verified": false,
+            "reason": "unsigned",
+            "signature": null,
+            "payload": null,
+            "verified_at": null
+          }
+        },
+        "url": "https://api.github.com/repos/majiayu000/remem/commits/9e40361d9346d09270864da675d3ef17aebd6ad7",
+        "html_url": "https://github.com/majiayu000/remem/commit/9e40361d9346d09270864da675d3ef17aebd6ad7",
+        "comments_url": "https://api.github.com/repos/majiayu000/remem/commits/9e40361d9346d09270864da675d3ef17aebd6ad7/comments",
+        "author": {
+          "login": "majiayu000",
+          "id": 19658300,
+          "node_id": "MDQ6VXNlcjE5NjU4MzAw",
+          "avatar_url": "https://avatars.githubusercontent.com/u/19658300?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/majiayu000",
+          "html_url": "https://github.com/majiayu000",
+          "followers_url": "https://api.github.com/users/majiayu000/followers",
+          "following_url": "https://api.github.com/users/majiayu000/following{/other_user}",
+          "gists_url": "https://api.github.com/users/majiayu000/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/majiayu000/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/majiayu000/subscriptions",
+          "organizations_url": "https://api.github.com/users/majiayu000/orgs",
+          "repos_url": "https://api.github.com/users/majiayu000/repos",
+          "events_url": "https://api.github.com/users/majiayu000/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/majiayu000/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "committer": {
+          "login": "majiayu000",
+          "id": 19658300,
+          "node_id": "MDQ6VXNlcjE5NjU4MzAw",
+          "avatar_url": "https://avatars.githubusercontent.com/u/19658300?v=4",
+          "gravatar_id": "",
+          "url": "https://api.github.com/users/majiayu000",
+          "html_url": "https://github.com/majiayu000",
+          "followers_url": "https://api.github.com/users/majiayu000/followers",
+          "following_url": "https://api.github.com/users/majiayu000/following{/other_user}",
+          "gists_url": "https://api.github.com/users/majiayu000/gists{/gist_id}",
+          "starred_url": "https://api.github.com/users/majiayu000/starred{/owner}{/repo}",
+          "subscriptions_url": "https://api.github.com/users/majiayu000/subscriptions",
+          "organizations_url": "https://api.github.com/users/majiayu000/orgs",
+          "repos_url": "https://api.github.com/users/majiayu000/repos",
+          "events_url": "https://api.github.com/users/majiayu000/events{/privacy}",
+          "received_events_url": "https://api.github.com/users/majiayu000/received_events",
+          "type": "User",
+          "user_view_type": "public",
+          "site_admin": false
+        },
+        "parents": [
+          {
+            "sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+            "url": "https://api.github.com/repos/majiayu000/remem/commits/c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+            "html_url": "https://github.com/majiayu000/remem/commit/c144b36a39415a28cd761d48b5ff78c88a6dfb10"
+          },
+          {
+            "sha": "e6735b1165bd92e47333ad7b322640791ecbe689",
+            "url": "https://api.github.com/repos/majiayu000/remem/commits/e6735b1165bd92e47333ad7b322640791ecbe689",
+            "html_url": "https://github.com/majiayu000/remem/commit/e6735b1165bd92e47333ad7b322640791ecbe689"
+          },
+          {
+            "sha": "049fbcba7b8f0d2e700159aedde197f6575a565e",
+            "url": "https://api.github.com/repos/majiayu000/remem/commits/049fbcba7b8f0d2e700159aedde197f6575a565e",
+            "html_url": "https://github.com/majiayu000/remem/commit/049fbcba7b8f0d2e700159aedde197f6575a565e"
+          }
+        ]
+      }
+    ],
+    "files": [
+      {
+        "sha": "afdf3ed63045669b6be7c55f886a2548f5b8d333",
+        "filename": "tests/shared_session_roots.rs",
+        "status": "modified",
+        "additions": 45,
+        "deletions": 24,
+        "changes": 69,
+        "blob_url": "https://github.com/majiayu000/remem/blob/9e40361d9346d09270864da675d3ef17aebd6ad7/tests%2Fshared_session_roots.rs",
+        "raw_url": "https://github.com/majiayu000/remem/raw/9e40361d9346d09270864da675d3ef17aebd6ad7/tests%2Fshared_session_roots.rs",
+        "contents_url": "https://api.github.com/repos/majiayu000/remem/contents/tests%2Fshared_session_roots.rs?ref=9e40361d9346d09270864da675d3ef17aebd6ad7",
+        "patch": "@@ -51,6 +51,24 @@ fn success(output: &Output) {\n     );\n }\n \n+fn failure_context(key: &str, fault: &str, output: &Output) -> String {\n+    format!(\n+        \"{key} {fault}: status={}\\nstdout={}\\nstderr={}\",\n+        output.status,\n+        String::from_utf8_lossy(&output.stdout),\n+        String::from_utf8_lossy(&output.stderr)\n+    )\n+}\n+\n+fn assert_codex_home_file_rejected(output: &Output, context: &str) {\n+    assert_eq!(output.status.code(), Some(1), \"{context}\");\n+    assert!(output.stdout.is_empty(), \"{context}\");\n+    assert!(\n+        String::from_utf8_lossy(&output.stderr).contains(\"Codex home is not a directory\"),\n+        \"{context}\"\n+    );\n+}\n+\n // Catches fixed home paths, cross-host override confusion and changed ingest counts.\n #[test]\n fn ingest_uses_both_native_root_overrides() {\n@@ -178,6 +196,22 @@ fn unavailable_explicit_roots_fail_without_importing_other_hosts() {\n                 &healthy.join(other_suffix).join(\"s.jsonl\"),\n                 serde_json::json!({\"type\":\"user\",\"message\":{\"content\":\"must stay unimported\"}}),\n             );\n+            let invalid_codex_home = key == \"CODEX_HOME\" && fault == \"host-file\";\n+            if invalid_codex_home {\n+                // Invalid profile configuration fails before opening the store,\n+                // rather than producing a discovery summary.\n+                let output = sandbox\n+                    .command()\n+                    .args([\"ingest-sessions\", \"--json\"])\n+                    .env(key, &broken)\n+                    .env(other_key, &healthy)\n+                    .output()\n+                    .unwrap();\n+                let context = failure_context(key, fault, &output);\n+                assert_codex_home_file_rejected(&output, &context);\n+                assert!(!sandbox.0.join(\"data\").exists(), \"{context}\");\n+                assert!(!sandbox.0.join(\"data/remem.db\").exists(), \"{context}\");\n+            }\n             success(&sandbox.command().arg(\"encrypt\").output().unwrap());\n             let output = sandbox\n                 .command()\n@@ -195,35 +229,22 @@ fn unavailable_explicit_roots_fail_without_importing_other_hosts() {\n                 )\n                 .unwrap();\n             }\n-            let stderr = String::from_utf8_lossy(&output.stderr);\n-            let diagnostics = format!(\n-                \"{key} {fault}: status={:?}\\nstdout:\\n{}\\nstderr:\\n{stderr}\",\n-                output.status,\n-                String::from_utf8_lossy(&output.stdout),\n-            );\n-            assert!(!output.status.success(), \"{diagnostics}\");\n-            if key == \"CODEX_HOME\" && fault == \"host-file\" {\n-                // The selected Codex profile is validated before batch discovery,\n-                // so this configuration error has no ingestion summary.\n-                assert_eq!(output.status.code(), Some(1), \"{diagnostics}\");\n-                assert!(output.stdout.is_empty(), \"{diagnostics}\");\n-                assert!(\n-                    stderr.contains(\"Codex home is not a directory\"),\n-                    \"{diagnostics}\"\n-                );\n+            let context = failure_context(key, fault, &output);\n+            assert!(!output.status.success(), \"{context}\");\n+            if invalid_codex_home {\n+                assert_codex_home_file_rejected(&output, &context);\n             } else {\n-                let summary: serde_json::Value = serde_json::from_slice(&output.stdout)\n-                    .unwrap_or_else(|error| {\n-                        panic!(\"invalid ingestion summary ({error}); {diagnostics}\")\n-                    });\n+                let summary = serde_json::from_slice::<serde_json::Value>(&output.stdout)\n+                    .unwrap_or_else(|error| panic!(\"invalid JSON: {error}; {context}\"));\n                 assert_eq!(\n                     summary,\n                     serde_json::json!({\"scanned\":1,\"skipped\":0,\"ingested_messages\":0,\"failed_files\":1,\"partial_files\":0}),\n-                    \"{diagnostics}\"\n+                    \"{context}\"\n                 );\n                 assert!(\n-                    stderr.contains(broken.join(suffix).to_string_lossy().as_ref()),\n-                    \"{diagnostics}\"\n+                    String::from_utf8_lossy(&output.stderr)\n+                        .contains(broken.join(suffix).to_string_lossy().as_ref()),\n+                    \"{context}\"\n                 );\n             }\n             let conn = rusqlite::Connection::open(sandbox.0.join(\"data/remem.db\")).unwrap();\n@@ -241,7 +262,7 @@ fn unavailable_explicit_roots_fail_without_importing_other_hosts() {\n                         .get::<_, i64>(0))\n                         .unwrap(),\n                     0,\n-                    \"{key} {fault} {table}\"\n+                    \"{context}\\ntable={table}\"\n                 );\n             }\n         }"
+      }
+    ]
+  },
+  "actual_remote_tree_matches_independently_reviewed_tree": true,
+  "new_tree_entries_from_q4": [
+    {
+      "path": "tests/shared_session_roots.rs",
+      "blob": "afdf3ed63045669b6be7c55f886a2548f5b8d333"
+    }
+  ],
+  "runtime_manifest_status": "Prepared separately after actual clean checkout and original P5 bundle authentication against the unchanged production identity",
+  "candidate_acceptance": "not run",
+  "review_pr_updated": false,
+  "review_ref_updated": false
+}

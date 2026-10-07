@@ -1,0 +1,28 @@
+{
+  "file": "/workspace/scratch/cec0cc9f355d/fixes/remem-q5-pr-body.md",
+  "bytes": 50965,
+  "sha256": "bc87a2fbb163ff386ca22e03c58d85ef8365a8042067891f63fe706add323929",
+  "producer_sha": "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+  "workflow_run_id": 37539811793,
+  "workflow_run_attempt": 1,
+  "candidate_sha": "9e40361d9346d09270864da675d3ef17aebd6ad7",
+  "candidate_tree": "2e538e34d86001005ba2cb0c77ff16755711b544",
+  "candidate_parents": [
+    "c144b36a39415a28cd761d48b5ff78c88a6dfb10",
+    "e6735b1165bd92e47333ad7b322640791ecbe689",
+    "049fbcba7b8f0d2e700159aedde197f6575a565e"
+  ],
+  "candidate_kind": "test_and_evidence_integration",
+  "candidate_acceptance": "Pending all eight unchanged gates on this actual candidate.",
+  "later_results_recorded_in_epic_only": true,
+  "epic_execution_anchor": "2026-10-06-utc-final-integration-and-acceptance",
+  "frozen_epic_input": {
+    "file": "/workspace/scratch/cec0cc9f355d/fixes/remem-q5-epic-body.md",
+    "bytes": 64041,
+    "sha256": "0b01b9a8a88dc1f5cc00ef3c59d8b69c8dc3d83f874cb2e595129ffad2bd1feb"
+  },
+  "integration_manifest_sha256": "33909aae9642bedabc4127cdbb095da4adf5067e3bf66e0400f556397c84df66",
+  "root_prepublication_binding_sha256": "35359a1d349a85bb63e647a05c41ab0f6bb5fbacc536daaa2e291d0d3689b20d",
+  "actual_candidate_readback_sha256": "df0605e27d0338ee8ae8a41608112868b37582982a3d5dda47a2617a53912fed",
+  "scope": "New runtime metadata after root independently froze both bodies and created actual Q5. Old evidence-only build/freezer code was neither used nor changed."
+}
