@@ -57,7 +57,9 @@ flush / 下次请求准备时传播；详细诊断查 remem 日志，插件不�
 来源 `remem` 不会被当成人类提示重复收录。历史 DSH 文件导入未实现。
 图片和文件仅保存有界引用元数据，不读取附件字节。用户提示捕获不执行
 无法送达的即时召回；每轮首步仅在已提交历史的记忆快照变化时注入，取消
-请求准备不会消耗后续注入。提炼任务落盘不等于已生成长期记忆：后者要求 remem 的 AI executor 正常工作。
+请求准备不会消耗后续注入。CLI 准备阶段不写注入审计或使用计数；
+交付事实以 DSH 已提交的记忆快照为准。工具参数先解析 JSON，再由 remem 按键脱敏；
+非法 JSON 返回可见捕获错误，不保存原始参数。提炼任务落盘不等于已生成长期记忆：后者要求 remem 的 AI executor 正常工作。
 
 ## 验证
 
@@ -96,4 +98,7 @@ import, automatic MCP registration, and memory AI credentials are outside this
 adapter. Image/file capture retains bounded reference metadata without reading
 attachment bytes. Prompt capture does not perform undeliverable recall. Snapshot
 deduplication uses committed session history, so cancelled preparation can retry.
+CLI preparation writes no injection audit or usage credit; committed DSH snapshots
+are the delivery record. Tool arguments are decoded before secret-key redaction;
+malformed JSON causes a visible capture error without storing the raw arguments.
 Successful queueing does not imply completed LLM memory promotion.

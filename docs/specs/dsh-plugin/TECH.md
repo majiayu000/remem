@@ -18,7 +18,9 @@ assistant answer from that turn. Context injection preserves downstream
 request-series decisions. DSH requests `context --gate off`: only the most recent
 committed `remem` snapshot in `session.deriveMessages()` suppresses an unchanged
 snapshot. Cancellation before admission therefore leaves the next turn eligible
-for injection. No plugin acknowledgement ledger is maintained.
+for injection. No plugin acknowledgement ledger is maintained. Rust context emission audit is
+skipped for the DSH host because CLI rendering precedes admission, cancellation,
+and snapshot deduplication; committed DSH history remains delivery authority.
 Human attachment blocks retain bounded reference metadata alongside text without
 reading attachment bytes. DSH `session-init` is capture-only because its
 post-commit callback cannot deliver prompt recall to request preparation; other
@@ -37,6 +39,8 @@ requires downstream exhaustive Rust matches on InstallHost to handle the new var
 The changed enum signatures remain staged until release verification.
 
 Subprocesses use argv and stdin, never a shell. Output and runtime are bounded.
+Tool-call argument JSON is parsed into structured values before capture. Invalid
+JSON raises a fixed capture error that omits the argument text and parser message.
 Captured payloads go through remem's redaction and governance; subprocess stderr
 is not copied into plugin diagnostics (it can contain provider secrets).
 

@@ -245,7 +245,9 @@ pub(super) fn generate_context_output_for_invocation(
         append_context_gate_debug_trace(&mut decision.output, &request, &decision_for_debug);
     }
     append_hook_integrity_warning(&mut decision.output, hook_integrity_warning.as_deref());
-    if !audit_items.is_empty() {
+    // DSH rendering prepares a candidate before host admission. Committed DSH
+    // snapshot history is its delivery record, not this CLI preparation.
+    if invocation.host != super::host::HostKind::DeepSeekHarness && !audit_items.is_empty() {
         let audit_write_start = Instant::now();
         audit_persistence::persist_emission_audit(
             &conn,
