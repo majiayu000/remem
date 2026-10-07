@@ -151,4 +151,4 @@ Add a new spec only when the work changes user-visible behavior, migrations, hoo
 
 ## DSH plugin
 
-- Current contract: [product](dsh-plugin/PRODUCT.md) and [technical](dsh-plugin/TECH.md).
+- Current contract (`dsh-plugin/`): [product](dsh-plugin/PRODUCT.md) and [technical](dsh-plugin/TECH.md).
