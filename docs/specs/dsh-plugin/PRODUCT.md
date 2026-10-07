@@ -1,0 +1,24 @@
+# DSH memory plugin
+
+Refs #1111.
+
+Status: Current contract; implementation is in this change.
+
+`@remem-ai/dsh-remem` connects an explicitly installed remem executable to
+DeepSeek Harness. It does not install a binary or implement memory retrieval,
+extraction, governance, or storage itself.
+
+Before the first step of a turn, it retrieves project memory through `context`.
+Live user prompts, assistant messages, and completed tool calls are captured
+through the existing CLI. A completed, interrupted, or failed turn queues the
+existing `summarize` workflow. Memory AI credentials and executor configuration
+remain owned by remem.
+
+The provenance host is `deepseek-harness`. DSH plugin context is never recaptured
+as a human prompt. Historical seed events are not ingested. The plugin does not
+claim filesystem transcript import, automatic MCP tools, or host installation via
+`remem install`. A DSH adapter preserves arbitrary tool names and results.
+
+Missing executables fail activation. Context failures reject request preparation;
+background capture failures are logged and surface through the awaited session
+flush checkpoint. No silent loss or automatic binary downloads.

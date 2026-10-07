@@ -48,7 +48,7 @@ pub(super) enum Commands {
         /// Host session ID used by duplicate-injection gating.
         #[arg(long)]
         session_id: Option<String>,
-        /// Host profile: claude-code, codex-cli, or cursor (exact closed set when explicit). Overrides REMEM_CONTEXT_HOST.
+        /// Host profile: claude-code, codex-cli, cursor, or deepseek-harness (exact closed set when explicit). Overrides REMEM_CONTEXT_HOST.
         #[arg(long)]
         host: Option<String>,
         /// Preserve ANSI colors in rendered context.
@@ -96,19 +96,19 @@ pub(super) enum Commands {
     },
     /// Hook entrypoint for starting a memory capture session.
     SessionInit {
-        /// Hook host, exact closed set: claude-code, codex-cli, or cursor (cursor is rejected as unsupported for session-init).
+        /// Hook host, exact closed set: claude-code, codex-cli, cursor, or deepseek-harness (cursor is rejected as unsupported for session-init).
         #[arg(long)]
         host: Option<String>,
     },
     /// Hook entrypoint for recording a tool or prompt observation.
     Observe {
-        /// Hook host, exact closed set: claude-code, codex-cli, or cursor.
+        /// Hook host, exact closed set: claude-code, codex-cli, cursor, or deepseek-harness.
         #[arg(long)]
         host: Option<String>,
     },
     /// Hook entrypoint for summarizing captured session activity.
     Summarize {
-        /// Hook host, exact closed set: claude-code, codex-cli, or cursor (cursor summarize stays fail-closed until GH-825).
+        /// Hook host, exact closed set: claude-code, codex-cli, cursor, or deepseek-harness (cursor summarize stays fail-closed until GH-825).
         #[arg(long)]
         host: Option<String>,
         /// Memory AI profile name from [memory_ai.profiles].

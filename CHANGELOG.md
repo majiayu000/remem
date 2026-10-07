@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.102` adds the thin DSH lifecycle plugin and truthful
+  `deepseek-harness` capture identity. Memory logic remains in the existing runtime.
 - Staged source version `0.6.101` binds session-intent preview and apply to the eligible summary shown by session listings, leaving hidden quarantined summaries unchanged.
 - Staged source version `0.6.100` redacts embedded credentials in raw session, REST session/workstream, and activity labels after rendering, preserving valid topics when redaction expands their length.
 - Staged source version `0.6.99` redacts embedded secrets in session intent preview topics and reasons before audit and apply (#1093).

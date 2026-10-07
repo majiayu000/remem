@@ -22,6 +22,13 @@ hooks, MCP, CLI, and a localhost REST API.
 *A new Claude Code session recalls the earlier root cause, commit, and open
 TODO with memory citations and no re-explaining.*
 
+## DeepSeek Harness
+
+The optional [DSH adapter](plugins/dsh-remem/README.md) injects project context
+and captures live prompts, assistant text, and tools using the existing CLI.
+It targets published DSH 0.2.0-rc.2; the npm adapter is not yet published.
+Build the DSH-enabled remem 0.6.102 source before installing the adapter.
+
 ## What remem gives you
 
 - Automatic session capture and background LLM distillation.

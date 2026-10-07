@@ -19,6 +19,7 @@ pub enum InstallHost {
     ClaudeCode,
     CodexCli,
     Cursor,
+    DeepSeekHarness,
 }
 
 impl InstallHost {
@@ -30,12 +31,13 @@ impl InstallHost {
             InstallHost::ClaudeCode => "claude-code",
             InstallHost::CodexCli => "codex-cli",
             InstallHost::Cursor => "cursor",
+            InstallHost::DeepSeekHarness => "deepseek-harness",
         }
     }
 
     /// Parse from the `--host` CLI argument. This is the shared exact
     /// hook-host parser (GH-823 B-001): the recognized closed set is exactly
-    /// `claude-code`, `codex-cli`, and `cursor`. Aliases, misspellings, empty
+    /// `claude-code`, `codex-cli`, `cursor`, and `deepseek-harness`. Aliases, misspellings, empty
     /// strings, `unknown`, and arbitrary values are refused at the boundary,
     /// in contrast to `context::host::HostKind` detection.
     pub fn parse(s: &str) -> Result<Self> {
@@ -43,8 +45,9 @@ impl InstallHost {
             "claude-code" => Ok(InstallHost::ClaudeCode),
             "codex-cli" => Ok(InstallHost::CodexCli),
             "cursor" => Ok(InstallHost::Cursor),
+            "deepseek-harness" => Ok(InstallHost::DeepSeekHarness),
             other => Err(anyhow!(
-                "invalid host '{other}'; hook host must be one of claude-code, codex-cli, cursor"
+                "invalid host '{other}'; hook host must be one of claude-code, codex-cli, cursor, deepseek-harness"
             )),
         }
     }
