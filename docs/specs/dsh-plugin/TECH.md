@@ -13,7 +13,10 @@ against deepseek-ai/deepseek-harness origin/master on 2026-10-07 and the publish
 The plugin lives in `plugins/dsh-remem`. It serializes CLI work per Session object
 and waits for capture before returning pre-step context. Human `user/message`
 events use `session-init`; assistant messages and tool results use `observe`.
-`turn/end` invokes `summarize`, with the latest assistant answer from that turn.
+`turn/end` invokes `summarize`, preserving its structured reason and the latest
+assistant answer from that turn. Context injection preserves downstream
+request-series decisions; the default context gate suppresses unchanged DSH
+snapshots within a session.
 Each capture uses the session's immutable `header.cwd`; absent cwd is an explicit
 error rather than falling back to the plugin process directory.
 

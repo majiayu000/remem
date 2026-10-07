@@ -110,7 +110,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     const memory = await run(executable, ['context', '--host', host, '--cwd', cwd(agent.session),
       '--session-id', agent.session.id, '--gate', 'auto'])
     if (!memory.trim() || signal.aborted) return decision
-    return { kind: 'enter', messages: [...decision.messages, createUserMessage({
+    return { ...decision, messages: [...decision.messages, createUserMessage({
       content: [{ type: 'text', text: memory }],
       source: { kind: 'remem', form: 'snapshot', sections: [{ name: 'memory', text: memory }] },
     })] }
@@ -137,7 +137,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
         capture(session, 'observe', { ...base, tool_name: call.name,
           tool_input: { arguments: call.arguments }, tool_response: event.data })
       } else if (event.type === 'turn/end') {
-        capture(session, 'summarize', { ...base, last_assistant_message: value.lastAnswer })
+        capture(session, 'summarize', { ...base, last_assistant_message: value.lastAnswer, reason: event.data.reason })
       }
     } catch (error) {
       const value = state(session)
