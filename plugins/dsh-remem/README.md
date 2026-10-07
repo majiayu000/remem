@@ -49,7 +49,9 @@ flush / 下次请求准备时传播；详细诊断查 remem 日志，插件不�
 
 自动捕获只覆盖插件加载后的实时事件。用户来源 `user` 会被保存，插件注入
 来源 `remem` 不会被当成人类提示重复收录。历史 DSH 文件导入未实现。提炼
-任务落盘不等于已生成长期记忆：后者要求 remem 的 AI executor 正常工作。
+图片和文件仅保存有界引用元数据，不读取附件字节。用户提示捕获不执行
+无法送达的即时召回；每轮首步仅在已提交历史的记忆快照变化时注入，取消
+请求准备不会消耗后续注入。提炼任务落盘不等于已生成长期记忆：后者要求 remem 的 AI executor 正常工作。
 
 ## 验证
 
@@ -83,4 +85,7 @@ awaited at session flush and plugin disposal. Errors remain visible without
 forwarding secret-bearing subprocess stderr. Injected remem context is attributed
 to its own source and never recaptured as a human prompt. Historical DSH transcript
 import, automatic MCP registration, and memory AI credentials are outside this
-adapter. Successful queueing does not imply completed LLM memory promotion.
+adapter. Image/file capture retains bounded reference metadata without reading
+attachment bytes. Prompt capture does not perform undeliverable recall. Snapshot
+deduplication uses committed session history, so cancelled preparation can retry.
+Successful queueing does not imply completed LLM memory promotion.

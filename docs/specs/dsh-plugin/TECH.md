@@ -15,8 +15,14 @@ and waits for capture before returning pre-step context. Human `user/message`
 events use `session-init`; assistant messages and tool results use `observe`.
 `turn/end` invokes `summarize`, preserving its structured reason and the latest
 assistant answer from that turn. Context injection preserves downstream
-request-series decisions; the default context gate suppresses unchanged DSH
-snapshots within a session.
+request-series decisions. DSH requests `context --gate off`: only the most recent
+committed `remem` snapshot in `session.deriveMessages()` suppresses an unchanged
+snapshot. Cancellation before admission therefore leaves the next turn eligible
+for injection. No plugin acknowledgement ledger is maintained.
+Human attachment blocks retain bounded reference metadata alongside text without
+reading attachment bytes. DSH `session-init` is capture-only because its
+post-commit callback cannot deliver prompt recall to request preparation; other
+hosts retain their existing prompt-recall behavior.
 Each capture uses the session's immutable `header.cwd`; absent cwd is an explicit
 error rather than falling back to the plugin process directory.
 

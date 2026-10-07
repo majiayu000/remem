@@ -63,10 +63,24 @@ function cwd(session: Session): string {
   return session.header.cwd
 }
 
-function text(content: readonly unknown[]): string {
+function text(content: readonly unknown[], attachments = false): string {
   return content.flatMap(block => {
     if (typeof block === 'object' && block !== null && 'type' in block && block.type === 'text'
       && 'text' in block && typeof block.text === 'string') return [block.text]
+    if (attachments && typeof block === 'object' && block !== null && 'type' in block
+      && (block.type === 'image' || block.type === 'file')) {
+      const ref = 'attachment' in block ? block.attachment : undefined
+      const metadata: Record<string, string | number> = {}
+      if (typeof ref === 'object' && ref !== null) {
+        for (const key of ['attachmentId', 'name', 'mediaType', 'bytes', 'width', 'height'] as const) {
+          if (!(key in ref)) continue
+          const value = (ref as Record<string, unknown>)[key]
+          if (typeof value === 'string' && !value.startsWith('data:')) metadata[key] = value.slice(0, 512)
+          else if (typeof value === 'number' && Number.isFinite(value)) metadata[key] = value
+        }
+      }
+      return [`[${block.type} attachment ${JSON.stringify(metadata)}]`]
+    }
     return []
   }).join('\n')
 }
@@ -108,8 +122,11 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     await wait(agent.session)
     if (step !== 1) return decision
     const memory = await run(executable, ['context', '--host', host, '--cwd', cwd(agent.session),
-      '--session-id', agent.session.id, '--gate', 'auto'])
+      '--session-id', agent.session.id, '--gate', 'off'])
     if (!memory.trim() || signal.aborted) return decision
+    const previous = agent.session.deriveMessages().findLast(message => message.source.kind === 'remem')
+    if (previous?.source.kind === 'remem' && previous.source.sections.length === 1
+      && previous.source.sections[0].name === 'memory' && previous.source.sections[0].text === memory) return decision
     return { ...decision, messages: [...decision.messages, createUserMessage({
       content: [{ type: 'text', text: memory }],
       source: { kind: 'remem', form: 'snapshot', sections: [{ name: 'memory', text: memory }] },
@@ -124,7 +141,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
       if (event.type === 'tool/call') { value.calls.set(event.data.callId, event.data); return }
       if (event.type === 'user/message' && event.data.source.kind === 'user') {
         capture(session, 'session-init', { ...base, hook_event_name: 'UserPromptSubmit',
-          prompt: text(event.data.content), turn_id: `dsh:${event.seq}` })
+          prompt: text(event.data.content, true), turn_id: `dsh:${event.seq}` })
       } else if (event.type === 'assistant/message') {
         const answer = text(event.data.message.content)
         if (answer) value.lastAnswer = answer

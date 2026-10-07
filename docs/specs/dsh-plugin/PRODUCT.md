@@ -10,7 +10,10 @@ extraction, governance, or storage itself.
 
 Before the first step of a turn, it retrieves project memory through `context`.
 Live user prompts, assistant messages, and completed tool calls are captured
-through the existing CLI. A completed, interrupted, or failed turn queues the
+through the existing CLI, including bounded image/file reference metadata.
+Unchanged memory is suppressed only after DSH commits the injected snapshot;
+a cancelled preparation does not consume later delivery. Prompt capture itself
+does not mark undelivered recall as injected. A completed, interrupted, or failed turn queues the
 existing `summarize` workflow. Memory AI credentials and executor configuration
 remain owned by remem.
 
