@@ -6,6 +6,7 @@ use super::{lock, mark_successful_job, record_failed_job_transition, recover_exp
 use test_support::install_stub_codex;
 
 mod once_budget;
+mod terminal_diagnostics;
 pub(super) mod test_support;
 
 #[tokio::test]

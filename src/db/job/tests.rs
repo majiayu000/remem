@@ -487,8 +487,9 @@ fn mark_job_failed_or_retry_requeues_before_max_attempts() {
         .expect("claim should succeed")
         .expect("job should be claimed");
 
-    mark_job_failed_or_retry(&conn, claimed.id, "worker-a", "boom", 30)
+    let outcome = mark_job_failed_or_retry(&conn, claimed.id, "worker-a", "boom", 30)
         .expect("retry should succeed");
+    assert_eq!(outcome, JobTransitionOutcome::Transitioned);
 
     let row = conn
         .query_row(
@@ -530,8 +531,9 @@ fn mark_job_failed_or_retry_fails_permanent_error_without_retry() {
         .expect("claim should succeed")
         .expect("job should be claimed");
 
-    mark_job_failed_or_retry(&conn, claimed.id, "worker-a", "not implemented", 30)
+    let outcome = mark_job_failed_or_retry(&conn, claimed.id, "worker-a", "not implemented", 30)
         .expect("permanent failure should succeed");
+    assert_eq!(outcome, JobTransitionOutcome::TerminalFailure);
 
     let row = conn
         .query_row(
@@ -580,8 +582,9 @@ fn mark_job_failed_or_retry_marks_failed_when_exhausted() {
         .expect("claim should succeed")
         .expect("job should be claimed");
 
-    mark_job_failed_or_retry(&conn, claimed.id, "worker-a", "fatal", 30)
+    let outcome = mark_job_failed_or_retry(&conn, claimed.id, "worker-a", "fatal", 30)
         .expect("failure should succeed");
+    assert_eq!(outcome, JobTransitionOutcome::TerminalFailure);
 
     let row = conn
         .query_row(

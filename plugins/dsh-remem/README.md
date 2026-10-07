@@ -8,7 +8,7 @@
 
 当前包为发布准备版本，尚未上传 npm。验证目标：DSH `0.2.0-rc.2` 与 Cordis
 `4.0.4`。DSH 主线 API 与该 npm 版本不同；本插件不宣称已验证主线兼容。
-需要 Node.js 22.19+ 和包含 DSH 宿主适配的 remem（此分支）。旧 remem 会在
+需要 Node.js 22.19+ 和包含 DSH 宿主适配的 remem 0.6.103（此分支，未发布）。旧 remem 会在
 首次真实 CLI 请求返回可见错误。
 
 ## 本地安装
@@ -76,7 +76,7 @@ Use Node.js 22.19+ and the remem binary built from this branch, run `npm ci`,
 `npm test`, `npm pack`, then run `dsh plugin --profile headless add /absolute/path/to/the.tgz`.
 The bundle is registered as a profile layer. Override the `remem` entry with the
 executable's absolute path using the user patch above. Configure memory AI in
-remem itself. Old binaries fail visibly on the first real DSH CLI request.
+remem 0.6.103 from this branch (not yet released). Old binaries fail visibly on the first real DSH CLI request.
 
 Live sessions require an absolute project cwd. Capture runs in order and is
 awaited at session flush and plugin disposal. Errors remain visible without

@@ -285,6 +285,14 @@ reviving the old queue or creating an upgrade-time retry storm.
 
 ## Compatibility
 
+- The staged Rust source boundary adds `JobTransitionOutcome::TerminalFailure`.
+  Callers of `mark_job_failed` and `mark_job_failed_or_retry` must update
+  exhaustive matches. This outcome means a permanent or retry-exhausted failure
+  was persisted with no retry scheduled; it must not be treated as success or a
+  retry promise. `Transitioned` and `Coalesced` retain their existing meanings.
+  The exact superseded declaration fingerprints are recorded in the public
+  surface retirement ledger; replacement signatures remain staged until a
+  separately reviewed release.
 - Extraction replay ranges have a precise manual recovery path:
   `remem pending list-extraction-ranges --id <positive-id> [--json]`,
   `retry-extraction-ranges --id <positive-id> [--dry-run]`, and

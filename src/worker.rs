@@ -230,6 +230,13 @@ fn record_failed_job_transition(
                 crate::db::truncate_str(error_message, 300)
             ),
         ),
+        db::JobTransitionOutcome::TerminalFailure => crate::log::error(
+            "worker",
+            &format!(
+                "job id={job_id} failed permanently or exhausted retries: {} (no retry scheduled)",
+                crate::db::truncate_str(error_message, 300)
+            ),
+        ),
         db::JobTransitionOutcome::Coalesced {
             source_id,
             canonical_id,

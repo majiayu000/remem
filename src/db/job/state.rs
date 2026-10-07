@@ -26,6 +26,7 @@ impl JobIdentityKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum JobTransitionOutcome {
     Transitioned,
+    TerminalFailure,
     Coalesced {
         source_id: i64,
         canonical_id: i64,
@@ -235,7 +236,7 @@ fn transition_failed_or_retry(
         )?;
         ensure_lease_transition(&tx, updated, job_id, lease_owner)?;
         tx.commit().context("commit terminal job failure")?;
-        return Ok(JobTransitionOutcome::Transitioned);
+        return Ok(JobTransitionOutcome::TerminalFailure);
     }
 
     let next_retry_epoch = now
