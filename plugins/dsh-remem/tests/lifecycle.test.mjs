@@ -274,6 +274,39 @@ test('context injection preserves a downstream request-series declaration', asyn
   } finally { await fiber.dispose(); await ctx.fiber.dispose(); await rm(f.root, { recursive: true, force: true }) }
 })
 
+test('an empty downstream first-step decision completes without memory-only dispatch', async () => {
+  const f = await fixture()
+  const { ctx, model, fiber } = await harness(f.executable)
+  let emptyFirstStep = true
+  ctx.on('agent/pre-step', async (_, next) => {
+    const decision = await next()
+    return emptyFirstStep && decision.kind === 'enter'
+      ? { ...decision, messages: [], startsRequestSeries: true }
+      : decision
+  })
+  try {
+    const handle = await runTurn(ctx, 'empty-admission-fixture')
+    const session = handle.agent.session
+    await ctx.parallel('session/flush', session)
+    assert.equal(model.requests.length, 0)
+    assert.equal((await f.calls()).filter(call => call.args[0] === 'context').length, 0)
+    assert.equal(session.snapshotEvents().filter(event => event.type === 'user/message'
+      && event.data.source.kind === 'remem').length, 0)
+    assert.deepEqual(session.snapshotEvents().filter(event => event.type === 'turn/end')
+      .map(event => event.data.reason), [{ kind: 'completed' }])
+    assert.equal(handle.agent.inbox.hasPending, false)
+
+    emptyFirstStep = false
+    handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'admit this followup' }], source: { kind: 'user' } }))
+    await handle.agent.whenIdle()
+    await ctx.parallel('session/flush', session)
+    assert.equal(model.requests.length, 2)
+    assert.equal((await f.calls()).filter(call => call.args[0] === 'context').length, 1)
+    assert.equal(session.deriveMessages().filter(message => message.source.kind === 'remem').length, 1)
+    await handle.dispose()
+  } finally { await fiber.dispose(); await ctx.fiber.dispose(); await rm(f.root, { recursive: true, force: true }) }
+})
+
 test('turn-end reasons survive capture when no assistant answer was produced', async () => {
   const f = await fixture()
   const { ctx, fiber } = await harness(f.executable)

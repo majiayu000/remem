@@ -129,6 +129,9 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   ctx.on('agent/pre-step', async ({ agent, messages, turn, step, signal }, next): Promise<PreStepDecision> => {
     const decision = await next()
     if (decision.kind === 'reject' || signal.aborted) return decision
+    // DSH completes an empty first-step admission without a model request.
+    // Preserve that downstream decision instead of creating a memory-only turn.
+    if (step === 1 && decision.messages.length === 0) return decision
     let memory: string
     try {
       await wait(agent.session)
