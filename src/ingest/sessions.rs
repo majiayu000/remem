@@ -75,6 +75,9 @@ fn validate_batch_host(host: InstallHost) -> Result<()> {
             "Cursor filesystem roots are unsupported; Cursor transcripts must enter through the Stop snapshot contract"
         );
     }
+    if host == InstallHost::DeepSeekHarness {
+        bail!("DSH filesystem transcript import is unsupported; use the live DSH plugin");
+    }
     Ok(())
 }
 
@@ -382,6 +385,12 @@ pub(crate) fn discover_transcript_files(root: &ScanRoot) -> (Vec<PathBuf>, Vec<S
     let agent = match root.host {
         InstallHost::ClaudeCode => agent_sessions::Agent::ClaudeCode,
         InstallHost::CodexCli => agent_sessions::Agent::Codex,
+        InstallHost::DeepSeekHarness => {
+            return (
+                Vec::new(),
+                vec!["DSH filesystem roots are unsupported".into()],
+            );
+        }
         InstallHost::Cursor => {
             return (
                 Vec::new(),

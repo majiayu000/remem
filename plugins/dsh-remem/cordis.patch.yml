@@ -1,0 +1,5 @@
+- insert:
+    - id: remem
+      name: '@remem-ai/dsh-remem'
+      config:
+        executable: remem

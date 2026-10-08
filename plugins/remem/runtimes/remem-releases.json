@@ -1,25 +1,8 @@
 {
   "versions": {
-    "0.6.104": {
-      "assets": {
-        "darwin-arm64": {
-          "file": "remem-darwin-arm64.tar.gz",
-          "sha256": "499b5b14561c169270d23c2d8782a07669579f8bc6e46c59e9a03c1adc57b976"
-        },
-        "darwin-x64": {
-          "file": "remem-darwin-x64.tar.gz",
-          "sha256": "030fdc0d100ac93b6240085925765aa1dbe7e8666e08421d1aad5b40fde0509b"
-        },
-        "linux-arm64": {
-          "file": "remem-linux-arm64.tar.gz",
-          "sha256": "c73debc33331c1030e33acb29954438929ab6fbfbe97c12761be6a7bae35ec20"
-        },
-        "linux-x64": {
-          "file": "remem-linux-x64.tar.gz",
-          "sha256": "9637adf6900ce3179dceade662abd8db393d7e5a34bebf0931428e7af87fec37"
-        }
-      },
-      "base_url": "https://github.com/majiayu000/remem/releases/download/v0.6.104"
+    "0.7.0": {
+      "state": "unreleased",
+      "assets": {}
     }
   }
 }
