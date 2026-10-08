@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.0] - Unreleased
+
+### Breaking
+
+- Add `InstallHost::DeepSeekHarness`; downstream exhaustive matches must handle the new host. This source change is staged under the 0.7.0 minor boundary.
+
+### Added
+
+- Add the optional DeepSeek Harness lifecycle adapter with cancellation-safe context preparation, recoverable capture failures, and retryable claimed prompts. The npm adapter and this source version remain unpublished.
+
 ## [0.6.104] - 2026-10-08
 
 - Add `doctor memory` to inspect existing capture, extraction, review, validity

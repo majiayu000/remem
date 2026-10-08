@@ -62,7 +62,11 @@ async fn session_init_input(input: &str, host: Option<&str>) -> Result<Option<St
     } else {
         None
     };
-    let output = if let Some(prompt) = user_prompt {
+    // DSH observes user/message after commit and discards this command's stdout.
+    // Capture must not consume prompt-recall candidates that cannot be delivered.
+    let output = if adapter_name == "deepseek-harness" {
+        None
+    } else if let Some(prompt) = user_prompt {
         let cwd = event.cwd.as_deref().unwrap_or(&event.project);
         crate::context::prompt_submit_additional_context_for_event(
             &conn,
@@ -337,6 +341,59 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(distinct_keys, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn dsh_prompt_capture_does_not_consume_undelivered_recall() -> anyhow::Result<()> {
+        let test_dir = ScopedTestDataDir::new("session-init-dsh-capture-only");
+        std::fs::create_dir_all(&test_dir.path)?;
+        let conn = rusqlite::Connection::open(test_dir.db_path())?;
+        crate::migrate::run_migrations(&conn)?;
+        let project = "/tmp/remem-dsh-capture-only";
+        let memory_id = crate::memory::insert_memory(
+            &conn,
+            Some("seed-session"),
+            project,
+            None,
+            "SQLCipher storage decision",
+            "Persist private data with SQLCipher encryption at rest.",
+            "decision",
+            None,
+        )?;
+        conn.execute(
+            "UPDATE memories SET source_trust_class = 'user_prompt' WHERE id = ?1",
+            [memory_id],
+        )?;
+        drop(conn);
+        let input = serde_json::json!({
+            "host": "deepseek-harness",
+            "session_id": "sess-dsh-capture-only", "turn_id": "dsh:1", "cwd": project,
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "How should SQLCipher protect private persisted data?"
+        })
+        .to_string();
+        assert!(session_init_input(&input, Some("deepseek-harness"))
+            .await?
+            .is_none());
+        let conn = crate::db::open_db()?;
+        let captured: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM captured_events WHERE session_id = 'sess-dsh-capture-only' AND event_type = 'user_prompt_submit'",
+            [], |row| row.get(0))?;
+        let injections: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM context_injection_items WHERE session_id = 'sess-dsh-capture-only'",
+            [], |row| row.get(0))?;
+        assert_eq!(captured, 1);
+        assert_eq!(injections, 0);
+        // The same seeded recall is still deliverable through a host with a hook output contract.
+        assert!(session_init_input(
+            &input
+                .replace("dsh:1", "codex-turn")
+                .replace("deepseek-harness", "codex-cli"),
+            Some("codex-cli"),
+        )
+        .await?
+        .is_some());
         Ok(())
     }
 

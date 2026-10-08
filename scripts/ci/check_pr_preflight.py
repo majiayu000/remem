@@ -13,6 +13,10 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from run_sessionstart_context_gate_smoke import (
+    CARGO_COMMAND, parse_remem_executable, print_cargo_diagnostics,
+)
+
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CARGO_TEST_THREADS = 4
@@ -49,6 +53,25 @@ def run(
     if result.returncode == 0:
         return StepResult(name, "PASS")
     return StepResult(name, "FAIL", f"exit {result.returncode}")
+
+
+def run_dsh_lifecycle() -> StepResult:
+    """Install the pinned adapter and test it against this checkout's Cargo artifact."""
+    install = run("Install DSH lifecycle dependencies", ["npm", "ci", "--prefix", "plugins/dsh-remem"])
+    if install.status != "PASS":
+        return install
+    print("\n==> Build remem for the DSH lifecycle suite", flush=True)
+    build = subprocess.run(CARGO_COMMAND, cwd=ROOT, text=True, capture_output=True, check=False)
+    if build.stderr:
+        sys.stderr.write(build.stderr)
+    print_cargo_diagnostics(build.stdout)
+    if build.returncode != 0:
+        return StepResult("Test DSH lifecycle", "FAIL", f"Cargo build exit {build.returncode}")
+    executable = parse_remem_executable(build.stdout)
+    if executable is None:
+        return StepResult("Test DSH lifecycle", "FAIL", "Cargo did not report a remem executable")
+    return run("Test DSH lifecycle", ["npm", "test", "--prefix", "plugins/dsh-remem"],
+               env={"REMEM_DSH_BINARY": str(executable)})
 
 
 def run_expected_failure(
@@ -284,6 +307,8 @@ def main() -> int:
 
     for name, command in fast_steps(args.base, args.head):
         results.append(run(name, command))
+
+    results.append(run_dsh_lifecycle())
 
     add_pr_body_steps(results, args, args.base, args.head)
 

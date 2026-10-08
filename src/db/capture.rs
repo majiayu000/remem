@@ -379,9 +379,9 @@ fn upsert_identity(
 
 fn normalize_host(host: &str) -> Result<&str> {
     match host {
-        "claude-code" | "codex-cli" | "cursor" => Ok(host),
+        "claude-code" | "codex-cli" | "cursor" | "deepseek-harness" => Ok(host),
         other => {
-            bail!("invalid capture host '{other}'; expected claude-code, codex-cli, or cursor")
+            bail!("invalid capture host '{other}'; expected claude-code, codex-cli, cursor, or deepseek-harness")
         }
     }
 }
