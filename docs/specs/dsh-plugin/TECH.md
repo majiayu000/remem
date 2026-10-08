@@ -39,9 +39,20 @@ paths and a generic tool-result summary. The context profile reports no MCP
 registration. Summaries consume the existing capture ledger; no DSH log parser,
 new schema, host migration, or extraction implementation is added.
 
-The existing InstallHost variants retain their identities. Adding DeepSeekHarness
-requires downstream exhaustive Rust matches on InstallHost to handle the new variant.
-This source-breaking addition is staged as unpublished 0.7.0, outside the 0.6.x compatibility range.
+The existing InstallHost variant names and database host strings remain unchanged.
+Adding DeepSeekHarness requires downstream exhaustive Rust matches on InstallHost
+to handle the new variant. This source-breaking addition is staged as unpublished
+0.7.0, outside the 0.6.x compatibility range; downstream crates staying on 0.6.x
+retain the three-variant API.
+
+The surface manifest retains the published baseline and records the previous
+InstallHost declaration and its three variant fingerprints in the append-only
+retirement ledger. The new declaration and all four variant fingerprints remain
+staged until release verification. Their signature hash changes from
+`7e5ec52a64cf1383c0abbc7bedfc1d20e9305731b882e957e8a198c77f664007`
+to `19403bce7d126e475d839c2827eade8071ebf87c04685b4058c8b8ac384e01a6`.
+Method signatures are unchanged. This inventory update does not promote a release
+or waive public-surface, lifecycle, baseline, or security-review checks.
 
 Subprocesses use argv and stdin, never a shell. Output and runtime are bounded.
 The turn AbortSignal kills an outstanding context child and preserves cancellation.
