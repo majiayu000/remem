@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Stage `0.6.105`: preserve prose at structured capture boundaries during observation extraction while retaining secret field and key redaction. Refs #931.
+
 ## [0.6.104] - 2026-10-08
 
 - Add `doctor memory` to inspect existing capture, extraction, review, validity
