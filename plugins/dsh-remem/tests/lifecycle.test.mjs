@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
@@ -421,11 +422,15 @@ test('invalid JSON arguments fail visibly without copying argument text', async 
 })
 
 
-test('blocked context cancellation promptly kills the real child without injection', async () => {
+for (const viaNpm of [false, true]) test(`blocked context cancellation promptly kills the real child without injection${viaNpm ? ' through npm' : ''}`, async () => {
   const f = await fixture()
   const pidFile = join(f.root, 'context.pid')
   await writeFile(f.executable, `#!${process.execPath}\nimport fs from 'node:fs';\nif (process.argv[2] === 'context') { fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); await new Promise(r=>setTimeout(r, 60000)); }\n`, { mode: 0o700 })
-  const { ctx, fiber, model } = await harness(f.executable)
+  const previousBinary = process.env.REMEM_NPM_BINARY
+  if (viaNpm) process.env.REMEM_NPM_BINARY = f.executable
+  const executable = viaNpm ? fileURLToPath(new URL('../../../npm/remem/bin/remem.js', import.meta.url)) : f.executable
+  const { ctx, fiber, model } = await harness(executable)
+  let pid
   try {
     const handle = await ctx.agents.create({ sessionId: SessionId('blocked-context'), meta: { cwd: tmpdir() },
       agentOptions: { provider: 'fixture', model: 'fixture' } })
@@ -435,17 +440,72 @@ test('blocked context cancellation promptly kills the real child without injecti
       assert(attempt < 200, 'context child did not start')
       await new Promise(resolve => setTimeout(resolve, 10))
     }
-    const pid = Number(await readFile(pidFile, 'utf8'))
+    pid = Number(await readFile(pidFile, 'utf8'))
     const before = Date.now()
     handle.agent.cancel({ kind: 'user' })
-    await handle.agent.whenIdle()
+    await Promise.race([handle.agent.whenIdle(), new Promise((_, reject) => setTimeout(() => reject(new Error('cancellation did not stop the process tree')), 2000))])
     assert(Date.now() - before < 2000, 'cancellation waited for the context timeout')
     assert.equal(model.requests.length, 0)
     assert.equal(handle.agent.session.deriveMessages().filter(m => m.source.kind === 'remem').length, 0)
     assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
     assert.equal(handle.agent.inbox.hasPending, false)
     await handle.dispose()
-  } finally { await fiber.dispose(); await ctx.fiber.dispose(); await rm(f.root, { recursive: true, force: true }) }
+  } finally {
+    if (pid) { try { process.kill(pid, 'SIGKILL') } catch (error) { if (error.code !== 'ESRCH') throw error } }
+    await fiber.dispose(); await ctx.fiber.dispose(); await rm(f.root, { recursive: true, force: true })
+    if (previousBinary === undefined) delete process.env.REMEM_NPM_BINARY; else process.env.REMEM_NPM_BINARY = previousBinary
+  }
+})
+
+for (const viaNpm of [false, true]) test(`plugin unload cancels an active context child and preserves its prompt for reinstall${viaNpm ? ' through npm' : ''}`, async () => {
+  const f = await fixture()
+  const normal = await readFile(f.executable, 'utf8')
+  const pidFile = join(f.root, 'context.pid')
+  await writeFile(f.executable, `#!${process.execPath}\nimport fs from 'node:fs';\nif (process.argv[2] === 'context') { fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); await new Promise(r=>setTimeout(r, 60000)); }\n`, { mode: 0o700 })
+  const previousBinary = process.env.REMEM_NPM_BINARY
+  if (viaNpm) process.env.REMEM_NPM_BINARY = f.executable
+  const executable = viaNpm ? fileURLToPath(new URL('../../../npm/remem/bin/remem.js', import.meta.url)) : f.executable
+  const { ctx, fiber, model } = await harness(executable)
+  let pid
+  let handle, reinstalled
+  try {
+    handle = await ctx.agents.create({ sessionId: SessionId('unload-context'), meta: { cwd: tmpdir() },
+      agentOptions: { provider: 'fixture', model: 'fixture' } })
+    const original = createUserMessage({ content: [{ type: 'text', text: 'retain this prompt after unload' }], source: { kind: 'user' } })
+    handle.agent.followup(original)
+    for (let attempt = 0; ; attempt++) {
+      if (await readFile(pidFile, 'utf8').catch(() => '')) break
+      assert(attempt < 200, 'context child did not start')
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    pid = Number(await readFile(pidFile, 'utf8'))
+    const before = Date.now()
+    await Promise.race([Promise.resolve(fiber.dispose()), new Promise((_, reject) => setTimeout(() => reject(new Error('unload did not stop the process tree')), 2000))])
+    assert(Date.now() - before < 2000, 'unload waited for the context timeout')
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
+    await handle.agent.whenIdle()
+    assert.equal(model.requests.length, 0)
+    assert.equal(handle.agent.session.deriveMessages().filter(m => m.source.kind === 'remem').length, 0)
+    assert.deepEqual(handle.agent.inbox.nextStep, [original])
+
+    await writeFile(f.executable, normal, { mode: 0o700 })
+    reinstalled = await ctx.plugin(plugin, { executable })
+    handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'retry after reinstall' }], source: { kind: 'user' } }))
+    await handle.agent.whenIdle()
+    assert.equal(model.requests.length, 2)
+    assert.equal(model.requests[0].messages.filter(message => message.id === original.id).length, 1)
+    assert.equal(handle.agent.inbox.hasPending, false)
+  } finally {
+    if (pid) { try { process.kill(pid, 'SIGKILL') } catch (error) { if (error.code !== 'ESRCH') throw error } }
+    if (previousBinary === undefined) delete process.env.REMEM_NPM_BINARY; else process.env.REMEM_NPM_BINARY = previousBinary
+    handle?.agent.cancel({ kind: 'user' })
+    await handle?.agent.whenIdle()
+    await handle?.dispose()
+    await reinstalled?.dispose()
+    await fiber.dispose()
+    await ctx.fiber.dispose()
+    await rm(f.root, { recursive: true, force: true })
+  }
 })
 
 test('failed context restores the original claimed batch with provenance for one retry', async () => {

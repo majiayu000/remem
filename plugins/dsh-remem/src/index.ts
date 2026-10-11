@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { isAbsolute, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createDeveloperMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -28,11 +29,36 @@ const maxOutputBytes = 1024 * 1024
 async function run(executable: string, args: string[], input?: unknown, signal?: AbortSignal): Promise<string> {
   signal?.throwIfAborted()
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, args, { stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] })
+    const child = spawn(executable, args, { detached: process.platform !== 'win32',
+      stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] })
     const chunks: Buffer[] = []
     let size = 0
     let failure: Error | undefined
-    const abort = () => { child.kill('SIGKILL') }
+    let stopping: Promise<void> | undefined
+    const abort = () => {
+      if (stopping || child.pid === undefined) return
+      stopping = new Promise<void>((stopped, stopFailed) => {
+        const fail = () => stopFailed(new Error(`remem ${args[0]} could not stop its process tree`))
+        if (process.platform === 'win32') {
+          const systemRoot = process.env.SystemRoot
+          if (!systemRoot || !isAbsolute(systemRoot)) { fail(); return }
+          const killer = spawn(join(systemRoot, 'System32', 'taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'],
+            { stdio: 'ignore', windowsHide: true })
+          killer.on('error', fail)
+          killer.on('close', code => {
+            if (code === 0) stopped()
+            else fail()
+          })
+        } else {
+          try { process.kill(-child.pid!, 'SIGKILL'); stopped() }
+          catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ESRCH') stopped()
+            else fail()
+          }
+        }
+      })
+      stopping.catch(error => { cleanup(); reject(error) })
+    }
     signal?.addEventListener('abort', abort, { once: true })
     const cleanup = () => {
       clearTimeout(timer)
@@ -40,13 +66,13 @@ async function run(executable: string, args: string[], input?: unknown, signal?:
     }
     const timer = setTimeout(() => {
       failure = new Error(`remem ${args[0]} timed out after ${timeoutMs}ms`)
-      child.kill('SIGKILL')
+      abort()
     }, timeoutMs)
     child.stdout!.on('data', (chunk: Buffer) => {
       size += chunk.length
       if (size > maxOutputBytes) {
         failure = new Error(`remem ${args[0]} exceeded the output limit`)
-        child.kill('SIGKILL')
+        abort()
       } else chunks.push(chunk)
     })
     child.stderr!.resume()
@@ -55,7 +81,9 @@ async function run(executable: string, args: string[], input?: unknown, signal?:
       cleanup()
       reject(new Error('Cannot start remem; install @remem-ai/remem or set executable to its absolute path'))
     })
-    child.on('close', (code, childSignal) => {
+    child.on('close', async (code, childSignal) => {
+      // The stop failure already rejected this run through stopping.catch.
+      try { await stopping } catch { return }
       cleanup()
       if (signal?.aborted) reject(signal.reason)
       else if (failure) reject(failure)
@@ -95,6 +123,8 @@ function text(content: readonly unknown[], attachments = false): string {
 
 export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const executable = config.executable ?? 'remem'
+  const lifetime = new AbortController()
+  const contextRuns = new Map<Promise<string>, AbortSignal>()
   // Availability only. The first real CLI request validates the DSH host contract.
   await run(executable, ['--version'])
   const states = new Map<Session, { pending: Promise<void>; error?: Error;
@@ -133,11 +163,17 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     // Preserve that downstream decision instead of creating a memory-only turn.
     if (step === 1 && decision.messages.length === 0) return decision
     let memory: string
+    const contextSignal = AbortSignal.any([signal, lifetime.signal])
     try {
+      contextSignal.throwIfAborted()
       await wait(agent.session)
+      contextSignal.throwIfAborted()
       if (step !== 1) return decision
-      memory = await run(executable, ['context', '--host', host, '--cwd', cwd(agent.session),
-        '--session-id', agent.session.id, '--gate', 'off'], undefined, signal)
+      const lookup = run(executable, ['context', '--host', host, '--cwd', cwd(agent.session),
+        '--session-id', agent.session.id, '--gate', 'off'], undefined, contextSignal)
+      contextRuns.set(lookup, contextSignal)
+      try { memory = await lookup } finally { contextRuns.delete(lookup) }
+      contextSignal.throwIfAborted()
     } catch (error) {
       // DSH has already claimed these original inputs. Park them for an explicit
       // retry before propagating failure; user cancellation still discards work.
@@ -204,9 +240,17 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     try { await wait(session) } finally { states.delete(session) }
   })
   ctx.effect(() => async () => {
-    const settled = await Promise.allSettled([...states.keys()].map(wait))
+    lifetime.abort(new Error('remem plugin disposed'))
+    const contexts = [...contextRuns]
+    const [settled, stopped] = await Promise.all([
+      Promise.allSettled([...states.keys()].map(wait)),
+      Promise.allSettled(contexts.map(([lookup]) => lookup)),
+    ])
     states.clear()
     const errors = settled.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+    for (const [index, result] of stopped.entries()) {
+      if (result.status === 'rejected' && result.reason !== contexts[index][1].reason) errors.push(result.reason)
+    }
     if (errors.length) throw new AggregateError(errors, 'remem capture failed during disposal')
   })
 }

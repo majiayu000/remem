@@ -55,7 +55,14 @@ Method signatures are unchanged. This inventory update does not promote a releas
 or waive public-surface, lifecycle, baseline, or security-review checks.
 
 Subprocesses use argv and stdin, never a shell. Output and runtime are bounded.
+Cancellation, timeout and output limits stop the owned process tree, including
+remem behind its npm launcher: a dedicated process group on POSIX and the system
+`taskkill.exe /T /F` operation on Windows. Tree-termination errors remain visible.
 The turn AbortSignal kills an outstanding context child and preserves cancellation.
+Plugin disposal aborts and awaits outstanding context children before returning;
+preparation waiting on capture cannot start a context child after disposal.
+An unload-interrupted preparation retains its original inputs for an explicit retry
+after reinstall, and cannot commit a memory snapshot.
 Preparation errors park the original claimed batch in the DSH inbox before
 propagating the error; an explicit later wake retries those identities and sources.
 Capture errors remain error-level diagnostics and are consumed once an awaited
