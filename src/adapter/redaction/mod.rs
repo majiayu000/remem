@@ -120,6 +120,18 @@ pub(crate) fn redact_sensitive_text(text: &str) -> String {
         .join("\n")
 }
 
+pub(crate) fn redact_structured_sensitive_text(text: &str) -> String {
+    // Keep JSON metadata from joining the last prose word into a secret-like token.
+    // Value redaction covers whole sensitive fields; text redaction also covers keys.
+    let text = serde_json::from_str::<serde_json::Value>(text)
+        .map(|value| {
+            serde_json::to_string_pretty(&redact_sensitive_value(&value))
+                .expect("captured JSON should serialize")
+        })
+        .unwrap_or_else(|_| text.to_string());
+    redact_sensitive_text(&text)
+}
+
 /// Redact user-facing projection text (MCP/CLI) including short inline
 /// credential assignments such as `Investigate token=abc123` and space-separated
 /// sensitive option arguments such as `curl --oauth2-bearer tiny-token`.

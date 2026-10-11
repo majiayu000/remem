@@ -8,7 +8,7 @@ use super::redaction::{
 };
 pub(crate) use super::redaction::{
     redact_hook_payload_preview, redact_projected_project_text, redact_projected_sensitive_text,
-    redact_sensitive_text, redact_sensitive_value,
+    redact_sensitive_text, redact_sensitive_value, redact_structured_sensitive_text,
 };
 use crate::adapter::{EventSummary, ParsedHookEvent};
 use crate::db;

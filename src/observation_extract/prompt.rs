@@ -168,15 +168,7 @@ fn extraction_run_date(range: &EvidenceRange) -> String {
 }
 
 fn redact_extract_content(content: &str) -> String {
-    // Keep JSON metadata from joining the last prose word into a secret-like token.
-    // Value redaction covers whole sensitive fields; text redaction also covers keys.
-    let content = serde_json::from_str::<serde_json::Value>(content)
-        .map(|value| {
-            serde_json::to_string_pretty(&crate::adapter::common::redact_sensitive_value(&value))
-                .expect("captured JSON should serialize")
-        })
-        .unwrap_or_else(|_| content.to_string());
-    let redacted = crate::adapter::common::redact_sensitive_text(&content)
+    let redacted = crate::adapter::common::redact_structured_sensitive_text(content)
         .replace("[REDACTED]", "[REDACTED_SECRET]");
     xml_escape_text(&redacted)
 }
