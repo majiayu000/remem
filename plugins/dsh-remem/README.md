@@ -8,6 +8,10 @@
 
 快照更新和移除遵守官方 session invariant；准备或替换失败后，未提交的原始提示
 保留待显式重试。取消等待不终止已经开始的持久化捕获，后续 flush 仍会报告错误。
+请求准备期间卸载插件后，恢复仍持续到该回调退出，已提交输入不会重复入队。
+超出 1 MiB 的工具观察按完整 JSON 字节预算保留结构化参数、结果和展示元数据，
+省略部分会显式标记。大文本仅保留完整前导行，超长单行整行省略；保留内容由
+核心继续脱敏和持久化。完整原始工具结果仍在 DSH 历史中。
 
 当前包为发布准备版本，尚未上传 npm。验证目标：DSH `0.2.0-rc.2` 与 Cordis
 `4.0.4`。DSH 主线 API 与该 npm 版本不同；本插件不宣称已验证主线兼容。
@@ -104,6 +108,13 @@ retaining the original event log and human prompts. Replacements run after
 replacement failures restore only uncommitted original inputs for explicit retry.
 Cancelling a capture checkpoint returns promptly while durable capture and any
 error remain available to the later flush.
+Unloading during pending request preparation still restores uncommitted original
+inputs when the callback exits, even after Cordis removes the plugin listeners.
+Tool observations exceeding the 1 MiB stdin budget retain bounded structured
+arguments, result content and presentation metadata with explicit omission
+metadata. Large strings retain complete leading lines; an oversized single line
+is omitted whole. Core redaction and capture handle retained evidence, while the
+full original result remains in DSH history.
 CLI preparation writes no injection audit or usage credit; committed DSH snapshots
 are the delivery record. Tool arguments are decoded before secret-key redaction;
 malformed JSON causes a visible capture error without storing the raw arguments.

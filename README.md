@@ -32,6 +32,8 @@ Assistant-only claims remain available for review and cannot auto-promote withou
 independent supporting evidence. Snapshot updates and removals respect the published
 DSH session invariant; failed preparation retains uncommitted prompts for an
 explicit retry, while cancellation leaves durable capture available to flush.
+This includes unloading during request preparation. Oversized tool observations
+retain bounded structured evidence with explicit omissions before core redaction.
 
 ## What remem gives you
 

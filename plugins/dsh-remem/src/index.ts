@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { isAbsolute, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
-import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
+import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createDeveloperMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent, SessionSeq } from '@deepseek-ai/dsh-session'
@@ -25,6 +25,57 @@ export interface Config {
 const host = 'deepseek-harness'
 const timeoutMs = 30_000
 const maxOutputBytes = 1024 * 1024
+const maxObservationBytes = 1024 * 1024
+
+const jsonBytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value) ?? 'null')
+
+/** Retain structure and complete text lines so core redaction keeps its key/token context. */
+function projectEvidence(value: unknown, budget: number): unknown {
+  const originalBytes = jsonBytes(value)
+  if (originalBytes <= budget) return value
+  if (typeof value === 'string') {
+    const marker = `\n[remem omitted remainder; original JSON bytes: ${originalBytes}]`
+    let low = 0, high = Math.min(value.length, budget)
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2)
+      if (jsonBytes(value.slice(0, mid) + marker) <= budget) low = mid
+      else high = mid - 1
+    }
+    // Never cut a credential/token or assignment in half before core redaction.
+    const end = value.lastIndexOf('\n', low - 1)
+    return (end < 0 ? '' : value.slice(0, end)) + marker
+  }
+  const array = Array.isArray(value)
+  const entries = Object.entries(value as object)
+  const kept: [string, unknown][] = []
+  let remaining = budget - 2
+  for (const [key, child] of entries) {
+    const overhead = (kept.length ? 1 : 0) + (array ? 0 : jsonBytes(key) + 1)
+    const allowance = Math.min(remaining - overhead, Math.floor(budget / 2))
+    if (allowance < 96) break
+    const projected = projectEvidence(child, allowance)
+    kept.push([key, projected])
+    remaining -= overhead + jsonBytes(projected)
+  }
+  return array ? kept.map(([, child]) => child) : Object.fromEntries(kept)
+}
+
+function toolObservation(base: object, name: string, args: unknown, result: unknown): unknown {
+  const payload = { ...base, tool_name: name, tool_input: { arguments: args }, tool_response: result }
+  const originalBytes = jsonBytes(payload)
+  if (originalBytes <= maxObservationBytes) return payload
+  // This sidecar is inside tool_input so the existing core ledger retains it.
+  const remem_capture = { omitted: true, original_envelope_bytes: originalBytes,
+    arguments_json_bytes: jsonBytes(args), result_json_bytes: jsonBytes(result),
+    policy: 'bounded structure and complete text lines; remaining entries/lines omitted' }
+  const fixed = { ...base, tool_name: name, tool_input: { arguments: null, remem_capture }, tool_response: null }
+  const available = maxObservationBytes - jsonBytes(fixed)
+  if (available < 512) throw new Error('remem: tool observation identity exceeds the stdin budget')
+  return { ...fixed,
+    tool_input: { arguments: projectEvidence(args, Math.floor(available / 4)), remem_capture },
+    tool_response: projectEvidence(result, Math.floor(available * 3 / 4)),
+  }
+}
 
 /** Spawn argv without a shell. Do not copy potentially secret-bearing stderr to host logs. */
 async function run(executable: string, args: string[], input?: unknown, signal?: AbortSignal): Promise<string> {
@@ -136,6 +187,16 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     if (!value) { value = { pending: Promise.resolve(), calls: new Map() }; states.set(session, value) }
     return value
   }
+  const recoverAdmission = (agent: Agent, value: ReturnType<typeof state>, turn: number) => {
+    const admission = value.admission
+    value.admission = undefined
+    if (admission?.turn !== turn || admission.signal.aborted) return
+    // Cordis may already have removed our post-commit listener during unload.
+    const committed = new Set(agent.session.snapshotEvents()
+      .filter(event => event.type === 'user/message').map(event => event.data.id))
+    const messages = admission.messages.filter(message => !committed.has(message.id))
+    if (messages.length) agent.inbox.splice('next-step', 0, 0, messages)
+  }
   const wait = async (session: Session, signal?: AbortSignal) => {
     const value = state(session)
     let onAbort: (() => void) | undefined
@@ -212,32 +273,34 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   }, { prepend: true })
 
   ctx.on('agent/request', async ({ agent, turn, step, signal }, next) => {
-    const config = await next()
-    AbortSignal.any([signal, lifetime.signal]).throwIfAborted()
-    const admission = state(agent.session).admission
-    if (admission?.turn === turn && admission.step === step) {
-      // This awaited lifecycle runs inside the open step. Native replacements
-      // preserve provenance and omit obsolete snapshots from derived requests.
-      for (const seq of admission.replacements) {
-        agent.session.append('developer/message', { turn, step, message: createDeveloperMessage({ content: [],
-          source: { kind: 'remem', form: 'snapshot', sections: [] } }) }, {
-          surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq }, sourceEventSeqs: [seq],
-        })
+    // Hold the state across next(): disposal clears the map and removes agent/error.
+    const value = state(agent.session)
+    try {
+      const config = await next()
+      AbortSignal.any([signal, lifetime.signal]).throwIfAborted()
+      const admission = value.admission
+      if (admission?.turn === turn && admission.step === step) {
+        // This awaited lifecycle runs inside the open step. Native replacements
+        // preserve provenance and omit obsolete snapshots from derived requests.
+        for (const seq of admission.replacements) {
+          agent.session.append('developer/message', { turn, step, message: createDeveloperMessage({ content: [],
+            source: { kind: 'remem', form: 'snapshot', sections: [] } }) }, {
+            surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq }, sourceEventSeqs: [seq],
+          })
+        }
+        admission.replacements = []
       }
-      admission.replacements = []
+      return config
+    } catch (error) {
+      recoverAdmission(agent, value, turn)
+      throw error
     }
-    return config
   }, { prepend: true })
 
   ctx.on('agent/error', ({ agent, turn }) => {
-    const value = state(agent.session)
-    const admission = value.admission
-    value.admission = undefined
     // This notification is outside session append publication, so inbox edits
     // are legal here. Only originals not yet committed need an explicit retry.
-    if (admission?.turn === turn && !admission.signal.aborted && admission.messages.length) {
-      agent.inbox.splice('next-step', 0, 0, admission.messages)
-    }
+    recoverAdmission(agent, state(agent.session), turn)
   })
 
   ctx.on('session/event', (session, event: SessionEvent) => {
@@ -264,8 +327,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
         let argumentsValue: unknown
         try { argumentsValue = call.arguments === '' ? {} : JSON.parse(call.arguments) }
         catch { throw new Error('remem: DSH tool arguments are invalid JSON; capture rejected') }
-        capture(session, 'observe', { ...base, tool_name: call.name,
-          tool_input: { arguments: argumentsValue }, tool_response: event.data })
+        capture(session, 'observe', toolObservation(base, call.name, argumentsValue, event.data))
       } else if (event.type === 'turn/end') {
         value.admission = undefined
         capture(session, 'summarize', { ...base, last_assistant_message: value.lastAnswer, reason: event.data.reason })

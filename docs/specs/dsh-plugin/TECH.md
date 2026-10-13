@@ -78,6 +78,12 @@ The current admitted batch is retained only until commitment or turn end. If req
 preparation or snapshot replacement fails, `agent/error` restores only originals
 not yet committed as `user/message`, without restoring synthetic context or
 duplicating committed prompts. User cancellation discards its claimed batch.
+The request callback holds its admission state across downstream preparation and
+recovers directly on failure, including after plugin disposal clears the session
+map and Cordis removes `agent/error`. Recovery consumes that admission once and
+checks committed message IDs in session history, so a commit after listener
+removal is not duplicated. It does not wait for arbitrary downstream middleware
+inside the plugin disposer; recovery lives until the callback exits.
 A later retry derives snapshot state from committed history, including any
 replacements accepted before a subsequent failure.
 Capture errors remain error-level diagnostics and are consumed once an awaited
@@ -88,6 +94,19 @@ Tool-call argument JSON is parsed into structured values before capture. Invalid
 JSON raises a fixed capture error that omits the argument text and parser message.
 Captured payloads go through remem's redaction and governance; subprocess stderr
 is not copied into plugin diagnostics (it can contain provider secrets).
+Before `observe`, the adapter measures the complete serialized tool envelope
+against the unchanged 1 MiB core stdin boundary. Envelopes that fit are unchanged.
+For oversized events it reserves the identity/omission envelope, then budgets
+one quarter of the remaining JSON bytes to structured arguments and three quarters
+to the result event (including presentation metadata). Nested objects keep their
+original keys; collections retain a bounded prefix and oversized strings retain
+only complete leading lines with an omission marker. An oversized single line is
+omitted whole, preventing partial credentials from losing their redaction context.
+`tool_input.remem_capture` records the original envelope/argument/result JSON byte
+counts and explicitly declares omitted entries/lines. An identity envelope that
+alone exhausts the bound returns a visible error. No secret policy is implemented
+in TypeScript; retained values go through the existing core redaction, capture
+ledger and event-blob path. The original DSH result history is unchanged.
 
 ## Validation
 
@@ -102,6 +121,11 @@ the candidate remains pending and no active memory is created. A Rust capture/
 summary regression additionally checks repeated claims, unrelated tool success,
 and independently corroborating tool evidence. This proves governance behavior,
 not live-provider extraction quality.
+Regressions also unload during pending request preparation (including downstream
+failure, partial commitment and intentional cancellation) and exercise 2 MiB
+presentation metadata, meaningful oversized arguments/results and escaped wide
+collections through the real tool host. Real remem checks the retained evidence,
+omission metadata, core redaction and Stop capture in an isolated store.
 CI and local preflight install the pinned npm dependencies, resolve the current
 remem executable from Cargo's artifact output, and run the entire lifecycle suite
 with `REMEM_DSH_BINARY` set, so the real CLI test is required.

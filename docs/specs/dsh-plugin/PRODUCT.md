@@ -28,12 +28,18 @@ claim filesystem transcript import, automatic MCP tools, or host installation vi
 `remem install`. A DSH adapter preserves arbitrary tool names and results. JSON tool arguments
 are decoded before capture so secret-key redaction applies; malformed arguments
 produce a visible safe capture error without retaining their raw text.
+Tool observations exceeding the CLI stdin budget retain a bounded projection of
+arguments and results, including presentation metadata. Omitted content is
+explicitly marked; retained evidence still passes through core redaction and
+capture. Full original results remain in DSH history, not a new adapter store.
 
 Missing executables fail activation. Context failures reject request preparation;
 the original claimed prompts remain in the DSH inbox for an explicit retry.
 The same guarantee covers request preparation and snapshot replacement failures:
 only uncommitted original inputs return to the inbox. Snapshot replacement obeys
 the published DSH session invariant and retains committed human prompts.
+Recovery remains effective until an in-flight request callback exits even when
+Cordis has unloaded the plugin and removed its listeners.
 Cancellation promptly stops context preparation without committing a snapshot.
 Background capture failures are logged and surface once through an awaited
 checkpoint, after which healthy work can recover. No silent loss or automatic binary downloads.

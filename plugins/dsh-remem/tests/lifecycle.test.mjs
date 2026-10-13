@@ -14,7 +14,7 @@ import LlmRuntime, { LlmAdapter, createUserMessage, createToolResultMessage, Too
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime, { defineContentToolFixture } from '@deepseek-ai/dsh-tools'
+import ToolRuntime, { defineContentToolFixture, defineTool } from '@deepseek-ai/dsh-tools'
 const plugin = await import(process.env.REMEM_DSH_PLUGIN_MODULE ?? '../dist/index.js')
 
 class ScriptedModel extends LlmAdapter {
@@ -778,5 +778,171 @@ for (const failCapture of [false, true]) test(`cancelling a capture checkpoint r
     await Promise.resolve(fiber.dispose()).catch(() => {})
     await Promise.resolve(ctx.fiber.dispose()).catch(() => {})
     await rm(f.root, { recursive: true, force: true })
+  }
+})
+
+
+for (const fault of ['unload', 'downstream-error', 'partial-commit', 'cancel']) {
+  test(`unload during pending request preserves original input identities: ${fault}`, async () => {
+    const f = await fixture()
+    const { ctx, fiber, model } = await harness(f.executable)
+    const entered = Promise.withResolvers()
+    const release = Promise.withResolvers()
+    let handle, stop, reinstalled
+    try {
+      handle = await runTurn(ctx, `unload-request-${fault}`)
+      const session = handle.agent.session
+      await ctx.parallel('session/flush', session)
+      const steering = createUserMessage({ content: [{ type: 'text', text: 'Keep the original steering.' }], source: { kind: 'user' } })
+      const original = createUserMessage({ content: [{ type: 'text', text: 'Keep the original followup.' }], source: { kind: 'user' } })
+      stop = ctx.on('agent/request', async (_, next) => {
+        const config = await next()
+        entered.resolve()
+        await release.promise
+        // This commit occurs after Cordis has removed remem's event listener.
+        if (fault === 'partial-commit') session.append('user/message', steering, { surfaceOp: 'append' })
+        if (fault === 'downstream-error') throw new Error('downstream preparation failed after unload')
+        return config
+      })
+      handle.agent.inject(steering)
+      handle.agent.followup(original)
+      await entered.promise
+      if (fault === 'cancel') handle.agent.cancel({ kind: 'user' })
+      await fiber.dispose()
+      release.resolve()
+      await handle.agent.whenIdle()
+      assert.equal(model.requests.length, 2, 'the interrupted request must not reach the model')
+      assert.equal(session.snapshotEvents().findLast(e => e.type === 'turn/end').data.reason.kind,
+        fault === 'cancel' ? 'aborted' : 'error')
+      assert.deepEqual(handle.agent.inbox.nextStep,
+        fault === 'cancel' ? [] : fault === 'partial-commit' ? [original] : [steering, original])
+      stop()
+      stop = undefined
+      reinstalled = await ctx.plugin(plugin, { executable: f.executable })
+      handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Explicit retry after reload.' }], source: { kind: 'user' } }))
+      await handle.agent.whenIdle()
+      await ctx.parallel('session/flush', session)
+      assert.equal(session.snapshotEvents().findLast(e => e.type === 'turn/end').data.reason.kind, 'completed')
+      for (const input of [steering, original]) {
+        const expected = fault === 'cancel' ? 0 : 1
+        assert.equal(session.snapshotEvents().filter(e => e.type === 'user/message' && e.data.id === input.id).length, expected)
+        assert.equal(model.requests.at(-1).messages.filter(m => m.id === input.id).length, expected)
+      }
+      assert.equal(handle.agent.inbox.hasPending, false)
+    } finally {
+      release.resolve()
+      stop?.()
+      await handle?.agent.whenIdle()
+      await handle?.dispose()
+      await reinstalled?.dispose()
+      await fiber.dispose()
+      await ctx.fiber.dispose()
+      await rm(f.root, { recursive: true, force: true })
+    }
+  })
+}
+
+const largeToolCases = ['presentation', 'arguments', 'result', 'wide-escaped']
+async function largeToolHarness(executable, kind) {
+  const h = await harness(executable)
+  const useful = 'Local check completed successfully.'
+  const argumentsValue = kind === 'arguments'
+    ? { password: 'argument-secret', operation: 'verify deployment', records: Array.from({ length: 25000 }, (_, i) => ({ path: `src/entry-${i}.ts`, status: 'verified', details: 'a'.repeat(64) })) }
+    : {}
+  const resultText = kind === 'result'
+    ? `${useful}\n${'Checked source entry successfully.\n'.repeat(70000)}final verification complete\n`
+    : useful
+  const meta = kind === 'presentation' ? { details: 'x'.repeat(2 * 1024 * 1024), status: 'verified', password: 'metadata-secret' }
+    : kind === 'wide-escaped' ? { records: Array.from({ length: 60000 }, () => ({ proof: 'passed\\quoted"\n证据', password: 'nested-secret' })) } : {}
+  h.ctx.tools.register(defineTool({ name: 'bounded_probe', description: 'Bounded capture fixture', parameters: {},
+    output: { schema: { type: 'string' }, render: () => [{ type: 'text', text: resultText }], presentationMeta: () => meta },
+    async execute(args) { assert.deepEqual(args, argumentsValue); return 'ok' },
+  }))
+  h.model.stream = async function* (options) {
+    this.requests.push(options)
+    const block = this.requests.length === 1
+      ? { type: 'tool-call', id: ToolCallId('bounded-call'), name: 'bounded_probe', arguments: JSON.stringify(argumentsValue) }
+      : { type: 'text', text: 'Bounded tool evidence captured.' }
+    yield { type: 'block-start', index: 0, blockType: block.type }
+    yield { type: 'block-end', index: 0, block }
+    yield { type: 'finish', reason: { kind: block.type === 'tool-call' ? 'tool-calls' : 'stop' } }
+  }
+  return h
+}
+
+for (const kind of largeToolCases) test(`tool envelope stays within serialized stdin budget: ${kind}`, async () => {
+  const f = await fixture()
+  const normal = await readFile(f.executable, 'utf8')
+  await writeFile(f.executable, normal.replace('fs.appendFileSync(',
+    "if (Buffer.byteLength(data) > 1024 * 1024) process.exit(7);\nfs.appendFileSync("), { mode: 0o700 })
+  const { ctx, fiber, model } = await largeToolHarness(f.executable, kind)
+  let handle
+  try {
+    handle = await runTurn(ctx, `bounded-${kind}`)
+    await ctx.parallel('session/flush', handle.agent.session)
+    assert.equal(model.requests.length, 2)
+    assert.equal(handle.agent.session.snapshotEvents().findLast(e => e.type === 'turn/end').data.reason.kind, 'completed')
+    const call = (await f.calls()).find(c => c.payload?.tool_name === 'bounded_probe')
+    assert(call, 'useful tool evidence must reach observe')
+    assert(Buffer.byteLength(JSON.stringify(call.payload)) <= 1024 * 1024)
+    assert(JSON.stringify(call.payload.tool_response).includes('Local check completed successfully.'))
+    assert.equal(call.payload.tool_input.remem_capture.omitted, true)
+    assert(call.payload.tool_input.remem_capture.original_envelope_bytes > 1024 * 1024)
+    if (kind === 'arguments') {
+      assert.equal(call.payload.tool_input.arguments.operation, 'verify deployment')
+      assert.equal(call.payload.tool_input.arguments.password, 'argument-secret', 'the core owns secret redaction')
+      assert(call.payload.tool_input.arguments.records.length > 0)
+    }
+  } finally {
+    await handle?.dispose()
+    await fiber.dispose()
+    await ctx.fiber.dispose()
+    await rm(f.root, { recursive: true, force: true })
+  }
+})
+
+test('real remem captures bounded large tools through core redaction and summary', {
+  skip: !process.env.REMEM_DSH_BINARY,
+}, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-remem-bounded-live-'))
+  const previous = Object.fromEntries(['HOME', 'REMEM_DATA_DIR', 'REMEM_CONFIG', 'REMEM_ALLOW_PLAINTEXT_DB'].map(key => [key, process.env[key]]))
+  Object.assign(process.env, { HOME: root, REMEM_DATA_DIR: root, REMEM_CONFIG: join(root, 'config.toml'), REMEM_ALLOW_PLAINTEXT_DB: '1' })
+  const executor = join(root, 'offline-executor.mjs')
+  await writeFile(executor, `#!${process.execPath}\nimport fs from 'node:fs';let prompt='';for await(const c of process.stdin)prompt+=c;fs.writeFileSync(process.argv[process.argv.indexOf('--output-last-message')+1],prompt.includes('Extract durable observations')?JSON.stringify({no_observations:{reason:'bounded capture fixture'}}):'<summary>Bounded tool verification.</summary><structured_fields><request></request><decisions></decisions><learned></learned><next_steps></next_steps><preferences></preferences></structured_fields><segments></segments>');\n`, { mode: 0o700 })
+  await writeFile(process.env.REMEM_CONFIG, `[memory_ai.profiles.codex]\npath = ${JSON.stringify(executor)}\n`)
+  try {
+    execFileSync(process.env.REMEM_DSH_BINARY, ['cleanup', '--dry-run'], { stdio: 'ignore' })
+    for (const kind of largeToolCases) {
+      const { ctx, fiber, model } = await largeToolHarness(process.env.REMEM_DSH_BINARY, kind)
+      let handle
+      try {
+        handle = await runTurn(ctx, `live-bounded-${kind}`)
+        await ctx.parallel('session/flush', handle.agent.session)
+        assert.equal(model.requests.length, 2)
+        assert.equal(handle.agent.session.snapshotEvents().findLast(e => e.type === 'turn/end').data.reason.kind, 'completed')
+        const rows = JSON.parse(execFileSync('/usr/bin/python3', ['-c', `import json,sqlite3,sys
+c=sqlite3.connect(sys.argv[1]); print(json.dumps(c.execute("SELECT e.event_type,e.tool_name,COALESCE(CAST(b.content_bytes AS TEXT),e.content_text),b.content_encoding FROM captured_events e LEFT JOIN event_blobs b ON b.id=e.content_blob_id WHERE e.session_id=? ORDER BY e.id",(sys.argv[2],)).fetchall()))`, join(root, 'remem.db'), `live-bounded-${kind}`], { encoding: 'utf8' }))
+        const captured = rows.find(row => row[1] === 'bounded_probe')
+        assert(captured, 'large valid tool result must be captured')
+        // event blobs are part of the existing core capture path, not adapter storage.
+        assert(captured[3] === null || captured[3] === 'plain')
+        const content = captured[2]
+        assert(content.includes('Local check completed successfully.'))
+        assert(captured[2].includes('remem_capture'))
+        assert(!JSON.stringify(rows).match(/argument-secret|metadata-secret|nested-secret/))
+        assert(rows.some(row => row[0] === 'session_stop'))
+      } finally {
+        await handle?.dispose()
+        await fiber.dispose()
+        await ctx.fiber.dispose()
+      }
+    }
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+    // Workers may still own the isolated queue; retain it for diagnostics.
+    console.log(`Isolated bounded-tool store: ${root}`)
   }
 })
