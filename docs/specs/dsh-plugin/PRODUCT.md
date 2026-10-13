@@ -31,6 +31,9 @@ produce a visible safe capture error without retaining their raw text.
 
 Missing executables fail activation. Context failures reject request preparation;
 the original claimed prompts remain in the DSH inbox for an explicit retry.
+The same guarantee covers request preparation and snapshot replacement failures:
+only uncommitted original inputs return to the inbox. Snapshot replacement obeys
+the published DSH session invariant and retains committed human prompts.
 Cancellation promptly stops context preparation without committing a snapshot.
 Background capture failures are logged and surface once through an awaited
 checkpoint, after which healthy work can recover. No silent loss or automatic binary downloads.

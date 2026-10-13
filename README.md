@@ -29,7 +29,9 @@ and captures live prompts, assistant text, and tools using the existing CLI.
 It targets published DSH 0.2.0-rc.2; the npm adapter is not yet published.
 Build the DSH-enabled remem 0.7.0 source before installing the adapter.
 Assistant-only claims remain available for review and cannot auto-promote without
-independent supporting evidence.
+independent supporting evidence. Snapshot updates and removals respect the published
+DSH session invariant; failed preparation retains uncommitted prompts for an
+explicit retry, while cancellation leaves durable capture available to flush.
 
 ## What remem gives you
 

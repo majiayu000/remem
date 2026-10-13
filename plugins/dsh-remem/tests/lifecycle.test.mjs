@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
+import InvariantRegistry from '@deepseek-ai/dsh-invariants'
+import * as SessionInvariant from '@deepseek-ai/dsh-session/invariant'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import LlmRuntime, { LlmAdapter, createUserMessage, createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
@@ -35,6 +37,8 @@ export async function harness(executable) {
   const ctx = new Context()
   await ctx.plugin(LlmRuntime)
   await ctx.plugin(SessionStore)
+  await ctx.plugin(InvariantRegistry)
+  await ctx.plugin(SessionInvariant)
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
@@ -267,12 +271,18 @@ test('a post-commit orphan tool result remains a visible flush error', async () 
   const { ctx, fiber } = await harness(f.executable)
   try {
     const session = ctx.sessions.create(SessionId('orphan-result'), { meta: { cwd: tmpdir() } })
+    session.append('turn/start', { turn: 1 })
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('tool/call', { turn: 1, step: 1, callId: ToolCallId('orphan-call'), name: 'fixture_probe', arguments: '{}' })
+    // The call is valid DSH history but predates this plugin instance.
+    await fiber.dispose()
+    await ctx.plugin(plugin, { executable: f.executable })
     session.append('tool/result', { turn: 1, step: 1, message: createToolResultMessage({
       callId: ToolCallId('orphan-call'), content: [{ type: 'text', text: 'orphan evidence' }], isError: false,
     }) }, { surfaceOp: 'append' })
     await assert.rejects(ctx.parallel('session/flush', session), error =>
       error instanceof AggregateError && error.errors.some(e => /has no live call/.test(e.message)))
-  } finally { await fiber.dispose().catch(() => {}); await ctx.fiber.dispose().catch(() => {}); await rm(f.root, { recursive: true, force: true }) }
+  } finally { await Promise.resolve(fiber.dispose()).catch(() => {}); await ctx.fiber.dispose().catch(() => {}); await rm(f.root, { recursive: true, force: true }) }
 })
 
 test('context injection preserves a downstream request-series declaration', async () => {
@@ -454,6 +464,8 @@ test('invalid JSON arguments fail visibly without copying argument text', async 
   const { ctx, fiber } = await harness(f.executable)
   try {
     const session = ctx.sessions.create(SessionId('invalid-arguments'), { meta: { cwd: tmpdir() } })
+    session.append('turn/start', { turn: 1 })
+    session.append('step/start', { turn: 1, step: 1 })
     const callId = ToolCallId('invalid-call')
     session.append('tool/call', { turn: 1, step: 1, callId, name: 'fixture_probe', arguments: '{"password":"fixture-secret"' })
     session.append('tool/result', { turn: 1, step: 1, message: createToolResultMessage({
@@ -622,6 +634,8 @@ test('changed and removed snapshots supersede only remem history across real tur
     const requestsBeforeCancel = model.requests.length
     await followup('cancelled change')
     assert.equal(model.requests.length, requestsBeforeCancel)
+    assert(session.surface.nodes.includes(oldEvent.seq), 'pre-step cancellation must not replace committed memory')
+    assert.equal(handle.agent.inbox.hasPending, false)
     await followup('retry changed memory')
     assert.deepEqual(memories(model.requests.at(-1)), ['current memory guidance'])
     assert(model.requests.at(-1).messages.every(m => m.content.length > 0), 'native empty replacements must be omitted from provider requests')
@@ -634,9 +648,135 @@ test('changed and removed snapshots supersede only remem history across real tur
     await writeFile(memoryFile, '')
     await followup('memory removed')
     assert.deepEqual(memories(model.requests.at(-1)), [])
+    assert(session.snapshotEvents().filter(e => e.type === 'turn/end').every(e => e.data.reason.kind === 'completed' || e.data.reason.kind === 'aborted'))
     assert.deepEqual(session.snapshotEvents()[oldEvent.seq], oldEvent)
     assert(session.deriveMessages().some(m => m.id === human.id))
     await ctx.parallel('session/flush', session)
     await handle.dispose()
   } finally { await fiber.dispose(); await ctx.fiber.dispose(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+for (const memory of ['updated memory', '']) {
+  for (const fault of ['replacement', 'admission', 'request', 'prepared-call', 'cancel-before-request', 'cancel-after-request', 'model']) {
+    test(`${memory ? 'changed' : 'removed'} snapshot ${fault} preserves official invariant and retry semantics`, async () => {
+      const f = await fixture()
+      const normal = await readFile(f.executable, 'utf8')
+      const { ctx, fiber, model } = await harness(f.executable)
+      let handle, stopFault
+      try {
+        handle = await runTurn(ctx, `snapshot-${fault}-${memory ? 'changed' : 'removed'}`)
+        const session = handle.agent.session
+        await ctx.parallel('session/flush', session)
+        const old = session.snapshotEvents().find(e => e.type === 'user/message' && e.data.source.kind === 'remem')
+        await writeFile(f.executable, normal.replace("process.stdout.write('fixture project memory')",
+          `process.stdout.write(${JSON.stringify(memory)})`), { mode: 0o700 })
+        const original = createUserMessage({ content: [{ type: 'text', text: `original ${fault}` }], source: { kind: 'user' } })
+        const steering = createUserMessage({ content: [{ type: 'text', text: 'original steering' }], source: { kind: 'user' } })
+        if (fault === 'replacement' || fault === 'admission') {
+          stopFault = ctx.on('internal/dispatch', (_, name, args) => {
+            if (name !== 'session/event' || args[0] !== session) return
+            const event = args[1]
+            if (fault === 'replacement' && event.type === 'developer/message' && event.data.message.source.kind === 'remem'
+              || fault === 'admission' && event.type === 'user/message' && event.data.id === original.id) {
+              throw new Error(`fixture ${fault} failure`)
+            }
+          })
+        } else if (fault === 'prepared-call') {
+          const prepareCall = model.prepareCall
+          model.prepareCall = async () => { throw new Error('fixture prepared-call failure') }
+          stopFault = () => { model.prepareCall = prepareCall }
+        } else if (fault === 'model') {
+          const stream = model.stream
+          model.stream = async function* () { throw new Error('fixture model failure') }
+          stopFault = () => { model.stream = stream }
+        } else {
+          stopFault = ctx.on('agent/request', async ({ agent }, next) => {
+            if (fault === 'cancel-before-request') agent.cancel({ kind: 'user' })
+            const config = await next()
+            if (fault === 'request') throw new Error('fixture request failure')
+            if (fault === 'cancel-after-request') agent.cancel({ kind: 'user' })
+            return config
+          }, { prepend: true })
+        }
+        handle.agent.inject(steering)
+        handle.agent.followup(original)
+        await handle.agent.whenIdle()
+        await ctx.parallel('session/flush', session)
+        const cancelled = fault.startsWith('cancel-')
+        const end = session.snapshotEvents().findLast(e => e.type === 'turn/end')
+        assert.equal(end.data.reason.kind, cancelled ? 'aborted' : 'error')
+        if (!cancelled) assert.match(end.data.reason.error.message, /fixture .*failure/)
+        const committed = session.snapshotEvents().filter(e => e.type === 'user/message' && e.data.id === original.id)
+        assert.equal(committed.length, fault === 'model' ? 1 : 0)
+        assert.deepEqual(handle.agent.inbox.nextStep, cancelled || fault === 'model' ? [] : fault === 'admission' ? [original] : [steering, original])
+        assert.deepEqual(session.snapshotEvents()[old.seq], old, 'original snapshot provenance is immutable')
+        if (fault === 'replacement' || fault === 'cancel-before-request') {
+          assert(session.surface.nodes.includes(old.seq), 'failed or cancelled replacement must not consume the old snapshot')
+        }
+        stopFault()
+        stopFault = undefined
+        handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'explicit retry' }], source: { kind: 'user' } }))
+        await handle.agent.whenIdle()
+        await ctx.parallel('session/flush', session)
+        assert.equal(session.snapshotEvents().findLast(e => e.type === 'turn/end').data.reason.kind, 'completed')
+        assert.deepEqual(model.requests.at(-1).messages.filter(m => m.source.kind === 'remem')
+          .map(m => m.content.map(b => b.text).join('')), memory ? [memory] : [])
+        for (const input of [steering, original]) {
+          const expected = cancelled ? 0 : 1
+          assert.equal(model.requests.at(-1).messages.filter(m => m.id === input.id).length, expected)
+          assert.equal(session.snapshotEvents().filter(e => e.type === 'user/message' && e.data.id === input.id).length, expected)
+          assert.equal((await f.calls()).filter(c => c.payload?.prompt === input.content[0].text).length, expected)
+        }
+        assert.equal(handle.agent.inbox.hasPending, false)
+      } finally {
+        stopFault?.()
+        await handle?.dispose()
+        await fiber.dispose()
+        await ctx.fiber.dispose()
+        await rm(f.root, { recursive: true, force: true })
+      }
+    })
+  }
+}
+
+for (const failCapture of [false, true]) test(`cancelling a capture checkpoint returns promptly and retains ${failCapture ? 'the flush error' : 'durability'}`, async () => {
+  const f = await fixture()
+  const entered = join(f.root, 'capture-entered')
+  const release = join(f.root, 'capture-release')
+  const normal = await readFile(f.executable, 'utf8')
+  await writeFile(f.executable, normal.replace("if (args[0] === 'observe') await new Promise(r=>setTimeout(r, 25));",
+    `if (args[0] === 'observe') { fs.writeFileSync(${JSON.stringify(entered)}, 'ready'); while (!fs.existsSync(${JSON.stringify(release)})) await new Promise(r=>setTimeout(r, 25)); ${failCapture ? 'process.exit(9)' : ''} }`), { mode: 0o700 })
+  const { ctx, model, fiber } = await harness(f.executable)
+  let handle
+  try {
+    handle = await ctx.agents.create({ sessionId: SessionId(`cancel-capture-${failCapture}`), meta: { cwd: tmpdir() },
+      agentOptions: { provider: 'fixture', model: 'fixture' } })
+    handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'cancel during capture checkpoint' }], source: { kind: 'user' } }))
+    for (let attempt = 0; !(await readFile(entered, 'utf8').catch(() => '')); attempt++) {
+      assert(attempt < 400, 'capture subprocess did not reach checkpoint')
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    handle.agent.cancel({ kind: 'user' })
+    const idleBeforeRelease = await Promise.race([handle.agent.whenIdle().then(() => true),
+      new Promise(resolve => setTimeout(() => resolve(false), 2000))])
+    await writeFile(release, 'release')
+    await handle.agent.whenIdle()
+    assert.equal(idleBeforeRelease, true, 'cancellation must not wait for durable capture to finish')
+    assert.equal(model.requests.length, 1)
+    assert.equal(handle.agent.inbox.hasPending, false)
+    assert.equal(handle.agent.session.snapshotEvents().findLast(e => e.type === 'turn/end').data.reason.kind, 'aborted')
+    if (failCapture) {
+      await assert.rejects(ctx.parallel('session/flush', handle.agent.session), error =>
+        error instanceof AggregateError && error.errors.some(e => /exit 9/.test(e.message)))
+    }
+    await ctx.parallel('session/flush', handle.agent.session)
+    assert.equal((await f.calls()).at(-1).args[0], 'summarize')
+  } finally {
+    await writeFile(release, 'release')
+    await handle?.agent.whenIdle()
+    await handle?.dispose().catch(() => {})
+    await Promise.resolve(fiber.dispose()).catch(() => {})
+    await Promise.resolve(ctx.fiber.dispose()).catch(() => {})
+    await rm(f.root, { recursive: true, force: true })
+  }
 })

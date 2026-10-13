@@ -6,6 +6,9 @@
 注入项目记忆，记录用户提示、助手文本与工具结果，轮次结束排队自动提炼。
 记忆提取、来源治理、加密与检索都沿用 remem。
 
+快照更新和移除遵守官方 session invariant；准备或替换失败后，未提交的原始提示
+保留待显式重试。取消等待不终止已经开始的持久化捕获，后续 flush 仍会报告错误。
+
 当前包为发布准备版本，尚未上传 npm。验证目标：DSH `0.2.0-rc.2` 与 Cordis
 `4.0.4`。DSH 主线 API 与该 npm 版本不同；本插件不宣称已验证主线兼容。
 需要 Node.js 22.19+ 和包含 DSH 宿主适配的 remem 0.7.0（此分支，未发布）。旧 remem 会在
@@ -96,7 +99,11 @@ adapter. Image/file capture retains bounded reference metadata without reading
 attachment bytes. Prompt capture does not perform undeliverable recall. Snapshot
 deduplication uses committed session history, so cancelled preparation can retry.
 Changed or removed memory supersedes obsolete snapshots in future requests while
-retaining the original event log and human prompts.
+retaining the original event log and human prompts. Replacements run after
+`step/start` with the official session invariant enabled. Request preparation or
+replacement failures restore only uncommitted original inputs for explicit retry.
+Cancelling a capture checkpoint returns promptly while durable capture and any
+error remain available to the later flush.
 CLI preparation writes no injection audit or usage credit; committed DSH snapshots
 are the delivery record. Tool arguments are decoded before secret-key redaction;
 malformed JSON causes a visible capture error without storing the raw arguments.

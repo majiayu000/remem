@@ -3,7 +3,8 @@ import { isAbsolute, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createDeveloperMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import type { UserMessage } from '@deepseek-ai/dsh-llm'
+import type { Session, SessionEvent, SessionSeq } from '@deepseek-ai/dsh-session'
 
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
@@ -128,15 +129,27 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   // Availability only. The first real CLI request validates the DSH host contract.
   await run(executable, ['--version'])
   const states = new Map<Session, { pending: Promise<void>; error?: Error;
+    admission?: { turn: number; step: number; signal: AbortSignal; messages: UserMessage[]; replacements: SessionSeq[] };
     calls: Map<string, { name: string; arguments: string }>; lastAnswer?: string }>()
   const state = (session: Session) => {
     let value = states.get(session)
     if (!value) { value = { pending: Promise.resolve(), calls: new Map() }; states.set(session, value) }
     return value
   }
-  const wait = async (session: Session) => {
+  const wait = async (session: Session, signal?: AbortSignal) => {
     const value = state(session)
-    await value.pending
+    let onAbort: (() => void) | undefined
+    try {
+      signal?.throwIfAborted()
+      await (signal ? Promise.race([value.pending, new Promise<never>((_, reject) => {
+        onAbort = () => reject(signal.reason)
+        signal.addEventListener('abort', onAbort, { once: true })
+      })]) : value.pending)
+    } finally {
+      if (onAbort) signal!.removeEventListener('abort', onAbort)
+    }
+    signal?.throwIfAborted()
+    // A cancelled preparation leaves capture and its error for a later flush.
     const error = value.error
     value.error = undefined
     if (error) throw error
@@ -157,56 +170,83 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   }
 
   ctx.on('agent/pre-step', async ({ agent, messages, turn, step, signal }, next): Promise<PreStepDecision> => {
-    const decision = await next()
-    if (decision.kind === 'reject' || signal.aborted) return decision
-    // DSH completes an empty first-step admission without a model request.
-    // Preserve that downstream decision instead of creating a memory-only turn.
-    if (step === 1 && decision.messages.length === 0) return decision
-    let memory: string
-    const contextSignal = AbortSignal.any([signal, lifetime.signal])
+    const value = state(agent.session)
     try {
+      const decision = await next()
+      if (decision.kind === 'reject' || signal.aborted) return decision
+      // DSH completes an empty first-step admission without a model request.
+      // Preserve that downstream decision instead of creating a memory-only turn.
+      if (step === 1 && decision.messages.length === 0) return decision
+      let memory: string
+      const contextSignal = AbortSignal.any([signal, lifetime.signal])
       contextSignal.throwIfAborted()
-      await wait(agent.session)
+      await wait(agent.session, contextSignal)
       contextSignal.throwIfAborted()
+      value.admission = { turn, step, signal, messages: [...messages], replacements: [] }
       if (step !== 1) return decision
       const lookup = run(executable, ['context', '--host', host, '--cwd', cwd(agent.session),
         '--session-id', agent.session.id, '--gate', 'off'], undefined, contextSignal)
       contextRuns.set(lookup, contextSignal)
       try { memory = await lookup } finally { contextRuns.delete(lookup) }
       contextSignal.throwIfAborted()
+      const session = agent.session
+      const snapshots = session.snapshotEvents().filter(event => session.surface.nodes.includes(event.seq)
+        && event.type === 'user/message' && event.data.source.kind === 'remem')
+      const previous = session.deriveMessages().findLast(message => message.source.kind === 'remem')
+      const unchanged = previous?.source.kind === 'remem' && previous.source.sections.length === 1
+        && previous.source.sections[0].name === 'memory' && previous.source.sections[0].text === memory
+      // Pre-step runs before step/start: prepare replacements without appending.
+      value.admission.replacements = (unchanged ? snapshots.slice(0, -1) : snapshots).map(event => event.seq)
+      if (!memory.trim() || unchanged) return decision
+      return { ...decision, messages: [...decision.messages, createUserMessage({
+        content: [{ type: 'text', text: memory }],
+        source: { kind: 'remem', form: 'snapshot', sections: [{ name: 'memory', text: memory }] },
+      })] }
     } catch (error) {
+      value.admission = undefined
       // DSH has already claimed these original inputs. Park them for an explicit
       // retry before propagating failure; user cancellation still discards work.
       if (!signal.aborted) agent.inbox.splice('next-step', 0, 0, messages)
       throw error
     }
-    if (signal.aborted) return decision
-    const session = agent.session
-    const snapshots = session.snapshotEvents().filter(event => session.surface.nodes.includes(event.seq)
-      && event.type === 'user/message' && event.data.source.kind === 'remem')
-    const previous = session.deriveMessages().findLast(message => message.source.kind === 'remem')
-    const unchanged = previous?.source.kind === 'remem' && previous.source.sections.length === 1
-      && previous.source.sections[0].name === 'memory' && previous.source.sections[0].text === memory
-    // Native replacement retains the original log event and its provenance.
-    // Empty developer nodes are omitted by DSH's durable request derivation.
-    // No new snapshot is committed here: cancelled admission can still retry.
-    for (const event of unchanged ? snapshots.slice(0, -1) : snapshots) {
-      session.append('developer/message', { turn, step, message: createDeveloperMessage({ content: [],
-        source: { kind: 'remem', form: 'snapshot', sections: [] } }) }, {
-        surfaceOp: { op: 'replace', startSeq: event.seq, endSeq: event.seq }, sourceEventSeqs: [event.seq],
-      })
-    }
-    if (!memory.trim() || unchanged) return decision
-    return { ...decision, messages: [...decision.messages, createUserMessage({
-      content: [{ type: 'text', text: memory }],
-      source: { kind: 'remem', form: 'snapshot', sections: [{ name: 'memory', text: memory }] },
-    })] }
   }, { prepend: true })
+
+  ctx.on('agent/request', async ({ agent, turn, step, signal }, next) => {
+    const config = await next()
+    AbortSignal.any([signal, lifetime.signal]).throwIfAborted()
+    const admission = state(agent.session).admission
+    if (admission?.turn === turn && admission.step === step) {
+      // This awaited lifecycle runs inside the open step. Native replacements
+      // preserve provenance and omit obsolete snapshots from derived requests.
+      for (const seq of admission.replacements) {
+        agent.session.append('developer/message', { turn, step, message: createDeveloperMessage({ content: [],
+          source: { kind: 'remem', form: 'snapshot', sections: [] } }) }, {
+          surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq }, sourceEventSeqs: [seq],
+        })
+      }
+      admission.replacements = []
+    }
+    return config
+  }, { prepend: true })
+
+  ctx.on('agent/error', ({ agent, turn }) => {
+    const value = state(agent.session)
+    const admission = value.admission
+    value.admission = undefined
+    // This notification is outside session append publication, so inbox edits
+    // are legal here. Only originals not yet committed need an explicit retry.
+    if (admission?.turn === turn && !admission.signal.aborted && admission.messages.length) {
+      agent.inbox.splice('next-step', 0, 0, admission.messages)
+    }
+  })
 
   ctx.on('session/event', (session, event: SessionEvent) => {
     try {
       const base = { host, session_id: session.id, cwd: cwd(session), reference_time_epoch: Math.floor(event.time / 1000) }
       const value = state(session)
+      if (event.type === 'user/message' && value.admission) {
+        value.admission.messages = value.admission.messages.filter(message => message.id !== event.data.id)
+      }
       if (event.type === 'turn/start') { value.lastAnswer = undefined; return }
       if (event.type === 'tool/call') { value.calls.set(event.data.callId, event.data); return }
       if (event.type === 'user/message' && event.data.source.kind === 'user') {
@@ -227,6 +267,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
         capture(session, 'observe', { ...base, tool_name: call.name,
           tool_input: { arguments: argumentsValue }, tool_response: event.data })
       } else if (event.type === 'turn/end') {
+        value.admission = undefined
         capture(session, 'summarize', { ...base, last_assistant_message: value.lastAnswer, reason: event.data.reason })
       }
     } catch (error) {
@@ -243,7 +284,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
     lifetime.abort(new Error('remem plugin disposed'))
     const contexts = [...contextRuns]
     const [settled, stopped] = await Promise.all([
-      Promise.allSettled([...states.keys()].map(wait)),
+      Promise.allSettled([...states.keys()].map(session => wait(session))),
       Promise.allSettled(contexts.map(([lookup]) => lookup)),
     ])
     states.clear()

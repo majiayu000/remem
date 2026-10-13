@@ -19,8 +19,11 @@ request-series decisions. DSH requests `context --gate off`: only the most recen
 committed `remem` snapshot in `session.deriveMessages()` suppresses an unchanged
 snapshot. Changed or empty memory replaces each obsolete remem surface node with
 an empty native `developer/message`, citing only that node's original event seq.
-DSH omits empty developer nodes from derived requests; the append-only snapshot
-and human prompt events stay intact. The fresh snapshot still enters through
+Replacements are prepared without mutating history in `agent/pre-step`, then
+appended in the awaited `agent/request` waterfall after `step/start`. This obeys
+the published session invariant; post-commit `session/event` cannot append them
+reentrantly. DSH omits empty developer nodes from derived requests; the append-only
+snapshot and human prompt events stay intact. The fresh snapshot still enters through
 normal pre-step admission, so cancellation cannot consume its later delivery.
 Cancellation before admission therefore leaves the next turn eligible
 for injection. No plugin acknowledgement ledger is maintained. Rust context emission audit is
@@ -65,10 +68,18 @@ remem behind its npm launcher: a dedicated process group on POSIX and the system
 The turn AbortSignal kills an outstanding context child and preserves cancellation.
 Plugin disposal aborts and awaits outstanding context children before returning;
 preparation waiting on capture cannot start a context child after disposal.
+A cancelled preparation stops waiting for capture promptly; the capture itself
+continues to the awaited flush, retaining any failure for that checkpoint.
 An unload-interrupted preparation retains its original inputs for an explicit retry
 after reinstall, and cannot commit a memory snapshot.
 Preparation errors park the original claimed batch in the DSH inbox before
 propagating the error; an explicit later wake retries those identities and sources.
+The current admitted batch is retained only until commitment or turn end. If request
+preparation or snapshot replacement fails, `agent/error` restores only originals
+not yet committed as `user/message`, without restoring synthetic context or
+duplicating committed prompts. User cancellation discards its claimed batch.
+A later retry derives snapshot state from committed history, including any
+replacements accepted before a subsequent failure.
 Capture errors remain error-level diagnostics and are consumed once an awaited
 checkpoint reports them, allowing later healthy captures and steps to proceed.
 Without an explicit profile, the existing runtime host defaults resolve DSH
@@ -81,7 +92,9 @@ is not copied into plugin diagnostics (it can contain provider secrets).
 ## Validation
 
 Typecheck/build and package installation must use published DSH packages. Tests
-exercise real Cordis SessionStore events and awaited middleware; a live remem
+enable the published invariant registry and official session companion for real
+Cordis SessionStore events and awaited middleware, including changed/removed
+snapshots, request preparation failures, replacement failures and cancellation; a live remem
 executable smoke verifies DSH host rows, prompt/tool/assistant capture, Stop and
 extraction-task queueing in an isolated store. A deterministic offline executor
 returns an assistant-only decision through the real rollup worker, proving that

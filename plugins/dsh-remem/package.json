@@ -42,6 +42,7 @@
   },
   "devDependencies": {
     "@deepseek-ai/dsh-agent-loop": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-invariants": "0.2.0-rc.2",
     "@types/node": "^22.0.0",
     "typescript": "^5.9.3"
   },
