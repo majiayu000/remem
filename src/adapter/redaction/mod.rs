@@ -1,6 +1,7 @@
 //! Shared redaction for hook capture previews and MCP/CLI projections.
 
 use crate::db;
+use serde::Serialize;
 
 mod keys;
 mod tokens;
@@ -125,8 +126,14 @@ pub(crate) fn redact_structured_sensitive_text(text: &str) -> String {
     // Value redaction covers whole sensitive fields; text redaction also covers keys.
     let text = serde_json::from_str::<serde_json::Value>(text)
         .map(|value| {
-            serde_json::to_string_pretty(&redact_sensitive_value(&value))
-                .expect("captured JSON should serialize")
+            // Keep field separators without depth-dependent indentation using the content budget.
+            let mut output = Vec::new();
+            let formatter = serde_json::ser::PrettyFormatter::with_indent(b"");
+            let mut serializer = serde_json::Serializer::with_formatter(&mut output, formatter);
+            redact_sensitive_value(&value)
+                .serialize(&mut serializer)
+                .expect("captured JSON should serialize");
+            String::from_utf8(output).expect("serialized JSON should be UTF-8")
         })
         .unwrap_or_else(|_| text.to_string());
     redact_sensitive_text(&text)

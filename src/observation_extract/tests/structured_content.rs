@@ -1,6 +1,68 @@
 use super::*;
 
 #[tokio::test]
+async fn observation_extract_preserves_nested_capture_within_content_budget() -> Result<()> {
+    let mut conn = setup_conn();
+    let rule = "Keep trailing prose and use default prefix MEM.";
+    let trailing_rule = "Preserve this final rule: use default prefix MEM.";
+    let mut nested = serde_json::json!({
+        "notes": (0..120).map(|ordinal| serde_json::json!({
+            "content": rule,
+            "source_ordinal": ordinal,
+        })).collect::<Vec<_>>(),
+    });
+    for _ in 0..8 {
+        nested = serde_json::json!({"nested": nested});
+    }
+    let content = serde_json::json!({
+        "host_boundary": "user_message",
+        "sanitized_content": nested,
+        "sanitized_tool_input": {"api_key": "fixture-budget-secret"},
+        "sanitized_tool_output": null,
+        "source_ordinal": 0,
+        "trailing_prose": trailing_rule,
+    })
+    .to_string();
+    assert!(
+        content.len() < 12 * 1024,
+        "compact capture should fit comfortably"
+    );
+    capture_event(
+        &conn,
+        "sess-nested-content-budget",
+        "user_prompt_submit",
+        Some("user"),
+        None,
+        &content,
+    )?;
+    let task = claim_extract_task(&mut conn)?;
+
+    process_with_extractor(&mut conn, &task, |prompt| async move {
+        let payload: serde_json::Value = serde_json::from_str(&prompt)?;
+        let content = payload["transcript_events"][0]["content"]
+            .as_str()
+            .context("content should be a string")?;
+        assert!(
+            content.contains(trailing_rule),
+            "trailing prose was truncated"
+        );
+        assert_eq!(content.matches(rule).count(), 120);
+        assert!(payload["content_truncated_event_ids"]
+            .as_array()
+            .context("truncation metadata should be an array")?
+            .is_empty());
+        assert!(
+            content.len() < payload["per_event_content_budget_bytes"].as_u64().unwrap() as usize
+        );
+        assert!(content.contains("[REDACTED_SECRET]"));
+        assert!(!prompt.contains("fixture-budget-secret"));
+        Ok(no_observations_response("nested prompt budget checked"))
+    })
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn observation_extract_preserves_structured_capture_values() -> Result<()> {
     let mut conn = setup_conn();
     let rule = "Ticket keys normalize to uppercase PREFIX-digits. Inputs may contain spaces, underscores, hyphens, or a leading #. If the input contains only digits, use default prefix MEM.";

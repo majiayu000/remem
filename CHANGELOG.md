@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Stage `0.6.105`: preserve prose at structured capture boundaries during observation extraction while retaining secret field and key redaction. Refs #931.
+- Stage `0.6.105`: preserve prose at structured capture boundaries during observation extraction while retaining secret field and key redaction. Avoid depth-dependent JSON indentation consuming the extraction content budget. Refs #931.
 
 ## [0.6.104] - 2026-10-08
 
