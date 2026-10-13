@@ -1,5 +1,65 @@
 use super::*;
 
+#[test]
+fn observation_extract_structured_redaction_adds_no_formatting_bytes() {
+    let fields: serde_json::Map<String, serde_json::Value> = (0..2048)
+        .map(|i| (format!("field_{i}"), serde_json::json!("v")))
+        .collect();
+    for value in [
+        serde_json::json!(vec![0; 8192]),
+        serde_json::json!(vec!["v"; 4096]),
+        serde_json::Value::Object(fields),
+    ] {
+        let compact = value.to_string();
+        assert_eq!(
+            crate::adapter::common::redact_structured_sensitive_text(&compact),
+            compact
+        );
+    }
+}
+
+#[tokio::test]
+async fn observation_extract_preserves_flat_capture_within_content_budget() -> Result<()> {
+    let mut conn = setup_conn();
+    let trailing_rule = "Preserve this final rule: use default prefix MEM.";
+    let content = serde_json::json!({
+        "sanitized_content": vec![0; 8192],
+        "sanitized_tool_input": {"api_key": "fixture-flat-budget-secret"},
+        "trailing_prose": trailing_rule,
+    })
+    .to_string();
+    assert!(content.len() < 18 * 1024);
+    capture_event(
+        &conn,
+        "sess-flat-content-budget",
+        "user_prompt_submit",
+        Some("user"),
+        None,
+        &content,
+    )?;
+    let task = claim_extract_task(&mut conn)?;
+    process_with_extractor(&mut conn, &task, |prompt| async move {
+        let payload: serde_json::Value = serde_json::from_str(&prompt)?;
+        let content = payload["transcript_events"][0]["content"]
+            .as_str()
+            .context("content should be a string")?;
+        assert!(
+            content.contains(trailing_rule),
+            "flat trailing prose was truncated"
+        );
+        assert_eq!(content.matches('0').count(), 8192);
+        assert!(payload["content_truncated_event_ids"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(content.contains("[REDACTED_SECRET]"));
+        assert!(!prompt.contains("fixture-flat-budget-secret"));
+        Ok(no_observations_response("flat prompt budget checked"))
+    })
+    .await?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn observation_extract_preserves_nested_capture_within_content_budget() -> Result<()> {
     let mut conn = setup_conn();
@@ -92,7 +152,7 @@ async fn observation_extract_preserves_structured_capture_values() -> Result<()>
                 .context("content should be a string")?;
             assert!(content.contains(rule), "{section}: {content}");
             assert!(!content.contains("[REDACTED_SECRET]"));
-            assert!(content.contains("&quot;source_ordinal&quot;: 0"));
+            assert!(content.contains("&quot;source_ordinal&quot;:0"));
         }
         Ok(no_observations_response("structured prompt checked"))
     })
