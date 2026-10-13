@@ -41,10 +41,14 @@ export async function harness(executable) {
   await ctx.plugin(AgentLoop, { agents: [] })
   const model = new ScriptedModel()
   ctx.llm.registerAdapter(['fixture'], model)
+  const toolArguments = []
   ctx.tools.register(defineContentToolFixture({ name: 'fixture_probe', description: 'Fixture probe',
-    parameters: {}, async execute() { return [{ type: 'text', text: 'fixture probe succeeded' }] } }))
+    parameters: {}, async execute(args) {
+      toolArguments.push(args)
+      return [{ type: 'text', text: 'fixture probe succeeded' }]
+    } }))
   const fiber = await ctx.plugin(plugin, { executable })
-  return { ctx, model, fiber }
+  return { ctx, model, fiber, toolArguments }
 }
 
 async function fixture() {
@@ -400,6 +404,30 @@ test('structured JSON arguments reach key redaction instead of an opaque string'
     await ctx.parallel('session/flush', handle.agent.session)
     const call = (await f.calls()).find(c => c.payload?.tool_name === 'fixture_probe')
     assert.deepEqual(call.payload.tool_input.arguments, { a: 1, password: 'fixture-secret' })
+    await handle.dispose()
+  } finally { await fiber.dispose(); await ctx.fiber.dispose(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+test('real AgentLoop captures empty tool arguments as an object and completes the turn', async () => {
+  const f = await fixture()
+  const { ctx, fiber, model, toolArguments } = await harness(f.executable)
+  model.arguments = ''
+  const errors = []
+  ctx.logger.error = message => errors.push(message)
+  try {
+    const handle = await runTurn(ctx, 'empty-arguments')
+    await ctx.parallel('session/flush', handle.agent.session)
+    assert.deepEqual(toolArguments, [{}])
+    assert.equal(model.requests.length, 2)
+    const calls = await f.calls()
+    const capturedTools = calls.filter(c => c.payload?.tool_name === 'fixture_probe')
+    assert.equal(capturedTools.length, 1)
+    assert.deepEqual(capturedTools[0].payload.tool_input.arguments, {})
+    assert(calls.some(c => c.payload?.tool_name === 'assistant/message'))
+    assert.deepEqual(calls.at(-1).payload.reason, { kind: 'completed' })
+    assert.deepEqual(handle.agent.session.snapshotEvents().findLast(e => e.type === 'turn/end').data.reason,
+      { kind: 'completed' })
+    assert.deepEqual(errors, [])
     await handle.dispose()
   } finally { await fiber.dispose(); await ctx.fiber.dispose(); await rm(f.root, { recursive: true, force: true }) }
 })

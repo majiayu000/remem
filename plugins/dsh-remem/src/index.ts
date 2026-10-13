@@ -222,7 +222,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
         if (!call) throw new Error(`remem: DSH tool result ${result.toolCallId} has no live call`)
         value.calls.delete(result.toolCallId)
         let argumentsValue: unknown
-        try { argumentsValue = JSON.parse(call.arguments) }
+        try { argumentsValue = call.arguments === '' ? {} : JSON.parse(call.arguments) }
         catch { throw new Error('remem: DSH tool arguments are invalid JSON; capture rejected') }
         capture(session, 'observe', { ...base, tool_name: call.name,
           tool_input: { arguments: argumentsValue }, tool_response: event.data })
