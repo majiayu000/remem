@@ -35,7 +35,11 @@ error rather than falling back to the plugin process directory.
 
 A narrow Rust adapter accepts the normalized hook wire format under
 `--host deepseek-harness`. It uses the existing capture/spill/redaction/extraction
-paths and a generic tool-result summary. The context profile reports no MCP
+paths. The synthetic `assistant/message` observe input is classified as `message`
+and persisted with `role=assistant` and no tool name; actual tool results keep
+their tool provenance. The existing trust classifier therefore treats assistant
+prose as external content, including during spill replay. No new trust class or
+promotion exception is introduced. The context profile reports no MCP
 registration. Summaries consume the existing capture ledger; no DSH log parser,
 new schema, host migration, or extraction implementation is added.
 
@@ -79,8 +83,12 @@ is not copied into plugin diagnostics (it can contain provider secrets).
 Typecheck/build and package installation must use published DSH packages. Tests
 exercise real Cordis SessionStore events and awaited middleware; a live remem
 executable smoke verifies DSH host rows, prompt/tool/assistant capture, Stop and
-extraction-task queueing in an isolated store. Memory AI promotion requires the
-operator's configured executor and is not implied by offline capture verification.
+extraction-task queueing in an isolated store. A deterministic offline executor
+returns an assistant-only decision through the real rollup worker, proving that
+the candidate remains pending and no active memory is created. A Rust capture/
+summary regression additionally checks repeated claims, unrelated tool success,
+and independently corroborating tool evidence. This proves governance behavior,
+not live-provider extraction quality.
 CI and local preflight install the pinned npm dependencies, resolve the current
 remem executable from Cargo's artifact output, and run the entire lifecycle suite
 with `REMEM_DSH_BINARY` set, so the real CLI test is required.

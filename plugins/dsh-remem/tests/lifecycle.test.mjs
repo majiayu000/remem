@@ -18,12 +18,13 @@ const plugin = await import(process.env.REMEM_DSH_PLUGIN_MODULE ?? '../dist/inde
 class ScriptedModel extends LlmAdapter {
   requests = []
   arguments = '{}'
+  answer = 'Verified the DSH fixture result.'
   async *stream(options) {
     this.requests.push(options)
     const id = ToolCallId('fixture-call')
     const block = this.requests.length === 1
       ? { type: 'tool-call', id, name: 'fixture_probe', arguments: this.arguments }
-      : { type: 'text', text: 'Verified the DSH fixture result.' }
+      : { type: 'text', text: this.answer }
     yield { type: 'block-start', index: 0, blockType: block.type }
     yield { type: 'block-end', index: 0, block }
     yield { type: 'finish', reason: { kind: block.type === 'tool-call' ? 'tool-calls' : 'stop' } }
@@ -149,7 +150,7 @@ test('unload awaits all sessions even when one capture failed', async () => {
 })
 
 
-test('real remem binary captures distinct DSH host and queues turn distillation', {
+test('real remem binary preserves DSH assistant provenance through rollup promotion', {
   skip: !process.env.REMEM_DSH_BINARY,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-remem-live-'))
@@ -161,13 +162,15 @@ test('real remem binary captures distinct DSH host and queues turn distillation'
   process.env.REMEM_ALLOW_PLAINTEXT_DB = '1'
   const executable = process.env.REMEM_DSH_BINARY
   // Keep the real queue/profile/executor path, but never invoke a paid model.
+  const decision = 'Use source kind telemetry for summary promotion gate'
   const executor = join(root, 'offline-codex')
   const executorCalls = join(root, 'executor-calls.jsonl')
-  await writeFile(executor, `#!${process.execPath}\nimport fs from 'node:fs';\nlet prompt=''; for await (const chunk of process.stdin) prompt += chunk;\nconst observation = prompt.includes('Extract durable observations');\nconst rollup = prompt.includes('You summarize captured development-session evidence');\nfs.appendFileSync(${JSON.stringify(executorCalls)}, JSON.stringify({observation,rollup})+'\\n');\nif (!observation && !rollup) process.exit(19);\nconst response = observation ? JSON.stringify({no_observations:{reason:'offline profile resolution probe'}}) : '<summary>Offline profile resolution probe.</summary><structured_fields><request></request><decisions></decisions><learned></learned><next_steps></next_steps><preferences></preferences></structured_fields><segments></segments>';\nfs.writeFileSync(process.argv[process.argv.indexOf('--output-last-message')+1],response);\n`, { mode: 0o700 })
+  await writeFile(executor, `#!${process.execPath}\nimport fs from 'node:fs';\nlet prompt=''; for await (const chunk of process.stdin) prompt += chunk;\nconst observation = prompt.includes('Extract durable observations');\nconst rollup = prompt.includes('You summarize captured development-session evidence');\nfs.appendFileSync(${JSON.stringify(executorCalls)}, JSON.stringify({observation,rollup})+'\\n');\nif (!observation && !rollup) process.exit(19);\nconst response = observation ? JSON.stringify({no_observations:{reason:'offline profile resolution probe'}}) : '<summary>Offline profile resolution probe.</summary><structured_fields><request></request><decisions>${decision}</decisions><learned></learned><next_steps></next_steps><preferences></preferences></structured_fields><segments></segments>';\nfs.writeFileSync(process.argv[process.argv.indexOf('--output-last-message')+1],response);\n`, { mode: 0o700 })
   await writeFile(process.env.REMEM_CONFIG, `[memory_ai.profiles.codex]\npath = ${JSON.stringify(executor)}\n`)
   execFileSync(executable, ['cleanup', '--dry-run'], { stdio: 'ignore' })
   const { ctx, fiber, model } = await harness(executable)
   model.arguments = JSON.stringify({ a: 1, password: 'hunter2' })
+  model.answer = decision
   try {
     let cancelFirst = true
     ctx.on('agent/pre-step', async ({ agent }, next) => {
@@ -211,14 +214,21 @@ test('real remem binary captures distinct DSH host and queues turn distillation'
     assert(executorEvidence.some(call => call.observation), 'DSH observation queue did not reach the configured executor')
     assert(executorEvidence.some(call => call.rollup), 'DSH rollup queue did not reach the configured executor')
     assert(!(await readFile(process.env.REMEM_CONFIG, 'utf8')).includes('deepseek-harness'))
-    const report = JSON.parse(execFileSync('/usr/bin/python3', ['-c', `import json,sqlite3,sys
+    let report
+    for (let attempt = 0; attempt < 200; attempt++) {
+      report = JSON.parse(execFileSync('/usr/bin/python3', ['-c', `import json,sqlite3,sys
 c=sqlite3.connect(sys.argv[1])
-e=c.execute("SELECT h.name,e.event_type,e.tool_name,e.content_text FROM captured_events e JOIN hosts h ON h.id=e.host_id WHERE e.session_id='live-remem-smoke' ORDER BY e.id").fetchall()
+e=c.execute("SELECT h.name,e.event_type,e.tool_name,e.content_text,e.role FROM captured_events e JOIN hosts h ON h.id=e.host_id WHERE e.session_id='live-remem-smoke' ORDER BY e.id").fetchall()
 t=c.execute("SELECT h.name,t.task_kind FROM extraction_tasks t JOIN hosts h ON h.id=t.host_id JOIN sessions s ON s.id=t.session_row_id WHERE s.session_id='live-remem-smoke'").fetchall()
 a=c.execute("SELECT content_text FROM captured_events WHERE session_id='live-attachments' ORDER BY id").fetchall()
 i=c.execute("SELECT COUNT(*) FROM context_injection_items WHERE session_id IN ('live-remem-smoke','live-attachments')").fetchone()[0]
 g=c.execute("SELECT COUNT(*) FROM context_injections WHERE session_id='live-remem-smoke'").fetchone()[0]
-print(json.dumps({'events':e,'tasks':t,'attachments':a,'prompt_injections':i,'persisted_gates':g}))`, join(root, 'remem.db')], { encoding: 'utf8' }))
+p=c.execute("SELECT review_status,source_trust_class,auto_promote_block_reason FROM memory_candidates c WHERE instr(c.text,?)>0 AND EXISTS (SELECT 1 FROM json_each(c.evidence_event_ids) i JOIN captured_events e ON e.id=i.value WHERE e.session_id='live-remem-smoke' AND (e.role='assistant' OR e.tool_name='assistant/message'))", (sys.argv[2],)).fetchall()
+m=c.execute("SELECT COUNT(*) FROM memories WHERE instr(content,?)>0", (sys.argv[2],)).fetchone()[0]
+print(json.dumps({'candidates':p,'promoted_memories':m,'events':e,'tasks':t,'attachments':a,'prompt_injections':i,'persisted_gates':g}))`, join(root, 'remem.db'), decision], { encoding: 'utf8' }))
+      if (report.candidates.length > 0) break
+      await new Promise(resolve => setTimeout(resolve, 25))
+    }
     assert.equal(report.attachments.length, 2)
     assert(report.attachments[0][0].includes('[image attachment'))
     assert(report.attachments[0][0].includes('[file attachment'))
@@ -229,7 +239,14 @@ print(json.dumps({'events':e,'tasks':t,'attachments':a,'prompt_injections':i,'pe
     assert(report.events.every(row => !row[3].includes('hunter2')))
     assert(report.events.some(row => row[1] === 'user_prompt_submit' && row[3].includes('Retry the fixture probe.')))
     assert(report.events.some(row => row[2] === 'fixture_probe' && row[3].includes('fixture probe succeeded')))
-    assert(report.events.some(row => row[2] === 'assistant/message' && row[3].includes('Verified the DSH fixture result.')))
+    assert(report.candidates.length > 0, 'rollup must produce a useful review candidate')
+    assert(report.candidates.every(row => row[0] === 'pending_review'
+      && row[1] === 'external_content' && row[2] === 'source_trust_below_floor'),
+    `assistant-only evidence must stay review-gated: ${JSON.stringify(report.candidates)}`)
+    assert.equal(report.promoted_memories, 0)
+    const assistants = report.events.filter(row => row[1] === 'message' && row[4] === 'assistant')
+    assert.equal(assistants.length, 2, 'both repeated assistant messages must be captured')
+    assert(assistants.every(row => row[2] === null && row[3].includes(decision)))
     assert(report.events.some(row => row[1] === 'session_stop'))
     assert(report.tasks.some(row => row[0] === 'deepseek-harness' && row[1] === 'session_rollup'))
     console.log(`Real remem smoke: ${report.events.length} DSH capture events; ${report.tasks.length} extraction tasks; flush complete`)

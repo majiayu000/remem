@@ -161,3 +161,109 @@ async fn observe_spills_projection_failure_and_replays_capture_once() -> anyhow:
     assert_eq!(retry_replayed_events, 1);
     Ok(())
 }
+
+#[test]
+fn dsh_assistant_capture_requires_corroboration_for_summary_promotion() -> anyhow::Result<()> {
+    let cwd = ScopedTestDataDir::new_offline("dsh-assistant-provenance");
+    std::fs::create_dir_all(&cwd.path)?;
+    let decision = "Use source kind telemetry for summary promotion gate";
+    for tool_content in [None, Some("cargo test passed"), Some(decision)] {
+        let mut conn = rusqlite::Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        let mut project = String::new();
+        let mut assistant_id = 0;
+        let mut event_ids = Vec::new();
+        let mut source_texts = Vec::new();
+        // Exercise the real DSH adapter and durable observe writer. Repeating an
+        // assistant claim, even beside an unrelated tool result, is not support.
+        for (index, (tool_name, content)) in [
+            Some(("assistant/message", decision)),
+            Some(("assistant/message", decision)),
+            tool_content.map(|content| ("fixture_probe", content)),
+        ]
+        .into_iter()
+        .flatten()
+        .enumerate()
+        {
+            let payload = serde_json::json!({
+                "host": "deepseek-harness", "session_id": "dsh-provenance",
+                "cwd": cwd.path, "tool_name": tool_name,
+                "tool_response": {"text": content}
+            });
+            let (adapter, event) =
+                super::detect_adapter_for_host(&payload.to_string(), Some("deepseek-harness"))
+                    .expect("DSH input should be recognized");
+            let summary = adapter.classify_event(&event).unwrap();
+            project = event.project.clone();
+            let id = super::record_observed_event_with_id(
+                &conn,
+                adapter.name(),
+                &format!("dsh-{index}"),
+                &event,
+                &summary,
+                &[],
+            )?;
+            event_ids.push(id);
+            source_texts.push(conn.query_row(
+                "SELECT content_text FROM captured_events WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )?);
+            if index == 0 {
+                assistant_id = id;
+            }
+        }
+        let project_id = conn.query_row(
+            "SELECT project_id FROM captured_events WHERE id = ?1",
+            [assistant_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            crate::memory::promote::promote_summary_to_memory_candidates_with_evidence(
+                &mut conn,
+                "dsh-provenance",
+                project_id,
+                &project,
+                &event_ids,
+                &source_texts,
+                None,
+                Some(decision),
+                None,
+                None,
+            )?,
+            1
+        );
+        let (status, trust, reason, memory_count): (String, String, Option<String>, i64) = conn
+            .query_row(
+                "SELECT review_status, source_trust_class, auto_promote_block_reason,
+                    (SELECT COUNT(*) FROM memories) FROM memory_candidates",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?;
+        if tool_content == Some(decision) {
+            assert_eq!(
+                (status.as_str(), trust.as_str(), reason, memory_count),
+                ("auto_promoted", "local_tool_output", None, 1)
+            );
+        } else {
+            assert_eq!(
+                status, "pending_review",
+                "assistant-only claim auto-promoted; tool={tool_content:?}"
+            );
+            assert_eq!(trust, "external_content");
+            assert_eq!(reason.as_deref(), Some("source_trust_below_floor"));
+            assert_eq!(memory_count, 0);
+        }
+        let (kind, role, tool, content): (String, Option<String>, Option<String>, String) = conn
+            .query_row(
+            "SELECT event_type, role, tool_name, content_text FROM captured_events WHERE id = ?1",
+            [assistant_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(kind, "message");
+        assert_eq!(role.as_deref(), Some("assistant"));
+        assert_eq!(tool, None);
+        assert!(content.contains(decision));
+    }
+    Ok(())
+}

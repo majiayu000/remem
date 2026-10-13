@@ -19,7 +19,11 @@ existing `summarize` workflow. Memory AI credentials and executor configuration
 remain owned by remem.
 
 The provenance host is `deepseek-harness`. DSH plugin context is never recaptured
-as a human prompt. Historical seed events are not ingested. The plugin does not
+as a human prompt. Assistant prose retains message/assistant provenance and remains
+external evidence: repetition or unrelated successful tools cannot make an
+assistant-only claim eligible for automatic memory promotion. Useful candidates
+stay available for review; independently supporting local evidence can satisfy
+the existing promotion gates. Historical seed events are not ingested. The plugin does not
 claim filesystem transcript import, automatic MCP tools, or host installation via
 `remem install`. A DSH adapter preserves arbitrary tool names and results. JSON tool arguments
 are decoded before capture so secret-key redaction applies; malformed arguments

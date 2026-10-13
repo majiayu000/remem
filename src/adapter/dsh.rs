@@ -25,7 +25,12 @@ impl ToolAdapter for DeepSeekHarnessAdapter {
 
     fn classify_event(&self, event: &ParsedHookEvent) -> Option<EventSummary> {
         Some(EventSummary {
-            event_type: "tool_result".into(),
+            event_type: if event.tool_name == "assistant/message" {
+                "message"
+            } else {
+                "tool_result"
+            }
+            .into(),
             summary: format!("DSH {}", event.tool_name),
             detail: None,
             files_json: None,
