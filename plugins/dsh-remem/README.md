@@ -6,9 +6,17 @@
 注入项目记忆，记录用户提示、助手文本与工具结果，轮次结束排队自动提炼。
 记忆提取、来源治理、加密与检索都沿用 remem。
 
-快照更新和移除遵守官方 session invariant；准备或替换失败后，未提交的原始提示
+快照更新和移除遵守官方 session invariant；remem 准备或替换失败后，未提交的原始提示
 保留待显式重试。取消等待不终止已经开始的持久化捕获，后续 flush 仍会报告错误。
-请求准备期间卸载插件后，恢复仍持续到该回调退出，已提交输入不会重复入队。
+插件仍加载时，`agent/error` 也会恢复后续请求准备失败涉及的未提交原始输入。
+卸载打断正在运行的 remem `agent/pre-step` 或 `agent/request` 回调时，恢复持续到
+该回调退出；保留原始身份、顺序和来源，不恢复合成记忆、已提交输入或主动取消的批次。
+
+已知宿主限制：DSH `0.2.0-rc.2` 在 `agent/pre-step` 前取走输入，在 `agent/request`
+返回后、提交 `user/message` 前等待公共 `LlmAdapter.prepareCall`。若此时 remem 已卸载
+且调用失败，输入会丢失，重载插件再显式重试也无法恢复；从未加载插件时同样如此。
+若调用成功，宿主仍会提交一次；卸载期间提交的事件不会在重载时补录。
+
 超出 1 MiB 的工具观察按完整 JSON 字节预算保留结构化参数、结果和展示元数据，
 省略部分会显式标记。大文本仅保留完整前导行，超长单行整行省略；保留内容由
 核心继续脱敏和持久化。完整原始工具结果仍在 DSH 历史中。
@@ -50,12 +58,13 @@ dsh plugin --profile headless add /absolute/path/remem-ai-dsh-remem-0.1.0.tgz
 
 确保会话有绝对 `cwd`；在 remem 内配置提炼使用的 executor/profile。插件继承
 remem 环境与配置，不下载二进制，不注册 MCP，不修改 DSH 的审批规则。
-`session/flush` 和插件卸载等待待处理子进程。CLI 错误写入宿主错误日志并在
+`session/flush` 和插件卸载等待 remem 自己的待处理工作，不等待宿主剩余请求准备。
+CLI 错误写入宿主错误日志并在
 flush / 下次请求准备时报告一次，后续正常捕获可以恢复；详细诊断查 remem 日志，插件不转发可能含敏感
-值的 stderr。准备失败会保留已取走的原始提示，等待显式重试；取消会立即终止
+值的 stderr。remem 准备失败会保留已取走的原始提示，等待显式重试；取消会立即终止
 context 子进程。未设置 profile 时，使用 remem 现有的 codex profile 默认值。
 
-自动捕获只覆盖插件加载后的实时事件。用户来源 `user` 会被保存，插件注入
+自动捕获只覆盖插件加载期间提交的实时事件。用户来源 `user` 会被保存，插件注入
 来源 `remem` 不会被当成人类提示重复收录。历史 DSH 文件导入未实现。提炼
 图片和文件仅保存有界引用元数据，不读取附件字节。用户提示捕获不执行
 无法送达的即时召回；每轮首步仅在已提交历史的记忆快照变化时注入，取消
@@ -91,25 +100,38 @@ executable's absolute path using the user patch above. Configure memory AI in
 remem 0.7.0 from this branch (not yet released). Old binaries fail visibly on the first real DSH CLI request.
 
 Live sessions require an absolute project cwd. Capture runs in order and is
-awaited at session flush and plugin disposal. A checkpoint reports each stored
-capture failure once, allowing later healthy work to recover. Failed preparation
+awaited at session flush and plugin disposal; disposal drains remem-owned work,
+not remaining host request preparation. A checkpoint reports each stored
+capture failure once, allowing later healthy work to recover. Failed remem preparation
 parks the original claimed batch for an explicit retry; cancellation kills the
 context child promptly. An omitted profile uses the existing codex profile
 defaults in remem. Errors remain visible without
 forwarding secret-bearing subprocess stderr. Injected remem context is attributed
-to its own source and never recaptured as a human prompt. Historical DSH transcript
+to its own source and never recaptured as a human prompt. Capture covers live
+events committed while the plugin is loaded. Historical DSH transcript
 import, automatic MCP registration, and memory AI credentials are outside this
 adapter. Image/file capture retains bounded reference metadata without reading
 attachment bytes. Prompt capture does not perform undeliverable recall. Snapshot
 deduplication uses committed session history, so cancelled preparation can retry.
 Changed or removed memory supersedes obsolete snapshots in future requests while
 retaining the original event log and human prompts. Replacements run after
-`step/start` with the official session invariant enabled. Request preparation or
-replacement failures restore only uncommitted original inputs for explicit retry.
+`step/start` with the official session invariant enabled. Remem preparation or
+replacement failures restore only uncommitted original inputs for explicit retry;
+while loaded, `agent/error` also recovers later request-preparation failures.
 Cancelling a capture checkpoint returns promptly while durable capture and any
 error remain available to the later flush.
-Unloading during pending request preparation still restores uncommitted original
-inputs when the callback exits, even after Cordis removes the plugin listeners.
+If unload interrupts a running remem `agent/pre-step` or `agent/request` callback,
+recovery lasts until that callback exits, even after Cordis removes its listeners.
+It preserves original identities, order and sources, excluding synthetic memory,
+committed inputs and intentionally cancelled batches.
+
+Known host limitation: DSH 0.2.0-rc.2 claims input before `agent/pre-step`, then
+awaits public `LlmAdapter.prepareCall` after `agent/request` returns and before
+committing `user/message`. If remem has unloaded and that call fails, the input is
+lost; reload plus explicit retry cannot recover it. The same loss occurs without
+ever loading remem. A successful call still commits once after unload; events
+committed while unloaded are not imported on reload.
+
 Tool observations exceeding the 1 MiB stdin budget retain bounded structured
 arguments, result content and presentation metadata with explicit omission
 metadata. Large strings retain complete leading lines; an oversized single line

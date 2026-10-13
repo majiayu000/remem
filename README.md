@@ -30,9 +30,13 @@ It targets published DSH 0.2.0-rc.2; the npm adapter is not yet published.
 Build the DSH-enabled remem 0.7.0 source before installing the adapter.
 Assistant-only claims remain available for review and cannot auto-promote without
 independent supporting evidence. Snapshot updates and removals respect the published
-DSH session invariant; failed preparation retains uncommitted prompts for an
+DSH session invariant; remem preparation failures retain uncommitted prompts for an
 explicit retry, while cancellation leaves durable capture available to flush.
-This includes unloading during request preparation. Oversized tool observations
+Recovery across unload lasts until the in-flight remem callback exits; while
+loaded, `agent/error` also recovers later preparation failures. Host `prepareCall`
+runs after `agent/request` returns: after unload, failure can lose claimed input,
+while success still commits once without remem capture. Reload does not recover
+lost input or import events committed while unloaded. Oversized tool observations
 retain bounded structured evidence with explicit omissions before core redaction.
 
 ## What remem gives you

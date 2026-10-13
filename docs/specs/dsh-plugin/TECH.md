@@ -70,20 +70,33 @@ Plugin disposal aborts and awaits outstanding context children before returning;
 preparation waiting on capture cannot start a context child after disposal.
 A cancelled preparation stops waiting for capture promptly; the capture itself
 continues to the awaited flush, retaining any failure for that checkpoint.
-An unload-interrupted preparation retains its original inputs for an explicit retry
-after reinstall, and cannot commit a memory snapshot.
-Preparation errors park the original claimed batch in the DSH inbox before
-propagating the error; an explicit later wake retries those identities and sources.
-The current admitted batch is retained only until commitment or turn end. If request
-preparation or snapshot replacement fails, `agent/error` restores only originals
-not yet committed as `user/message`, without restoring synthetic context or
-duplicating committed prompts. User cancellation discards its claimed batch.
-The request callback holds its admission state across downstream preparation and
-recovers directly on failure, including after plugin disposal clears the session
-map and Cordis removes `agent/error`. Recovery consumes that admission once and
+Errors within a running remem `agent/pre-step` callback park the original claimed
+batch in the DSH inbox before propagating; an explicit later wake retries those
+identities, order and sources. User cancellation still discards its claimed batch.
+The `agent/request` callback holds admission state across `await next()` and
+recovers uncommitted originals on downstream failure, snapshot replacement failure
+or remem lifetime-abort, even after disposal clears the session map and Cordis
+removes `agent/error`. Recovery consumes that admission once and
 checks committed message IDs in session history, so a commit after listener
-removal is not duplicated. It does not wait for arbitrary downstream middleware
-inside the plugin disposer; recovery lives until the callback exits.
+removal is not duplicated; synthetic context is never restored. This callback-local
+recovery lasts until the callback exits. While remem remains loaded, `agent/error`
+also restores uncommitted admitted originals on later preparation failures,
+including public `LlmAdapter.prepareCall` failures, before `turn/end` clears admission.
+Disposal drains remem-owned work, not arbitrary downstream middleware or host
+request preparation.
+
+DSH 0.2.0-rc.2 claims input before `agent/pre-step`. `agent/request` returns
+configuration; the host then awaits `LlmAdapter.prepareCall` before committing
+`user/message`. Once the callback has returned and Cordis has unloaded remem, no
+plugin error listener remains. A later `prepareCall` rejection follows the host's
+no-plugin baseline: claimed input is absent from both inbox and committed history,
+and remem has not captured it. Reload plus explicit retry cannot reconstruct it.
+A successful late call still commits the host-owned accepted batch once after
+unload; events committed while unloaded are not imported on reload. The guarantee
+that unload prevents a memory snapshot commit applies only to preparation actually
+interrupted by remem's lifetime abort. It does not cover later host preparation
+after the callback returns. No post-unload host transaction guarantee is provided.
+
 A later retry derives snapshot state from committed history, including any
 replacements accepted before a subsequent failure.
 Capture errors remain error-level diagnostics and are consumed once an awaited

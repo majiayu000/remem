@@ -33,13 +33,25 @@ arguments and results, including presentation metadata. Omitted content is
 explicitly marked; retained evidence still passes through core redaction and
 capture. Full original results remain in DSH history, not a new adapter store.
 
-Missing executables fail activation. Context failures reject request preparation;
-the original claimed prompts remain in the DSH inbox for an explicit retry.
-The same guarantee covers request preparation and snapshot replacement failures:
-only uncommitted original inputs return to the inbox. Snapshot replacement obeys
-the published DSH session invariant and retains committed human prompts.
-Recovery remains effective until an in-flight request callback exits even when
-Cordis has unloaded the plugin and removed its listeners.
+Missing executables fail activation. Errors in remem context preparation, its
+awaited capture checkpoint or snapshot replacement preserve uncommitted original
+inputs for explicit retry. While loaded, `agent/error` also recovers the admitted
+batch on later request-preparation failures. If unload interrupts a running remem
+`agent/pre-step` or `agent/request` callback, recovery lasts until that callback
+exits, even after Cordis removes its listeners. Recovery preserves original
+identities, order and sources, excluding synthetic memory, committed messages
+and intentionally cancelled batches. Snapshot replacement obeys the published
+DSH session invariant and retains committed human prompts.
 Cancellation promptly stops context preparation without committing a snapshot.
 Background capture failures are logged and surface once through an awaited
-checkpoint, after which healthy work can recover. No silent loss or automatic binary downloads.
+checkpoint, after which healthy work can recover. Disposal awaits remem-owned
+work, not remaining host request preparation. No silent capture failures or
+automatic binary downloads.
+
+Known host limitation: DSH 0.2.0-rc.2 claims input before `agent/pre-step`, then
+awaits public `LlmAdapter.prepareCall` after `agent/request` returns and before
+committing `user/message`. If remem has unloaded and that call fails, the claimed
+input is lost; reload plus explicit retry cannot recover it. The same loss occurs
+without ever loading remem. A successful call still commits once after unload.
+Capture covers live events committed while remem is loaded; events committed
+while unloaded are not imported on reload.
