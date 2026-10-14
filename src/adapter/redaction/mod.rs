@@ -1,6 +1,8 @@
 //! Shared redaction for hook capture previews and MCP/CLI projections.
 
 use crate::db;
+use serde::ser::SerializeMap;
+use serde::Serialize;
 
 mod keys;
 mod tokens;
@@ -118,6 +120,40 @@ pub(crate) fn redact_sensitive_text(text: &str) -> String {
         .map(redact_sensitive_line)
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+pub(crate) fn redact_structured_sensitive_text(text: &str) -> String {
+    // Redact at JSON boundaries so metadata cannot join prose into a secret-like token.
+    // Compact output leaves the content budget available for evidence, not formatting.
+    serde_json::from_str::<serde_json::Value>(text)
+        .map(|value| {
+            serde_json::to_string(&RedactedJsonKeys(&redact_sensitive_value(&value)))
+                .expect("captured JSON should serialize")
+        })
+        .unwrap_or_else(|_| redact_sensitive_text(text))
+}
+
+// Serialize entries directly: rebuilding a map after key redaction could collapse
+// distinct secret-shaped keys and lose their non-sensitive values.
+struct RedactedJsonKeys<'a>(&'a serde_json::Value);
+
+impl Serialize for RedactedJsonKeys<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            serde_json::Value::Object(map) => {
+                let mut output = serializer.serialize_map(Some(map.len()))?;
+                for (key, value) in map {
+                    output
+                        .serialize_entry(&redact_sensitive_text(key), &RedactedJsonKeys(value))?;
+                }
+                output.end()
+            }
+            serde_json::Value::Array(items) => {
+                serializer.collect_seq(items.iter().map(RedactedJsonKeys))
+            }
+            value => value.serialize(serializer),
+        }
+    }
 }
 
 /// Redact user-facing projection text (MCP/CLI) including short inline

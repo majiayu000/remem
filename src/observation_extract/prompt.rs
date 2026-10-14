@@ -168,7 +168,7 @@ fn extraction_run_date(range: &EvidenceRange) -> String {
 }
 
 fn redact_extract_content(content: &str) -> String {
-    let redacted = crate::adapter::common::redact_sensitive_text(content)
+    let redacted = crate::adapter::common::redact_structured_sensitive_text(content)
         .replace("[REDACTED]", "[REDACTED_SECRET]");
     xml_escape_text(&redacted)
 }

@@ -1,5 +1,6 @@
 mod bounded_input;
 mod generated_output;
+mod structured_content;
 
 use anyhow::Context;
 use rusqlite::params;
