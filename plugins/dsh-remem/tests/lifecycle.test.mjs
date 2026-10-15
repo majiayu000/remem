@@ -223,7 +223,7 @@ test('real remem binary preserves DSH assistant provenance through rollup promot
       report = JSON.parse(execFileSync('/usr/bin/python3', ['-c', `import json,sqlite3,sys
 c=sqlite3.connect(sys.argv[1])
 e=c.execute("SELECT h.name,e.event_type,e.tool_name,e.content_text,e.role FROM captured_events e JOIN hosts h ON h.id=e.host_id WHERE e.session_id='live-remem-smoke' ORDER BY e.id").fetchall()
-t=c.execute("SELECT h.name,t.task_kind FROM extraction_tasks t JOIN hosts h ON h.id=t.host_id JOIN sessions s ON s.id=t.session_row_id WHERE s.session_id='live-remem-smoke'").fetchall()
+t=c.execute("SELECT h.name,t.task_kind,t.status,t.high_watermark_event_id,t.completed_event_id FROM extraction_tasks t JOIN hosts h ON h.id=t.host_id JOIN sessions s ON s.id=t.session_row_id WHERE s.session_id='live-remem-smoke'").fetchall()
 a=c.execute("SELECT content_text FROM captured_events WHERE session_id='live-attachments' ORDER BY id").fetchall()
 i=c.execute("SELECT COUNT(*) FROM context_injection_items WHERE session_id IN ('live-remem-smoke','live-attachments')").fetchone()[0]
 g=c.execute("SELECT COUNT(*) FROM context_injections WHERE session_id='live-remem-smoke'").fetchone()[0]
@@ -231,6 +231,10 @@ p=c.execute("SELECT review_status,source_trust_class,auto_promote_block_reason F
 m=c.execute("SELECT COUNT(*) FROM memories WHERE instr(content,?)>0", (sys.argv[2],)).fetchone()[0]
 print(json.dumps({'candidates':p,'promoted_memories':m,'events':e,'tasks':t,'attachments':a,'prompt_injections':i,'persisted_gates':g}))`, join(root, 'remem.db'), decision], { encoding: 'utf8' }))
       if (report.candidates.length > 0) break
+      // Executor-start logs can describe an earlier rollup without assistant
+      // evidence. Keep admitting bounded worker passes until durable promotion
+      // evidence exists; a once worker can exit while follow-up work is pending.
+      execFileSync(executable, ['worker', '--once'], { stdio: 'ignore', timeout: 10_000 })
       await new Promise(resolve => setTimeout(resolve, 25))
     }
     assert.equal(report.attachments.length, 2)
@@ -243,7 +247,8 @@ print(json.dumps({'candidates':p,'promoted_memories':m,'events':e,'tasks':t,'att
     assert(report.events.every(row => !row[3].includes('hunter2')))
     assert(report.events.some(row => row[1] === 'user_prompt_submit' && row[3].includes('Retry the fixture probe.')))
     assert(report.events.some(row => row[2] === 'fixture_probe' && row[3].includes('fixture probe succeeded')))
-    assert(report.candidates.length > 0, 'rollup must produce a useful review candidate')
+    assert(report.candidates.length > 0,
+      `rollup must produce a useful review candidate; tasks=${JSON.stringify(report.tasks.slice(0, 12))}`)
     assert(report.candidates.every(row => row[0] === 'pending_review'
       && row[1] === 'external_content' && row[2] === 'source_trust_below_floor'),
     `assistant-only evidence must stay review-gated: ${JSON.stringify(report.candidates)}`)
