@@ -950,14 +950,15 @@ c=sqlite3.connect(sys.argv[1]); print(json.dumps(c.execute("SELECT e.event_type,
       assert.equal(model.requests.length, 2)
       assert.equal(handle.agent.session.snapshotEvents().findLast(e => e.type === 'turn/end').data.reason.kind, 'completed')
       const rows = JSON.parse(execFileSync('/usr/bin/python3', ['-c', `import json,sqlite3,sys
-c=sqlite3.connect(sys.argv[1]); print(json.dumps(c.execute("SELECT e.event_type,e.role,COALESCE(CAST(b.content_bytes AS TEXT),e.content_text) FROM captured_events e LEFT JOIN event_blobs b ON b.id=e.content_blob_id WHERE e.session_id='live-large-messages' ORDER BY e.id").fetchall()))`, join(root, 'remem.db')], { encoding: 'utf8' }))
+c=sqlite3.connect(sys.argv[1]); rows=c.execute("SELECT e.event_type,e.role,COALESCE(CAST(b.content_bytes AS TEXT),e.content_text) FROM captured_events e LEFT JOIN event_blobs b ON b.id=e.content_blob_id WHERE e.session_id='live-large-messages' ORDER BY e.id").fetchall()
+print(json.dumps([[kind,role,'Useful large message evidence.' in content,'remem_capture' in content,'message-secret' in content] for kind,role,content in rows]))`, join(root, 'remem.db')], { encoding: 'utf8' }))
       for (const row of [rows.find(r => r[0] === 'user_prompt_submit'),
         rows.find(r => r[0] === 'message' && r[1] === 'assistant'), rows.find(r => r[0] === 'session_stop')]) {
         assert(row, 'prompt, assistant and Stop must all persist')
-        assert(row[2].includes('Useful large message evidence.'))
-        assert(row[2].includes('remem_capture'), 'omission metadata must survive the core writer')
+        assert(row[2], 'useful message evidence must survive the core writer')
+        assert(row[3], 'omission metadata must survive the core writer')
       }
-      assert(!JSON.stringify(rows).includes('message-secret'))
+      assert(rows.every(row => !row[4]), 'core redaction must remove the fixture secret')
     } finally { await handle?.dispose(); await fiber.dispose(); await ctx.fiber.dispose() }
   } finally {
     for (const [key, value] of Object.entries(previous)) {
