@@ -63,9 +63,9 @@ dsh plugin --profile headless add /absolute/path/remem-ai-dsh-remem-0.1.0.tgz
 确保会话有绝对 `cwd`；在 remem 内配置提炼使用的 executor/profile。插件继承
 remem 环境与配置，不下载二进制，不注册 MCP，不修改 DSH 的审批规则。
 `session/flush` 和插件卸载等待 remem 自己的待处理工作，不等待宿主剩余请求准备。
-CLI 错误写入宿主错误日志并在
-flush / 下次请求准备时报告一次，后续正常捕获可以恢复；详细诊断查 remem 日志，插件不转发可能含敏感
-值的 stderr。remem 准备失败会保留已取走的原始提示，等待显式重试；取消会立即终止
+每个同步或异步捕获错误分别写入宿主错误日志，并在
+flush / 下次请求准备时一起报告一次；取消等待不会清除待报告错误，后续正常捕获可以恢复。
+详细诊断查 remem 日志，插件不转发可能含敏感值的 stderr。remem 准备失败会保留已取走的原始提示，等待显式重试；取消会立即终止
 context 子进程。未设置 profile 时，使用 remem 现有的 codex profile 默认值。
 
 自动捕获只覆盖插件加载期间提交的实时事件。用户来源 `user` 会被保存，插件注入
@@ -105,8 +105,9 @@ remem 0.7.0 from this branch (not yet released). Old binaries fail visibly on th
 
 Live sessions require an absolute project cwd. Capture runs in order and is
 awaited at session flush and plugin disposal; disposal drains remem-owned work,
-not remaining host request preparation. A checkpoint reports each stored
-capture failure once, allowing later healthy work to recover. Failed remem preparation
+not remaining host request preparation. Each synchronous or asynchronous capture
+failure is logged separately. A checkpoint reports all pending failures once,
+allowing later healthy work to recover. Failed remem preparation
 parks the original claimed batch for an explicit retry; cancellation kills the
 context child promptly. An omitted profile uses the existing codex profile
 defaults in remem. Errors remain visible without
@@ -123,7 +124,7 @@ retaining the original event log and human prompts. Replacements run after
 replacement failures restore only uncommitted original inputs for explicit retry;
 while loaded, `agent/error` also recovers later request-preparation failures.
 Cancelling a capture checkpoint returns promptly while durable capture and any
-error remain available to the later flush.
+errors remain available to the later flush.
 If unload interrupts a running remem `agent/pre-step` or `agent/request` callback,
 recovery lasts until that callback exits, even after Cordis removes its listeners.
 It preserves original identities, order and sources, excluding synthetic memory,

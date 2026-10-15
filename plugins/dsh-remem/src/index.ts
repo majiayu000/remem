@@ -197,12 +197,12 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
   const contextRuns = new Map<Promise<string>, AbortSignal>()
   // Availability only. The first real CLI request validates the DSH host contract.
   await run(executable, ['--version'])
-  const states = new Map<Session, { pending: Promise<void>; error?: Error;
+  const states = new Map<Session, { pending: Promise<void>; errors: Error[];
     admission?: { turn: number; step: number; signal: AbortSignal; messages: UserMessage[]; replacements: SessionSeq[] };
     calls: Map<string, { name: string; arguments: string }>; lastAnswer?: string }>()
   const state = (session: Session) => {
     let value = states.get(session)
-    if (!value) { value = { pending: Promise.resolve(), calls: new Map() }; states.set(session, value) }
+    if (!value) { value = { pending: Promise.resolve(), errors: [], calls: new Map() }; states.set(session, value) }
     return value
   }
   const recoverAdmission = (agent: Agent, value: ReturnType<typeof state>, turn: number) => {
@@ -228,10 +228,10 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
       if (onAbort) signal!.removeEventListener('abort', onAbort)
     }
     signal?.throwIfAborted()
-    // A cancelled preparation leaves capture and its error for a later flush.
-    const error = value.error
-    value.error = undefined
-    if (error) throw error
+    // A cancelled preparation leaves capture and its errors for a later flush.
+    const errors = value.errors.splice(0)
+    if (errors.length === 1) throw errors[0]
+    if (errors.length) throw new AggregateError(errors, errors.map(error => error.message).join('; '))
   }
   const capture = (session: Session, command: string, payload: unknown) => {
     const value = state(session)
@@ -242,8 +242,9 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
         if (command === 'summarize' && config.profile) args.push('--profile', config.profile)
         await run(executable, args, payload)
       } catch (error) {
-        value.error ??= error instanceof Error ? error : new Error(String(error))
-        ctx.logger.error(value.error.message)
+        const failure = error instanceof Error ? error : new Error(String(error))
+        value.errors.push(failure)
+        ctx.logger.error(failure.message)
       }
     })
   }
@@ -352,8 +353,9 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
       }
     } catch (error) {
       const value = state(session)
-      value.error ??= error instanceof Error ? error : new Error(String(error))
-      ctx.logger.error(value.error.message)
+      const failure = error instanceof Error ? error : new Error(String(error))
+      value.errors.push(failure)
+      ctx.logger.error(failure.message)
     }
   })
   ctx.on('session/flush', wait)

@@ -132,6 +132,55 @@ test('capture failure is reported once and later captures recover', async () => 
   } finally { await fiber.dispose().catch(() => {}); await ctx.fiber.dispose().catch(() => {}); await rm(f.root, { recursive: true, force: true }) }
 })
 
+test('one checkpoint reports every queued async and synchronous capture failure', async () => {
+  const f = await fixture()
+  const normal = await readFile(f.executable, 'utf8')
+  await writeFile(f.executable, `#!${process.execPath}\nfor await (const chunk of process.stdin) {}\nif (process.argv[2] === 'session-init') process.exit(7);\nif (process.argv[2] === 'summarize') process.exit(9);\n`, { mode: 0o700 })
+  const { ctx, fiber } = await harness(f.executable)
+  const logged = []
+  ctx.logger.error = message => logged.push(message)
+  try {
+    const session = ctx.sessions.create(SessionId('multiple-failures'), { meta: { cwd: tmpdir() } })
+    session.append('turn/start', { turn: 1 })
+    session.append('step/start', { turn: 1, step: 1 })
+    const appendPrompt = prompt => session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: prompt }], source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    appendPrompt('first capture')
+    for (const [callId, name, args] of [['invalid', 'fixture_probe', 'private-invalid-json'],
+      ['identity', 't'.repeat(1024 * 1024), '{}']]) {
+      session.append('tool/call', { turn: 1, step: 1, callId: ToolCallId(callId), name, arguments: args })
+      session.append('tool/result', { turn: 1, step: 1, message: createToolResultMessage({
+        callId: ToolCallId(callId), content: [{ type: 'text', text: 'evidence' }], isError: false,
+      }) }, { surfaceOp: 'append' })
+    }
+    session.append('step/end', { turn: 1, step: 1 })
+    session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    const expected = [
+      'remem: DSH tool arguments are invalid JSON; capture rejected',
+      'remem: tool observation identity exceeds the stdin budget',
+      'remem session-init failed (exit 7, signal none); inspect the remem log',
+      'remem summarize failed (exit 9, signal none); inspect the remem log',
+    ].sort()
+    const failure = await ctx.parallel('session/flush', session).then(() => null, error => error)
+    assert.deepEqual(logged.toSorted(), expected, 'log each current cause, never repeat the first error')
+    assert(failure instanceof AggregateError)
+    const batch = failure.errors[0]
+    assert(batch instanceof AggregateError)
+    assert.deepEqual(batch.errors.map(error => error.message).sort(), expected)
+    assert(expected.every(message => batch.message.includes(message)), 'host-visible message must retain every cause')
+    await ctx.parallel('session/flush', session)
+    await writeFile(f.executable, normal, { mode: 0o700 })
+    appendPrompt('healthy capture after reported batch')
+    await ctx.parallel('session/flush', session)
+    assert((await f.calls()).some(call => call.payload?.prompt === 'healthy capture after reported batch'))
+    assert.equal(logged.length, 4)
+  } finally {
+    await fiber.dispose().catch(() => {}); await ctx.fiber.dispose().catch(() => {})
+    await rm(f.root, { recursive: true, force: true })
+  }
+})
+
 test('missing executable rejects plugin activation', async () => {
   const ctx = new Context()
   await assert.rejects(plugin.apply(ctx, { executable: '/missing/dsh-remem-binary' }), /Cannot start remem/)
@@ -750,7 +799,7 @@ for (const failCapture of [false, true]) test(`cancelling a capture checkpoint r
   const release = join(f.root, 'capture-release')
   const normal = await readFile(f.executable, 'utf8')
   await writeFile(f.executable, normal.replace("if (args[0] === 'observe') await new Promise(r=>setTimeout(r, 25));",
-    `if (args[0] === 'observe') { fs.writeFileSync(${JSON.stringify(entered)}, 'ready'); while (!fs.existsSync(${JSON.stringify(release)})) await new Promise(r=>setTimeout(r, 25)); ${failCapture ? 'process.exit(9)' : ''} }`), { mode: 0o700 })
+    `if (args[0] === 'observe') { fs.writeFileSync(${JSON.stringify(entered)}, 'ready'); while (!fs.existsSync(${JSON.stringify(release)})) await new Promise(r=>setTimeout(r, 25)); ${failCapture ? 'process.exit(9)' : ''} }`) + (failCapture ? "\nif (args[0] === 'session-init') process.exit(7); if (args[0] === 'summarize') process.exit(8);\n" : ''), { mode: 0o700 })
   const { ctx, model, fiber } = await harness(f.executable)
   let handle
   try {
@@ -771,8 +820,11 @@ for (const failCapture of [false, true]) test(`cancelling a capture checkpoint r
     assert.equal(handle.agent.inbox.hasPending, false)
     assert.equal(handle.agent.session.snapshotEvents().findLast(e => e.type === 'turn/end').data.reason.kind, 'aborted')
     if (failCapture) {
-      await assert.rejects(ctx.parallel('session/flush', handle.agent.session), error =>
-        error instanceof AggregateError && error.errors.some(e => /exit 9/.test(e.message)))
+      await assert.rejects(ctx.parallel('session/flush', handle.agent.session), error => {
+        const batch = error instanceof AggregateError && error.errors[0]
+        return batch instanceof AggregateError && batch.errors.length === 3
+          && [7, 8, 9].every(code => batch.errors.some(cause => cause.message.includes(`exit ${code}`)))
+      })
     }
     await ctx.parallel('session/flush', handle.agent.session)
     assert.equal((await f.calls()).at(-1).args[0], 'summarize')

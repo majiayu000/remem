@@ -47,8 +47,9 @@ identities, order and sources, excluding synthetic memory, committed messages
 and intentionally cancelled batches. Snapshot replacement obeys the published
 DSH session invariant and retains committed human prompts.
 Cancellation promptly stops context preparation without committing a snapshot.
-Background capture failures are logged and surface once through an awaited
-checkpoint, after which healthy work can recover. Disposal awaits remem-owned
+Every synchronous or background capture failure is logged separately and all
+pending failures surface together once through an awaited checkpoint. Cancellation
+leaves them for a later checkpoint, after which healthy work can recover. Disposal awaits remem-owned
 work, not remaining host request preparation. No silent capture failures or
 automatic binary downloads.
 

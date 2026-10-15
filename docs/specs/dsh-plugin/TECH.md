@@ -102,8 +102,10 @@ after the callback returns. No post-unload host transaction guarantee is provide
 
 A later retry derives snapshot state from committed history, including any
 replacements accepted before a subsequent failure.
-Capture errors remain error-level diagnostics and are consumed once an awaited
-checkpoint reports them, allowing later healthy captures and steps to proceed.
+Each capture error remains an error-level diagnostic and is retained in the
+session queue until an uncancelled awaited checkpoint consumes the batch. A single
+failure is thrown unchanged; multiple failures use AggregateError with each cause
+and its safe message. Later healthy captures and steps can then proceed.
 Without an explicit profile, the existing runtime host defaults resolve DSH
 extraction to the existing codex profile; this does not modify models or credentials.
 Tool-call argument JSON is parsed into structured values before capture. Invalid
