@@ -198,7 +198,8 @@ fn dsh_assistant_capture_requires_corroboration_for_summary_promotion() -> anyho
             let payload = serde_json::json!({
                 "host": host, "session_id": "dsh-provenance",
                 "cwd": cwd.path, "tool_name": tool_name,
-                "tool_input": {"command": "cargo test"},
+                "tool_input": {"command": "cargo test", "dsh_event_type":
+                    if index < 2 { "assistant/message" } else { "tool/result" }},
                 "tool_response": {"text": content, "exitCode": 0}
             });
             let (adapter, event) = super::detect_adapter_for_host(&payload.to_string(), Some(host))
@@ -274,6 +275,44 @@ fn dsh_assistant_capture_requires_corroboration_for_summary_promotion() -> anyho
         assert_eq!(role.as_deref(), Some("assistant"));
         assert_eq!(tool, None);
         assert!(content.contains(decision));
+    }
+    Ok(())
+}
+
+#[test]
+fn dsh_colliding_tool_name_keeps_durable_tool_provenance() -> anyhow::Result<()> {
+    let conn = rusqlite::Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    for (source, kind, role, tool) in [
+        (
+            "tool/result",
+            "tool_result",
+            None,
+            Some("assistant/message"),
+        ),
+        ("assistant/message", "message", Some("assistant"), None),
+    ] {
+        let payload = serde_json::json!({
+            "host": "deepseek-harness", "session_id": "dsh-collision",
+            "cwd": "/tmp/dsh-collision", "tool_name": "assistant/message",
+            "tool_input": {"dsh_event_type": source,
+                "arguments": {"dsh_event_type": "assistant/message"}},
+            "tool_response": {"text": "captured evidence"}
+        });
+        let (adapter, event) =
+            super::detect_adapter_for_host(&payload.to_string(), Some("deepseek-harness"))
+                .expect("DSH event should be recognized");
+        let summary = adapter.classify_event(&event).unwrap();
+        let id =
+            super::record_capture_event_with_id(&conn, adapter.name(), source, &event, &summary)?;
+        let stored: (String, Option<String>, Option<String>) = conn.query_row(
+            "SELECT event_type, role, tool_name FROM captured_events WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(stored.0, kind);
+        assert_eq!(stored.1.as_deref(), role);
+        assert_eq!(stored.2.as_deref(), tool);
     }
     Ok(())
 }

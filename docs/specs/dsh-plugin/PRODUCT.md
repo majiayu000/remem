@@ -27,7 +27,10 @@ the existing promotion gates. Historical seed events are not ingested. The plugi
 claim filesystem transcript import, automatic MCP tools, or host installation via
 `remem install`. A DSH adapter preserves arbitrary tool names and results. All DSH tool results
 are external evidence because arbitrary registered names do not prove local
-provenance, including names matching local tools on other hosts. JSON tool arguments
+provenance, including names matching local tools on other hosts. Tool arguments
+cannot change an event's source: a tool named `assistant/message` remains a tool
+result, distinct from actual assistant prose even when its evidence is oversized.
+JSON tool arguments
 are decoded before capture so secret-key redaction applies; malformed arguments
 produce a visible safe capture error without retaining their raw text.
 Prompts, assistant messages, turn summaries and tool observations exceeding the

@@ -60,19 +60,23 @@ function projectEvidence(value: unknown, budget: number): unknown {
   return array ? kept.map(([, child]) => child) : Object.fromEntries(kept)
 }
 
-function toolObservation(base: object, name: string, args: unknown, result: unknown): unknown {
-  const payload = { ...base, tool_name: name, tool_input: { arguments: args }, tool_response: result }
+function toolObservation(base: object, eventType: 'assistant/message' | 'tool/result',
+  name: string, args: unknown, result: unknown): unknown {
+  const payload = { ...base, tool_name: name,
+    tool_input: { dsh_event_type: eventType, arguments: args }, tool_response: result }
   const originalBytes = jsonBytes(payload)
   if (originalBytes <= maxObservationBytes) return payload
   // This sidecar is inside tool_input so the existing core ledger retains it.
   const remem_capture = { omitted: true, original_envelope_bytes: originalBytes,
     arguments_json_bytes: jsonBytes(args), result_json_bytes: jsonBytes(result),
     policy: 'bounded structure and complete text lines; remaining entries/lines omitted' }
-  const fixed = { ...base, tool_name: name, tool_input: { arguments: null, remem_capture }, tool_response: null }
+  const fixed = { ...base, tool_name: name,
+    tool_input: { dsh_event_type: eventType, arguments: null, remem_capture }, tool_response: null }
   const available = maxObservationBytes - jsonBytes(fixed)
   if (available < 512) throw new Error('remem: tool observation identity exceeds the stdin budget')
   return { ...fixed,
-    tool_input: { arguments: projectEvidence(args, Math.floor(available / 4)), remem_capture },
+    tool_input: { dsh_event_type: eventType,
+      arguments: projectEvidence(args, Math.floor(available / 4)), remem_capture },
     tool_response: projectEvidence(result, Math.floor(available * 3 / 4)),
   }
 }
@@ -337,7 +341,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
       } else if (event.type === 'assistant/message') {
         const answer = text(event.data.message.content)
         if (answer) value.lastAnswer = answer
-        if (answer) capture(session, 'observe', toolObservation(base, 'assistant/message', {}, { text: answer }))
+        if (answer) capture(session, 'observe', toolObservation(base, event.type, 'assistant/message', {}, { text: answer }))
       } else if (event.type === 'tool/result') {
         const result = event.data.message
         const call = value.calls.get(result.toolCallId)
@@ -346,7 +350,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
         let argumentsValue: unknown
         try { argumentsValue = call.arguments === '' ? {} : JSON.parse(call.arguments) }
         catch { throw new Error('remem: DSH tool arguments are invalid JSON; capture rejected') }
-        capture(session, 'observe', toolObservation(base, call.name, argumentsValue, event.data))
+        capture(session, 'observe', toolObservation(base, event.type, call.name, argumentsValue, event.data))
       } else if (event.type === 'turn/end') {
         value.admission = undefined
         capture(session, 'summarize', messageCapture(base, 'last_assistant_message', value.lastAnswer, { reason: event.data.reason }))

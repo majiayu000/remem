@@ -19,13 +19,14 @@ const plugin = await import(process.env.REMEM_DSH_PLUGIN_MODULE ?? '../dist/inde
 
 class ScriptedModel extends LlmAdapter {
   requests = []
+  toolName = 'fixture_probe'
   arguments = '{}'
   answer = 'Verified the DSH fixture result.'
   async *stream(options) {
     this.requests.push(options)
     const id = ToolCallId('fixture-call')
     const block = this.requests.length === 1
-      ? { type: 'tool-call', id, name: 'fixture_probe', arguments: this.arguments }
+      ? { type: 'tool-call', id, name: this.toolName, arguments: this.arguments }
       : { type: 'text', text: this.answer }
     yield { type: 'block-start', index: 0, blockType: block.type }
     yield { type: 'block-end', index: 0, block }
@@ -33,7 +34,7 @@ class ScriptedModel extends LlmAdapter {
   }
 }
 
-export async function harness(executable) {
+export async function harness(executable, toolName = 'fixture_probe') {
   const ctx = new Context()
   await ctx.plugin(LlmRuntime)
   await ctx.plugin(SessionStore)
@@ -45,9 +46,10 @@ export async function harness(executable) {
   await ctx.plugin(AgentRegistry)
   await ctx.plugin(AgentLoop, { agents: [] })
   const model = new ScriptedModel()
+  model.toolName = toolName
   ctx.llm.registerAdapter(['fixture'], model)
   const toolArguments = []
-  ctx.tools.register(defineContentToolFixture({ name: 'fixture_probe', description: 'Fixture probe',
+  ctx.tools.register(defineContentToolFixture({ name: toolName, description: 'Fixture probe',
     parameters: {}, async execute(args) {
       toolArguments.push(args)
       return [{ type: 'text', text: 'fixture probe succeeded' }]
@@ -92,6 +94,29 @@ test('real AgentLoop captures human/tool/assistant, injects once and flushes in 
     assert(model.requests[0].messages.some(m => m.source.kind === 'remem'))
     await handle.dispose()
   } finally { await fiber.dispose(); await ctx.fiber.dispose(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+for (const oversized of [false, true]) test(`native source survives colliding tool names and projection: ${oversized}`, async () => {
+  const f = await fixture()
+  const { ctx, fiber, model } = await harness(f.executable, 'assistant/message')
+  model.arguments = JSON.stringify({ dsh_event_type: 'assistant/message',
+    notes: oversized ? 'tool argument evidence\n'.repeat(80000) : 'tool argument evidence' })
+  if (oversized) model.answer = 'assistant evidence\n'.repeat(80000)
+  let handle
+  try {
+    handle = await runTurn(ctx, `source-collision-${oversized}`)
+    await ctx.parallel('session/flush', handle.agent.session)
+    const observed = (await f.calls()).filter(c => c.args[0] === 'observe').map(c => c.payload)
+    assert.equal(observed.length, 2)
+    assert(observed.every(p => p.tool_name === 'assistant/message'))
+    assert.deepEqual(observed.map(p => p.tool_input.dsh_event_type), ['tool/result', 'assistant/message'])
+    assert.equal(observed[0].tool_input.arguments.dsh_event_type, 'assistant/message')
+    assert(observed.every(p => Buffer.byteLength(JSON.stringify(p)) <= 1024 * 1024))
+    if (oversized) assert(observed.every(p => p.tool_input.remem_capture.omitted))
+  } finally {
+    await handle?.dispose(); await fiber.dispose(); await ctx.fiber.dispose()
+    await rm(f.root, { recursive: true, force: true })
+  }
 })
 
 test('plugin unload drains pending real subprocess work without an explicit flush', async () => {
@@ -203,7 +228,7 @@ test('unload awaits all sessions even when one capture failed', async () => {
 })
 
 
-test('real remem binary preserves DSH assistant provenance through rollup promotion', {
+test('real remem binary preserves DSH assistant and colliding tool provenance through rollup promotion', {
   skip: !process.env.REMEM_DSH_BINARY,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-remem-live-'))
@@ -221,8 +246,8 @@ test('real remem binary preserves DSH assistant provenance through rollup promot
   await writeFile(executor, `#!${process.execPath}\nimport fs from 'node:fs';\nlet prompt=''; for await (const chunk of process.stdin) prompt += chunk;\nconst observation = prompt.includes('Extract durable observations');\nconst rollup = prompt.includes('You summarize captured development-session evidence');\nfs.appendFileSync(${JSON.stringify(executorCalls)}, JSON.stringify({observation,rollup})+'\\n');\nif (!observation && !rollup) process.exit(19);\nconst response = observation ? JSON.stringify({no_observations:{reason:'offline profile resolution probe'}}) : '<summary>Offline profile resolution probe.</summary><structured_fields><request></request><decisions>${decision}</decisions><learned></learned><next_steps></next_steps><preferences></preferences></structured_fields><segments></segments>';\nfs.writeFileSync(process.argv[process.argv.indexOf('--output-last-message')+1],response);\n`, { mode: 0o700 })
   await writeFile(process.env.REMEM_CONFIG, `[memory_ai.profiles.codex]\npath = ${JSON.stringify(executor)}\n`)
   execFileSync(executable, ['cleanup', '--dry-run'], { stdio: 'ignore' })
-  const { ctx, fiber, model } = await harness(executable)
-  model.arguments = JSON.stringify({ a: 1, password: 'hunter2' })
+  const { ctx, fiber, model } = await harness(executable, 'assistant/message')
+  model.arguments = JSON.stringify({ a: 1, password: 'hunter2', dsh_event_type: 'assistant/message' })
   model.answer = decision
   try {
     let cancelFirst = true
@@ -295,7 +320,8 @@ print(json.dumps({'candidates':p,'promoted_memories':m,'events':e,'tasks':t,'att
     assert(report.events.every(row => row[0] === 'deepseek-harness'))
     assert(report.events.every(row => !row[3].includes('hunter2')))
     assert(report.events.some(row => row[1] === 'user_prompt_submit' && row[3].includes('Retry the fixture probe.')))
-    assert(report.events.some(row => row[2] === 'fixture_probe' && row[3].includes('fixture probe succeeded')))
+    assert(report.events.some(row => row[1] === 'tool_result' && row[2] === 'assistant/message'
+      && row[4] === null && row[3].includes('fixture probe succeeded')))
     assert(report.candidates.length > 0,
       `rollup must produce a useful review candidate; tasks=${JSON.stringify(report.tasks.slice(0, 12))}`)
     assert(report.candidates.every(row => row[0] === 'pending_review'

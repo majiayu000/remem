@@ -25,7 +25,13 @@ impl ToolAdapter for DeepSeekHarnessAdapter {
 
     fn classify_event(&self, event: &ParsedHookEvent) -> Option<EventSummary> {
         Some(EventSummary {
-            event_type: if event.tool_name == "assistant/message" {
+            event_type: if event
+                .tool_input
+                .as_ref()
+                .and_then(|input| input.get("dsh_event_type"))
+                .and_then(serde_json::Value::as_str)
+                == Some("assistant/message")
+            {
                 "message"
             } else {
                 "tool_result"
@@ -56,5 +62,27 @@ mod tests {
         assert_eq!(event.tool_name, "query_records");
         assert_eq!(event.tool_response.unwrap()["rows"][0], "answer");
         assert!(adapter.parse_hook(r#"{"session_id":"claude-1"}"#).is_none());
+    }
+
+    #[test]
+    fn dsh_classifies_native_source_without_tool_name_collisions() {
+        let adapter = DeepSeekHarnessAdapter;
+        for (source, expected) in [
+            (Some("tool/result"), "tool_result"),
+            (Some("assistant/message"), "message"),
+            (None, "tool_result"),
+        ] {
+            let payload = serde_json::json!({
+                "host": "deepseek-harness", "session_id": "dsh-source", "cwd": "/tmp",
+                "tool_name": "assistant/message",
+                "tool_input": {
+                    "dsh_event_type": source,
+                    "arguments": {"dsh_event_type": "assistant/message"}
+                },
+                "tool_response": {"text": "retained evidence"}
+            });
+            let event = adapter.parse_hook(&payload.to_string()).unwrap();
+            assert_eq!(adapter.classify_event(&event).unwrap().event_type, expected);
+        }
     }
 }

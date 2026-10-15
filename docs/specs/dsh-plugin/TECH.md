@@ -38,7 +38,11 @@ error rather than falling back to the plugin process directory.
 
 A narrow Rust adapter accepts the normalized hook wire format under
 `--host deepseek-harness`. It uses the existing capture/spill/redaction/extraction
-paths. The synthetic `assistant/message` observe input is classified as `message`
+paths. The plugin places the native event type in its own
+`tool_input.dsh_event_type` wrapper, outside tool-controlled `arguments`, and
+retains it in the fixed envelope when projecting oversized evidence. Classification
+uses that source field, never the registered tool name. The synthetic
+`assistant/message` observe input is classified as `message`
 and persisted with `role=assistant` and no tool name; actual tool results keep
 their tool provenance. Both aggregate trust derivation and per-claim evidence
 binding pass the existing database host identity to the trust classifier. It treats
