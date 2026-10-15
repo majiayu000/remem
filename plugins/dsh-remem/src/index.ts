@@ -77,6 +77,24 @@ function toolObservation(base: object, name: string, args: unknown, result: unkn
   }
 }
 
+/** Keep omission evidence in the text field consumed by session-init/summarize. */
+function messageCapture(base: object, field: 'prompt' | 'last_assistant_message',
+  message: string | undefined, details: object = {}): unknown {
+  const payload = { ...base, ...details, [field]: message }
+  const originalBytes = jsonBytes(payload)
+  if (originalBytes <= maxObservationBytes) return payload
+  const marker = `\n[remem_capture ${JSON.stringify({ omitted: true,
+    original_envelope_bytes: originalBytes, message_json_bytes: jsonBytes(message),
+    details_json_bytes: jsonBytes(details),
+    policy: 'bounded structure and complete text lines; remaining entries/lines omitted' })}]`
+  const fixed = { ...base, [field]: marker }
+  const available = maxObservationBytes - jsonBytes(fixed)
+  if (available < 512) throw new Error('remem: message identity exceeds the stdin budget')
+  const projectedDetails = projectEvidence(details, Math.floor(available / 4)) as object
+  const projectedText = projectEvidence(message ?? '', Math.floor(available * 3 / 4)) as string
+  return { ...base, ...projectedDetails, [field]: projectedText + marker }
+}
+
 /** Spawn argv without a shell. Do not copy potentially secret-bearing stderr to host logs. */
 async function run(executable: string, args: string[], input?: unknown, signal?: AbortSignal): Promise<string> {
   signal?.throwIfAborted()
@@ -313,12 +331,12 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
       if (event.type === 'turn/start') { value.lastAnswer = undefined; return }
       if (event.type === 'tool/call') { value.calls.set(event.data.callId, event.data); return }
       if (event.type === 'user/message' && event.data.source.kind === 'user') {
-        capture(session, 'session-init', { ...base, hook_event_name: 'UserPromptSubmit',
-          prompt: text(event.data.content, true), turn_id: `dsh:${event.seq}` })
+        capture(session, 'session-init', messageCapture({ ...base, hook_event_name: 'UserPromptSubmit',
+          turn_id: `dsh:${event.seq}` }, 'prompt', text(event.data.content, true)))
       } else if (event.type === 'assistant/message') {
         const answer = text(event.data.message.content)
         if (answer) value.lastAnswer = answer
-        if (answer) capture(session, 'observe', { ...base, tool_name: 'assistant/message', tool_response: { text: answer } })
+        if (answer) capture(session, 'observe', toolObservation(base, 'assistant/message', {}, { text: answer }))
       } else if (event.type === 'tool/result') {
         const result = event.data.message
         const call = value.calls.get(result.toolCallId)
@@ -330,7 +348,7 @@ export async function apply(ctx: Context, config: Config = {}): Promise<void> {
         capture(session, 'observe', toolObservation(base, call.name, argumentsValue, event.data))
       } else if (event.type === 'turn/end') {
         value.admission = undefined
-        capture(session, 'summarize', { ...base, last_assistant_message: value.lastAnswer, reason: event.data.reason })
+        capture(session, 'summarize', messageCapture(base, 'last_assistant_message', value.lastAnswer, { reason: event.data.reason }))
       }
     } catch (error) {
       const value = state(session)

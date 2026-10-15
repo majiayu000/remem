@@ -25,13 +25,17 @@ assistant-only claim eligible for automatic memory promotion. Useful candidates
 stay available for review; independently supporting local evidence can satisfy
 the existing promotion gates. Historical seed events are not ingested. The plugin does not
 claim filesystem transcript import, automatic MCP tools, or host installation via
-`remem install`. A DSH adapter preserves arbitrary tool names and results. JSON tool arguments
+`remem install`. A DSH adapter preserves arbitrary tool names and results. All DSH tool results
+are external evidence because arbitrary registered names do not prove local
+provenance, including names matching local tools on other hosts. JSON tool arguments
 are decoded before capture so secret-key redaction applies; malformed arguments
 produce a visible safe capture error without retaining their raw text.
-Tool observations exceeding the CLI stdin budget retain a bounded projection of
-arguments and results, including presentation metadata. Omitted content is
+Prompts, assistant messages, turn summaries and tool observations exceeding the
+CLI stdin budget retain bounded text and structured evidence, including turn-end
+reasons and tool presentation metadata. Omitted content is
 explicitly marked; retained evidence still passes through core redaction and
-capture. Full original results remain in DSH history, not a new adapter store.
+capture. Full original messages and results remain in DSH history, not a new adapter store.
+Identity fields exceeding the budget fail visibly instead of changing provenance.
 
 Missing executables fail activation. Errors in remem context preparation, its
 awaited capture checkpoint or snapshot replacement preserve uncommitted original

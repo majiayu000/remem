@@ -60,7 +60,7 @@ async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'dsh-remem-test-'))
   const executable = join(root, 'remem')
   const log = join(root, 'calls.jsonl')
-  await writeFile(executable, `#!${process.execPath}\nimport fs from 'node:fs';\nconst args = process.argv.slice(2);\nlet data=''; for await (const c of process.stdin) data += c;\nfs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({args,payload:data ? JSON.parse(data):null})+'\\n');\nif (args[0] === 'context') process.stdout.write('fixture project memory');\nif (args[0] === 'observe') await new Promise(r=>setTimeout(r, 25));\n`, { mode: 0o700 })
+  await writeFile(executable, `#!${process.execPath}\nimport fs from 'node:fs';\nconst args = process.argv.slice(2);\nconst chunks=[]; for await (const c of process.stdin) chunks.push(c); const data=Buffer.concat(chunks).toString('utf8');\nfs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({args,payload:data ? JSON.parse(data):null})+'\\n');\nif (args[0] === 'context') process.stdout.write('fixture project memory');\nif (args[0] === 'observe') await new Promise(r=>setTimeout(r, 25));\n`, { mode: 0o700 })
   return { root, executable, log, async calls() { return (await readFile(log, 'utf8')).trim().split('\n').map(JSON.parse) } }
 }
 
@@ -937,6 +937,28 @@ c=sqlite3.connect(sys.argv[1]); print(json.dumps(c.execute("SELECT e.event_type,
         await ctx.fiber.dispose()
       }
     }
+    const { ctx, fiber, model } = await harness(process.env.REMEM_DSH_BINARY)
+    let handle
+    try {
+      const message = 'Useful large message evidence.\npassword=message-secret\n' + '证据😀"\\\tverified\n'.repeat(120000)
+      model.answer = message
+      handle = await ctx.agents.create({ sessionId: SessionId('live-large-messages'), meta: { cwd: tmpdir() },
+        agentOptions: { provider: 'fixture', model: 'fixture' } })
+      handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: message }], source: { kind: 'user' } }))
+      await handle.agent.whenIdle()
+      await ctx.parallel('session/flush', handle.agent.session)
+      assert.equal(model.requests.length, 2)
+      assert.equal(handle.agent.session.snapshotEvents().findLast(e => e.type === 'turn/end').data.reason.kind, 'completed')
+      const rows = JSON.parse(execFileSync('/usr/bin/python3', ['-c', `import json,sqlite3,sys
+c=sqlite3.connect(sys.argv[1]); print(json.dumps(c.execute("SELECT e.event_type,e.role,COALESCE(CAST(b.content_bytes AS TEXT),e.content_text) FROM captured_events e LEFT JOIN event_blobs b ON b.id=e.content_blob_id WHERE e.session_id='live-large-messages' ORDER BY e.id").fetchall()))`, join(root, 'remem.db')], { encoding: 'utf8' }))
+      for (const row of [rows.find(r => r[0] === 'user_prompt_submit'),
+        rows.find(r => r[0] === 'message' && r[1] === 'assistant'), rows.find(r => r[0] === 'session_stop')]) {
+        assert(row, 'prompt, assistant and Stop must all persist')
+        assert(row[2].includes('Useful large message evidence.'))
+        assert(row[2].includes('remem_capture'), 'omission metadata must survive the core writer')
+      }
+      assert(!JSON.stringify(rows).includes('message-secret'))
+    } finally { await handle?.dispose(); await fiber.dispose(); await ctx.fiber.dispose() }
   } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key]
@@ -945,4 +967,111 @@ c=sqlite3.connect(sys.argv[1]); print(json.dumps(c.execute("SELECT e.event_type,
     // Workers may still own the isolated queue; retain it for diagnostics.
     console.log(`Isolated bounded-tool store: ${root}`)
   }
+})
+
+
+for (const kind of ['multiline-escaped', 'single-line']) test(`large messages preserve bounded evidence through Stop: ${kind}`, async () => {
+  const f = await fixture()
+  const normal = await readFile(f.executable, 'utf8')
+  await writeFile(f.executable, normal.replace('fs.appendFileSync(',
+    "if (Buffer.byteLength(data) > 1024 * 1024) process.exit(7);\nfs.appendFileSync("), { mode: 0o700 })
+  const { ctx, fiber, model } = await harness(f.executable)
+  const body = kind === 'multiline-escaped'
+    ? 'Useful message evidence.\n' + '证据😀\\quoted"\tcompleted\n'.repeat(100000)
+    : 'private-token-'.repeat(180000)
+  model.answer = body
+  let handle
+  try {
+    handle = await ctx.agents.create({ sessionId: SessionId(`large-message-${kind}`), meta: { cwd: tmpdir() },
+      agentOptions: { provider: 'fixture', model: 'fixture' } })
+    handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: body }], source: { kind: 'user' } }))
+    await handle.agent.whenIdle()
+    await ctx.parallel('session/flush', handle.agent.session)
+    assert.equal(model.requests.length, 2)
+    assert.equal(handle.agent.session.snapshotEvents().findLast(e => e.type === 'turn/end').data.reason.kind, 'completed')
+    const calls = (await f.calls()).filter(c => c.payload)
+    assert(calls.every(c => Buffer.byteLength(JSON.stringify(c.payload)) <= 1024 * 1024))
+    const prompt = calls.find(c => c.args[0] === 'session-init').payload.prompt
+    const assistant = calls.find(c => c.payload.tool_name === 'assistant/message').payload
+    const summary = calls.find(c => c.args[0] === 'summarize').payload
+    assert(prompt.includes('remem_capture'))
+    assert(summary.last_assistant_message.includes('remem_capture'))
+    assert.equal(assistant.tool_input.remem_capture.omitted, true)
+    assert.equal(assistant.tool_input.remem_capture.result_json_bytes, Buffer.byteLength(JSON.stringify({ text: body })))
+    for (const value of [prompt, assistant.tool_response.text, summary.last_assistant_message]) {
+      assert(value.includes('remem omitted remainder'))
+      if (kind === 'multiline-escaped') assert(value.startsWith('Useful message evidence.'))
+      else assert(!value.includes('private-token-'), 'omit overlong lines without cutting credential context')
+    }
+    assert.deepEqual(summary.reason, { kind: 'completed' })
+  } finally {
+    await handle?.dispose(); await fiber.dispose(); await ctx.fiber.dispose()
+    await rm(f.root, { recursive: true, force: true })
+  }
+})
+
+test('large turn-end metadata is bounded and its omission remains in captured text', async () => {
+  const f = await fixture()
+  const { ctx, fiber } = await harness(f.executable)
+  try {
+    const session = ctx.sessions.create(SessionId('large-turn-reason'), { meta: { cwd: tmpdir() } })
+    session.append('turn/start', { turn: 1 })
+    session.append('turn/end', { turn: 1, reason: { kind: 'error', error: {
+      message: 'Failure detail.\n' + '证据"\\\n'.repeat(250000), code: 'UNKNOWN',
+    } } })
+    await ctx.parallel('session/flush', session)
+    const summary = (await f.calls()).find(c => c.args[0] === 'summarize').payload
+    assert(Buffer.byteLength(JSON.stringify(summary)) <= 1024 * 1024)
+    assert.equal(summary.reason.kind, 'error')
+    assert(summary.reason.error.message.startsWith('Failure detail.'))
+    assert(summary.last_assistant_message.includes('remem_capture'))
+  } finally { await fiber.dispose(); await ctx.fiber.dispose(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+
+test('message envelopes preserve an exact JSON-byte fit and project one byte over', async () => {
+  const f = await fixture()
+  const { ctx, fiber } = await harness(f.executable)
+  try {
+    const session = ctx.sessions.create(SessionId('byte-boundary'), { meta: { cwd: tmpdir() } })
+    const append = prompt => session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: prompt }], source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    append('probe')
+    await ctx.parallel('session/flush', session)
+    const sample = (await f.calls()).find(c => c.args[0] === 'session-init').payload
+    const overhead = Buffer.byteLength(JSON.stringify({ ...sample, prompt: '' }))
+    const escaped = '证😀"\\\t'.repeat(40000)
+    const prompt = escaped + 'x'.repeat(1024 * 1024 - overhead - Buffer.byteLength(JSON.stringify(escaped)) + 2)
+    append(prompt)
+    append(prompt + 'x')
+    await ctx.parallel('session/flush', session)
+    const captures = (await f.calls()).filter(c => c.args[0] === 'session-init')
+    assert.equal(Buffer.byteLength(JSON.stringify(captures[1].payload)), 1024 * 1024)
+    assert.equal(captures[1].payload.prompt, prompt)
+    assert(Buffer.byteLength(JSON.stringify(captures[2].payload)) <= 1024 * 1024)
+    assert(captures[2].payload.prompt.includes('"original_envelope_bytes":1048577'))
+  } finally { await fiber.dispose(); await ctx.fiber.dispose(); await rm(f.root, { recursive: true, force: true }) }
+})
+
+
+test('oversized tool identity fails visibly without renaming the tool', async () => {
+  const f = await fixture()
+  const { ctx, fiber } = await harness(f.executable)
+  const errors = []
+  ctx.logger.error = message => errors.push(message)
+  try {
+    const session = ctx.sessions.create(SessionId('large-tool-name'), { meta: { cwd: tmpdir() } })
+    session.append('turn/start', { turn: 1 })
+    session.append('step/start', { turn: 1, step: 1 })
+    session.append('tool/call', { turn: 1, step: 1, callId: ToolCallId('large-name'),
+      name: 't'.repeat(1024 * 1024), arguments: '{}' })
+    session.append('tool/result', { turn: 1, step: 1, message: createToolResultMessage({
+      callId: ToolCallId('large-name'), content: [{ type: 'text', text: 'external evidence' }], isError: false,
+    }) }, { surfaceOp: 'append' })
+    await assert.rejects(ctx.parallel('session/flush', session), error => error instanceof AggregateError
+      && error.errors.some(e => e.message === 'remem: tool observation identity exceeds the stdin budget'))
+    assert.deepEqual(errors, ['remem: tool observation identity exceeds the stdin budget'])
+    assert(!(await f.calls()).some(c => c.args[0] === 'observe'))
+  } finally { await fiber.dispose(); await ctx.fiber.dispose(); await rm(f.root, { recursive: true, force: true }) }
 })

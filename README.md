@@ -36,8 +36,10 @@ Recovery across unload lasts until the in-flight remem callback exits; while
 loaded, `agent/error` also recovers later preparation failures. Host `prepareCall`
 runs after `agent/request` returns: after unload, failure can lose claimed input,
 while success still commits once without remem capture. Reload does not recover
-lost input or import events committed while unloaded. Oversized tool observations
-retain bounded structured evidence with explicit omissions before core redaction.
+lost input or import events committed while unloaded. Oversized prompts, assistant
+messages, turn summaries and tool observations retain bounded evidence with explicit
+omissions before core redaction. Arbitrary DSH tool names retain their provenance
+but are external evidence; their names alone never authorize automatic promotion.
 
 ## What remem gives you
 

@@ -167,7 +167,17 @@ fn dsh_assistant_capture_requires_corroboration_for_summary_promotion() -> anyho
     let cwd = ScopedTestDataDir::new_offline("dsh-assistant-provenance");
     std::fs::create_dir_all(&cwd.path)?;
     let decision = "Use source kind telemetry for summary promotion gate";
-    for tool_content in [None, Some("cargo test passed"), Some(decision)] {
+    for (tool_host, tool_name, tool_content) in [
+        ("deepseek-harness", "fixture_probe", None),
+        (
+            "deepseek-harness",
+            "fixture_probe",
+            Some("cargo test passed"),
+        ),
+        ("deepseek-harness", "browser_search", Some(decision)),
+        ("deepseek-harness", "Read", Some(decision)),
+        ("claude-code", "Bash", Some(decision)),
+    ] {
         let mut conn = rusqlite::Connection::open_in_memory()?;
         crate::migrate::run_migrations(&conn)?;
         let mut project = String::new();
@@ -176,23 +186,23 @@ fn dsh_assistant_capture_requires_corroboration_for_summary_promotion() -> anyho
         let mut source_texts = Vec::new();
         // Exercise the real DSH adapter and durable observe writer. Repeating an
         // assistant claim, even beside an unrelated tool result, is not support.
-        for (index, (tool_name, content)) in [
-            Some(("assistant/message", decision)),
-            Some(("assistant/message", decision)),
-            tool_content.map(|content| ("fixture_probe", content)),
+        for (index, (host, tool_name, content)) in [
+            Some(("deepseek-harness", "assistant/message", decision)),
+            Some(("deepseek-harness", "assistant/message", decision)),
+            tool_content.map(|content| (tool_host, tool_name, content)),
         ]
         .into_iter()
         .flatten()
         .enumerate()
         {
             let payload = serde_json::json!({
-                "host": "deepseek-harness", "session_id": "dsh-provenance",
+                "host": host, "session_id": "dsh-provenance",
                 "cwd": cwd.path, "tool_name": tool_name,
-                "tool_response": {"text": content}
+                "tool_input": {"command": "cargo test"},
+                "tool_response": {"text": content, "exitCode": 0}
             });
-            let (adapter, event) =
-                super::detect_adapter_for_host(&payload.to_string(), Some("deepseek-harness"))
-                    .expect("DSH input should be recognized");
+            let (adapter, event) = super::detect_adapter_for_host(&payload.to_string(), Some(host))
+                .expect("DSH input should be recognized");
             let summary = adapter.classify_event(&event).unwrap();
             project = event.project.clone();
             let id = super::record_observed_event_with_id(
@@ -240,7 +250,7 @@ fn dsh_assistant_capture_requires_corroboration_for_summary_promotion() -> anyho
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )?;
-        if tool_content == Some(decision) {
+        if tool_host == "claude-code" {
             assert_eq!(
                 (status.as_str(), trust.as_str(), reason, memory_count),
                 ("auto_promoted", "local_tool_output", None, 1)

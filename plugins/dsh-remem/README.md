@@ -17,9 +17,13 @@
 且调用失败，输入会丢失，重载插件再显式重试也无法恢复；从未加载插件时同样如此。
 若调用成功，宿主仍会提交一次；卸载期间提交的事件不会在重载时补录。
 
-超出 1 MiB 的工具观察按完整 JSON 字节预算保留结构化参数、结果和展示元数据，
+DSH 允许任意注册工具名，工具结果均按外部证据处理，保留真实工具名称；
+同名 `Read` / `Bash` 也不证明本地来源，不能据此自动晋升。
+
+超出 1 MiB 的提示、助手消息、轮次总结和工具观察按完整 JSON 字节预算保留文本、结构化参数、结果和展示元数据，
 省略部分会显式标记。大文本仅保留完整前导行，超长单行整行省略；保留内容由
-核心继续脱敏和持久化。完整原始工具结果仍在 DSH 历史中。
+核心继续脱敏和持久化。提示和轮次总结的省略元数据保留在实际捕获文本内；
+身份字段（包括工具名）本身超限会返回可见错误。完整原始消息和工具结果仍在 DSH 历史中。
 
 当前包为发布准备版本，尚未上传 npm。验证目标：DSH `0.2.0-rc.2` 与 Cordis
 `4.0.4`。DSH 主线 API 与该 npm 版本不同；本插件不宣称已验证主线兼容。
@@ -132,11 +136,17 @@ lost; reload plus explicit retry cannot recover it. The same loss occurs without
 ever loading remem. A successful call still commits once after unload; events
 committed while unloaded are not imported on reload.
 
-Tool observations exceeding the 1 MiB stdin budget retain bounded structured
-arguments, result content and presentation metadata with explicit omission
-metadata. Large strings retain complete leading lines; an oversized single line
+DSH permits arbitrary tool names; every DSH tool result remains external evidence
+with its real name preserved. Even names such as `Read` or `Bash` cannot establish
+local provenance or authorize automatic promotion.
+
+Prompts, assistant messages, turn summaries and tool observations exceeding the
+1 MiB stdin budget retain bounded text, structured arguments, result content and
+presentation metadata with explicit omissions. Prompt and summary omission metadata
+is embedded in the captured text. Identity fields (including tool names) that alone
+exceed the budget fail visibly. Large strings retain complete leading lines; an oversized single line
 is omitted whole. Core redaction and capture handle retained evidence, while the
-full original result remains in DSH history.
+full original messages and results remain in DSH history.
 CLI preparation writes no injection audit or usage credit; committed DSH snapshots
 are the delivery record. Tool arguments are decoded before secret-key redaction;
 malformed JSON causes a visible capture error without storing the raw arguments.

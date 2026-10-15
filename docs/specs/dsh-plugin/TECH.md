@@ -40,8 +40,11 @@ A narrow Rust adapter accepts the normalized hook wire format under
 `--host deepseek-harness`. It uses the existing capture/spill/redaction/extraction
 paths. The synthetic `assistant/message` observe input is classified as `message`
 and persisted with `role=assistant` and no tool name; actual tool results keep
-their tool provenance. The existing trust classifier therefore treats assistant
-prose as external content, including during spill replay. No new trust class or
+their tool provenance. Both aggregate trust derivation and per-claim evidence
+binding pass the existing database host identity to the trust classifier. It treats
+all non-human DSH evidence as external content, including assistant prose and
+arbitrarily named tools, during live capture and spill replay. Tool names alone
+cannot prove local provenance; other hosts retain their existing classifications. No new trust class or
 promotion exception is introduced. The context profile reports no MCP
 registration. Summaries consume the existing capture ledger; no DSH log parser,
 new schema, host migration, or extraction implementation is added.
@@ -107,9 +110,9 @@ Tool-call argument JSON is parsed into structured values before capture. Invalid
 JSON raises a fixed capture error that omits the argument text and parser message.
 Captured payloads go through remem's redaction and governance; subprocess stderr
 is not copied into plugin diagnostics (it can contain provider secrets).
-Before `observe`, the adapter measures the complete serialized tool envelope
+Before capture, the adapter measures the complete serialized envelope
 against the unchanged 1 MiB core stdin boundary. Envelopes that fit are unchanged.
-For oversized events it reserves the identity/omission envelope, then budgets
+For oversized tool and assistant observations it reserves the identity/omission envelope, then budgets
 one quarter of the remaining JSON bytes to structured arguments and three quarters
 to the result event (including presentation metadata). Nested objects keep their
 original keys; collections retain a bounded prefix and oversized strings retain
@@ -119,7 +122,13 @@ omitted whole, preventing partial credentials from losing their redaction contex
 counts and explicitly declares omitted entries/lines. An identity envelope that
 alone exhausts the bound returns a visible error. No secret policy is implemented
 in TypeScript; retained values go through the existing core redaction, capture
-ledger and event-blob path. The original DSH result history is unchanged.
+ledger and event-blob path. Oversized user prompts and Stop payloads use the same
+projection with three quarters of the remaining budget for message text and one
+quarter for structured details (including the turn-end reason). Their omission
+metadata is embedded in `prompt` or `last_assistant_message`, the actual fields
+persisted by core capture, and records original envelope/message/details JSON
+byte counts. This also bounds the assistant answer forwarded again at turn end.
+The original DSH message and result history is unchanged.
 
 ## Validation
 
@@ -138,7 +147,12 @@ Regressions also unload during pending request preparation (including downstream
 failure, partial commitment and intentional cancellation) and exercise 2 MiB
 presentation metadata, meaningful oversized arguments/results and escaped wide
 collections through the real tool host. Real remem checks the retained evidence,
-omission metadata, core redaction and Stop capture in an isolated store.
+omission metadata, core redaction and Stop capture in an isolated store. Large
+messages cover UTF-8 and JSON escaping, oversized single lines, exact-limit and
+one-byte-over envelopes, and large turn-end metadata. Trust regressions cover
+arbitrary names and local-tool name collisions in both classification paths;
+DSH-only corroboration cannot promote a claim, while genuine local evidence from
+another host retains its existing eligibility.
 CI and local preflight install the pinned npm dependencies, resolve the current
 remem executable from Cargo's artifact output, and run the entire lifecycle suite
 with `REMEM_DSH_BINARY` set, so the real CLI test is required.
