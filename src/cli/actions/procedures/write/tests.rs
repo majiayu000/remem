@@ -19,6 +19,7 @@ fn writer_creates_neutral_runbook_target() -> Result<()> {
 #[test]
 fn writer_refuses_high_context_paths() -> Result<()> {
     let root = procedure_export_temp_dir("procedure-export-high-context")?;
+    std::fs::write(root.join(".git"), "gitdir: /tmp/not-used\n")?;
 
     let claude_err = write_for(
         root.join(".claude").join("skills"),
@@ -55,9 +56,7 @@ fn writer_refuses_high_context_paths() -> Result<()> {
         .contains("high-context instruction file"));
 
     let skill_root_err = write_for(
-        std::env::current_dir()?
-            .join("skills")
-            .join("procedure-export"),
+        root.join("skills").join("procedure-export"),
         ProcedureExportFormat::RunbookMd,
         false,
     )
@@ -65,10 +64,7 @@ fn writer_refuses_high_context_paths() -> Result<()> {
     assert!(skill_root_err.to_string().contains("skill-root path"));
 
     let plugin_skill_err = write_for(
-        std::env::current_dir()?
-            .join("plugins")
-            .join("remem")
-            .join("skills"),
+        root.join("plugins").join("remem").join("skills"),
         ProcedureExportFormat::RunbookMd,
         false,
     )

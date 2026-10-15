@@ -10,6 +10,7 @@ pub enum HostKind {
     /// (`crate::cursor_hook`); deliberately absent from `parse()` so legacy
     /// env/default detection can never produce a Cursor invocation.
     Cursor,
+    DeepSeekHarness,
     Unknown,
 }
 
@@ -19,6 +20,7 @@ impl HostKind {
             Self::ClaudeCode => "claude-code",
             Self::CodexCli => "codex-cli",
             Self::Cursor => "cursor",
+            Self::DeepSeekHarness => "deepseek-harness",
             Self::Unknown => "unknown",
         }
     }
@@ -27,6 +29,7 @@ impl HostKind {
         match value.trim().to_ascii_lowercase().as_str() {
             "claude" | "claude-code" | "claudecode" => Some(Self::ClaudeCode),
             "codex" | "codex-cli" | "codexcli" => Some(Self::CodexCli),
+            "deepseek-harness" => Some(Self::DeepSeekHarness),
             "unknown" => Some(Self::Unknown),
             _ => None,
         }
@@ -57,6 +60,7 @@ pub(super) struct ClaudeCodeContextProfile;
 pub(super) struct CodexCliContextProfile;
 pub(super) struct CursorContextProfile;
 pub(super) struct UnknownContextProfile;
+pub(super) struct DeepSeekHarnessContextProfile;
 
 impl ContextHostProfile for ClaudeCodeContextProfile {
     fn capabilities(&self) -> HostCapabilities {
@@ -116,6 +120,24 @@ impl ContextHostProfile for CursorContextProfile {
     }
 }
 
+impl ContextHostProfile for DeepSeekHarnessContextProfile {
+    fn capabilities(&self) -> HostCapabilities {
+        HostCapabilities {
+            has_mcp_tools: false,
+            has_session_start_hook: true,
+            has_user_prompt_submit_hook: true,
+            observes_native_file_edits: true,
+            observes_bash: true,
+        }
+    }
+
+    fn retrieval_hints(&self) -> RetrievalHints {
+        RetrievalHints {
+            line: "DSH prompts, assistant messages, and tool results are captured automatically; turn end queues memory distillation. Use the remem CLI for explicit recall.",
+        }
+    }
+}
+
 impl ContextHostProfile for UnknownContextProfile {
     fn capabilities(&self) -> HostCapabilities {
         HostCapabilities {
@@ -157,6 +179,7 @@ pub(super) fn resolve_profile(host: HostKind) -> Box<dyn ContextHostProfile> {
         HostKind::ClaudeCode => Box::new(ClaudeCodeContextProfile),
         HostKind::CodexCli => Box::new(CodexCliContextProfile),
         HostKind::Cursor => Box::new(CursorContextProfile),
+        HostKind::DeepSeekHarness => Box::new(DeepSeekHarnessContextProfile),
         HostKind::Unknown => Box::new(UnknownContextProfile),
     }
 }

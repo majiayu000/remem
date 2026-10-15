@@ -235,16 +235,17 @@ fn query_event_trust_class(
     include_content: bool,
 ) -> Result<SourceTrustClass> {
     let sql = if include_content {
-        "SELECT event_type, role, tool_name, content_text
-         FROM captured_events
-         WHERE id = ?1"
+        "SELECT e.event_type, e.role, e.tool_name, e.content_text, h.name
+         FROM captured_events e JOIN hosts h ON h.id = e.host_id
+         WHERE e.id = ?1"
     } else {
-        "SELECT event_type, role, tool_name, NULL
-         FROM captured_events
-         WHERE id = ?1"
+        "SELECT e.event_type, e.role, e.tool_name, NULL, h.name
+         FROM captured_events e JOIN hosts h ON h.id = e.host_id
+         WHERE e.id = ?1"
     };
     match conn.query_row(sql, params![event_id], |row| {
         Ok(event_trust_class(
+            row.get::<_, String>(4)?.as_str(),
             row.get::<_, String>(0)?.as_str(),
             row.get::<_, Option<String>>(1)?.as_deref(),
             row.get::<_, Option<String>>(2)?.as_deref(),
@@ -266,6 +267,7 @@ pub(crate) fn validate_trust_class(value: &str) -> Result<()> {
 }
 
 pub(crate) fn event_trust_class(
+    host: &str,
     event_type: &str,
     role: Option<&str>,
     tool_name: Option<&str>,
@@ -276,6 +278,11 @@ pub(crate) fn event_trust_class(
     }
     if event_type == "message" && role == Some("user") {
         return SourceTrustClass::UserPrompt;
+    }
+    // DSH permits arbitrary tool registration, including names used by local
+    // tools on other hosts. The name alone cannot establish local provenance.
+    if host == "deepseek-harness" {
+        return SourceTrustClass::ExternalContent;
     }
     if tool_name == Some(super::raw_transcript::CODEX_TRANSCRIPT_MESSAGE_TOOL) {
         // A rendered assistant turn can repeat WebSearch/MCP/external material,
@@ -435,8 +442,13 @@ mod tests {
     #[test]
     fn summary_session_stop_is_external_content() -> Result<()> {
         let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE hosts (id INTEGER PRIMARY KEY, name TEXT);
+            INSERT INTO hosts VALUES (1, 'claude-code');",
+        )?;
         conn.execute(
             "CREATE TABLE captured_events (
+                host_id INTEGER DEFAULT 1,
                 id INTEGER PRIMARY KEY,
                 event_type TEXT NOT NULL,
                 role TEXT,
@@ -465,8 +477,13 @@ mod tests {
     #[test]
     fn codex_transcript_assistant_is_external_content() -> Result<()> {
         let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE hosts (id INTEGER PRIMARY KEY, name TEXT);
+            INSERT INTO hosts VALUES (1, 'claude-code');",
+        )?;
         conn.execute(
             "CREATE TABLE captured_events (
+                host_id INTEGER DEFAULT 1,
                 id INTEGER PRIMARY KEY,
                 event_type TEXT NOT NULL,
                 role TEXT,
@@ -491,8 +508,13 @@ mod tests {
     #[test]
     fn bash_web_fetches_are_external_content() -> Result<()> {
         let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "CREATE TABLE hosts (id INTEGER PRIMARY KEY, name TEXT);
+            INSERT INTO hosts VALUES (1, 'claude-code');",
+        )?;
         conn.execute(
             "CREATE TABLE captured_events (
+                host_id INTEGER DEFAULT 1,
                 id INTEGER PRIMARY KEY,
                 event_type TEXT NOT NULL,
                 role TEXT,
