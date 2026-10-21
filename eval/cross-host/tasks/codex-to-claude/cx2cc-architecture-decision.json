@@ -11,51 +11,104 @@
     {
       "episode_id": "cx2cc-architecture-decision-episode-1",
       "host": "codex",
-      "summary": "Source-host session settles a durable architecture decision the target task depends on.",
+      "reference_time_epoch": 1760000060,
+      "summary": "The journal receives a caller-owned dictionary with balance, entries and optional metadata. An entry has key and amount. The earlier in-place append approach changed a cached caller snapshot before persistence; reject that design.",
       "expected_memory_facts": [
-        "fact:architecture_decision"
+        "fact:copy_on_write_idempotent_journal"
       ],
       "memories": [
         {
-          "title": "Architecture decision for the continuation module",
-          "text": "TODO: record the concrete architecture decision (chosen design, rejected alternative, reason) from a real or deterministic source-host episode.",
+          "title": "Journal architecture",
+          "text": "The journal receives a caller-owned dictionary with balance, entries and optional metadata. An entry has key and amount. The earlier in-place append approach changed a cached caller snapshot before persistence; reject that design.",
           "memory_type": "decision",
           "topic_key": "cx2cc-architecture-decision"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cx2cc-architecture-decision:e1",
+          "timestamp_epoch": 1760000060,
+          "role": "user",
+          "sanitized_content": "The journal receives a caller-owned dictionary with balance, entries and optional metadata. An entry has key and amount. The earlier in-place append approach changed a cached caller snapshot before persistence; reject that design.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
+        }
+      ]
+    },
+    {
+      "episode_id": "cx2cc-architecture-decision-episode-2",
+      "host": "codex",
+      "reference_time_epoch": 1760000120,
+      "summary": "Use a copy-on-write journal: append_entry(state, key, amount) leaves the input and its entries unchanged, preserves metadata and returns a new state for a new key with balance increased by amount. Replaying any existing key with the same amount is a no-op; reusing a key with a different amount raises ValueError without mutation. Amounts can be positive, zero or negative.",
+      "expected_memory_facts": [
+        "fact:copy_on_write_idempotent_journal"
+      ],
+      "memories": [
+        {
+          "title": "Journal architecture",
+          "text": "Use a copy-on-write journal: append_entry(state, key, amount) leaves the input and its entries unchanged, preserves metadata and returns a new state for a new key with balance increased by amount. Replaying any existing key with the same amount is a no-op; reusing a key with a different amount raises ValueError without mutation. Amounts can be positive, zero or negative.",
+          "memory_type": "decision",
+          "topic_key": "cx2cc-architecture-decision"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cx2cc-architecture-decision:e2",
+          "timestamp_epoch": 1760000120,
+          "role": "user",
+          "sanitized_content": "Use a copy-on-write journal: append_entry(state, key, amount) leaves the input and its entries unchanged, preserves metadata and returns a new state for a new key with balance increased by amount. Replaying any existing key with the same amount is a no-op; reusing a key with a different amount raises ValueError without mutation. Amounts can be positive, zero or negative.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
         }
       ]
     }
   ],
   "target_task": {
-    "prompt": "Continue the feature work. The repository intentionally does not restate the architecture decision; only handoff memory carries it. TODO: bind to a concrete fixture repository and change request.",
+    "prompt": "Implement append_entry in handoff_demo/journal.py for the continuation feature. Follow the journal architecture settled in the earlier source-host episodes; the visible repository intentionally does not restate that decision.",
     "allowed_paths": [
-      "TODO: fixture source paths",
+      "handoff_demo/journal.py",
       "tests"
     ],
     "forbidden_paths": [
+      "README.md",
       "MEMORY.md",
       "REMEM_CONTEXT.md"
     ],
     "timeout_ms": 180000
   },
   "score": {
-    "commands": [],
-    "hidden_files": {},
+    "commands": [
+      [
+        "python3",
+        "-m",
+        "unittest",
+        "tests.test_journal_hidden"
+      ]
+    ],
+    "hidden_files": {
+      "tests/test_journal_hidden.py": "import copy\nimport unittest\n\nfrom handoff_demo.journal import append_entry\n\n\nclass JournalHiddenTests(unittest.TestCase):\n    def test_copy_on_write_preserves_nested_input(self):\n        for balance, amount in [(40, 7), (0, -3), (100, 0)]:\n            with self.subTest(balance=balance, amount=amount):\n                state = {\"balance\": balance, \"entries\": [{\"key\": \"old\", \"amount\": 2}], \"currency\": \"EUR\"}\n                before = copy.deepcopy(state)\n                result = append_entry(state, \"new\", amount)\n                self.assertEqual(state, before)\n                self.assertIsNot(result, state)\n                self.assertIsNot(result[\"entries\"], state[\"entries\"])\n                self.assertEqual(result[\"balance\"], balance + amount)\n                self.assertEqual(result[\"entries\"], before[\"entries\"] + [{\"key\": \"new\", \"amount\": amount}])\n                self.assertEqual(result[\"currency\"], \"EUR\")\n\n    def test_duplicate_is_a_noop_even_before_the_last_entry(self):\n        state = {\"balance\": 15, \"entries\": [{\"key\": \"first\", \"amount\": 10}, {\"key\": \"second\", \"amount\": 5}]}\n        before = copy.deepcopy(state)\n        self.assertEqual(append_entry(state, \"first\", 10), before)\n        self.assertEqual(state, before)\n\n    def test_changed_payload_rejects_without_partial_mutation(self):\n        state = {\"balance\": 15, \"entries\": [{\"key\": \"first\", \"amount\": 10}]}\n        before = copy.deepcopy(state)\n        with self.assertRaises(ValueError):\n            append_entry(state, \"first\", 11)\n        self.assertEqual(state, before)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    },
     "required_patch_patterns": [],
     "forbidden_patch_patterns": []
   },
   "gold_memory": {
     "required_facts": [
-      "fact:architecture_decision"
+      "fact:copy_on_write_idempotent_journal"
     ],
     "forbidden_facts": [],
     "supporting_event_ids": [
-      "cx2cc-architecture-decision-episode-1:e1"
+      "cx2cc-architecture-decision:e1",
+      "cx2cc-architecture-decision:e2"
     ]
   },
   "todo": [
-    "Fill history_episodes with real or deterministic source-host episode content; current text fields are design intent, not fixture data.",
-    "Bind target_task.prompt and allowed_paths to a concrete deterministic fixture repository.",
-    "Add hidden test files and score.commands; hidden tests are the primary outcome.",
-    "Set status to ready and clear this todo list once the fixture is real."
-  ]
+    "Register the v2 foreign-project decoy/canary, causal_oracle_v1 and pre_run_scorer_commitment_v1 before declaring this task ready.",
+    "Bind real source/target host profiles, source seal, production capture/extraction and independent scorer on the approved shared runner.",
+    "Run the approved real bidirectional smoke with identity isolation and direction-grouped reporting; offline fixture checks are not a live handoff result."
+  ],
+  "fixture": "fixtures/smoke.json"
 }
