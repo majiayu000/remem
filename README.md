@@ -22,6 +22,25 @@ hooks, MCP, CLI, and a localhost REST API.
 *A new Claude Code session recalls the earlier root cause, commit, and open
 TODO with memory citations and no re-explaining.*
 
+## DeepSeek Harness
+
+The optional [DSH adapter](plugins/dsh-remem/README.md) injects project context
+and captures live prompts, assistant text, and tools using the existing CLI.
+It targets published DSH 0.2.0-rc.2; the npm adapter is not yet published.
+Build the DSH-enabled remem 0.7.0 source before installing the adapter.
+Assistant-only claims remain available for review and cannot auto-promote without
+independent supporting evidence. Snapshot updates and removals respect the published
+DSH session invariant; remem preparation failures retain uncommitted prompts for an
+explicit retry, while cancellation leaves durable capture available to flush.
+Recovery across unload lasts until the in-flight remem callback exits; while
+loaded, `agent/error` also recovers later preparation failures. Host `prepareCall`
+runs after `agent/request` returns: after unload, failure can lose claimed input,
+while success still commits once without remem capture. Reload does not recover
+lost input or import events committed while unloaded. Oversized prompts, assistant
+messages, turn summaries and tool observations retain bounded evidence with explicit
+omissions before core redaction. Arbitrary DSH tool names retain their provenance
+but are external evidence; their names alone never authorize automatic promotion.
+
 ## What remem gives you
 
 - Automatic session capture and background LLM distillation.

@@ -149,3 +149,7 @@ Useful examples:
 ## When To Add A New Spec
 
 Add a new spec only when the work changes user-visible behavior, migrations, hook contracts, plugin runtime behavior, or cross-module architecture. For bug fixes with a clear root cause, a focused regression test and a short PR explanation are usually enough.
+
+## DSH plugin
+
+- Current contract (`dsh-plugin/`): [product](dsh-plugin/PRODUCT.md) and [technical](dsh-plugin/TECH.md).

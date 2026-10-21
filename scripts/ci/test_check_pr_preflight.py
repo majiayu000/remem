@@ -37,6 +37,12 @@ def assert_sessionstart_smoke_registration(commands: list[list[str]]) -> None:
 
 
 class PreflightCargoTestThreadsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        gate = mock.patch.object(check_pr_preflight, "run_dsh_lifecycle",
+                                 return_value=check_pr_preflight.StepResult("Test DSH lifecycle", "PASS"))
+        gate.start()
+        self.addCleanup(gate.stop)
+
     def run_main(self, *arguments: str) -> list[list[str]]:
         commands: list[list[str]] = []
         self.calls: list[tuple[str, list[str], object]] = []
@@ -314,6 +320,59 @@ class PreflightCargoTestThreadsTests(unittest.TestCase):
         self.assertFalse(
             any("target/debug/remem" in argument for command in commands for argument in command)
         )
+
+
+class DshLifecycleGateTests(unittest.TestCase):
+    def test_installs_then_uses_the_reported_artifact_for_real_cli_test(self) -> None:
+        executable = Path("/isolated/custom-target/debug/remem")
+        build = mock.Mock(returncode=0, stdout="cargo artifacts", stderr="")
+        with (
+            mock.patch.object(check_pr_preflight, "run", return_value=check_pr_preflight.StepResult("gate", "PASS")) as run,
+            mock.patch.object(check_pr_preflight.subprocess, "run", return_value=build) as cargo,
+            mock.patch.object(check_pr_preflight, "parse_remem_executable", return_value=executable) as artifact,
+            mock.patch.object(check_pr_preflight, "print_cargo_diagnostics"),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(check_pr_preflight.run_dsh_lifecycle().status, "PASS")
+        self.assertEqual(run.call_args_list[0].args[1], ["npm", "ci", "--prefix", "plugins/dsh-remem"])
+        self.assertEqual(cargo.call_args.args[0], check_pr_preflight.CARGO_COMMAND)
+        artifact.assert_called_once_with("cargo artifacts")
+        self.assertEqual(run.call_args_list[1].args[1], ["npm", "test", "--prefix", "plugins/dsh-remem"])
+        self.assertEqual(run.call_args_list[1].kwargs["env"], {"REMEM_DSH_BINARY": str(executable)})
+
+    def test_install_or_build_failure_cannot_be_reported_as_a_pass(self) -> None:
+        with (
+            mock.patch.object(check_pr_preflight, "run", return_value=check_pr_preflight.StepResult("install", "FAIL")),
+            mock.patch.object(check_pr_preflight.subprocess, "run") as cargo,
+        ):
+            self.assertEqual(check_pr_preflight.run_dsh_lifecycle().status, "FAIL")
+            cargo.assert_not_called()
+        for build_code, artifact in [(1, Path("/should/not/run")), (0, None)]:
+            with (
+                self.subTest(build_code=build_code, artifact=artifact),
+                mock.patch.object(check_pr_preflight, "run", return_value=check_pr_preflight.StepResult("install", "PASS")) as run,
+                mock.patch.object(check_pr_preflight.subprocess, "run", return_value=mock.Mock(returncode=build_code, stdout="", stderr="")),
+                mock.patch.object(check_pr_preflight, "parse_remem_executable", return_value=artifact),
+                mock.patch.object(check_pr_preflight, "print_cargo_diagnostics"),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(check_pr_preflight.run_dsh_lifecycle().status, "FAIL")
+                self.assertEqual(run.call_count, 1, "never run a CLI-skipping npm test after failed build")
+
+    def test_ci_and_preflight_register_the_same_required_gate(self) -> None:
+        with (
+            mock.patch.object(sys, "argv", ["check_pr_preflight.py", "--fast"]),
+            mock.patch.object(check_pr_preflight, "fast_steps", return_value=[]),
+            mock.patch.object(check_pr_preflight, "add_pr_body_steps"),
+            mock.patch.object(check_pr_preflight, "run_dsh_lifecycle", return_value=check_pr_preflight.StepResult("DSH", "FAIL")) as gate,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(check_pr_preflight.main(), 1)
+            gate.assert_called_once_with()
+        workflow = (check_pr_preflight.ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        self.assertIn("sys.exit(run_dsh_lifecycle().status !=", workflow)
+        self.assertIn("actions/setup-node@v6.0.0", workflow)
+        self.assertIn("node-version: 22", workflow)
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ use std::sync::LazyLock;
 pub mod claude;
 pub mod codex;
 pub(crate) mod common;
+mod dsh;
 pub(crate) mod redaction;
 
 /// Normalized event parsed from a hook's raw JSON input.
@@ -51,6 +52,7 @@ static ADAPTERS: LazyLock<Vec<Box<dyn ToolAdapter>>> = LazyLock::new(|| {
     vec![
         Box::new(crate::adapter::claude::ClaudeCodeAdapter),
         Box::new(crate::adapter::codex::CodexAdapter),
+        Box::new(dsh::DeepSeekHarnessAdapter),
     ]
 });
 
