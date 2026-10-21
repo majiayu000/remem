@@ -5,7 +5,15 @@ Status: Current contract; v1 infrastructure shipped, completion unimplemented; I
 ## Existing Implementation Facts
 
 - `eval/cross-host/benchmark-charter.json` is `cross-host-v1` / `infrastructure_only_no_runs`.
-- `eval/cross-host/tasks/` contains 24 `skeleton_todo` JSON tasks.
+- `eval/cross-host/tasks/` contains 24 `skeleton_todo` JSON tasks. Four registered
+  smoke tasks (architecture decision and failed-attempt lesson, both directions)
+  bind `fixtures/smoke.json`: a shared inline-Python repository, independent
+  reference patches and known-wrong patches. Their task files carry two
+  chronological raw source episodes and hidden `ScoreSpec` commands/files.
+  `scripts/test_smoke_fixtures.py` runs the unchanged base, reference and wrong
+  patches in separate temporary repositories. This is an offline fixture
+  discrimination check, not a host runner, scorer commitment or live result.
+  All four remain `skeleton_todo` until the remaining v2 task contract is met.
 - `cross-host-task.schema.json`, the strictly isolated v1/v2 run schemas,
   `schema_validate.py`, `scan_artifacts.py`, `test_run_dry.py`, and `run_dry.py`
   are offline; no Rust runner/report exists.

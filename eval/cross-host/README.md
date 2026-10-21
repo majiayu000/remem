@@ -25,7 +25,20 @@ executed and no result may be cited from here.
 - `tasks/claude-to-codex/`, `tasks/codex-to-claude/`: 12 task skeletons per
   direction, one per required category. All are `status: "skeleton_todo"`
   with explicit `todo` lists; text fields describe design intent, not
-  fixture data. Hidden tests and deterministic fixtures are follow-up work.
+  fixture data except for the four registered smoke tasks below.
+- `fixtures/smoke.json`: shared inline-Python repository recipe, scorer-private
+  reference repairs and known-wrong repairs for architecture-decision and
+  failed-attempt-lesson tasks in both directions. Each of these four task files
+  now contains two chronological raw source episodes, a concrete continuation
+  request, hidden test files and score commands. The other 20 tasks remain
+  design skeletons. All 24 retain `skeleton_todo`: v2 causal oracles, scorer
+  commitments, source seals and real host execution are still missing.
+- `scripts/test_smoke_fixtures.py`: offline fixture check. For each smoke task
+  it runs score commands in fresh temporary repositories and requires the base
+  to fail, the reference repair to pass, and two known-wrong repairs to fail
+  through test assertions. Hidden tests, gold facts and repair recipes are
+  scorer-private inputs, never target-visible repository files. This check
+  launches no host/provider and establishes no cross-host outcome.
 - `examples/`: v1 and v2 compatibility schema fixtures, including invalid
   inputs used to exercise diagnostics. Fixtures only, not benchmark results.
 - `scripts/schema_validate.py`: stdlib-only validator for the JSON Schema
@@ -79,6 +92,7 @@ resolved-rate gains.
 python3 eval/cross-host/scripts/schema_validate.py --self-test
 python3 eval/cross-host/scripts/scan_artifacts.py --self-test
 python3 eval/cross-host/scripts/test_run_dry.py
+python3 eval/cross-host/scripts/test_smoke_fixtures.py
 python3 eval/cross-host/scripts/run_dry.py
 python3 eval/cross-host/scripts/run_dry.py \
   --suite-version cross-host-v2 \
@@ -95,7 +109,9 @@ python3 eval/cross-host/scripts/scan_artifacts.py <artifact-dir> \
 
 ## Follow-up (not in this directory yet)
 
-- Deterministic fixture repositories and hidden tests per task.
+- Complete deterministic fixtures/hidden tests for the remaining 20 tasks and
+  the v2 task/scorer commitments for all 24. The four smoke fixtures are a
+  partial preparation slice, not executable cross-host readiness.
 - Shared executable runner from #931, followed by the GH935-specific real-host
   harness using the `eval/coding-bench` isolation policy (temporary HOME,
   stripped env, host-read sandbox).

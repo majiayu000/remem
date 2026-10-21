@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "repo": {
+    "kind": "inline_python",
+    "base_commit": "fixture:gh935-four-smoke-v1",
+    "fixture_revision": "gh935-four-smoke-v1",
+    "files": {
+      "README.md": "# Handoff Demo\n\nDeterministic continuation tasks for cross-host smoke preparation.\n",
+      "handoff_demo/__init__.py": "",
+      "handoff_demo/journal.py": "def append_entry(state, key, amount):\n    state[\"balance\"] += amount\n    state[\"entries\"].append({\"key\": key, \"amount\": amount})\n    return state\n",
+      "handoff_demo/export.py": "def parse_export_row(line):\n    return line.split(\";\")\n",
+      "tests/__init__.py": "",
+      "tests/test_visible.py": "import unittest\n\nfrom handoff_demo.export import parse_export_row\n\n\nclass VisibleTests(unittest.TestCase):\n    def test_simple_row(self):\n        self.assertEqual(parse_export_row(\"a;b\"), [\"a\", \"b\"])\n"
+    }
+  },
+  "reference_patches": {
+    "architecture_decision": {
+      "handoff_demo/journal.py": "def append_entry(state, key, amount):\n    for entry in state[\"entries\"]:\n        if entry[\"key\"] == key:\n            if entry[\"amount\"] != amount:\n                raise ValueError(\"idempotency key reused with a different amount\")\n            return state\n    return {\n        **state,\n        \"balance\": state[\"balance\"] + amount,\n        \"entries\": [*state[\"entries\"], {\"key\": key, \"amount\": amount}],\n    }\n"
+    },
+    "failed_attempt_lesson": {
+      "handoff_demo/export.py": "import csv\nimport io\n\n\ndef parse_export_row(line):\n    rows = list(csv.reader(io.StringIO(line), delimiter=\";\", strict=True))\n    if not rows:\n        return []\n    if len(rows) != 1:\n        raise ValueError(\"expected one CSV record\")\n    return rows[0]\n"
+    }
+  },
+  "wrong_patches": {
+    "architecture_decision": {
+      "copy_without_idempotency": {
+        "handoff_demo/journal.py": "def append_entry(state, key, amount):\n    return {**state, \"balance\": state[\"balance\"] + amount, \"entries\": [*state[\"entries\"], {\"key\": key, \"amount\": amount}]}\n"
+      },
+      "deduplicate_without_conflict_check": {
+        "handoff_demo/journal.py": "def append_entry(state, key, amount):\n    for entry in state[\"entries\"]:\n        if entry[\"key\"] == key:\n            return state\n    return {\n        **state,\n        \"balance\": state[\"balance\"] + amount,\n        \"entries\": [*state[\"entries\"], {\"key\": key, \"amount\": amount}],\n    }\n"
+      }
+    },
+    "failed_attempt_lesson": {
+      "split_then_strip_quotes": {
+        "handoff_demo/export.py": "def parse_export_row(line):\n    return [part.strip().strip(chr(34)) for part in line.split(\";\")]\n"
+      },
+      "csv_drops_empty_fields": {
+        "handoff_demo/export.py": "import csv\nimport io\n\n\ndef parse_export_row(line):\n    rows = list(csv.reader(io.StringIO(line), delimiter=\";\", strict=True))\n    if not rows:\n        return []\n    if len(rows) != 1:\n        raise ValueError(\"expected one CSV record\")\n    return [field for field in rows[0] if field]\n"
+      }
+    }
+  }
+}

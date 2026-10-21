@@ -20,6 +20,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 import run_dry  # noqa: E402
 import schema_validate  # noqa: E402
 from schema_validate import validate  # noqa: E402
+from test_smoke_fixtures import SmokeFixtureTests  # noqa: E402,F401
 
 
 class RunDryTests(unittest.TestCase):

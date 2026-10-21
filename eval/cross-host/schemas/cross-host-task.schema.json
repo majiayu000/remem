@@ -43,6 +43,7 @@
     "status": { "enum": ["skeleton_todo", "ready"] },
     "source_host": { "enum": ["claude_code", "codex"] },
     "target_host": { "enum": ["claude_code", "codex"] },
+    "fixture": {"type": "string", "pattern": "^fixtures/[a-z0-9-]+[.]json$", "description": "Suite-relative deterministic offline fixture recipe; does not establish live readiness."},
     "history_episodes": {
       "type": "array",
       "minItems": 1,
@@ -53,6 +54,69 @@
         "properties": {
           "episode_id": { "type": "string", "minLength": 1 },
           "host": { "enum": ["claude_code", "codex"] },
+          "reference_time_epoch": {"type": "integer", "minimum": 1},
+          "raw_events": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "event_id",
+                "timestamp_epoch",
+                "role",
+                "sanitized_content",
+                "tool_name",
+                "sanitized_tool_input",
+                "sanitized_tool_output",
+                "host_boundary"
+              ],
+              "properties": {
+                "event_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "timestamp_epoch": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "user",
+                    "assistant",
+                    "tool"
+                  ]
+                },
+                "sanitized_content": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "tool_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "sanitized_tool_input": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "sanitized_tool_output": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "host_boundary": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
           "summary": { "type": "string", "minLength": 1 },
           "expected_memory_facts": {
             "type": "array",
