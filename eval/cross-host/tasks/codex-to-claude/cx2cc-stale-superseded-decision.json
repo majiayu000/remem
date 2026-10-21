@@ -11,51 +11,108 @@
     {
       "episode_id": "cx2cc-stale-superseded-decision-episode-1",
       "host": "codex",
-      "summary": "An early source-host decision was later superseded; both versions exist in history.",
+      "reference_time_epoch": 1760004060,
+      "summary": "The old v1 cursor decision encoded continuation tokens as cursor=<URL-escaped-token>. That generation is recorded as superseded; it is retained only to explain old incidents and must not be used for current work.",
       "expected_memory_facts": [
-        "fact:current_decision"
+        "fact:cursor_v1_superseded"
       ],
       "memories": [
         {
-          "title": "Superseding decision that replaces the stale one",
-          "text": "TODO: record the current decision plus a pointer to the superseded one, with supersession order and timestamps.",
+          "title": "Stale superseded decision",
+          "text": "The old v1 cursor decision encoded continuation tokens as cursor=<URL-escaped-token>. That generation is recorded as superseded; it is retained only to explain old incidents and must not be used for current work.",
           "memory_type": "decision",
-          "topic_key": "cx2cc-stale-superseded-decision"
+          "topic_key": "cx2cc-stale-superseded-decision",
+          "status": "stale"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cx2cc-stale-superseded-decision:e1",
+          "timestamp_epoch": 1760004060,
+          "role": "user",
+          "sanitized_content": "The old v1 cursor decision encoded continuation tokens as cursor=<URL-escaped-token>. That generation is recorded as superseded; it is retained only to explain old incidents and must not be used for current work.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
+        }
+      ]
+    },
+    {
+      "episode_id": "cx2cc-stale-superseded-decision-episode-2",
+      "host": "codex",
+      "reference_time_epoch": 1760004120,
+      "summary": "The reviewed v2 decision supersedes v1 for every token, including empty and ASCII tokens: encode_cursor returns a JSON object with exactly cursor equal to the original string and version equal to integer 2. Do not restore the old query-string format or keep a v1 compatibility arm.",
+      "expected_memory_facts": [
+        "fact:cursor_v2_current"
+      ],
+      "memories": [
+        {
+          "title": "Stale superseded decision",
+          "text": "The reviewed v2 decision supersedes v1 for every token, including empty and ASCII tokens: encode_cursor returns a JSON object with exactly cursor equal to the original string and version equal to integer 2. Do not restore the old query-string format or keep a v1 compatibility arm.",
+          "memory_type": "decision",
+          "topic_key": "cx2cc-stale-superseded-decision",
+          "status": "active"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cx2cc-stale-superseded-decision:e2",
+          "timestamp_epoch": 1760004120,
+          "role": "user",
+          "sanitized_content": "The reviewed v2 decision supersedes v1 for every token, including empty and ASCII tokens: encode_cursor returns a JSON object with exactly cursor equal to the original string and version equal to integer 2. Do not restore the old query-string format or keep a v1 compatibility arm.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
         }
       ]
     }
   ],
   "target_task": {
-    "prompt": "Apply the current decision. Following the older superseded decision must fail hidden tests and count as stale_memory_followed. TODO: bind to a fixture with both decision generations.",
+    "prompt": "Update handoff_demo/cursor.py to the current cursor transport decision from the source-host history. An older decision is present in that history; follow the superseding decision.",
     "allowed_paths": [
-      "TODO: fixture source paths",
+      "handoff_demo/cursor.py",
       "tests"
     ],
     "forbidden_paths": [
+      "README.md",
       "MEMORY.md",
       "REMEM_CONTEXT.md"
     ],
     "timeout_ms": 180000
   },
   "score": {
-    "commands": [],
-    "hidden_files": {},
+    "commands": [
+      [
+        "python3",
+        "-m",
+        "unittest",
+        "tests.test_cursor_hidden"
+      ]
+    ],
+    "hidden_files": {
+      "tests/test_cursor_hidden.py": "import json\nimport unittest\n\nfrom handoff_demo.cursor import encode_cursor\n\n\nclass HiddenTests(unittest.TestCase):\n    def test_current_generation_applies_to_every_token(self):\n        for token in (\"next\", \"\", \"a&b\", \"\u00e9/\u4e2d\"):\n            with self.subTest(token=token):\n                encoded = encode_cursor(token)\n                try:\n                    payload = json.loads(encoded)\n                except (json.JSONDecodeError, TypeError) as error:\n                    self.fail(f\"expected a current JSON cursor payload: {error}\")\n                self.assertEqual(payload, {\"cursor\": token, \"version\": 2})\n                self.assertIs(type(payload[\"version\"]), int)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    },
     "required_patch_patterns": [],
     "forbidden_patch_patterns": []
   },
   "gold_memory": {
     "required_facts": [
-      "fact:current_decision"
+      "fact:cursor_v2_current"
     ],
-    "forbidden_facts": [],
+    "forbidden_facts": [
+      "fact:cursor_v1_superseded"
+    ],
     "supporting_event_ids": [
-      "cx2cc-stale-superseded-decision-episode-1:e1"
+      "cx2cc-stale-superseded-decision:e2"
     ]
   },
   "todo": [
-    "Fill history_episodes with real or deterministic source-host episode content; current text fields are design intent, not fixture data.",
-    "Bind target_task.prompt and allowed_paths to a concrete deterministic fixture repository.",
-    "Add hidden test files and score.commands; hidden tests are the primary outcome.",
-    "Set status to ready and clear this todo list once the fixture is real."
-  ]
+    "Register the v2 foreign-project decoy/canary, causal_oracle_v1 and pre_run_scorer_commitment_v1 before declaring this task ready.",
+    "Bind the superseded challenge to actual production state and the per-run query-relevant pre-filter match assertion; fixture text/status metadata does not establish this proof.",
+    "Bind real source/target host profiles, source seal, production capture/extraction and independent scorer on the approved shared runner.",
+    "Run approved real bidirectional handoffs with identity isolation and direction-grouped reporting; offline fixture checks are not live handoff or production filtering evidence."
+  ],
+  "fixture": "fixtures/smoke.json"
 }

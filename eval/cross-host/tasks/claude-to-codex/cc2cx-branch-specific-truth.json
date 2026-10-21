@@ -11,51 +11,107 @@
     {
       "episode_id": "cc2cx-branch-specific-truth-episode-1",
       "host": "claude_code",
-      "summary": "A fact holds only on one branch; the source-host history covers both branches.",
+      "reference_time_epoch": 1760005060,
+      "summary": "On the stable Git branch, the reviewed encode_event(name, value) contract is the literal name|value text protocol. The fixture branch-marker.txt identifies this branch; changes from the next branch must not be treated as stable truth.",
       "expected_memory_facts": [
-        "fact:branch_specific_truth"
+        "fact:stable_event_contract"
       ],
       "memories": [
         {
-          "title": "Branch-specific truth",
-          "text": "TODO: record the fact together with the branch it applies to, and the conflicting state on the other branch.",
-          "memory_type": "discovery",
-          "topic_key": "cc2cx-branch-specific-truth"
+          "title": "Branch specific truth",
+          "text": "On the stable Git branch, the reviewed encode_event(name, value) contract is the literal name|value text protocol. The fixture branch-marker.txt identifies this branch; changes from the next branch must not be treated as stable truth.",
+          "memory_type": "decision",
+          "topic_key": "cc2cx-branch-specific-truth",
+          "branch": "stable"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cc2cx-branch-specific-truth:e1",
+          "timestamp_epoch": 1760005060,
+          "role": "user",
+          "sanitized_content": "On the stable Git branch, the reviewed encode_event(name, value) contract is the literal name|value text protocol. The fixture branch-marker.txt identifies this branch; changes from the next branch must not be treated as stable truth.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
+        }
+      ]
+    },
+    {
+      "episode_id": "cc2cx-branch-specific-truth-episode-2",
+      "host": "claude_code",
+      "reference_time_epoch": 1760005120,
+      "summary": "On the distinct next Git branch, encode_event returns a JSON object with exactly event=name and value=value. Both contracts remain current on their own branch; neither supersedes the other. The target remains on stable and must use only the stable contract; the next-branch decision is not target-branch truth.",
+      "expected_memory_facts": [
+        "fact:next_event_contract"
+      ],
+      "memories": [
+        {
+          "title": "Branch specific truth",
+          "text": "On the distinct next Git branch, encode_event returns a JSON object with exactly event=name and value=value. Both contracts remain current on their own branch; neither supersedes the other. The target remains on stable and must use only the stable contract; the next-branch decision is not target-branch truth.",
+          "memory_type": "decision",
+          "topic_key": "cc2cx-branch-specific-truth",
+          "branch": "next"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cc2cx-branch-specific-truth:e2",
+          "timestamp_epoch": 1760005120,
+          "role": "user",
+          "sanitized_content": "On the distinct next Git branch, encode_event returns a JSON object with exactly event=name and value=value. Both contracts remain current on their own branch; neither supersedes the other. The target remains on stable and must use only the stable contract; the next-branch decision is not target-branch truth.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
         }
       ]
     }
   ],
   "target_task": {
-    "prompt": "Work on the stated branch and use only that branch's truth. Applying the other branch's state must fail. TODO: bind to a fixture with divergent branches.",
+    "prompt": "Implement encode_event in handoff_demo/branch_policy.py on the stated stable branch using only that branch's decision from the source-host history. The other branch has a different current contract and must not determine this target's behavior.",
     "allowed_paths": [
-      "TODO: fixture source paths",
+      "handoff_demo/branch_policy.py",
       "tests"
     ],
     "forbidden_paths": [
+      "README.md",
       "MEMORY.md",
       "REMEM_CONTEXT.md"
     ],
     "timeout_ms": 180000
   },
   "score": {
-    "commands": [],
-    "hidden_files": {},
+    "commands": [
+      [
+        "python3",
+        "-m",
+        "unittest",
+        "tests.test_branch_policy_hidden"
+      ]
+    ],
+    "hidden_files": {
+      "tests/test_branch_policy_hidden.py": "import subprocess\nimport unittest\nfrom pathlib import Path\n\nfrom handoff_demo.branch_policy import encode_event\n\n\nclass HiddenTests(unittest.TestCase):\n    def test_only_the_current_stable_branch_contract_is_followed(self):\n        root = Path(__file__).resolve().parents[1]\n        branch = subprocess.check_output([\"git\", \"branch\", \"--show-current\"], cwd=root, text=True).strip()\n        self.assertEqual(branch, \"stable\")\n        self.assertEqual((root / \"branch-marker.txt\").read_text().strip(), \"stable\")\n        other = subprocess.check_output([\"git\", \"show\", \"next:branch-marker.txt\"], cwd=root, text=True).strip()\n        self.assertEqual(other, \"next\")\n        for name, value in ((\"ready\", \"yes\"), (\"failed\", \"no\")):\n            self.assertEqual(encode_event(name, value), f\"{name}|{value}\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    },
     "required_patch_patterns": [],
     "forbidden_patch_patterns": []
   },
   "gold_memory": {
     "required_facts": [
-      "fact:branch_specific_truth"
+      "fact:stable_event_contract"
     ],
-    "forbidden_facts": [],
+    "forbidden_facts": [
+      "fact:next_event_contract"
+    ],
     "supporting_event_ids": [
-      "cc2cx-branch-specific-truth-episode-1:e1"
+      "cc2cx-branch-specific-truth:e1"
     ]
   },
   "todo": [
-    "Fill history_episodes with real or deterministic source-host episode content; current text fields are design intent, not fixture data.",
-    "Bind target_task.prompt and allowed_paths to a concrete deterministic fixture repository.",
-    "Add hidden test files and score.commands; hidden tests are the primary outcome.",
-    "Set status to ready and clear this todo list once the fixture is real."
-  ]
+    "Register the v2 foreign-project decoy/canary, causal_oracle_v1 and pre_run_scorer_commitment_v1 before declaring this task ready.",
+    "Bind real source/target host profiles, source seal, production capture/extraction and independent scorer on the approved shared runner.",
+    "Run approved real bidirectional handoffs with identity isolation and direction-grouped reporting; offline fixture checks are not live handoff or production filtering evidence."
+  ],
+  "fixture": "fixtures/smoke.json"
 }

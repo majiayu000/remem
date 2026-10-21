@@ -11,51 +11,107 @@
     {
       "episode_id": "cx2cc-git-evidence-episode-1",
       "host": "codex",
-      "summary": "The load-bearing fact is anchored in git evidence (commit, blame, tag) from the source-host session.",
+      "reference_time_epoch": 1760009060,
+      "summary": "The retry budget was reviewed in Git and pinned by tag reviewed-budget, whose retry-budget.txt contains 5 in this fixture. approved_retry_limit(repo_root) must read the tagged file, not a hardcoded value; subsequent reviewed tags can carry a different integer.",
       "expected_memory_facts": [
-        "fact:git_evidence"
+        "fact:reviewed_git_tag_retry_budget"
       ],
       "memories": [
         {
-          "title": "Git-evidence-anchored fact",
-          "text": "TODO: record the fact with its git anchor (fixture commit hash, tag, or blame range) from the deterministic fixture history.",
+          "title": "Git evidence",
+          "text": "The retry budget was reviewed in Git and pinned by tag reviewed-budget, whose retry-budget.txt contains 5 in this fixture. approved_retry_limit(repo_root) must read the tagged file, not a hardcoded value; subsequent reviewed tags can carry a different integer.",
           "memory_type": "discovery",
           "topic_key": "cx2cc-git-evidence"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cx2cc-git-evidence:e1",
+          "timestamp_epoch": 1760009060,
+          "role": "user",
+          "sanitized_content": "The retry budget was reviewed in Git and pinned by tag reviewed-budget, whose retry-budget.txt contains 5 in this fixture. approved_retry_limit(repo_root) must read the tagged file, not a hardcoded value; subsequent reviewed tags can carry a different integer.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
+        }
+      ]
+    },
+    {
+      "episode_id": "cx2cc-git-evidence-episode-2",
+      "host": "codex",
+      "reference_time_epoch": 1760009120,
+      "summary": "A newer experiment changed the current retry-budget.txt to 2 without approval. HEAD and the working tree therefore disagree with reviewed-budget. Use Git evidence from the reviewed tag; neither recency nor the current file proves approval.",
+      "expected_memory_facts": [
+        "fact:head_retry_budget_unapproved"
+      ],
+      "memories": [
+        {
+          "title": "Git evidence",
+          "text": "A newer experiment changed the current retry-budget.txt to 2 without approval. HEAD and the working tree therefore disagree with reviewed-budget. Use Git evidence from the reviewed tag; neither recency nor the current file proves approval.",
+          "memory_type": "discovery",
+          "topic_key": "cx2cc-git-evidence"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cx2cc-git-evidence:e2",
+          "timestamp_epoch": 1760009120,
+          "role": "user",
+          "sanitized_content": "A newer experiment changed the current retry-budget.txt to 2 without approval. HEAD and the working tree therefore disagree with reviewed-budget. Use Git evidence from the reviewed tag; neither recency nor the current file proves approval.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
         }
       ]
     }
   ],
   "target_task": {
-    "prompt": "Answer/fix using the git-anchored truth. The working tree alone is misleading without the recorded git evidence. TODO: bind to a fixture repo with scripted git history.",
+    "prompt": "Implement approved_retry_limit in handoff_demo/git_budget.py using the reviewed Git evidence recorded by the source host. The current working tree includes a newer unapproved experiment.",
     "allowed_paths": [
-      "TODO: fixture source paths",
+      "handoff_demo/git_budget.py",
       "tests"
     ],
     "forbidden_paths": [
+      "README.md",
       "MEMORY.md",
       "REMEM_CONTEXT.md"
     ],
     "timeout_ms": 180000
   },
   "score": {
-    "commands": [],
-    "hidden_files": {},
+    "commands": [
+      [
+        "python3",
+        "-m",
+        "unittest",
+        "tests.test_git_budget_hidden"
+      ]
+    ],
+    "hidden_files": {
+      "tests/test_git_budget_hidden.py": "import subprocess\nimport unittest\nfrom pathlib import Path\n\nfrom handoff_demo.git_budget import approved_retry_limit\n\n\nclass HiddenTests(unittest.TestCase):\n    def test_reviewed_tag_not_the_newest_or_working_tree(self):\n        root = Path(__file__).resolve().parents[1]\n        def git(*args):\n            subprocess.run([\"git\", \"-c\", \"core.hooksPath=/dev/null\", \"-c\", \"commit.gpgsign=false\", *args], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)\n        self.assertEqual((root / \"retry-budget.txt\").read_text().strip(), \"2\")\n        self.assertEqual(approved_retry_limit(root), 5)\n        (root / \"retry-budget.txt\").write_text(\"9\\n\")\n        git(\"add\", \"retry-budget.txt\")\n        git(\"commit\", \"--quiet\", \"-m\", \"second reviewed budget\")\n        git(\"tag\", \"--force\", \"reviewed-budget\")\n        (root / \"retry-budget.txt\").write_text(\"3\\n\")\n        git(\"add\", \"retry-budget.txt\")\n        git(\"commit\", \"--quiet\", \"-m\", \"newer unapproved experiment\")\n        self.assertEqual(approved_retry_limit(root), 9)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    },
     "required_patch_patterns": [],
     "forbidden_patch_patterns": []
   },
   "gold_memory": {
     "required_facts": [
-      "fact:git_evidence"
+      "fact:reviewed_git_tag_retry_budget",
+      "fact:head_retry_budget_unapproved"
     ],
-    "forbidden_facts": [],
+    "forbidden_facts": [
+      "fact:head_retry_budget_is_approved"
+    ],
     "supporting_event_ids": [
-      "cx2cc-git-evidence-episode-1:e1"
+      "cx2cc-git-evidence:e1",
+      "cx2cc-git-evidence:e2"
     ]
   },
   "todo": [
-    "Fill history_episodes with real or deterministic source-host episode content; current text fields are design intent, not fixture data.",
-    "Bind target_task.prompt and allowed_paths to a concrete deterministic fixture repository.",
-    "Add hidden test files and score.commands; hidden tests are the primary outcome.",
-    "Set status to ready and clear this todo list once the fixture is real."
-  ]
+    "Register the v2 foreign-project decoy/canary, causal_oracle_v1 and pre_run_scorer_commitment_v1 before declaring this task ready.",
+    "Bind real source/target host profiles, source seal, production capture/extraction and independent scorer on the approved shared runner.",
+    "Run approved real bidirectional handoffs with identity isolation and direction-grouped reporting; offline fixture checks are not live handoff or production filtering evidence."
+  ],
+  "fixture": "fixtures/smoke.json"
 }

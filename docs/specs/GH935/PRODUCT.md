@@ -7,13 +7,15 @@ Issue: #935 (refs #849, #852, #385)
 PR #937 shipped `cross-host-v1` infrastructure under `eval/cross-host/`:
 
 - a versioned charter and task/run schemas;
-- 12 `skeleton_todo` tasks in each direction; the architecture-decision and
-  failed-attempt cases now have deterministic offline fixtures and hidden tests
-  (four tasks total), while their real-host/scorer acceptance remains pending;
+- 12 `skeleton_todo` tasks in each direction; all 12 logical scenarios now have deterministic offline fixtures and hidden
+  tests in both directions (24 task definitions), while real-host/scorer
+  acceptance remains pending;
 - an artifact leak scanner and offline dry-run validator.
 
 There is still no executable cross-host runner, live run, result bundle or
-conclusion. The four offline smoke fixtures only prepare later execution.
+conclusion. These offline fixtures only prepare later execution. The four registered smoke
+tasks remain the first planned live milestone; paired directions repeat the
+same 12 logical scenarios and are not 24 independent statistical units.
 The charter remains `infrastructure_only_no_runs`. This defines remaining work;
 it is not outcome evidence and does not authorize a
 live run.
