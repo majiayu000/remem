@@ -94,7 +94,11 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
     push_check(&mut checks, &mut on_check, check_binary)?;
     let shared_db = SharedDoctorDb::open();
     push_check(&mut checks, &mut on_check, || {
-        check_schema_migration(shared_db.conn(), shared_db.open_error())
+        // The dry-run may clone the store with its connection as the backup
+        // source; afterwards reads on that connection failed with
+        // "database disk image is malformed" (#1117). Keep it off the shared one.
+        let dry_run_db = SharedDoctorDb::open();
+        check_schema_migration(dry_run_db.conn(), dry_run_db.open_error())
     })?;
     push_check(&mut checks, &mut on_check, check_key_format)?;
     push_check(&mut checks, &mut on_check, || {
