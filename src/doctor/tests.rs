@@ -701,7 +701,7 @@ fn run_doctor_with_writer_opens_one_shared_database_connection() -> anyhow::Resu
     )?;
 
     assert!(outcome.exit_code() <= 2);
-    assert_eq!(runtime_connection_open_count(), 1);
+    assert_eq!(runtime_connection_open_count(), 2); // shared + Schema dry-run (#1117)
     Ok(())
 }
 
