@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Stage `0.6.106`: `remem doctor` no longer clones the whole database when the schema is current, and the Schema dry-run uses its own connection so later checks stop reporting a false `database disk image is malformed`. Fixes #1117, #1118.
 - Stage `0.6.105`: preserve prose at structured capture boundaries during observation extraction while retaining secret field and key redaction. Compact JSON adds no formatting bytes to the extraction content budget, including deeply nested captures and large flat arrays. Refs #931.
 
 ## [0.6.104] - 2026-10-08
