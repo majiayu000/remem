@@ -36,6 +36,22 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
         });
     }
 
+    // Same condition as the `run_migrations` fast path (invariants were checked
+    // above): a fully current store has nothing to rehearse, so skip the full
+    // backup-API clone of the database (#1118).
+    if has_migration_table(real_conn)
+        && migration_version == super::latest_schema_version()
+        && applied_pending_count(&applied) == 0
+    {
+        return Ok(DryRunResult {
+            migration_version,
+            sqlite_user_version: raw_current_version,
+            current_version,
+            pending_count: 0,
+            error: None,
+        });
+    }
+
     let temp_path = match DryRunTempPath::create() {
         Ok(temp_path) => temp_path,
         Err(error) => {
@@ -205,7 +221,19 @@ fn logical_current_version(raw_current_version: i64, applied: &[i64]) -> i64 {
     raw_current_version.max(OLD_BASELINE_VERSION - 1 + latest_applied)
 }
 
+#[cfg(test)]
+thread_local! {
+    static DATABASE_CLONES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn database_clone_count() -> usize {
+    DATABASE_CLONES.with(std::cell::Cell::get)
+}
+
 fn clone_database(src: &Connection, dst: &mut Connection) -> Result<()> {
+    #[cfg(test)]
+    DATABASE_CLONES.with(|count| count.set(count.get() + 1));
     let page_size = query_page_size(src)?;
     ensure!(page_size > 0, "source database page_size must be positive");
     dst.execute_batch(&format!("PRAGMA page_size = {page_size}"))?;
@@ -355,6 +383,7 @@ fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
 mod tests {
     use super::*;
     use crate::db::test_support::{cleanup_temp_db_files, unique_temp_db_path};
+    use crate::migrate::run_migrations;
 
     #[cfg(unix)]
     #[test]
@@ -424,6 +453,34 @@ mod tests {
         }
 
         cleanup_temp_db_files(&source_path);
+        Ok(())
+    }
+
+    /// Regression (#1118): a fully current store must not be cloned. On a multi-GB
+    /// database the backup-API clone alone made `remem doctor` take minutes.
+    #[test]
+    fn dry_run_pending_skips_clone_for_fully_current_schema() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        run_migrations(&conn)?;
+        let clones_before = database_clone_count();
+
+        let result = dry_run_pending(&conn)?;
+
+        assert_eq!(result.pending_count, 0);
+        assert!(
+            result.error.is_none(),
+            "unexpected dry-run error: {:?}",
+            result.error
+        );
+        assert_eq!(database_clone_count(), clones_before);
+
+        let pending_conn = Connection::open_in_memory()?;
+        dry_run_pending(&pending_conn)?;
+        assert_eq!(
+            database_clone_count(),
+            clones_before + 1,
+            "pending migrations must still be rehearsed on a clone"
+        );
         Ok(())
     }
 }

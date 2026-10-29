@@ -701,7 +701,9 @@ fn run_doctor_with_writer_opens_one_shared_database_connection() -> anyhow::Resu
     )?;
 
     assert!(outcome.exit_code() <= 2);
-    assert_eq!(runtime_connection_open_count(), 1);
+    // One shared connection for every check, plus one for the Schema dry-run,
+    // which must never use the shared connection as its backup source (#1117).
+    assert_eq!(runtime_connection_open_count(), 2);
     Ok(())
 }
 
