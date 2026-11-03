@@ -25,8 +25,8 @@ DSH 允许任意注册工具名，工具结果均按外部证据处理，保留�
 核心继续脱敏和持久化。提示和轮次总结的省略元数据保留在实际捕获文本内；
 身份字段（包括工具名）本身超限会返回可见错误。完整原始消息和工具结果仍在 DSH 历史中。
 
-当前包为发布准备版本，尚未上传 npm。验证目标：DSH `0.2.0-rc.2` 与 Cordis
-`4.0.4`。DSH 主线 API 与该 npm 版本不同；本插件不宣称已验证主线兼容。
+当前包为发布准备版本，尚未上传 npm。验证目标：DSH `0.2.1-rc.5` 与 Cordis
+`4.0.5`。DSH 主线 API 与该 npm 版本不同；本插件不宣称已验证主线兼容。
 需要 Node.js 22.19+ 和包含 DSH 宿主适配的 remem 0.7.0（此分支，未发布）。旧 remem 会在
 首次真实 CLI 请求返回可见错误。
 
@@ -96,7 +96,7 @@ assistant text and completed tools, and queues remem's existing distillation at
 turn end. Retrieval, storage, redaction and governance stay in remem.
 
 The package is prepared for publication and is not yet on npm. Tested APIs target
-DSH 0.2.0-rc.2 and Cordis 4.0.4; the current upstream source uses a different API.
+DSH 0.2.1-rc.5 and Cordis 4.0.5; the current upstream source uses a different API.
 Use Node.js 22.19+ and the remem binary built from this branch, run `npm ci`,
 `npm test`, `npm pack`, then run `dsh plugin --profile headless add /absolute/path/to/the.tgz`.
 The bundle is registered as a profile layer. Override the `remem` entry with the

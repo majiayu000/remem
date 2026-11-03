@@ -7,8 +7,6 @@ import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
-import InvariantRegistry from '@deepseek-ai/dsh-invariants'
-import * as SessionInvariant from '@deepseek-ai/dsh-session/invariant'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import LlmRuntime, { LlmAdapter, createUserMessage, createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
@@ -38,8 +36,6 @@ export async function harness(executable, toolName = 'fixture_probe') {
   const ctx = new Context()
   await ctx.plugin(LlmRuntime)
   await ctx.plugin(SessionStore)
-  await ctx.plugin(InvariantRegistry)
-  await ctx.plugin(SessionInvariant)
   await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
