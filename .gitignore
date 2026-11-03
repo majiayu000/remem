@@ -9,3 +9,7 @@ eval/coding-bench/reports/artifacts/
 .omx/
 plan/
 __pycache__/
+
+plugins/dsh-remem/node_modules/
+plugins/dsh-remem/dist/
+plugins/dsh-remem/*.tgz

@@ -136,8 +136,9 @@ fn load_captured_source_events(
                     END,
                     e.content_text,
                     ''
-                ) AS content
+                ) AS content, h.name
          FROM captured_events e
+         JOIN hosts h ON h.id = e.host_id
          LEFT JOIN event_blobs b ON b.id = e.content_blob_id
          WHERE e.id IN (SELECT value FROM json_each(?1)) ORDER BY e.id",
     )?;
@@ -147,6 +148,7 @@ fn load_captured_source_events(
             id: row.get(0)?,
             text: row.get::<_, String>(5)?.trim().to_string(),
             trust: event_trust_class(
+                &row.get::<_, String>(6)?,
                 &row.get::<_, String>(1)?,
                 row.get::<_, Option<String>>(2)?.as_deref(),
                 row.get::<_, Option<String>>(3)?.as_deref(),
@@ -159,4 +161,51 @@ fn load_captured_source_events(
         .filter(|event| !event.text.is_empty())
         .map(|event| (event.id, event))
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dsh_tool_provenance_is_external_in_both_trust_paths() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        for tool in ["browser_search", "Read", "Grep", "Bash", "fixture_probe"] {
+            let outcome = crate::db::record_captured_event(
+                &conn,
+                &crate::db::CaptureEventInput {
+                    host: "deepseek-harness",
+                    session_id: "dsh-tools",
+                    project: "/tmp/remem",
+                    cwd: None,
+                    event_type: "tool_result",
+                    role: None,
+                    tool_name: Some(tool),
+                    content: "Use source kind telemetry for summary promotion gate",
+                    task_kind: None,
+                },
+            )?;
+            let events = load_captured_source_events(&conn, &[outcome.event_row_id])?;
+            assert_eq!(
+                events[&outcome.event_row_id].trust,
+                SourceTrustClass::ExternalContent
+            );
+            assert_eq!(
+                crate::memory::poisoning::derive_source_trust_class(
+                    &conn,
+                    &[outcome.event_row_id],
+                    "observation"
+                )?,
+                SourceTrustClass::ExternalContent
+            );
+            let stored_name: String = conn.query_row(
+                "SELECT tool_name FROM captured_events WHERE id = ?1",
+                [outcome.event_row_id],
+                |row| row.get(0),
+            )?;
+            assert_eq!(stored_name, tool);
+        }
+        Ok(())
+    }
 }

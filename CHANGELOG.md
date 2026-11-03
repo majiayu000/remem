@@ -1,8 +1,18 @@
 # Changelog
 
-## Unreleased
+## [0.7.0] - Unreleased
 
-- Stage `0.6.105`: preserve prose at structured capture boundaries during observation extraction while retaining secret field and key redaction. Compact JSON adds no formatting bytes to the extraction content budget, including deeply nested captures and large flat arrays. Refs #931.
+### Breaking
+
+- Add `InstallHost::DeepSeekHarness`; downstream exhaustive matches must handle the new host. This source change is staged under the 0.7.0 minor boundary.
+
+### Added
+
+- Add the optional DeepSeek Harness lifecycle adapter with cancellation-safe context preparation, recoverable capture failures, and retryable claimed prompts. The npm adapter and this source version remain unpublished.
+
+### Fixed
+
+- Preserve prose at structured capture boundaries during observation extraction while retaining secret field and key redaction. Compact JSON adds no formatting bytes to the extraction content budget, including deeply nested captures and large flat arrays. Refs #931.
 
 ## [0.6.104] - 2026-10-08
 

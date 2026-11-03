@@ -274,6 +274,9 @@ fn record_capture_event_with_git_evidence(
     git_evidence: &[crate::git_util::GitCommitEvidence],
 ) -> Result<i64> {
     let content = capture_event_content_with_git_evidence(event, summary, git_evidence);
+    // DSH routes assistant prose through observe, but it is not tool evidence.
+    // Keep the same canonical provenance on live capture and spill replay.
+    let assistant_message = host == "deepseek-harness" && summary.event_type == "message";
     let outcome = db::record_captured_event_with_id_and_reference_time_and_git_evidence(
         conn,
         &db::CaptureEventInput {
@@ -281,9 +284,13 @@ fn record_capture_event_with_git_evidence(
             session_id: &event.session_id,
             project: &event.project,
             cwd: event.cwd.as_deref(),
-            event_type: crate::cursor_hook::captured_event_type_for_summary(&summary.event_type),
-            role: None,
-            tool_name: Some(&event.tool_name),
+            event_type: if assistant_message {
+                "message"
+            } else {
+                crate::cursor_hook::captured_event_type_for_summary(&summary.event_type)
+            },
+            role: assistant_message.then_some("assistant"),
+            tool_name: (!assistant_message).then_some(event.tool_name.as_str()),
             content: &content,
             task_kind: Some(db::ExtractionTaskKind::ObservationExtract),
         },
