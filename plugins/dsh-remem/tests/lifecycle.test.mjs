@@ -70,6 +70,16 @@ export async function runTurn(ctx, id = 'dsh-fixture') {
   return handle
 }
 
+// A SIGKILLed grandchild can linger as a zombie until init reaps it, so poll briefly instead of asserting once.
+async function assertProcessGone(pid, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    try { process.kill(pid, 0) } catch (error) { if (error.code === 'ESRCH') return; throw error }
+    assert(Date.now() < deadline, `process ${pid} still exists ${timeoutMs}ms after unload`)
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+}
+
 test('real AgentLoop captures human/tool/assistant, injects once and flushes in order', async () => {
   const f = await fixture()
   const { ctx, model, fiber } = await harness(f.executable)
@@ -580,7 +590,7 @@ for (const viaNpm of [false, true]) test(`blocked context cancellation promptly 
     assert(Date.now() - before < 2000, 'cancellation waited for the context timeout')
     assert.equal(model.requests.length, 0)
     assert.equal(handle.agent.session.deriveMessages().filter(m => m.source.kind === 'remem').length, 0)
-    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
+    await assertProcessGone(pid)
     assert.equal(handle.agent.inbox.hasPending, false)
     await handle.dispose()
   } finally {
@@ -615,7 +625,7 @@ for (const viaNpm of [false, true]) test(`plugin unload cancels an active contex
     const before = Date.now()
     await Promise.race([Promise.resolve(fiber.dispose()), new Promise((_, reject) => setTimeout(() => reject(new Error('unload did not stop the process tree')), 2000))])
     assert(Date.now() - before < 2000, 'unload waited for the context timeout')
-    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' })
+    await assertProcessGone(pid)
     await handle.agent.whenIdle()
     assert.equal(model.requests.length, 0)
     assert.equal(handle.agent.session.deriveMessages().filter(m => m.source.kind === 'remem').length, 0)
