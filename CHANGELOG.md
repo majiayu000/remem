@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.1] - Unreleased
+
+### Performance
+
+- Reach a project's memories through the owner, target and legacy project indexes in hybrid prompt recall instead of decrypting every active memory per channel. On a 100k-memory store, `session-init` CPU drops from 0.6–0.96s to 0.12–0.22s with unchanged injected context.
+
 ## [0.7.0] - Unreleased
 
 ### Breaking

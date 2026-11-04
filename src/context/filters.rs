@@ -8,10 +8,70 @@ pub(super) fn push_owner_included_filter(
     conditions: &mut Vec<String>,
     params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
 ) -> Result<()> {
-    let (owner_clause, next) =
+    let clauses = push_owner_value_clauses(conn, project, idx, params)?;
+    conditions.push(clauses.included());
+    Ok(())
+}
+
+/// Same rows as [`push_owner_included_filter`], plus a rowid prefilter so
+/// SQLite reaches the project's memories through the owner, target and legacy
+/// project indexes. The three-way OR alone makes the planner walk every
+/// active memory through the status index, decrypting the whole table on each
+/// context query (about 150ms per channel on a store with 100k memories).
+pub(super) fn push_owner_included_filter_indexed(
+    conn: &Connection,
+    project: &str,
+    table_ref: &str,
+    idx: &mut usize,
+    conditions: &mut Vec<String>,
+    params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+) -> Result<()> {
+    let clauses = push_owner_value_clauses(conn, project, idx, params)?;
+    conditions.push(clauses.candidate_ids(table_ref));
+    conditions.push(clauses.included());
+    Ok(())
+}
+
+struct OwnerValueClauses {
+    owner: String,
+    target: String,
+    legacy: String,
+}
+
+impl OwnerValueClauses {
+    fn included(&self) -> String {
+        format!(
+            "((owner_scope = 'repo' AND {}) \
+              OR (owner_scope = 'repo' AND {}) \
+              OR (owner_scope IS NULL AND {} \
+                  AND COALESCE(scope, 'project') != 'global'))",
+            self.owner, self.target, self.legacy
+        )
+    }
+
+    // Each branch is a superset of its `included` counterpart and names only
+    // its own indexed column, so the planner picks that column's index.
+    fn candidate_ids(&self, table_ref: &str) -> String {
+        format!(
+            "{table_ref}.id IN (
+                 SELECT id FROM memories WHERE owner_scope = 'repo' AND {}
+                 UNION SELECT id FROM memories WHERE {}
+                 UNION SELECT id FROM memories WHERE {})",
+            self.owner, self.target, self.legacy
+        )
+    }
+}
+
+fn push_owner_value_clauses(
+    conn: &Connection,
+    project: &str,
+    idx: &mut usize,
+    params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+) -> Result<OwnerValueClauses> {
+    let (owner, next) =
         crate::project_alias::push_project_value_filter(conn, "owner_key", project, *idx, params)?;
     *idx = next;
-    let (target_clause, next) = crate::project_alias::push_project_value_filter(
+    let (target, next) = crate::project_alias::push_project_value_filter(
         conn,
         "target_project",
         project,
@@ -19,16 +79,14 @@ pub(super) fn push_owner_included_filter(
         params,
     )?;
     *idx = next;
-    let (legacy_clause, next) =
+    let (legacy, next) =
         crate::project_alias::push_project_value_filter(conn, "project", project, *idx, params)?;
     *idx = next;
-    conditions.push(format!(
-        "((owner_scope = 'repo' AND {owner_clause}) \
-          OR (owner_scope = 'repo' AND {target_clause}) \
-          OR (owner_scope IS NULL AND {legacy_clause} \
-              AND COALESCE(scope, 'project') != 'global'))"
-    ));
-    Ok(())
+    Ok(OwnerValueClauses {
+        owner,
+        target,
+        legacy,
+    })
 }
 
 pub(super) fn push_owner_excluded_filter(
@@ -38,26 +96,8 @@ pub(super) fn push_owner_excluded_filter(
     conditions: &mut Vec<String>,
     params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
 ) -> Result<()> {
-    let (owner_clause, next) =
-        crate::project_alias::push_project_value_filter(conn, "owner_key", project, *idx, params)?;
-    *idx = next;
-    let (target_clause, next) = crate::project_alias::push_project_value_filter(
-        conn,
-        "target_project",
-        project,
-        *idx,
-        params,
-    )?;
-    *idx = next;
-    let (legacy_clause, next) =
-        crate::project_alias::push_project_value_filter(conn, "project", project, *idx, params)?;
-    *idx = next;
-    conditions.push(format!(
-        "NOT ((owner_scope = 'repo' AND {owner_clause}) \
-              OR (owner_scope = 'repo' AND {target_clause}) \
-              OR (owner_scope IS NULL AND {legacy_clause} \
-                  AND COALESCE(scope, 'project') != 'global'))"
-    ));
+    let clauses = push_owner_value_clauses(conn, project, idx, params)?;
+    conditions.push(format!("NOT {}", clauses.included()));
     Ok(())
 }
 
