@@ -11,51 +11,105 @@
     {
       "episode_id": "cc2cx-workstream-next-action-episode-1",
       "host": "claude_code",
-      "summary": "Source-host session ended mid-workstream with an explicit agreed next action.",
+      "reference_time_epoch": 1760003060,
+      "summary": "The release-note workstream has completed and reviewed normalize_title: collapse whitespace into single spaces while preserving case and punctuation. Its public signature and the -- generated footer are finished work; do not restart or replace them with slug normalization.",
       "expected_memory_facts": [
-        "fact:workstream_next_action"
+        "fact:release_title_work_completed"
       ],
       "memories": [
         {
-          "title": "Current workstream and next action",
-          "text": "TODO: record workstream state at handoff: what was finished, what is in flight, and the exact agreed next step.",
-          "memory_type": "decision",
+          "title": "Workstream next action",
+          "text": "The release-note workstream has completed and reviewed normalize_title: collapse whitespace into single spaces while preserving case and punctuation. Its public signature and the -- generated footer are finished work; do not restart or replace them with slug normalization.",
+          "memory_type": "procedure",
           "topic_key": "cc2cx-workstream-next-action"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cc2cx-workstream-next-action:e1",
+          "timestamp_epoch": 1760003060,
+          "role": "user",
+          "sanitized_content": "The release-note workstream has completed and reviewed normalize_title: collapse whitespace into single spaces while preserving case and punctuation. Its public signature and the -- generated footer are finished work; do not restart or replace them with slug normalization.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
+        }
+      ]
+    },
+    {
+      "episode_id": "cc2cx-workstream-next-action-episode-2",
+      "host": "claude_code",
+      "reference_time_epoch": 1760003120,
+      "summary": "The agreed next action is to finish render_release_note by escaping &, < and > in body text exactly once while retaining quotes and embedded newlines. Keep the completed title normalization and the existing title/body/footer newline layout unchanged.",
+      "expected_memory_facts": [
+        "fact:release_body_escape_next_action"
+      ],
+      "memories": [
+        {
+          "title": "Workstream next action",
+          "text": "The agreed next action is to finish render_release_note by escaping &, < and > in body text exactly once while retaining quotes and embedded newlines. Keep the completed title normalization and the existing title/body/footer newline layout unchanged.",
+          "memory_type": "procedure",
+          "topic_key": "cc2cx-workstream-next-action"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cc2cx-workstream-next-action:e2",
+          "timestamp_epoch": 1760003120,
+          "role": "user",
+          "sanitized_content": "The agreed next action is to finish render_release_note by escaping &, < and > in body text exactly once while retaining quotes and embedded newlines. Keep the completed title normalization and the existing title/body/footer newline layout unchanged.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
         }
       ]
     }
   ],
   "target_task": {
-    "prompt": "Pick up the workstream where the previous session stopped and execute the agreed next step, not a restart. TODO: bind to a fixture repository with partial work checked in.",
+    "prompt": "Resume the release-note workstream in handoff_demo/release_note.py and carry out the agreed next action. Preserve the behavior already completed in the source-host sessions.",
     "allowed_paths": [
-      "TODO: fixture source paths",
+      "handoff_demo/release_note.py",
       "tests"
     ],
     "forbidden_paths": [
+      "README.md",
       "MEMORY.md",
       "REMEM_CONTEXT.md"
     ],
     "timeout_ms": 180000
   },
   "score": {
-    "commands": [],
-    "hidden_files": {},
+    "commands": [
+      [
+        "python3",
+        "-m",
+        "unittest",
+        "tests.test_release_note_hidden"
+      ]
+    ],
+    "hidden_files": {
+      "tests/test_release_note_hidden.py": "import unittest\n\nfrom handoff_demo.release_note import normalize_title, render_release_note\n\n\nclass HiddenTests(unittest.TestCase):\n    def test_completed_title_contract_is_preserved(self):\n        self.assertEqual(normalize_title(\"  Release   Notes  \"), \"Release Notes\")\n        self.assertEqual(normalize_title(\"RC_2\"), \"RC_2\")\n\n    def test_agreed_next_step_escapes_body_only(self):\n        self.assertEqual(render_release_note(\" Release  Notes \", 'A&B <x> \"quoted\"'), 'Release Notes\\nA&amp;B &lt;x&gt; \"quoted\"\\n-- generated')\n        self.assertEqual(render_release_note(\"RC_2\", \"line1\\nline2\"), \"RC_2\\nline1\\nline2\\n-- generated\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    },
     "required_patch_patterns": [],
     "forbidden_patch_patterns": []
   },
   "gold_memory": {
     "required_facts": [
-      "fact:workstream_next_action"
+      "fact:release_title_work_completed",
+      "fact:release_body_escape_next_action"
     ],
     "forbidden_facts": [],
     "supporting_event_ids": [
-      "cc2cx-workstream-next-action-episode-1:e1"
+      "cc2cx-workstream-next-action:e1",
+      "cc2cx-workstream-next-action:e2"
     ]
   },
   "todo": [
-    "Fill history_episodes with real or deterministic source-host episode content; current text fields are design intent, not fixture data.",
-    "Bind target_task.prompt and allowed_paths to a concrete deterministic fixture repository.",
-    "Add hidden test files and score.commands; hidden tests are the primary outcome.",
-    "Set status to ready and clear this todo list once the fixture is real."
-  ]
+    "Register the v2 foreign-project decoy/canary, causal_oracle_v1 and pre_run_scorer_commitment_v1 before declaring this task ready.",
+    "Bind real source/target host profiles, source seal, production capture/extraction and independent scorer on the approved shared runner.",
+    "Run approved real bidirectional handoffs with identity isolation and direction-grouped reporting; offline fixture checks are not live handoff or production filtering evidence."
+  ],
+  "fixture": "fixtures/smoke.json"
 }

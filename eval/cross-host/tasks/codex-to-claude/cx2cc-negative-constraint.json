@@ -11,51 +11,107 @@
     {
       "episode_id": "cx2cc-negative-constraint-episode-1",
       "host": "codex",
-      "summary": "Source-host session established a hard 'do not do X' constraint for this project.",
+      "reference_time_epoch": 1760002060,
+      "summary": "Notification rendering runs offline. The project prohibits network fetches from avatar_label, including on a cache miss; the fetch callback is supplied for other call sites and must not be invoked here.",
       "expected_memory_facts": [
-        "fact:negative_constraint"
+        "fact:offline_avatar_no_network"
       ],
       "memories": [
         {
-          "title": "Negative constraint for this project",
-          "text": "TODO: record the explicit prohibition (forbidden API, forbidden file, forbidden pattern) and its reason.",
-          "memory_type": "procedure",
+          "title": "Negative constraint",
+          "text": "Notification rendering runs offline. The project prohibits network fetches from avatar_label, including on a cache miss; the fetch callback is supplied for other call sites and must not be invoked here.",
+          "memory_type": "decision",
           "topic_key": "cx2cc-negative-constraint"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cx2cc-negative-constraint:e1",
+          "timestamp_epoch": 1760002060,
+          "role": "user",
+          "sanitized_content": "Notification rendering runs offline. The project prohibits network fetches from avatar_label, including on a cache miss; the fetch callback is supplied for other call sites and must not be invoked here.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
+        }
+      ]
+    },
+    {
+      "episode_id": "cx2cc-negative-constraint-episode-2",
+      "host": "codex",
+      "reference_time_epoch": 1760002120,
+      "summary": "For avatar_label(name, cached, fetch), preserve any cached value other than None, including an empty string. On a miss, return the uppercased first characters of at most two whitespace-separated name words, or ? for an empty name. Never repair the miss by calling fetch.",
+      "expected_memory_facts": [
+        "fact:avatar_local_fallback_contract"
+      ],
+      "memories": [
+        {
+          "title": "Negative constraint",
+          "text": "For avatar_label(name, cached, fetch), preserve any cached value other than None, including an empty string. On a miss, return the uppercased first characters of at most two whitespace-separated name words, or ? for an empty name. Never repair the miss by calling fetch.",
+          "memory_type": "decision",
+          "topic_key": "cx2cc-negative-constraint"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cx2cc-negative-constraint:e2",
+          "timestamp_epoch": 1760002120,
+          "role": "user",
+          "sanitized_content": "For avatar_label(name, cached, fetch), preserve any cached value other than None, including an empty string. On a miss, return the uppercased first characters of at most two whitespace-separated name words, or ? for an empty name. Never repair the miss by calling fetch.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
         }
       ]
     }
   ],
   "target_task": {
-    "prompt": "Complete the task without violating the project's recorded prohibition. The constraint is not visible in the repository. TODO: bind to a fixture with a forbidden patch pattern check.",
+    "prompt": "Finish avatar_label in handoff_demo/avatar.py according to the recorded notification rendering constraint. Handle cache misses without repeating the prohibited action.",
     "allowed_paths": [
-      "TODO: fixture source paths",
+      "handoff_demo/avatar.py",
       "tests"
     ],
     "forbidden_paths": [
+      "README.md",
       "MEMORY.md",
       "REMEM_CONTEXT.md"
     ],
     "timeout_ms": 180000
   },
   "score": {
-    "commands": [],
-    "hidden_files": {},
+    "commands": [
+      [
+        "python3",
+        "-m",
+        "unittest",
+        "tests.test_avatar_hidden"
+      ]
+    ],
+    "hidden_files": {
+      "tests/test_avatar_hidden.py": "import unittest\n\nfrom handoff_demo.avatar import avatar_label\n\n\nclass HiddenTests(unittest.TestCase):\n    def forbidden_fetch(self, name):\n        self.fail(\"notification renderer attempted the forbidden network fetch\")\n\n    def test_missing_cache_is_local_and_deterministic(self):\n        self.assertEqual(avatar_label(\"  Ada  Lovelace  \", None, self.forbidden_fetch), \"AL\")\n        self.assertEqual(avatar_label(\"Prince\", None, self.forbidden_fetch), \"P\")\n        self.assertEqual(avatar_label(\"\", None, self.forbidden_fetch), \"?\")\n\n    def test_any_present_cached_value_is_preserved(self):\n        self.assertEqual(avatar_label(\"Ada Lovelace\", \"cached-avatar\", self.forbidden_fetch), \"cached-avatar\")\n        self.assertEqual(avatar_label(\"Ada Lovelace\", \"\", self.forbidden_fetch), \"\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    },
     "required_patch_patterns": [],
     "forbidden_patch_patterns": []
   },
   "gold_memory": {
     "required_facts": [
-      "fact:negative_constraint"
+      "fact:offline_avatar_no_network",
+      "fact:avatar_local_fallback_contract"
     ],
-    "forbidden_facts": [],
+    "forbidden_facts": [
+      "fact:avatar_fetch_on_miss"
+    ],
     "supporting_event_ids": [
-      "cx2cc-negative-constraint-episode-1:e1"
+      "cx2cc-negative-constraint:e1",
+      "cx2cc-negative-constraint:e2"
     ]
   },
   "todo": [
-    "Fill history_episodes with real or deterministic source-host episode content; current text fields are design intent, not fixture data.",
-    "Bind target_task.prompt and allowed_paths to a concrete deterministic fixture repository.",
-    "Add hidden test files and score.commands; hidden tests are the primary outcome.",
-    "Set status to ready and clear this todo list once the fixture is real."
-  ]
+    "Register the v2 foreign-project decoy/canary, causal_oracle_v1 and pre_run_scorer_commitment_v1 before declaring this task ready.",
+    "Bind real source/target host profiles, source seal, production capture/extraction and independent scorer on the approved shared runner.",
+    "Run approved real bidirectional handoffs with identity isolation and direction-grouped reporting; offline fixture checks are not live handoff or production filtering evidence."
+  ],
+  "fixture": "fixtures/smoke.json"
 }

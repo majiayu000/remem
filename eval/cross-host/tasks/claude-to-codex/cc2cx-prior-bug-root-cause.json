@@ -11,51 +11,105 @@
     {
       "episode_id": "cc2cx-prior-bug-root-cause-episode-1",
       "host": "claude_code",
-      "summary": "Source-host session diagnosed a bug root cause; the visible symptom recurs in the target task.",
+      "reference_time_epoch": 1760001060,
+      "summary": "The recurring expiry bug was caused by replacing timezone information rather than converting instants. A +08:00 expiry and a -04:00 current clock label cannot be compared as local wall times.",
       "expected_memory_facts": [
-        "fact:prior_bug_root_cause"
+        "fact:expiry_offset_root_cause"
       ],
       "memories": [
         {
-          "title": "Root cause of the prior bug",
-          "text": "TODO: record the diagnosed root cause (component, mechanism, fix constraint) from the source-host debugging episode.",
+          "title": "Prior bug root cause",
+          "text": "The recurring expiry bug was caused by replacing timezone information rather than converting instants. A +08:00 expiry and a -04:00 current clock label cannot be compared as local wall times.",
           "memory_type": "discovery",
           "topic_key": "cc2cx-prior-bug-root-cause"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cc2cx-prior-bug-root-cause:e1",
+          "timestamp_epoch": 1760001060,
+          "role": "user",
+          "sanitized_content": "The recurring expiry bug was caused by replacing timezone information rather than converting instants. A +08:00 expiry and a -04:00 current clock label cannot be compared as local wall times.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
+        }
+      ]
+    },
+    {
+      "episode_id": "cc2cx-prior-bug-root-cause-episode-2",
+      "host": "claude_code",
+      "reference_time_epoch": 1760001120,
+      "summary": "The expiry contract is is_expired(expires_at, now) over ISO timestamps: convert aware offsets to UTC, interpret a naive timestamp as UTC, preserve fractional seconds, and expire inclusively when now equals expires_at. Do not strip or overwrite an existing offset.",
+      "expected_memory_facts": [
+        "fact:utc_instant_inclusive_expiry"
+      ],
+      "memories": [
+        {
+          "title": "Prior bug root cause",
+          "text": "The expiry contract is is_expired(expires_at, now) over ISO timestamps: convert aware offsets to UTC, interpret a naive timestamp as UTC, preserve fractional seconds, and expire inclusively when now equals expires_at. Do not strip or overwrite an existing offset.",
+          "memory_type": "discovery",
+          "topic_key": "cc2cx-prior-bug-root-cause"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cc2cx-prior-bug-root-cause:e2",
+          "timestamp_epoch": 1760001120,
+          "role": "user",
+          "sanitized_content": "The expiry contract is is_expired(expires_at, now) over ISO timestamps: convert aware offsets to UTC, interpret a naive timestamp as UTC, preserve fractional seconds, and expire inclusively when now equals expires_at. Do not strip or overwrite an existing offset.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
         }
       ]
     }
   ],
   "target_task": {
-    "prompt": "Fix the recurring failure. The visible test only shows the symptom; the root-cause mechanism is only in handoff memory. TODO: bind to a concrete fixture bug with hidden regression tests.",
+    "prompt": "Repair the recurring expiry failure in handoff_demo/expiry.py using the root cause established in the source-host episodes. Preserve the agreed expiry boundary semantics.",
     "allowed_paths": [
-      "TODO: fixture source paths",
+      "handoff_demo/expiry.py",
       "tests"
     ],
     "forbidden_paths": [
+      "README.md",
       "MEMORY.md",
       "REMEM_CONTEXT.md"
     ],
     "timeout_ms": 180000
   },
   "score": {
-    "commands": [],
-    "hidden_files": {},
+    "commands": [
+      [
+        "python3",
+        "-m",
+        "unittest",
+        "tests.test_expiry_hidden"
+      ]
+    ],
+    "hidden_files": {
+      "tests/test_expiry_hidden.py": "import unittest\n\nfrom handoff_demo.expiry import is_expired\n\n\nclass HiddenTests(unittest.TestCase):\n    def test_offsets_represent_instants_not_clock_labels(self):\n        self.assertFalse(is_expired(\"2026-01-02T00:30:00+08:00\", \"2026-01-01T17:00:00+02:00\"))\n        self.assertTrue(is_expired(\"2026-01-02T00:30:00+08:00\", \"2026-01-01T12:31:00-04:00\"))\n\n    def test_inclusive_boundary_fractional_seconds_and_naive_utc(self):\n        self.assertTrue(is_expired(\"2026-01-02T00:30:00+08:00\", \"2026-01-01T16:30:00+00:00\"))\n        self.assertFalse(is_expired(\"2026-01-01T16:30:00.500+00:00\", \"2026-01-01T16:30:00.499+00:00\"))\n        self.assertTrue(is_expired(\"2026-01-01T16:30:00\", \"2026-01-01T16:30:00+00:00\"))\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    },
     "required_patch_patterns": [],
     "forbidden_patch_patterns": []
   },
   "gold_memory": {
     "required_facts": [
-      "fact:prior_bug_root_cause"
+      "fact:expiry_offset_root_cause",
+      "fact:utc_instant_inclusive_expiry"
     ],
     "forbidden_facts": [],
     "supporting_event_ids": [
-      "cc2cx-prior-bug-root-cause-episode-1:e1"
+      "cc2cx-prior-bug-root-cause:e1",
+      "cc2cx-prior-bug-root-cause:e2"
     ]
   },
   "todo": [
-    "Fill history_episodes with real or deterministic source-host episode content; current text fields are design intent, not fixture data.",
-    "Bind target_task.prompt and allowed_paths to a concrete deterministic fixture repository.",
-    "Add hidden test files and score.commands; hidden tests are the primary outcome.",
-    "Set status to ready and clear this todo list once the fixture is real."
-  ]
+    "Register the v2 foreign-project decoy/canary, causal_oracle_v1 and pre_run_scorer_commitment_v1 before declaring this task ready.",
+    "Bind real source/target host profiles, source seal, production capture/extraction and independent scorer on the approved shared runner.",
+    "Run approved real bidirectional handoffs with identity isolation and direction-grouped reporting; offline fixture checks are not live handoff or production filtering evidence."
+  ],
+  "fixture": "fixtures/smoke.json"
 }

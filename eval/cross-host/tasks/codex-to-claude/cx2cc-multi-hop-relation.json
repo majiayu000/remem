@@ -11,51 +11,105 @@
     {
       "episode_id": "cx2cc-multi-hop-relation-episode-1",
       "host": "codex",
-      "summary": "Resolving the target task requires chaining issue -> file -> component relations recorded across source-host episodes.",
+      "reference_time_epoch": 1760006060,
+      "summary": "Issue BILL-17 is owned by the historical receipt_flow workstream, not search or counter work. Its observed symptom is that receipt codes no longer match the durable uppercase, underscore-to-hyphen code convention.",
       "expected_memory_facts": [
-        "fact:multi_hop_relation"
+        "fact:bill17_receipt_workstream"
       ],
       "memories": [
         {
-          "title": "Multi-hop issue/file/component relation",
-          "text": "TODO: record the hop chain (issue ref, linking entity, target component) split across at least two episodes.",
+          "title": "Multi hop relation",
+          "text": "Issue BILL-17 is owned by the historical receipt_flow workstream, not search or counter work. Its observed symptom is that receipt codes no longer match the durable uppercase, underscore-to-hyphen code convention.",
           "memory_type": "discovery",
           "topic_key": "cx2cc-multi-hop-relation"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cx2cc-multi-hop-relation:e1",
+          "timestamp_epoch": 1760006060,
+          "role": "user",
+          "sanitized_content": "Issue BILL-17 is owned by the historical receipt_flow workstream, not search or counter work. Its observed symptom is that receipt codes no longer match the durable uppercase, underscore-to-hyphen code convention.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
+        }
+      ]
+    },
+    {
+      "episode_id": "cx2cc-multi-hop-relation-episode-2",
+      "host": "codex",
+      "reference_time_epoch": 1760006120,
+      "summary": "The receipt_flow relation resolves through dispatch flow receipt to component_b.normalize. Search belongs to component_a and count to component_c; those behaviors are already correct. The owning normalizer must trim whitespace, replace underscores with hyphens, uppercase letters, and preserve existing hyphens.",
+      "expected_memory_facts": [
+        "fact:receipt_workstream_component"
+      ],
+      "memories": [
+        {
+          "title": "Multi hop relation",
+          "text": "The receipt_flow relation resolves through dispatch flow receipt to component_b.normalize. Search belongs to component_a and count to component_c; those behaviors are already correct. The owning normalizer must trim whitespace, replace underscores with hyphens, uppercase letters, and preserve existing hyphens.",
+          "memory_type": "discovery",
+          "topic_key": "cx2cc-multi-hop-relation"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cx2cc-multi-hop-relation:e2",
+          "timestamp_epoch": 1760006120,
+          "role": "user",
+          "sanitized_content": "The receipt_flow relation resolves through dispatch flow receipt to component_b.normalize. Search belongs to component_a and count to component_c; those behaviors are already correct. The owning normalizer must trim whitespace, replace underscores with hyphens, uppercase letters, and preserve existing hyphens.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
         }
       ]
     }
   ],
   "target_task": {
-    "prompt": "Locate and fix the right component. No single memory names it; the chain of recorded relations does. TODO: bind to a fixture with a verifiable hop path.",
+    "prompt": "Fix the recurring BILL-17 mismatch in the continuation package. Use the issue/workstream/component relations recorded across the source-host episodes to choose the affected code, and preserve the other flows.",
     "allowed_paths": [
-      "TODO: fixture source paths",
+      "handoff_demo",
       "tests"
     ],
     "forbidden_paths": [
+      "README.md",
       "MEMORY.md",
       "REMEM_CONTEXT.md"
     ],
     "timeout_ms": 180000
   },
   "score": {
-    "commands": [],
-    "hidden_files": {},
+    "commands": [
+      [
+        "python3",
+        "-m",
+        "unittest",
+        "tests.test_dispatch_hidden"
+      ]
+    ],
+    "hidden_files": {
+      "tests/test_dispatch_hidden.py": "import unittest\n\nfrom handoff_demo.dispatch import dispatch\n\n\nclass HiddenTests(unittest.TestCase):\n    def test_issue_path_reaches_the_affected_behavior(self):\n        self.assertEqual(dispatch(\"receipt\", \" ab_7 \"), \"AB-7\")\n        self.assertEqual(dispatch(\"receipt\", \"r-2\"), \"R-2\")\n        self.assertEqual(dispatch(\"receipt\", \"17\"), \"17\")\n\n    def test_unrelated_components_keep_their_contracts(self):\n        self.assertEqual(dispatch(\"search\", \"  Foo_BAR  \"), \"foo_bar\")\n        self.assertEqual(dispatch(\"count\", \"0017\"), 17)\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    },
     "required_patch_patterns": [],
     "forbidden_patch_patterns": []
   },
   "gold_memory": {
     "required_facts": [
-      "fact:multi_hop_relation"
+      "fact:bill17_receipt_workstream",
+      "fact:receipt_workstream_component"
     ],
     "forbidden_facts": [],
     "supporting_event_ids": [
-      "cx2cc-multi-hop-relation-episode-1:e1"
+      "cx2cc-multi-hop-relation:e1",
+      "cx2cc-multi-hop-relation:e2"
     ]
   },
   "todo": [
-    "Fill history_episodes with real or deterministic source-host episode content; current text fields are design intent, not fixture data.",
-    "Bind target_task.prompt and allowed_paths to a concrete deterministic fixture repository.",
-    "Add hidden test files and score.commands; hidden tests are the primary outcome.",
-    "Set status to ready and clear this todo list once the fixture is real."
-  ]
+    "Register the v2 foreign-project decoy/canary, causal_oracle_v1 and pre_run_scorer_commitment_v1 before declaring this task ready.",
+    "Bind real source/target host profiles, source seal, production capture/extraction and independent scorer on the approved shared runner.",
+    "Run approved real bidirectional handoffs with identity isolation and direction-grouped reporting; offline fixture checks are not live handoff or production filtering evidence."
+  ],
+  "fixture": "fixtures/smoke.json"
 }

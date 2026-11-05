@@ -11,51 +11,107 @@
     {
       "episode_id": "cx2cc-user-project-preference-episode-1",
       "host": "codex",
-      "summary": "The user stated a durable project preference in the source-host session.",
+      "reference_time_epoch": 1760007060,
+      "summary": "The user requested DD/MM/YYYY due dates for the exact project key atlas, with zero-padded day and month. This preference is project-scoped and does not change the default ISO date convention in other projects.",
       "expected_memory_facts": [
-        "fact:user_project_preference"
+        "fact:atlas_project_date_preference"
       ],
       "memories": [
         {
           "title": "User project preference",
-          "text": "TODO: record the explicit user preference (style, tool, workflow) and its stated scope.",
+          "text": "The user requested DD/MM/YYYY due dates for the exact project key atlas, with zero-padded day and month. This preference is project-scoped and does not change the default ISO date convention in other projects.",
           "memory_type": "preference",
           "topic_key": "cx2cc-user-project-preference"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cx2cc-user-project-preference:e1",
+          "timestamp_epoch": 1760007060,
+          "role": "user",
+          "sanitized_content": "The user requested DD/MM/YYYY due dates for the exact project key atlas, with zero-padded day and month. This preference is project-scoped and does not change the default ISO date convention in other projects.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
+        }
+      ]
+    },
+    {
+      "episode_id": "cx2cc-user-project-preference-episode-2",
+      "host": "codex",
+      "reference_time_epoch": 1760007120,
+      "summary": "The separate atlas-tools project retains YYYY-MM-DD, as do unknown projects. Do not match a project by prefix or globalize the atlas preference. Calendar validation continues to use the standard date constructor.",
+      "expected_memory_facts": [
+        "fact:other_project_iso_date_default"
+      ],
+      "memories": [
+        {
+          "title": "User project preference",
+          "text": "The separate atlas-tools project retains YYYY-MM-DD, as do unknown projects. Do not match a project by prefix or globalize the atlas preference. Calendar validation continues to use the standard date constructor.",
+          "memory_type": "preference",
+          "topic_key": "cx2cc-user-project-preference"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cx2cc-user-project-preference:e2",
+          "timestamp_epoch": 1760007120,
+          "role": "user",
+          "sanitized_content": "The separate atlas-tools project retains YYYY-MM-DD, as do unknown projects. Do not match a project by prefix or globalize the atlas preference. Calendar validation continues to use the standard date constructor.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
         }
       ]
     }
   ],
   "target_task": {
-    "prompt": "Complete the change in the way this project's user prefers. The preference is only in handoff memory. TODO: bind to a fixture where the preference is checkable in the diff.",
+    "prompt": "Complete format_due_date in handoff_demo/due_date.py using the user/project preference recorded in the source-host sessions. Keep unrelated project output stable.",
     "allowed_paths": [
-      "TODO: fixture source paths",
+      "handoff_demo/due_date.py",
       "tests"
     ],
     "forbidden_paths": [
+      "README.md",
       "MEMORY.md",
       "REMEM_CONTEXT.md"
     ],
     "timeout_ms": 180000
   },
   "score": {
-    "commands": [],
-    "hidden_files": {},
+    "commands": [
+      [
+        "python3",
+        "-m",
+        "unittest",
+        "tests.test_due_date_hidden"
+      ]
+    ],
+    "hidden_files": {
+      "tests/test_due_date_hidden.py": "import unittest\n\nfrom handoff_demo.due_date import format_due_date\n\n\nclass HiddenTests(unittest.TestCase):\n    def test_atlas_preference_uses_unambiguous_day_month_order(self):\n        self.assertEqual(format_due_date(2026, 2, 25, \"atlas\"), \"25/02/2026\")\n        self.assertEqual(format_due_date(2028, 2, 29, \"atlas\"), \"29/02/2028\")\n        self.assertEqual(format_due_date(99, 1, 2, \"atlas\"), \"02/01/0099\")\n\n    def test_preference_does_not_leak_to_other_projects(self):\n        for project in (\"atlas-tools\", \"other\", \"\"):\n            self.assertEqual(format_due_date(2026, 2, 25, project), \"2026-02-25\")\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    },
     "required_patch_patterns": [],
     "forbidden_patch_patterns": []
   },
   "gold_memory": {
     "required_facts": [
-      "fact:user_project_preference"
+      "fact:atlas_project_date_preference",
+      "fact:other_project_iso_date_default"
     ],
-    "forbidden_facts": [],
+    "forbidden_facts": [
+      "fact:global_day_month_preference"
+    ],
     "supporting_event_ids": [
-      "cx2cc-user-project-preference-episode-1:e1"
+      "cx2cc-user-project-preference:e1",
+      "cx2cc-user-project-preference:e2"
     ]
   },
   "todo": [
-    "Fill history_episodes with real or deterministic source-host episode content; current text fields are design intent, not fixture data.",
-    "Bind target_task.prompt and allowed_paths to a concrete deterministic fixture repository.",
-    "Add hidden test files and score.commands; hidden tests are the primary outcome.",
-    "Set status to ready and clear this todo list once the fixture is real."
-  ]
+    "Register the v2 foreign-project decoy/canary, causal_oracle_v1 and pre_run_scorer_commitment_v1 before declaring this task ready.",
+    "Bind real source/target host profiles, source seal, production capture/extraction and independent scorer on the approved shared runner.",
+    "Run approved real bidirectional handoffs with identity isolation and direction-grouped reporting; offline fixture checks are not live handoff or production filtering evidence."
+  ],
+  "fixture": "fixtures/smoke.json"
 }

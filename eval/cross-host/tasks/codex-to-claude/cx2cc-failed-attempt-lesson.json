@@ -11,51 +11,104 @@
     {
       "episode_id": "cx2cc-failed-attempt-lesson-episode-1",
       "host": "codex",
-      "summary": "Source-host session tried an approach that failed for a non-obvious reason and recorded the lesson.",
+      "reference_time_epoch": 1760000060,
+      "summary": "Export rows use semicolon-delimited CSV with double quotes. The previous split(\";\") repair corrupted alpha;\"beta;gamma\";delta; stripping each part also destroyed intentional spaces and empty fields. Do not retry that approach.",
       "expected_memory_facts": [
-        "fact:failed_attempt_lesson"
+        "fact:quoted_semicolon_export"
       ],
       "memories": [
         {
-          "title": "Lesson from the failed attempt",
-          "text": "TODO: record which approach failed, the observed failure mode, and why it must not be retried.",
+          "title": "CSV failed-attempt lesson",
+          "text": "Export rows use semicolon-delimited CSV with double quotes. The previous split(\";\") repair corrupted alpha;\"beta;gamma\";delta; stripping each part also destroyed intentional spaces and empty fields. Do not retry that approach.",
           "memory_type": "lesson",
           "topic_key": "cx2cc-failed-attempt-lesson"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cx2cc-failed-attempt-lesson:e1",
+          "timestamp_epoch": 1760000060,
+          "role": "user",
+          "sanitized_content": "Export rows use semicolon-delimited CSV with double quotes. The previous split(\";\") repair corrupted alpha;\"beta;gamma\";delta; stripping each part also destroyed intentional spaces and empty fields. Do not retry that approach.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
+        }
+      ]
+    },
+    {
+      "episode_id": "cx2cc-failed-attempt-lesson-episode-2",
+      "host": "codex",
+      "reference_time_epoch": 1760000120,
+      "summary": "Use the standard CSV parser for parse_export_row: semicolons delimit outside double quotes, doubled quotes decode to one quote, quoted newlines stay in one field, empty fields and spaces survive unchanged. Empty input returns []; multiple records or malformed quotes must raise ValueError or csv.Error.",
+      "expected_memory_facts": [
+        "fact:quoted_semicolon_export"
+      ],
+      "memories": [
+        {
+          "title": "CSV failed-attempt lesson",
+          "text": "Use the standard CSV parser for parse_export_row: semicolons delimit outside double quotes, doubled quotes decode to one quote, quoted newlines stay in one field, empty fields and spaces survive unchanged. Empty input returns []; multiple records or malformed quotes must raise ValueError or csv.Error.",
+          "memory_type": "lesson",
+          "topic_key": "cx2cc-failed-attempt-lesson"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cx2cc-failed-attempt-lesson:e2",
+          "timestamp_epoch": 1760000120,
+          "role": "user",
+          "sanitized_content": "Use the standard CSV parser for parse_export_row: semicolons delimit outside double quotes, doubled quotes decode to one quote, quoted newlines stay in one field, empty fields and spaces survive unchanged. Empty input returns []; multiple records or malformed quotes must raise ValueError or csv.Error.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
         }
       ]
     }
   ],
   "target_task": {
-    "prompt": "Implement the requested change. The naive approach is the one that already failed in the source-host session. TODO: bind to a fixture where retrying the failed approach trips hidden tests.",
+    "prompt": "Repair parse_export_row in handoff_demo/export.py. Follow the export-format contract and the failed-attempt lesson from the earlier source-host episodes; the visible repository intentionally only tests the simple case.",
     "allowed_paths": [
-      "TODO: fixture source paths",
+      "handoff_demo/export.py",
       "tests"
     ],
     "forbidden_paths": [
+      "README.md",
       "MEMORY.md",
       "REMEM_CONTEXT.md"
     ],
     "timeout_ms": 180000
   },
   "score": {
-    "commands": [],
-    "hidden_files": {},
+    "commands": [
+      [
+        "python3",
+        "-m",
+        "unittest",
+        "tests.test_export_hidden"
+      ]
+    ],
+    "hidden_files": {
+      "tests/test_export_hidden.py": "import csv\nimport unittest\n\nfrom handoff_demo.export import parse_export_row\n\n\nclass ExportHiddenTests(unittest.TestCase):\n    def test_quoted_delimiters_and_escaped_quotes(self):\n        self.assertEqual(parse_export_row('alpha;\"beta;gamma\";delta'), [\"alpha\", \"beta;gamma\", \"delta\"])\n        self.assertEqual(parse_export_row('\"say \"\"hi\"\"\";ok'), ['say \"hi\"', \"ok\"])\n\n    def test_empty_fields_and_spaces_are_data(self):\n        self.assertEqual(parse_export_row(';\"\";  keep  ;'), [\"\", \"\", \"  keep  \", \"\"])\n        self.assertEqual(parse_export_row(\"\"), [])\n\n    def test_quoted_newline_is_one_field(self):\n        self.assertEqual(parse_export_row('\"first\\nsecond\";ok'), [\"first\\nsecond\", \"ok\"])\n\n    def test_multiple_records_and_broken_quotes_fail(self):\n        with self.assertRaises((ValueError, csv.Error)):\n            parse_export_row(\"a;b\\nc;d\")\n        with self.assertRaises((ValueError, csv.Error)):\n            parse_export_row('\"unfinished;field')\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    },
     "required_patch_patterns": [],
     "forbidden_patch_patterns": []
   },
   "gold_memory": {
     "required_facts": [
-      "fact:failed_attempt_lesson"
+      "fact:quoted_semicolon_export"
     ],
     "forbidden_facts": [],
     "supporting_event_ids": [
-      "cx2cc-failed-attempt-lesson-episode-1:e1"
+      "cx2cc-failed-attempt-lesson:e1",
+      "cx2cc-failed-attempt-lesson:e2"
     ]
   },
   "todo": [
-    "Fill history_episodes with real or deterministic source-host episode content; current text fields are design intent, not fixture data.",
-    "Bind target_task.prompt and allowed_paths to a concrete deterministic fixture repository.",
-    "Add hidden test files and score.commands; hidden tests are the primary outcome.",
-    "Set status to ready and clear this todo list once the fixture is real."
-  ]
+    "Register the v2 foreign-project decoy/canary, causal_oracle_v1 and pre_run_scorer_commitment_v1 before declaring this task ready.",
+    "Bind real source/target host profiles, source seal, production capture/extraction and independent scorer on the approved shared runner.",
+    "Run the approved real bidirectional smoke with identity isolation and direction-grouped reporting; offline fixture checks are not a live handoff result."
+  ],
+  "fixture": "fixtures/smoke.json"
 }

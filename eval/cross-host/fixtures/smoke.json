@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "repo": {
+    "kind": "inline_python",
+    "base_commit": "fixture:gh935-twelve-scenarios-v1",
+    "fixture_revision": "gh935-twelve-scenarios-v1",
+    "files": {
+      "README.md": "# Handoff Demo\n\nDeterministic continuation tasks for cross-host smoke preparation.\n",
+      "handoff_demo/__init__.py": "",
+      "handoff_demo/journal.py": "def append_entry(state, key, amount):\n    state[\"balance\"] += amount\n    state[\"entries\"].append({\"key\": key, \"amount\": amount})\n    return state\n",
+      "handoff_demo/export.py": "def parse_export_row(line):\n    return line.split(\";\")\n",
+      "tests/__init__.py": "",
+      "tests/test_visible.py": "import unittest\n\nfrom handoff_demo.export import parse_export_row\n\n\nclass VisibleTests(unittest.TestCase):\n    def test_simple_row(self):\n        self.assertEqual(parse_export_row(\"a;b\"), [\"a\", \"b\"])\n",
+      "handoff_demo/expiry.py": "from datetime import datetime, timezone\n\n\ndef is_expired(expires_at, now):\n    expiry = datetime.fromisoformat(expires_at).replace(tzinfo=timezone.utc)\n    current = datetime.fromisoformat(now).replace(tzinfo=timezone.utc)\n    return current >= expiry\n",
+      "handoff_demo/avatar.py": "def avatar_label(name, cached, fetch):\n    return cached if cached else fetch(name)\n",
+      "handoff_demo/release_note.py": "def normalize_title(title):\n    return \" \".join(str(title).split())\n\n\ndef render_release_note(title, body):\n    return f\"{normalize_title(title)}\\n{body}\\n-- generated\"\n",
+      "handoff_demo/cursor.py": "def encode_cursor(token):\n    return \"cursor=\" + token\n",
+      "handoff_demo/branch_policy.py": "def encode_event(name, value):\n    return f\"{name}={value}\"\n",
+      "handoff_demo/component_a.py": "def normalize(value):\n    return str(value).strip().lower()\n",
+      "handoff_demo/component_b.py": "def normalize(value):\n    return str(value).strip()\n",
+      "handoff_demo/component_c.py": "def normalize(value):\n    return int(value)\n",
+      "handoff_demo/dispatch.py": "from . import component_a, component_b, component_c\n\n\ndef dispatch(flow, value):\n    handlers = {\"search\": component_a.normalize, \"receipt\": component_b.normalize, \"count\": component_c.normalize}\n    return handlers[flow](value)\n",
+      "handoff_demo/due_date.py": "from datetime import date\n\n\ndef format_due_date(year, month, day, project):\n    return date(year, month, day).isoformat()\n",
+      "handoff_demo/owners.py": "def choose_owner(candidates):\n    return candidates[0][\"owner\"] if candidates else None\n",
+      "handoff_demo/git_budget.py": "from pathlib import Path\n\n\ndef approved_retry_limit(repo_root):\n    return int((Path(repo_root) / \"retry-budget.txt\").read_text().strip())\n",
+      "handoff_demo/project_routes.py": "from pathlib import Path\n\n\ndef endpoint_for(root, routes):\n    return routes.get(Path(root).name)\n"
+    }
+  },
+  "reference_patches": {
+    "architecture_decision": {
+      "handoff_demo/journal.py": "def append_entry(state, key, amount):\n    for entry in state[\"entries\"]:\n        if entry[\"key\"] == key:\n            if entry[\"amount\"] != amount:\n                raise ValueError(\"idempotency key reused with a different amount\")\n            return state\n    return {\n        **state,\n        \"balance\": state[\"balance\"] + amount,\n        \"entries\": [*state[\"entries\"], {\"key\": key, \"amount\": amount}],\n    }\n"
+    },
+    "failed_attempt_lesson": {
+      "handoff_demo/export.py": "import csv\nimport io\n\n\ndef parse_export_row(line):\n    rows = list(csv.reader(io.StringIO(line), delimiter=\";\", strict=True))\n    if not rows:\n        return []\n    if len(rows) != 1:\n        raise ValueError(\"expected one CSV record\")\n    return rows[0]\n"
+    },
+    "prior_bug_root_cause": {
+      "handoff_demo/expiry.py": "from datetime import datetime, timezone\n\n\ndef is_expired(expires_at, now):\n    def utc(value):\n        parsed = datetime.fromisoformat(value)\n        if parsed.tzinfo is None:\n            return parsed.replace(tzinfo=timezone.utc)\n        return parsed.astimezone(timezone.utc)\n    return utc(now) >= utc(expires_at)\n"
+    },
+    "negative_constraint": {
+      "handoff_demo/avatar.py": "def avatar_label(name, cached, fetch):\n    if cached is not None:\n        return cached\n    return \"\".join(part[0].upper() for part in str(name).split()[:2]) or \"?\"\n"
+    },
+    "workstream_next_action": {
+      "handoff_demo/release_note.py": "import html\n\n\ndef normalize_title(title):\n    return \" \".join(str(title).split())\n\n\ndef render_release_note(title, body):\n    return f\"{normalize_title(title)}\\n{html.escape(str(body), quote=False)}\\n-- generated\"\n"
+    },
+    "stale_superseded_decision": {
+      "handoff_demo/cursor.py": "import json\n\n\ndef encode_cursor(token):\n    return json.dumps({\"cursor\": token, \"version\": 2}, ensure_ascii=False, separators=(\",\", \":\"))\n"
+    },
+    "branch_specific_truth": {
+      "handoff_demo/branch_policy.py": "def encode_event(name, value):\n    return f\"{name}|{value}\"\n"
+    },
+    "multi_hop_relation": {
+      "handoff_demo/component_b.py": "def normalize(value):\n    return str(value).strip().replace(\"_\", \"-\").upper()\n"
+    },
+    "user_project_preference": {
+      "handoff_demo/due_date.py": "from datetime import date\n\n\ndef format_due_date(year, month, day, project):\n    value = date(year, month, day)\n    return f\"{value.day:02d}/{value.month:02d}/{value.year:04d}\" if project == \"atlas\" else value.isoformat()\n"
+    },
+    "unresolved_conflict_abstention": {
+      "handoff_demo/owners.py": "def choose_owner(candidates):\n    owners = {item[\"owner\"] for item in candidates if item[\"status\"] == \"active\"}\n    return next(iter(owners)) if len(owners) == 1 else None\n"
+    },
+    "git_evidence": {
+      "handoff_demo/git_budget.py": "import subprocess\n\n\ndef approved_retry_limit(repo_root):\n    value = subprocess.check_output([\"git\", \"show\", \"reviewed-budget:retry-budget.txt\"], cwd=repo_root, text=True)\n    return int(value.strip())\n"
+    },
+    "same_name_repo_isolation": {
+      "handoff_demo/project_routes.py": "from pathlib import Path\n\n\ndef endpoint_for(root, routes):\n    return routes.get(str(Path(root).resolve()))\n"
+    }
+  },
+  "wrong_patches": {
+    "architecture_decision": {
+      "copy_without_idempotency": {
+        "handoff_demo/journal.py": "def append_entry(state, key, amount):\n    return {**state, \"balance\": state[\"balance\"] + amount, \"entries\": [*state[\"entries\"], {\"key\": key, \"amount\": amount}]}\n"
+      },
+      "deduplicate_without_conflict_check": {
+        "handoff_demo/journal.py": "def append_entry(state, key, amount):\n    for entry in state[\"entries\"]:\n        if entry[\"key\"] == key:\n            return state\n    return {\n        **state,\n        \"balance\": state[\"balance\"] + amount,\n        \"entries\": [*state[\"entries\"], {\"key\": key, \"amount\": amount}],\n    }\n"
+      }
+    },
+    "failed_attempt_lesson": {
+      "split_then_strip_quotes": {
+        "handoff_demo/export.py": "def parse_export_row(line):\n    return [part.strip().strip(chr(34)) for part in line.split(\";\")]\n"
+      },
+      "csv_drops_empty_fields": {
+        "handoff_demo/export.py": "import csv\nimport io\n\n\ndef parse_export_row(line):\n    rows = list(csv.reader(io.StringIO(line), delimiter=\";\", strict=True))\n    if not rows:\n        return []\n    if len(rows) != 1:\n        raise ValueError(\"expected one CSV record\")\n    return [field for field in rows[0] if field]\n"
+      }
+    },
+    "prior_bug_root_cause": {
+      "discard_offset": {
+        "handoff_demo/expiry.py": "from datetime import datetime\n\n\ndef is_expired(expires_at, now):\n    return datetime.fromisoformat(now).replace(tzinfo=None) >= datetime.fromisoformat(expires_at).replace(tzinfo=None)\n"
+      },
+      "strict_boundary": {
+        "handoff_demo/expiry.py": "from datetime import datetime, timezone\n\n\ndef is_expired(expires_at, now):\n    def utc(value):\n        parsed = datetime.fromisoformat(value)\n        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)\n    return utc(now) > utc(expires_at)\n"
+      }
+    },
+    "negative_constraint": {
+      "fetch_on_miss": {
+        "handoff_demo/avatar.py": "def avatar_label(name, cached, fetch):\n    if cached is not None:\n        return cached\n    return fetch(name)\n"
+      },
+      "ignore_cache": {
+        "handoff_demo/avatar.py": "def avatar_label(name, cached, fetch):\n    return \"\".join(part[0].upper() for part in str(name).split()[:2]) or \"?\"\n"
+      }
+    },
+    "workstream_next_action": {
+      "restart_completed_title_work": {
+        "handoff_demo/release_note.py": "import html\n\n\ndef normalize_title(title):\n    return \"-\".join(str(title).split()).lower()\n\n\ndef render_release_note(title, body):\n    return f\"{normalize_title(title)}\\n{html.escape(str(body), quote=False)}\\n-- generated\"\n"
+      },
+      "miss_ampersand_in_next_step": {
+        "handoff_demo/release_note.py": "def normalize_title(title):\n    return \" \".join(str(title).split())\n\n\ndef render_release_note(title, body):\n    escaped = str(body).replace(\"<\", \"&lt;\").replace(\">\", \"&gt;\")\n    return f\"{normalize_title(title)}\\n{escaped}\\n-- generated\"\n"
+      }
+    },
+    "stale_superseded_decision": {
+      "follow_superseded_v1": {
+        "handoff_demo/cursor.py": "import urllib.parse\n\n\ndef encode_cursor(token):\n    return \"cursor=\" + urllib.parse.quote(token)\n"
+      },
+      "retain_old_generation": {
+        "handoff_demo/cursor.py": "import json\n\n\ndef encode_cursor(token):\n    return json.dumps({\"cursor\": token, \"version\": 1}, ensure_ascii=False, separators=(\",\", \":\"))\n"
+      }
+    },
+    "branch_specific_truth": {
+      "apply_next_everywhere": {
+        "handoff_demo/branch_policy.py": "import json\n\n\ndef encode_event(name, value):\n    return json.dumps({\"event\": name, \"value\": value}, ensure_ascii=False, separators=(\",\", \":\"))\n"
+      },
+      "mix_in_other_branch_by_payload": {
+        "handoff_demo/branch_policy.py": "import json\n\n\ndef encode_event(name, value):\n    if value == \"yes\":\n        return f\"{name}|{value}\"\n    return json.dumps({\"event\": name, \"value\": value}, ensure_ascii=False, separators=(\",\", \":\"))\n"
+      }
+    },
+    "multi_hop_relation": {
+      "repair_unrelated_component": {
+        "handoff_demo/component_a.py": "def normalize(value):\n    return str(value).strip().replace(\"_\", \"-\").upper()\n"
+      },
+      "discard_separators_in_owned_component": {
+        "handoff_demo/component_b.py": "def normalize(value):\n    return str(value).strip().replace(\"_\", \"\").replace(\"-\", \"\").upper()\n"
+      }
+    },
+    "user_project_preference": {
+      "globalize_project_preference": {
+        "handoff_demo/due_date.py": "from datetime import date\n\n\ndef format_due_date(year, month, day, project):\n    return date(year, month, day).strftime(\"%d/%m/%Y\")\n"
+      },
+      "apply_to_similarly_named_project": {
+        "handoff_demo/due_date.py": "from datetime import date\n\n\ndef format_due_date(year, month, day, project):\n    value = date(year, month, day)\n    return value.strftime(\"%d/%m/%Y\") if project.startswith(\"atlas\") else value.isoformat()\n"
+      }
+    },
+    "unresolved_conflict_abstention": {
+      "always_abstain": {
+        "handoff_demo/owners.py": "def choose_owner(candidates):\n    return None\n"
+      },
+      "silently_choose_newest": {
+        "handoff_demo/owners.py": "def choose_owner(candidates):\n    active = [item for item in candidates if item[\"status\"] == \"active\"]\n    return max(active, key=lambda item: item[\"updated_at\"])[\"owner\"] if active else None\n"
+      }
+    },
+    "git_evidence": {
+      "read_unapproved_working_tree": {
+        "handoff_demo/git_budget.py": "from pathlib import Path\n\n\ndef approved_retry_limit(repo_root):\n    return int((Path(repo_root) / \"retry-budget.txt\").read_text().strip())\n"
+      },
+      "read_latest_commit_instead_of_reviewed_tag": {
+        "handoff_demo/git_budget.py": "import subprocess\n\n\ndef approved_retry_limit(repo_root):\n    value = subprocess.check_output([\"git\", \"show\", \"HEAD:retry-budget.txt\"], cwd=repo_root, text=True)\n    return int(value.strip())\n"
+      }
+    },
+    "same_name_repo_isolation": {
+      "reuse_same_basename_route": {
+        "handoff_demo/project_routes.py": "from pathlib import Path\n\n\ndef endpoint_for(root, routes):\n    for project, endpoint in routes.items():\n        if Path(project).name == Path(root).name:\n            return endpoint\n    return None\n"
+      },
+      "skip_canonical_path_normalization": {
+        "handoff_demo/project_routes.py": "def endpoint_for(root, routes):\n    return routes.get(str(root))\n"
+      }
+    }
+  }
+}

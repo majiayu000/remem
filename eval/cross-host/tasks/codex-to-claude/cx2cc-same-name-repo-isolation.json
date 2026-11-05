@@ -11,51 +11,106 @@
     {
       "episode_id": "cx2cc-same-name-repo-isolation-episode-1",
       "host": "codex",
-      "summary": "Two same-named projects exist in source-host history; only one is relevant to the target task.",
+      "reference_time_epoch": 1760010060,
+      "summary": "The tenant-b/atlas checkout is a different project from tenant-a/atlas despite sharing the basename atlas. Its recorded route is /beta and it must never be reused just because another checkout has the same name.",
       "expected_memory_facts": [
-        "fact:same_name_repo_truth"
+        "fact:tenant_b_canonical_route"
       ],
       "memories": [
         {
-          "title": "Fact scoped to the correct same-name project",
-          "text": "TODO: record the per-project facts for both same-named repositories, with distinct project identities.",
-          "memory_type": "discovery",
+          "title": "Same name repo isolation",
+          "text": "The tenant-b/atlas checkout is a different project from tenant-a/atlas despite sharing the basename atlas. Its recorded route is /beta and it must never be reused just because another checkout has the same name.",
+          "memory_type": "decision",
           "topic_key": "cx2cc-same-name-repo-isolation"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cx2cc-same-name-repo-isolation:e1",
+          "timestamp_epoch": 1760010060,
+          "role": "user",
+          "sanitized_content": "The tenant-b/atlas checkout is a different project from tenant-a/atlas despite sharing the basename atlas. Its recorded route is /beta and it must never be reused just because another checkout has the same name.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
+        }
+      ]
+    },
+    {
+      "episode_id": "cx2cc-same-name-repo-isolation-episode-2",
+      "host": "codex",
+      "reference_time_epoch": 1760010120,
+      "summary": "The target tenant-a/atlas route is /alpha. endpoint_for(root, routes) keys the supplied mapping by the full canonical resolved checkout path, normalizes equivalent path spellings, and returns None for an unknown root. Do not match basenames or prefix/suffix similarities.",
+      "expected_memory_facts": [
+        "fact:tenant_a_canonical_route"
+      ],
+      "memories": [
+        {
+          "title": "Same name repo isolation",
+          "text": "The target tenant-a/atlas route is /alpha. endpoint_for(root, routes) keys the supplied mapping by the full canonical resolved checkout path, normalizes equivalent path spellings, and returns None for an unknown root. Do not match basenames or prefix/suffix similarities.",
+          "memory_type": "decision",
+          "topic_key": "cx2cc-same-name-repo-isolation"
+        }
+      ],
+      "raw_events": [
+        {
+          "event_id": "cx2cc-same-name-repo-isolation:e2",
+          "timestamp_epoch": 1760010120,
+          "role": "user",
+          "sanitized_content": "The target tenant-a/atlas route is /alpha. endpoint_for(root, routes) keys the supplied mapping by the full canonical resolved checkout path, normalizes equivalent path spellings, and returns None for an unknown root. Do not match basenames or prefix/suffix similarities.",
+          "tool_name": null,
+          "sanitized_tool_input": null,
+          "sanitized_tool_output": null,
+          "host_boundary": "user_message"
         }
       ]
     }
   ],
   "target_task": {
-    "prompt": "Work in the stated project only. Injecting or following the other same-named project's memory counts as wrong_project_injection and fails stop-loss. TODO: bind to two same-named fixture repos.",
+    "prompt": "Repair endpoint_for in handoff_demo/project_routes.py for the current tenant-a/atlas project using the recorded project routing policy. Preserve isolation from the separate same-named checkout.",
     "allowed_paths": [
-      "TODO: fixture source paths",
+      "handoff_demo/project_routes.py",
       "tests"
     ],
     "forbidden_paths": [
+      "README.md",
       "MEMORY.md",
       "REMEM_CONTEXT.md"
     ],
     "timeout_ms": 180000
   },
   "score": {
-    "commands": [],
-    "hidden_files": {},
+    "commands": [
+      [
+        "python3",
+        "-m",
+        "unittest",
+        "tests.test_project_routes_hidden"
+      ]
+    ],
+    "hidden_files": {
+      "tests/test_project_routes_hidden.py": "import unittest\nfrom pathlib import Path\n\nfrom handoff_demo.project_routes import endpoint_for\n\n\nclass HiddenTests(unittest.TestCase):\n    def test_distinct_real_roots_with_the_same_basename(self):\n        root = Path(__file__).resolve().parents[1]\n        a = root / \"tenant-a\" / \"atlas\"\n        b = root / \"tenant-b\" / \"atlas\"\n        self.assertTrue(a.is_dir() and b.is_dir())\n        self.assertEqual(a.name, b.name)\n        self.assertNotEqual(a.resolve(), b.resolve())\n        routes = {str(b.resolve()): \"/beta\", str(a.resolve()): \"/alpha\"}\n        self.assertEqual(endpoint_for(a, routes), \"/alpha\")\n        self.assertEqual(endpoint_for(b, routes), \"/beta\")\n        self.assertEqual(endpoint_for(a / \"..\" / \"atlas\", routes), \"/alpha\")\n        self.assertIsNone(endpoint_for(root / \"tenant-c\" / \"atlas\", routes))\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n"
+    },
     "required_patch_patterns": [],
     "forbidden_patch_patterns": []
   },
   "gold_memory": {
     "required_facts": [
-      "fact:same_name_repo_truth"
+      "fact:tenant_a_canonical_route"
     ],
-    "forbidden_facts": [],
+    "forbidden_facts": [
+      "fact:tenant_b_canonical_route"
+    ],
     "supporting_event_ids": [
-      "cx2cc-same-name-repo-isolation-episode-1:e1"
+      "cx2cc-same-name-repo-isolation:e2"
     ]
   },
   "todo": [
-    "Fill history_episodes with real or deterministic source-host episode content; current text fields are design intent, not fixture data.",
-    "Bind target_task.prompt and allowed_paths to a concrete deterministic fixture repository.",
-    "Add hidden test files and score.commands; hidden tests are the primary outcome.",
-    "Set status to ready and clear this todo list once the fixture is real."
-  ]
+    "Register the v2 foreign-project decoy/canary, causal_oracle_v1 and pre_run_scorer_commitment_v1 before declaring this task ready.",
+    "Verify production project identity and zero wrong-project injection for the two actual same-named roots; output-scoring checks alone do not prove context isolation.",
+    "Bind real source/target host profiles, source seal, production capture/extraction and independent scorer on the approved shared runner.",
+    "Run approved real bidirectional handoffs with identity isolation and direction-grouped reporting; offline fixture checks are not live handoff or production filtering evidence."
+  ],
+  "fixture": "fixtures/smoke.json"
 }
