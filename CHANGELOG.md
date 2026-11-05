@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.2] - Unreleased
+
+### Fixed
+
+- `remem doctor` no longer clones the whole store when every migration is already applied, and runs the Schema dry-run on its own connection so later checks stop reporting a false `database disk image is malformed` (#1117, #1118).
+
 ## [0.7.1] - Unreleased
 
 ### Performance
