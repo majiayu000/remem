@@ -1,8 +1,24 @@
 # Changelog
 
-## Unreleased
+## [0.7.1] - Unreleased
 
-- Stage `0.6.105`: preserve prose at structured capture boundaries during observation extraction while retaining secret field and key redaction. Compact JSON adds no formatting bytes to the extraction content budget, including deeply nested captures and large flat arrays. Refs #931.
+### Performance
+
+- Reach a project's memories through the owner, target and legacy project indexes in hybrid prompt recall instead of decrypting every active memory per channel. On a 100k-memory store, `session-init` CPU drops from 0.6–0.96s to 0.12–0.22s with unchanged injected context.
+
+## [0.7.0] - Unreleased
+
+### Breaking
+
+- Add `InstallHost::DeepSeekHarness`; downstream exhaustive matches must handle the new host. This source change is staged under the 0.7.0 minor boundary.
+
+### Added
+
+- Add the optional DeepSeek Harness lifecycle adapter with cancellation-safe context preparation, recoverable capture failures, and retryable claimed prompts. The npm adapter and this source version remain unpublished.
+
+### Fixed
+
+- Preserve prose at structured capture boundaries during observation extraction while retaining secret field and key redaction. Compact JSON adds no formatting bytes to the extraction content budget, including deeply nested captures and large flat arrays. Refs #931.
 
 ## [0.6.104] - 2026-10-08
 

@@ -7,7 +7,7 @@ use crate::retrieval::search::common::{
 };
 use crate::retrieval::search::SearchWeights;
 
-use super::filters::{push_excluded_type_filter, push_owner_included_filter};
+use super::filters::{push_excluded_type_filter, push_owner_included_filter_indexed};
 
 mod query;
 mod rank;
@@ -431,7 +431,7 @@ fn push_context_memory_filters(
     conditions.push(crate::memory::suppression::memory_policy_filter_sql(
         table_ref(alias),
     ));
-    push_owner_included_filter(conn, project, idx, conditions, params)?;
+    push_owner_included_filter_indexed(conn, project, table_ref(alias), idx, conditions, params)?;
     if let Some(branch) = current_branch.filter(|branch| !branch.trim().is_empty()) {
         conditions.push(format!(
             "({}.branch = ?{idx} OR {}.branch IS NULL)",

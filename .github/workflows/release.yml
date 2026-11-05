@@ -325,6 +325,20 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public
+      - name: Publish DSH adapter (skip if this version already exists)
+        working-directory: plugins/dsh-remem
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          name="$(node -p 'require("./package.json").name')"
+          version="$(node -p 'require("./package.json").version')"
+          if npm view "${name}@${version}" version >/dev/null 2>&1; then
+            echo "${name}@${version} already on npm; skipping"
+            exit 0
+          fi
+          npm ci
+          npm publish --access public
 
   publish-mcp-registry:
     needs: publish-npm
