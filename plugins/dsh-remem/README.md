@@ -25,9 +25,9 @@ DSH 允许任意注册工具名，工具结果均按外部证据处理，保留�
 核心继续脱敏和持久化。提示和轮次总结的省略元数据保留在实际捕获文本内；
 身份字段（包括工具名）本身超限会返回可见错误。完整原始消息和工具结果仍在 DSH 历史中。
 
-当前包为发布准备版本，尚未上传 npm。验证目标：DSH `0.2.1-rc.5` 与 Cordis
+`@remem-ai/dsh-remem@0.1.0` 已发布到 npm。验证目标：DSH `0.2.1-rc.5` 与 Cordis
 `4.0.5`。DSH 主线 API 与该 npm 版本不同；本插件不宣称已验证主线兼容。
-需要 Node.js 22.19+ 和包含 DSH 宿主适配的 remem 0.7.0（此分支，未发布）。旧 remem 会在
+需要 Node.js 22.19+ 和已发布、包含 DSH 宿主适配的 remem 0.7.0。旧 remem 会在
 首次真实 CLI 请求返回可见错误。
 
 ## 本地安装
@@ -50,7 +50,13 @@ dsh plugin --profile headless add /absolute/path/remem-ai-dsh-remem-0.1.0.tgz
 
 `dsh.bundle` 指向随包发布的 `cordis.patch.yml`，CLI 将其注册为 profile layer。
 在该 profile 的用户 patch 中设置 `config.executable` 为构建出的 remem
-**绝对路径**。发布后可使用包名安装；本地验收不依赖已发布的 npm 包。
+**绝对路径**。也可安装已发布版本：
+
+```bash
+dsh plugin --profile headless add @remem-ai/dsh-remem@0.1.0
+```
+
+本地验收仍可使用自行构建的 tarball，不依赖 npm 上的包。
 
 ```yaml
 - id: remem
@@ -95,13 +101,15 @@ project memory at the first step of each turn, captures live human prompts,
 assistant text and completed tools, and queues remem's existing distillation at
 turn end. Retrieval, storage, redaction and governance stay in remem.
 
-The package is prepared for publication and is not yet on npm. Tested APIs target
+`@remem-ai/dsh-remem@0.1.0` is published on npm. Tested APIs target
 DSH 0.2.1-rc.5 and Cordis 4.0.5; the current upstream source uses a different API.
 Use Node.js 22.19+ and the remem binary built from this branch, run `npm ci`,
 `npm test`, `npm pack`, then run `dsh plugin --profile headless add /absolute/path/to/the.tgz`.
 The bundle is registered as a profile layer. Override the `remem` entry with the
 executable's absolute path using the user patch above. Configure memory AI in
-remem 0.7.0 from this branch (not yet released). Old binaries fail visibly on the first real DSH CLI request.
+the released remem 0.7.0. Alternatively, install the published adapter with
+`dsh plugin --profile headless add @remem-ai/dsh-remem@0.1.0`.
+Old binaries fail visibly on the first real DSH CLI request.
 
 Live sessions require an absolute project cwd. Capture runs in order and is
 awaited at session flush and plugin disposal; disposal drains remem-owned work,
