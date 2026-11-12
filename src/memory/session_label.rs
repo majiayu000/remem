@@ -191,7 +191,7 @@ pub fn label_timezone() -> LabelTimeZone {
 
 #[cfg(not(test))]
 fn resolve_label_timezone() -> LabelTimeZone {
-    let resolved = crate::runtime_config::session_label_timezone_setting()
+    let resolved = crate::runtime_config::session_labels::session_label_timezone_setting()
         .and_then(|setting| LabelTimeZone::parse(&setting));
     match resolved {
         Ok(zone) => zone,

@@ -1,12 +1,12 @@
 use anyhow::Result;
 use toml_edit::{DocumentMut, Item};
 
-pub const SESSION_LABEL_TIMEZONE_ENV: &str = "REMEM_SESSION_LABEL_TIMEZONE";
-pub const DEFAULT_SESSION_LABEL_TIMEZONE: &str = "local";
+pub(crate) const SESSION_LABEL_TIMEZONE_ENV: &str = "REMEM_SESSION_LABEL_TIMEZONE";
+pub(crate) const DEFAULT_SESSION_LABEL_TIMEZONE: &str = "local";
 
 /// Raw `session_labels.timezone` setting: env override first, then config,
 /// then `local`. Parsing happens in `memory::session_label`.
-pub fn session_label_timezone_setting() -> Result<String> {
+pub(crate) fn session_label_timezone_setting() -> Result<String> {
     let doc = super::read_config_doc_or_default()?;
     let env_value = std::env::var(SESSION_LABEL_TIMEZONE_ENV).ok();
     Ok(setting_from(env_value.as_deref(), &doc))

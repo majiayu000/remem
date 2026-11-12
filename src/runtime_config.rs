@@ -11,7 +11,7 @@ mod model;
 mod pricing;
 mod promotion;
 mod rules;
-mod session_labels;
+pub(crate) mod session_labels;
 mod user_auto_promote;
 use config_value::cli_value;
 pub(crate) use context::context_budget_limits;
@@ -24,7 +24,6 @@ pub(crate) use pricing::{
 };
 pub use promotion::{summary_gate_mode, SummaryGateMode};
 pub use rules::{rule_compilation_config, RuleCompilationConfig};
-pub use session_labels::session_label_timezone_setting;
 pub use user_auto_promote::{
     user_context_auto_promote_config, AutoPromotePolicy, UserContextAutoPromoteConfig,
 };
