@@ -491,7 +491,8 @@ error rather than `capture_health: null`.
 Source version `0.6.91` adds the same nullable label fields to
 `GET /api/v1/sessions` and `GET /api/v1/workstreams` (list and detail):
 
-- `mmdd`: four-digit Asia/Shanghai date from **created** epoch, or null
+- `mmdd`: four-digit date from **created** epoch in the configured label
+  timezone (`session_labels.timezone`, default `local`), or null
 - `session_intent`: closed code `fea|des|fix|opt|rel|exp|doc|res`, or null
 - `session_topic`: short redacted topic, or null
 - `display_label`: `{MMDD}｜{INTENT}｜{topic}` only when intent and topic are both present

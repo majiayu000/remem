@@ -34,7 +34,7 @@ DSH 工具保留真实名称，均按外部证据处理，不能仅凭名称自�
 - Claude Code 与 Codex 共用一份项目级本地记忆。
 - 决策、Bug 修复、架构说明、偏好和原始会话证据都可以搜索。
 - 每条记忆带有来源、时效状态、审核和注入记录。
-- 新安装默认使用 SQLite 与 SQLCipher 加密。
+- 新安装默认使用 SQLite 与 SQLCipher 加密；密钥文件与数据库放在同一目录（见“安全与隐私”）。
 - MCP、CLI 和带认证的本机 REST API 共用同一套 Rust runtime。
 
 remem 优先保证记忆质量。自动 hook 捕获承担主要工作，手动
@@ -186,7 +186,7 @@ opt-in 接口分别由 [Context Bundle](docs/specs/GH932/PRODUCT.md)和
 如果使用宿主支持的批量改名流程，先预览再应用。它只整理宿主侧栏；Remem 不改写
 宿主会话标题，也不把标题当作意图覆盖，仍以自身结构化字段为准。
 
-本地应用的 Sessions 页显示标签或明确的 Abstain，并按意图和上海时区创建日期
+本地应用的 Sessions 页显示标签或明确的 Abstain，并按意图和浏览器本地时区创建日期
 筛选。Sessions 与 Workstreams 均支持填写 ID 后预览 Before/After，确认后原子
 应用并记录审计；空字段表示明确清空。人工修正及清空会跨后续自动摘要保留，
 workstream 身份和别名保持稳定。详见[操作说明](plugins/remem/apps/remem/README.md)。
@@ -235,7 +235,9 @@ Codex 会话模式按原生来源判断：IDE 归入交互，明确的 `exec` �
 格式。JSON 信封会报告 `excluded_legacy_rows`、`excluded_legacy_sessions` 和
 `excluded_legacy_identities`。每条会话还带有可空的 `mmdd`、`session_intent`、
 `session_topic`、`display_label` 和 `session_intent_source`：`mmdd` 由创建时间
-按 Asia/Shanghai 推导；完整 `{MMDD}｜{INTENT}｜{topic}` 标签只在 intent 和 topic
+按本机本地时区推导；可在 `config.toml` 设置 `session_labels.timezone`，或设置
+`REMEM_SESSION_LABEL_TIMEZONE` 为 `UTC` 或 `+08:00` 这类固定偏移来固定时区。
+时区每个进程读取一次，`mmdd` 在读取时计算，不改写已存储的数据；完整 `{MMDD}｜{INTENT}｜{topic}` 标签只在 intent 和 topic
 都已知时出现。Stop 摘要可用 `summary` 来源写入这些字段；未知、空、过长或被脱敏
 的值会弃权，而不是阻断整次摘要。listing 仍返回健康会话，`--latest N` 只从健康
 会话里取最新 N 条，未解决行既不会中断 listing，也不会占用 latest 名额。用信封
@@ -328,8 +330,11 @@ SessionStart 检索路径直接比较。
 
 ## 安全与隐私
 
-- 新安装会创建 SQLCipher 加密数据库和独立密钥文件。
-- 数据目录和密钥使用严格的用户级权限。
+- 新安装会在同一数据目录（`~/.remem` 或 `REMEM_DATA_DIR`）创建 SQLCipher
+  加密数据库（`remem.db`）和随机密钥文件（`.key`）。静态加密只保护单独拷走的
+  数据库文件；能读取整个数据目录或以你的用户身份操作的人可以同时拿到密钥。
+  `REMEM_CIPHER_KEY` 可在运行时提供密钥，但 `remem install` 仍要求 `.key` 文件存在。
+- 在 Unix 上，数据目录设为 `0700`，密钥文件以 `0600` 创建；其他平台依赖用户目录的默认权限。
 - REST API 只绑定 `127.0.0.1`，并要求 bearer token。
 - hook 捕获的事件预览会在持久化之前清理敏感内容。
 - candidate 和注入内容都要经过 secret 与 poisoning defense。

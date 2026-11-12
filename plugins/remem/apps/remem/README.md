@@ -63,8 +63,10 @@ exists.
 
 ## Correct session and workstream labels
 
-In **Sessions**, filter by intent or created-date range. Dates use Asia/Shanghai
-calendar days, including the selected end date. The Label column shows
+In **Sessions**, filter by intent or created-date range. Dates use the browser's
+local calendar days, including the selected end date. This matches the default
+`local` label timezone when the browser and remem run on the same machine; a
+pinned `session_labels.timezone` does not change the filter. The Label column shows
 `MMDD｜intent｜topic` or explicit `Abstain` with the available fallback. The
 list remains bounded and displays a notice when more matching sessions exist.
 

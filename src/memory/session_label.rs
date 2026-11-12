@@ -1,10 +1,9 @@
 use anyhow::Result;
-use chrono::{FixedOffset, TimeZone};
+use chrono::{FixedOffset, Local, TimeZone};
+use std::sync::OnceLock;
 
 pub const LABEL_SEPARATOR: &str = "｜";
 pub const TOPIC_MAX_CHARS: usize = 80;
-
-const SHANGHAI_OFFSET_SECS: i32 = 8 * 3600;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionIntent {
@@ -125,15 +124,96 @@ pub struct SessionLabelView {
     pub display_title: String,
 }
 
-pub fn asia_shanghai() -> FixedOffset {
-    FixedOffset::east_opt(SHANGHAI_OFFSET_SECS).expect("UTC+8 is a valid offset")
+/// Calendar zone used to derive `MMDD` from a session's created epoch.
+/// `MMDD` is never stored, so changing the zone needs no backfill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabelTimeZone {
+    /// The machine's local zone (honors `TZ` on Unix), including DST.
+    Local,
+    Fixed(FixedOffset),
+}
+
+impl LabelTimeZone {
+    /// Accepts `local`, `UTC`/`Z`, or a fixed offset such as `+08:00`,
+    /// `-0530`, or `+09`.
+    pub fn parse(raw: &str) -> Result<Self> {
+        let value = raw.trim();
+        if value.eq_ignore_ascii_case("local") {
+            return Ok(Self::Local);
+        }
+        if value.eq_ignore_ascii_case("utc") || value.eq_ignore_ascii_case("z") {
+            return Ok(Self::Fixed(FixedOffset::east_opt(0).expect("UTC is valid")));
+        }
+        parse_fixed_offset(value).map(Self::Fixed).ok_or_else(|| {
+            anyhow::anyhow!(
+                "invalid session_labels.timezone '{value}'; expected local, UTC, or a fixed offset such as +08:00"
+            )
+        })
+    }
+
+    pub fn mmdd(self, epoch: i64) -> Option<String> {
+        let when = match self {
+            Self::Local => Local.timestamp_opt(epoch, 0).single()?.fixed_offset(),
+            Self::Fixed(offset) => offset.timestamp_opt(epoch, 0).single()?,
+        };
+        Some(when.format("%m%d").to_string())
+    }
+}
+
+fn parse_fixed_offset(value: &str) -> Option<FixedOffset> {
+    let (sign, rest) = match value.as_bytes().first()? {
+        b'+' => (1, &value[1..]),
+        b'-' => (-1, &value[1..]),
+        _ => return None,
+    };
+    let digits = rest.replace(':', "");
+    if !digits.bytes().all(|byte| byte.is_ascii_digit()) || !matches!(digits.len(), 2 | 4) {
+        return None;
+    }
+    let hours: i32 = digits[..2].parse().ok()?;
+    let minutes: i32 = if digits.len() == 4 {
+        digits[2..].parse().ok()?
+    } else {
+        0
+    };
+    if hours > 14 || minutes > 59 {
+        return None;
+    }
+    FixedOffset::east_opt(sign * (hours * 3600 + minutes * 60))
+}
+
+/// Resolved once per process from `REMEM_SESSION_LABEL_TIMEZONE` or
+/// `session_labels.timezone`; invalid values fall back to `local`.
+pub fn label_timezone() -> LabelTimeZone {
+    static ZONE: OnceLock<LabelTimeZone> = OnceLock::new();
+    *ZONE.get_or_init(resolve_label_timezone)
+}
+
+#[cfg(not(test))]
+fn resolve_label_timezone() -> LabelTimeZone {
+    let resolved = crate::runtime_config::session_label_timezone_setting()
+        .and_then(|setting| LabelTimeZone::parse(&setting));
+    match resolved {
+        Ok(zone) => zone,
+        Err(error) => {
+            crate::log::warn(
+                "session-label",
+                &format!("timezone fallback=local error={error}"),
+            );
+            LabelTimeZone::Local
+        }
+    }
+}
+
+/// Unit tests pin UTC+8 so label fixtures do not depend on the machine zone;
+/// resolution itself is covered by `runtime_config::session_labels` tests.
+#[cfg(test)]
+fn resolve_label_timezone() -> LabelTimeZone {
+    LabelTimeZone::Fixed(FixedOffset::east_opt(8 * 3600).expect("UTC+8 is valid"))
 }
 
 pub fn mmdd_from_created_epoch(epoch: i64) -> Option<String> {
-    asia_shanghai()
-        .timestamp_opt(epoch, 0)
-        .single()
-        .map(|when| when.format("%m%d").to_string())
+    label_timezone().mmdd(epoch)
 }
 
 pub fn normalize_topic(raw: &str) -> Option<String> {
@@ -204,18 +284,81 @@ pub fn render_from_stored(
 mod tests {
     use super::*;
 
-    #[test]
-    fn mmdd_uses_asia_shanghai_not_utc_or_process_tz() {
-        // 2024-12-31 16:00:00 UTC == 2025-01-01 00:00:00 in Asia/Shanghai.
-        let epoch = 1_735_660_800;
-        assert_eq!(mmdd_from_created_epoch(epoch).as_deref(), Some("0101"));
+    fn fixed(raw: &str) -> LabelTimeZone {
+        LabelTimeZone::parse(raw).expect("valid offset")
     }
 
     #[test]
-    fn mmdd_stays_on_created_calendar_day_in_shanghai() {
-        // 2024-12-31 15:59:59 UTC == 2024-12-31 23:59:59 in Asia/Shanghai.
-        let epoch = 1_735_659_999;
-        assert_eq!(mmdd_from_created_epoch(epoch).as_deref(), Some("1231"));
+    fn timezone_parse_accepts_local_utc_and_fixed_offsets() {
+        assert_eq!(
+            LabelTimeZone::parse(" Local ").unwrap(),
+            LabelTimeZone::Local
+        );
+        let utc = LabelTimeZone::Fixed(FixedOffset::east_opt(0).unwrap());
+        assert_eq!(LabelTimeZone::parse("UTC").unwrap(), utc);
+        assert_eq!(LabelTimeZone::parse("z").unwrap(), utc);
+        let plus8 = LabelTimeZone::Fixed(FixedOffset::east_opt(8 * 3600).unwrap());
+        assert_eq!(fixed("+08:00"), plus8);
+        assert_eq!(fixed("+0800"), plus8);
+        assert_eq!(fixed("+08"), plus8);
+        assert_eq!(
+            fixed("-05:30"),
+            LabelTimeZone::Fixed(FixedOffset::west_opt(5 * 3600 + 30 * 60).unwrap())
+        );
+    }
+
+    #[test]
+    fn timezone_parse_rejects_names_and_out_of_range_offsets() {
+        for raw in [
+            "Asia/Shanghai",
+            "",
+            "08:00",
+            "+8",
+            "+15:00",
+            "+08:60",
+            "+08:0a",
+        ] {
+            let error = LabelTimeZone::parse(raw).unwrap_err().to_string();
+            assert!(error.contains("session_labels.timezone"), "{raw}: {error}");
+        }
+    }
+
+    #[test]
+    fn mmdd_date_boundary_follows_the_configured_zone() {
+        // 2024-12-31 16:00:00 UTC: already 01-01 at UTC+8, still 12-31 in UTC.
+        let new_year_plus8 = 1_735_660_800;
+        assert_eq!(
+            fixed("+08:00").mmdd(new_year_plus8).as_deref(),
+            Some("0101")
+        );
+        assert_eq!(
+            fixed("+08:00").mmdd(new_year_plus8 - 1).as_deref(),
+            Some("1231")
+        );
+        assert_eq!(fixed("UTC").mmdd(new_year_plus8).as_deref(), Some("1231"));
+        // 2025-01-01 00:00:00 UTC is 2024-12-31 19:00 at UTC-05:00.
+        let new_year_utc = 1_735_689_600;
+        assert_eq!(fixed("UTC").mmdd(new_year_utc).as_deref(), Some("0101"));
+        assert_eq!(fixed("-05:00").mmdd(new_year_utc).as_deref(), Some("1231"));
+    }
+
+    #[test]
+    fn local_zone_matches_the_process_local_calendar() {
+        let epoch = 1_735_660_800;
+        let expected = Local
+            .timestamp_opt(epoch, 0)
+            .single()
+            .map(|when| when.format("%m%d").to_string());
+        assert_eq!(LabelTimeZone::Local.mmdd(epoch), expected);
+    }
+
+    #[test]
+    fn unit_tests_pin_label_zone_to_utc_plus_8() {
+        assert_eq!(label_timezone(), fixed("+08:00"));
+        assert_eq!(
+            mmdd_from_created_epoch(1_735_660_800).as_deref(),
+            Some("0101")
+        );
     }
 
     #[test]
