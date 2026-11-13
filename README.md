@@ -49,7 +49,8 @@ but are external evidence; their names alone never authorize automatic promotion
   session evidence.
 - Source attribution, staleness labels, suppression, review queues, and
   injection audits.
-- SQLite with SQLCipher encryption by default for fresh installs.
+- SQLite with SQLCipher encryption by default for fresh installs; the key file
+  lives next to the database (see [Security and privacy](#security-and-privacy)).
 - MCP, CLI, and authenticated localhost REST access from one Rust runtime.
 
 remem prioritizes memory quality. Automatic capture is the primary path;
@@ -381,7 +382,10 @@ and `excluded_legacy_identities` when some archive rows cannot enter the
 host-bound session contract. Each listed session also carries additive nullable
 `mmdd`, `session_intent`, `session_topic`, `display_label`, and
 `session_intent_source` fields. `mmdd` is derived from the session created epoch
-in Asia/Shanghai; the full `{MMDD}｜{INTENT}｜{topic}` label is present only when
+in the machine's local timezone; set `session_labels.timezone` in
+`config.toml` or `REMEM_SESSION_LABEL_TIMEZONE` to `UTC` or a fixed offset such
+as `+08:00` to pin it. The zone is read once per process, and `mmdd` is computed
+at read time, so stored rows are never rewritten. The full `{MMDD}｜{INTENT}｜{topic}` label is present only when
 both intent and topic are known. Stop summaries may fill those fields with
 source `summary`; unknown, empty, too-long, or redacted values abstain instead
 of blocking the rest of the summary. Automatic Stop rollups preserve manual
@@ -424,7 +428,7 @@ mutation and scope boundary:
 
 The local [Remem app](plugins/remem/apps/remem/README.md#correct-session-and-workstream-labels)
 shows session/workstream labels or explicit abstention. Sessions can be filtered
-by intent and created date in Asia/Shanghai. Operators can correct labels in
+by intent and created date in the browser's local timezone. Operators can correct labels in
 batches with a Before/After preview, explicit confirmation, and an audit;
 workstream identity and host conversation titles stay stable.
 
@@ -512,8 +516,15 @@ checked-in report.
 
 ## Security and privacy
 
-- Fresh installs create a SQLCipher-encrypted database and private key file.
-- The data directory and key use restrictive per-user permissions.
+- Fresh installs create a SQLCipher-encrypted database (`remem.db`) and a
+  random key file (`.key`) in the same data directory (`~/.remem` or
+  `REMEM_DATA_DIR`). Encryption at rest protects a copy of the database file on
+  its own. It does not protect against anyone who can read the whole data
+  directory or act as your user account, because the key is stored beside the
+  database. `REMEM_CIPHER_KEY` can supply the key at runtime, but `remem
+  install` still expects the persisted `.key` file.
+- On Unix, the data directory is set to `0700` and the key file is created
+  `0600`; other platforms rely on the default permissions of the user profile.
 - The REST API binds to `127.0.0.1` and requires a bearer token.
 - Hook-captured event previews are redacted before durable storage.
 - MCP and CLI workstream listings project redacted text: credential-like
