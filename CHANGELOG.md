@@ -1,10 +1,12 @@
 # Changelog
 
-## [0.7.2] - Unreleased
+## [0.7.3] - Unreleased
 
 ### Changed
 
 - Session label `MMDD` now uses the machine's local timezone instead of a hardcoded Asia/Shanghai offset. Pin it with `session_labels.timezone` or `REMEM_SESSION_LABEL_TIMEZONE` (`local`, `UTC`, or a fixed offset such as `+08:00`). The Remem app date filter uses the browser's local calendar day. Stored labels are unchanged.
+
+## [0.7.2] - Unreleased
 
 ### Fixed
 
