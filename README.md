@@ -572,6 +572,10 @@ The most common destinations are:
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)
 
+Running several agents at once? [Fibo](https://github.com/majiayu000/fibo) is a
+separate macOS workbench that keeps their terminals running and shows which
+session needs you. It does not depend on remem.
+
 ## Uninstall
 
 Preview and remove host hooks and MCP registration without deleting memory:

@@ -373,6 +373,9 @@ API、插件、运维、架构和评测材料的跳转页面。
 - [Changelog](CHANGELOG.md)
 - [参与贡献](CONTRIBUTING.md)
 
+同时跑多个 Agent？[Fibo](https://github.com/majiayu000/fibo) 是一个独立的 macOS
+工作台，让它们的终端一直跑着，并显示哪个会话在等你。它不依赖 remem。
+
 ## 卸载
 
 先预览，再移除 host hooks 和 MCP 注册。这个过程不会删除记忆。
