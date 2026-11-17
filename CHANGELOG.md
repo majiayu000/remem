@@ -1,10 +1,16 @@
 # Changelog
 
-## [0.7.5] - Unreleased
+## [0.7.6] - Unreleased
 
 ### Fixed
 
 - `remem install --target claude` registers the `PreToolUse(Bash)` `rules eval` hook only when `rule_compilation.enabled` is true, which is not the default. With compilation off, the hook could only return "allow" but still started a remem process on every Bash call. `remem install --target claude --repair` removes it while compilation is off and adds it back once it is enabled; until then SessionStart and `remem doctor` report the hook as missing. Third-party `PreToolUse` hooks are kept.
+
+## [0.7.5] - Unreleased
+
+### Fixed
+
+- SessionStart no longer drops its whole Core section when an active policy suppression hides the memory that would win a CurrentTruth slot. The live CurrentTruth loader now treats memory, topic-key, entity and pattern suppressions as not visible before winner selection, so a visible rival in the same slot wins and the other Core claims still render. The experimental MCP `context_bundle` tool no longer returns a blocked bundle in this case. A suppressed memory keeps its replacement links, so it cannot bring back a row it replaced, but it no longer turns its slot into an unresolved conflict, and its id no longer appears in the bundle audit when the slot abstains. Real winner-materialization failures still fail closed, and `remem doctor truth` is unchanged. Affected since 0.6.75 (#1130, refs #933).
 
 ## [0.7.4] - Unreleased
 
@@ -30,15 +36,15 @@
 
 - Reach a project's memories through the owner, target and legacy project indexes in hybrid prompt recall instead of decrypting every active memory per channel. On a 100k-memory store, `session-init` CPU drops from 0.6–0.96s to 0.12–0.22s with unchanged injected context.
 
-## [0.7.0] - Unreleased
+## [0.7.0] - 2026-11-03
 
 ### Breaking
 
-- Add `InstallHost::DeepSeekHarness`; downstream exhaustive matches must handle the new host. This source change is staged under the 0.7.0 minor boundary.
+- Add `InstallHost::DeepSeekHarness`; downstream exhaustive matches must handle the new host. This source change ships at the 0.7.0 minor boundary.
 
 ### Added
 
-- Add the optional DeepSeek Harness lifecycle adapter with cancellation-safe context preparation, recoverable capture failures, and retryable claimed prompts. The npm adapter and this source version remain unpublished.
+- Add the optional DeepSeek Harness lifecycle adapter with cancellation-safe context preparation, recoverable capture failures, and retryable claimed prompts. The adapter is published separately as `@remem-ai/dsh-remem@0.1.0` for DSH 0.2.1-rc.5 and Cordis 4.0.5.
 
 ### Fixed
 

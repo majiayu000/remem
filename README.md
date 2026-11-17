@@ -26,11 +26,15 @@ TODO with memory citations and no re-explaining.*
 
 The optional [DSH adapter](plugins/dsh-remem/README.md) injects project context
 and captures live prompts, assistant text, and tools using the existing CLI.
-It targets published DSH 0.2.0-rc.2; the npm adapter is not yet published.
-Build the DSH-enabled remem 0.7.0 source before installing the adapter.
+The published `@remem-ai/dsh-remem@0.1.0` package targets DSH 0.2.1-rc.5
+and Cordis 4.0.5. Its DSH peers are exact, so the DSH plugin manager rejects it
+on any other DSH version, including newer 0.2.2 prereleases, and upgrading DSH
+disables it; keep DSH pinned at 0.2.1-rc.5. Use remem 0.7.0 or later, the first
+release with DSH host support; see the adapter README for
+installation and the remaining host limitations.
 Assistant-only claims remain available for review and cannot auto-promote without
-independent supporting evidence. Snapshot updates and removals respect the published
-DSH session invariant; remem preparation failures retain uncommitted prompts for an
+independent supporting evidence. Snapshot updates and removals are appended after
+`step/start`, as the session invariant published with DSH 0.2.0-rc.2 requires; remem preparation failures retain uncommitted prompts for an
 explicit retry, while cancellation leaves durable capture available to flush.
 Recovery across unload lasts until the in-flight remem callback exits; while
 loaded, `agent/error` also recovers later preparation failures. Host `prepareCall`
