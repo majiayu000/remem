@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use rmcp::handler::server::router::tool::{ToolRoute, ToolRouter};
-use rmcp::model::{CallToolResult, ToolAnnotations};
+use rmcp::model::{CallToolResponse, CallToolResult, ToolAnnotations};
 use serde_json::{json, Map, Value};
 
 use super::MemoryServer;
@@ -285,8 +285,12 @@ fn wrap_success(
     route.call = Arc::new(move |context| {
         let original = Arc::clone(&original);
         Box::pin(async move {
-            let result = original(context).await?;
-            add_structured_content(tool, shape, schema, result)
+            match original(context).await? {
+                CallToolResponse::Complete(result) => {
+                    add_structured_content(tool, shape, schema, result).map(Into::into)
+                }
+                other => Ok(other),
+            }
         })
     });
 }
@@ -317,7 +321,6 @@ fn add_structured_content(
     }
 
     let text = result.content[0]
-        .raw
         .as_text()
         .map(|content| content.text.as_str())
         .ok_or_else(|| contract_violation(tool, "legacy success content was not text"))?;

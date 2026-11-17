@@ -57,8 +57,14 @@ pub(super) fn build_schema(kind: OutputSchema) -> anyhow::Result<Arc<JsonObject>
         OutputSchema::UpdateWorkstream => schema_for_output::<UpdateWorkstreamOutput>(),
         OutputSchema::SearchRaw => schema_for_output::<SearchRawOutput>(),
         OutputSchema::ListRawSessions => schema_for_output::<RawSessionsOutput>(),
+    };
+    // rmcp >= 2 no longer rejects non-object output schemas (SEP-2106); keep
+    // remem's object-root contract explicit.
+    if schema.get("type").and_then(Value::as_str) != Some("object") {
+        return Err(anyhow!(
+            "failed to build {kind:?} output schema: root type must be 'object'"
+        ));
     }
-    .map_err(|message| anyhow!("failed to build {kind:?} output schema: {message}"))?;
 
     let schema = normalize_nullable(schema.as_ref().clone())
         .with_context(|| format!("normalize {kind:?} output schema"))?;
