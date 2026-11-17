@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.4] - Unreleased
+
+### Security
+
+- Update locked dependencies within their existing semver ranges to clear 14 RustSec advisories reported by `cargo audit`: quinn-proto 0.11.19, quinn-udp 0.5.16, rustls 0.23.46, rustls-webpki 0.103.17 and webpki-roots 1.0.12. Three advisories remain and need major upgrades: libsqlite3-sys through rusqlite 0.32 (RUSTSEC-2026-0459) and rmcp 0.15 (RUSTSEC-2026-0189, RUSTSEC-2026-0462).
+
 ## [0.7.3] - Unreleased
 
 ### Changed
