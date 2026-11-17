@@ -24,15 +24,15 @@
 
 - Reach a project's memories through the owner, target and legacy project indexes in hybrid prompt recall instead of decrypting every active memory per channel. On a 100k-memory store, `session-init` CPU drops from 0.6–0.96s to 0.12–0.22s with unchanged injected context.
 
-## [0.7.0] - Unreleased
+## [0.7.0] - 2026-11-03
 
 ### Breaking
 
-- Add `InstallHost::DeepSeekHarness`; downstream exhaustive matches must handle the new host. This source change is staged under the 0.7.0 minor boundary.
+- Add `InstallHost::DeepSeekHarness`; downstream exhaustive matches must handle the new host. This source change ships at the 0.7.0 minor boundary.
 
 ### Added
 
-- Add the optional DeepSeek Harness lifecycle adapter with cancellation-safe context preparation, recoverable capture failures, and retryable claimed prompts. The npm adapter and this source version remain unpublished.
+- Add the optional DeepSeek Harness lifecycle adapter with cancellation-safe context preparation, recoverable capture failures, and retryable claimed prompts. The adapter is published separately as `@remem-ai/dsh-remem@0.1.0` for DSH 0.2.1-rc.5 and Cordis 4.0.5.
 
 ### Fixed
 
