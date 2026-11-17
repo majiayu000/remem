@@ -173,23 +173,41 @@ function cwd(session: Session): string {
   return session.header.cwd
 }
 
+const attachmentFields = ['attachmentId', 'name', 'mediaType', 'bytes', 'width', 'height'] as const
+
+/** JSON-quote a value that could split its word, end the reference, or break the line. */
+function attachmentValue(value: string): string {
+  let clipped = value.slice(0, 512)
+  // Never cut a surrogate pair in half at the cap.
+  if (/[\uD800-\uDBFF]$/.test(clipped)) clipped = clipped.slice(0, -1)
+  // A raw lone surrogate makes remem discard the whole prompt; JSON escapes it.
+  return clipped && !/[\s"\\[\]\p{Cc}\p{Cs}]/u.test(clipped) ? clipped : JSON.stringify(clipped)
+}
+
+/**
+ * Core redaction masks any whitespace-free word of 32+ characters with a letter and a
+ * digit, so each field is its own short `key=value` word rather than one JSON token.
+ * Quoted values keep real spaces, so a name with spaces stays several short words.
+ */
+function attachmentReference(type: string, ref: unknown): string {
+  const words = [`[${type} attachment`]
+  if (typeof ref === 'object' && ref !== null) {
+    for (const key of attachmentFields) {
+      const value = (ref as Record<string, unknown>)[key]
+      if (typeof value === 'string' && !value.startsWith('data:')) words.push(`${key}=${attachmentValue(value)}`)
+      else if (typeof value === 'number' && Number.isFinite(value)) words.push(`${key}=${value}`)
+    }
+  }
+  return `${words.join(' ')}]`
+}
+
 function text(content: readonly unknown[], attachments = false): string {
   return content.flatMap(block => {
     if (typeof block === 'object' && block !== null && 'type' in block && block.type === 'text'
       && 'text' in block && typeof block.text === 'string') return [block.text]
     if (attachments && typeof block === 'object' && block !== null && 'type' in block
       && (block.type === 'image' || block.type === 'file')) {
-      const ref = 'attachment' in block ? block.attachment : undefined
-      const metadata: Record<string, string | number> = {}
-      if (typeof ref === 'object' && ref !== null) {
-        for (const key of ['attachmentId', 'name', 'mediaType', 'bytes', 'width', 'height'] as const) {
-          if (!(key in ref)) continue
-          const value = (ref as Record<string, unknown>)[key]
-          if (typeof value === 'string' && !value.startsWith('data:')) metadata[key] = value.slice(0, 512)
-          else if (typeof value === 'number' && Number.isFinite(value)) metadata[key] = value
-        }
-      }
-      return [`[${block.type} attachment ${JSON.stringify(metadata)}]`]
+      return [attachmentReference(block.type, 'attachment' in block ? block.attachment : undefined)]
     }
     return []
   }).join('\n')
