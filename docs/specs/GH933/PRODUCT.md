@@ -40,8 +40,8 @@ The v1 baseline exposes this projection but has correctness gaps around
 canonical subject identity, historical mutation, Observation mapping, policy
 suppression, external-content trust, relation bounds and reference-time
 replayability.
-Staged 0.7.5 closes only the current-snapshot part of the policy-suppression
-gap in the live Context Bundle/SessionStart loader (#1130): an active memory,
+The fix for #1130 closes only the current-snapshot part of the policy-suppression
+gap in the live Context Bundle/SessionStart loader: an active memory,
 topic-key, entity or pattern suppression changes Visibility before winner
 selection. The rest of item 8 remains open.
 
