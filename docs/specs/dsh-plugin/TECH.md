@@ -6,9 +6,11 @@ Refs #1111.
 
 Adapt the existing remem CLI instead of building another memory service. Official
 DSH `agent/pre-step` uses a middleware decision; `session/event` is a post-commit
-notification and `session/flush` is an awaited durability checkpoint. Verified
-against deepseek-ai/deepseek-harness origin/master on 2026-10-07 and the published
-`@deepseek-ai/dsh-agent` / `dsh-session` 0.2.0-rc.2 packages. Cordis is 4.0.4.
+notification and `session/flush` is an awaited durability checkpoint. Originally
+verified against deepseek-ai/deepseek-harness origin/master on 2026-10-07 and the
+published `@deepseek-ai/dsh-agent` / `dsh-session` 0.2.0-rc.2 packages with Cordis
+4.0.4. The released adapter (`@remem-ai/dsh-remem@0.1.0`, #1112) targets the
+published 0.2.1-rc.5 packages and Cordis ~4.0.5.
 
 The plugin lives in `plugins/dsh-remem`. It serializes CLI work per Session object
 and waits for capture before returning pre-step context. Human `user/message`
@@ -20,9 +22,9 @@ committed `remem` snapshot in `session.deriveMessages()` suppresses an unchanged
 snapshot. Changed or empty memory replaces each obsolete remem surface node with
 an empty native `developer/message`, citing only that node's original event seq.
 Replacements are prepared without mutating history in `agent/pre-step`, then
-appended in the awaited `agent/request` waterfall after `step/start`. This obeys
-the published session invariant; post-commit `session/event` cannot append them
-reentrantly. DSH omits empty developer nodes from derived requests; the append-only
+appended in the awaited `agent/request` waterfall after `step/start`. This follows
+the session invariant published with DSH 0.2.0-rc.2 (0.2.1-rc.5 no longer ships
+that module); post-commit `session/event` cannot append them reentrantly. DSH omits empty developer nodes from derived requests; the append-only
 snapshot and human prompt events stay intact. The fresh snapshot still enters through
 normal pre-step admission, so cancellation cannot consume its later delivery.
 Cancellation before admission therefore leaves the next turn eligible
@@ -30,7 +32,9 @@ for injection. No plugin acknowledgement ledger is maintained. Rust context emis
 skipped for the DSH host because CLI rendering precedes admission, cancellation,
 and snapshot deduplication; committed DSH history remains delivery authority.
 Human attachment blocks retain bounded reference metadata alongside text without
-reading attachment bytes. DSH `session-init` is capture-only because its
+reading attachment bytes. Known defect in 0.1.0: the metadata is rendered as one
+compact JSON token, which core long-token redaction replaces with `[REDACTED]`
+(#1126). DSH `session-init` is capture-only because its
 post-commit callback cannot deliver prompt recall to request preparation; other
 hosts retain their existing prompt-recall behavior.
 Each capture uses the session's immutable `header.cwd`; absent or relative cwd is an explicit
@@ -55,8 +59,8 @@ new schema, host migration, or extraction implementation is added.
 
 The existing InstallHost variant names and database host strings remain unchanged.
 Adding DeepSeekHarness requires downstream exhaustive Rust matches on InstallHost
-to handle the new variant. This source-breaking addition is staged as unpublished
-0.7.0, outside the 0.6.x compatibility range; downstream crates staying on 0.6.x
+to handle the new variant. This source-breaking addition shipped in 0.7.0
+(released 2026-11-03), outside the 0.6.x compatibility range; downstream crates staying on 0.6.x
 retain the three-variant API.
 
 The surface manifest retains the published baseline and records the previous
@@ -71,7 +75,8 @@ or waive public-surface, lifecycle, baseline, or security-review checks.
 Subprocesses use argv and stdin, never a shell. Output and runtime are bounded.
 Cancellation, timeout and output limits stop the owned process tree, including
 remem behind its npm launcher: a dedicated process group on POSIX and the system
-`taskkill.exe /T /F` operation on Windows. Tree-termination errors remain visible.
+`taskkill.exe /T /F` operation on Windows (implemented, not exercised in CI).
+Tree-termination errors remain visible.
 The turn AbortSignal kills an outstanding context child and preserves cancellation.
 Plugin disposal aborts and awaits outstanding context children before returning;
 preparation waiting on capture cannot start a context child after disposal.
@@ -92,7 +97,7 @@ including public `LlmAdapter.prepareCall` failures, before `turn/end` clears adm
 Disposal drains remem-owned work, not arbitrary downstream middleware or host
 request preparation.
 
-DSH 0.2.0-rc.2 claims input before `agent/pre-step`. `agent/request` returns
+DSH 0.2.1-rc.5 (unchanged from 0.2.0-rc.2) claims input before `agent/pre-step`. `agent/request` returns
 configuration; the host then awaits `LlmAdapter.prepareCall` before committing
 `user/message`. Once the callback has returned and Cordis has unloaded remem, no
 plugin error listener remains. A later `prepareCall` rejection follows the host's
@@ -139,8 +144,9 @@ The original DSH message and result history is unchanged.
 ## Validation
 
 Typecheck/build and package installation must use published DSH packages. Tests
-enable the published invariant registry and official session companion for real
-Cordis SessionStore events and awaited middleware, including changed/removed
+use the official session companion for real Cordis SessionStore events and awaited
+middleware. DSH 0.2.1-rc.5 publishes no invariant registry, so the suite checks
+outcomes and retry semantics rather than an invariant check. Coverage includes changed/removed
 snapshots, request preparation failures, replacement failures and cancellation; a live remem
 executable smoke verifies DSH host rows, prompt/tool/assistant capture, Stop and
 extraction-task queueing in an isolated store. A deterministic offline executor

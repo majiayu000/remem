@@ -2,7 +2,8 @@
 
 Refs #1111.
 
-Status: Current contract; implementation is in this change.
+Status: Current contract; implemented in #1112, released with remem 0.7.0 and
+`@remem-ai/dsh-remem@0.1.0`.
 
 `@remem-ai/dsh-remem` connects an explicitly installed remem executable to
 DeepSeek Harness. It does not install a binary or implement memory retrieval,
@@ -10,7 +11,8 @@ extraction, governance, or storage itself.
 
 Before the first step of a turn, it retrieves project memory through `context`.
 Live user prompts, assistant messages, and completed tool calls are captured
-through the existing CLI, including bounded image/file reference metadata.
+through the existing CLI, including bounded image/file reference metadata (in
+0.1.0 core redaction masks that metadata; see #1126).
 Unchanged memory is suppressed only after DSH commits the injected snapshot;
 a cancelled preparation does not consume later delivery. Changed or removed memory supersedes old remem snapshots in future model requests while retaining the original event log and all human messages. Prompt capture itself
 does not mark undelivered recall as injected. Context preparation also creates no
@@ -47,8 +49,9 @@ batch on later request-preparation failures. If unload interrupts a running reme
 `agent/pre-step` or `agent/request` callback, recovery lasts until that callback
 exits, even after Cordis removes its listeners. Recovery preserves original
 identities, order and sources, excluding synthetic memory, committed messages
-and intentionally cancelled batches. Snapshot replacement obeys the published
-DSH session invariant and retains committed human prompts.
+and intentionally cancelled batches. Snapshot replacement appends after
+`step/start`, as the session invariant published with DSH 0.2.0-rc.2 requires,
+and retains committed human prompts.
 Cancellation promptly stops context preparation without committing a snapshot.
 Every synchronous or background capture failure is logged separately and all
 pending failures surface together once through an awaited checkpoint. Cancellation
@@ -56,7 +59,7 @@ leaves them for a later checkpoint, after which healthy work can recover. Dispos
 work, not remaining host request preparation. No silent capture failures or
 automatic binary downloads.
 
-Known host limitation: DSH 0.2.0-rc.2 claims input before `agent/pre-step`, then
+Known host limitation: DSH 0.2.1-rc.5 (unchanged from 0.2.0-rc.2) claims input before `agent/pre-step`, then
 awaits public `LlmAdapter.prepareCall` after `agent/request` returns and before
 committing `user/message`. If remem has unloaded and that call fails, the claimed
 input is lost; reload plus explicit retry cannot recover it. The same loss occurs
