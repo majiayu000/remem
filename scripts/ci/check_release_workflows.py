@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
@@ -10,7 +11,10 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
+from urllib.error import HTTPError
 
+import check_release_registry
 import surface_lifecycle_release
 
 
@@ -88,6 +92,55 @@ def check_workflow_text() -> None:
     ]:
         if needle not in release_text:
             die(f"release workflow is missing lifecycle asset step {needle!r}")
+
+
+
+def check_distribution_channels() -> None:
+    text = RELEASE.read_text(encoding="utf-8")
+    for job, dependency in (
+        ("publish-npm", "release"),
+        ("publish-dsh", "release"),
+        ("publish-mcp-registry", "publish-npm"),
+    ):
+        if f"\n  {job}:\n    needs: {dependency}\n" not in text:
+            die(f"{job} must depend on {dependency} only")
+
+    wrapper = {"name": "@remem-ai/remem", "version": "1.2.3"}
+    with patch.object(check_release_registry, "urlopen", return_value=io.StringIO(json.dumps(wrapper))) as fetch:
+        if not check_release_registry.published("npm", wrapper):
+            die("an existing npm version must skip publication on retry")
+        if not fetch.call_args.args[0].full_url.endswith("/%40remem-ai%2Fremem/1.2.3"):
+            die("npm must be queried for the exact scoped package version")
+
+    for status in (404, 503):
+        error = HTTPError("https://registry.npmjs.org", status, "fixture", None, None)
+        with patch.object(check_release_registry, "urlopen", side_effect=error):
+            try:
+                exists = check_release_registry.published("npm", wrapper)
+            except HTTPError:
+                if status == 404:
+                    die("a missing package version must allow publication")
+            else:
+                if exists or status != 404:
+                    die("only a missing package version may allow publication")
+
+    manifest = {
+        "name": "io.github.majiayu000/remem",
+        "version": "1.2.3",
+        "packages": [{"registryType": "npm", "identifier": wrapper["name"], "version": wrapper["version"]}],
+    }
+    with patch.object(check_release_registry, "urlopen", return_value=io.StringIO(json.dumps({"server": manifest}))):
+        if not check_release_registry.published("mcp", manifest):
+            die("an existing MCP Registry version must skip publication on retry")
+
+    wrong_version = {"server": {**manifest, "packages": [{**manifest["packages"][0], "version": "1.2.2"}]}}
+    with patch.object(check_release_registry, "urlopen", return_value=io.StringIO(json.dumps(wrong_version))):
+        try:
+            check_release_registry.published("mcp", manifest)
+        except ValueError:
+            pass
+        else:
+            die("a different npm version cannot satisfy the MCP Registry check")
 
 
 def git_init(path: Path) -> None:
@@ -215,6 +268,7 @@ def main() -> int:
     if shutil.which("git") is None:
         die("git is required")
     check_workflow_text()
+    check_distribution_channels()
     check_tag_state_script()
     check_surface_release_verifier()
     print("release workflow check: ok")
