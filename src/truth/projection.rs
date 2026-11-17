@@ -6,7 +6,7 @@
 //! `Unknown`. No randomness, no LLM, no stored confidence in the decision
 //! path.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use anyhow::Result;
 use rusqlite::Connection;
@@ -37,15 +37,30 @@ pub(crate) fn project_current_truth_for_context(
     relevant_memory_ids: &[i64],
 ) -> Result<CurrentTruthProjection> {
     let reference_epoch = reference_epoch(query);
-    let (claims, relations) =
+    let (claims, relations, policy_hidden) =
         load_memory_claim_groups_for_context_at(conn, query, reference_epoch, relevant_memory_ids)?;
     let relations = context_safe_relations(&claims, relations);
-    Ok(resolve_projection(
-        query,
-        claims,
-        relations,
-        reference_epoch,
-    ))
+    let mut projection = resolve_projection(query, claims, relations, reference_epoch);
+    hide_policy_suppressed_refs(&mut projection, &policy_hidden);
+    Ok(projection)
+}
+
+/// A policy-suppressed claim keeps its place in slot resolution, so a
+/// suppressed replacement still retires the row it replaced. The user asked
+/// for it to stay hidden, so its ref never leaves the context projection as a
+/// rejected or conflicting candidate (for example in a bundle's shadow audit).
+fn hide_policy_suppressed_refs(projection: &mut CurrentTruthProjection, hidden: &HashSet<String>) {
+    if hidden.is_empty() {
+        return;
+    }
+    for truth in &mut projection.truths {
+        truth
+            .rejected
+            .retain(|claim_ref| !hidden.contains(claim_ref));
+        truth
+            .conflicting_claims
+            .retain(|claim| !hidden.contains(&claim.canonical_ref));
+    }
 }
 
 fn context_safe_relations(claims: &[ClaimView], relations: Vec<RelationView>) -> Vec<RelationView> {

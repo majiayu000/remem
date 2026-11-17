@@ -327,6 +327,83 @@ fn suppressed_replacement_still_retires_the_row_it_replaced() {
     );
 }
 
+fn assert_no_suppressed_ref(label: &str, wire: &str) {
+    assert!(
+        !wire.contains("memory:91"),
+        "{label}: suppressed ref leaked: {wire}"
+    );
+    assert!(
+        !wire.contains(WINNER_TITLE) && !wire.contains("zebrafish"),
+        "{label}: suppressed text leaked: {wire}"
+    );
+}
+
+#[test]
+fn suppressed_replacement_keeps_its_ref_out_of_the_shadow_audit() {
+    let _dir = ScopedTestDataDir::new("current-truth-suppressed-replacement-audit");
+    let conn = conn_with_schema();
+    seed_semantic_slot(&conn);
+    conn.execute(
+        "INSERT INTO memory_edges (edge_type, from_memory_id, to_memory_id, created_at_epoch)
+         VALUES ('supersedes', ?1, ?2, ?3)",
+        params![RIVAL, WINNER, recent_epoch()],
+    )
+    .expect("winner replaces rival");
+    suppress(&conn, "memory", Some(WINNER), None);
+
+    // The slot abstains (its only visible row was retired), and the abstention
+    // must not name the suppressed replacement in either bundle.
+    let bundle = compile_session_start_bundle(
+        &conn,
+        &bundle_request(),
+        "/tmp/remem-current-truth-suppressed-replacement-audit",
+        None,
+        true,
+    )
+    .expect("compile bundle");
+    assert_ne!(bundle.degraded_mode, DegradedMode::Blocked, "{bundle:#?}");
+    let wire = serde_json::to_string(&bundle).expect("serialize bundle");
+    assert_no_suppressed_ref("mcp bundle", &wire);
+
+    let rendered = render(&conn, None);
+    assert!(!rendered.has_load_errors, "{}", rendered.output);
+    assert_no_suppressed_ref("sessionstart output", &rendered.output);
+    let sealed = rendered.context_bundle.as_ref().expect("sealed bundle");
+    let sealed_wire = serde_json::to_string(sealed).expect("serialize sealed bundle");
+    assert_no_suppressed_ref("sealed bundle", &sealed_wire);
+}
+
+#[test]
+fn suppressed_conflict_party_yields_core_to_visible_rival() {
+    let _dir = ScopedTestDataDir::new("current-truth-suppressed-conflict-party");
+    let conn = conn_with_schema();
+    seed_semantic_slot(&conn);
+    conn.execute(
+        "INSERT INTO memory_edges (edge_type, from_memory_id, to_memory_id, created_at_epoch)
+         VALUES ('conflicts', ?1, ?2, ?3)",
+        params![RIVAL, WINNER, recent_epoch()],
+    )
+    .expect("rival conflicts with winner");
+    suppress(&conn, "memory", Some(WINNER), None);
+
+    // Without the fix the slot abstained as an unresolved conflict that named
+    // the suppressed memory and hid the visible rival.
+    let rendered = render(&conn, None);
+    assert_rival_owns_core(&rendered);
+    assert_no_suppressed_ref("sessionstart output", &rendered.output);
+
+    let bundle = compile_session_start_bundle(
+        &conn,
+        &bundle_request(),
+        "/tmp/remem-current-truth-suppressed-conflict-party",
+        None,
+        true,
+    )
+    .expect("compile bundle");
+    let wire = serde_json::to_string(&bundle).expect("serialize bundle");
+    assert_no_suppressed_ref("mcp bundle", &wire);
+}
+
 #[test]
 fn live_projection_treats_suppressed_claim_as_not_visible() {
     let conn = conn_with_schema();
@@ -351,7 +428,11 @@ fn live_projection_treats_suppressed_claim_as_not_visible() {
         slot.selected_reason,
         crate::truth::TruthSelectionReason::OnlySurvivingClaim
     );
-    assert!(slot.rejected.iter().any(|claim| claim == "memory:91"));
+    assert!(
+        !slot.rejected.iter().any(|claim| claim == "memory:91"),
+        "a policy-suppressed ref must not surface as a rejected candidate: {:?}",
+        slot.rejected
+    );
 }
 
 #[test]

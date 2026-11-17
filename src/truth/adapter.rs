@@ -1,7 +1,7 @@
 //! Read-only adapter mapping existing canonical tables into the CurrentTruth
 //! read DTOs (GH933 Phase A). SELECT-only: no writes, no migrations.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
@@ -48,7 +48,7 @@ pub(crate) fn load_memory_claim_groups_for_context_at(
     query: &TruthQuery,
     reference_epoch: i64,
     relevant_memory_ids: &[i64],
-) -> Result<(Vec<ClaimView>, Vec<RelationView>)> {
+) -> Result<(Vec<ClaimView>, Vec<RelationView>, HashSet<String>)> {
     context::load(conn, query, reference_epoch, relevant_memory_ids)
 }
 

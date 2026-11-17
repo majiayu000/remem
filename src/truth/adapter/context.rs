@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
@@ -10,14 +10,16 @@ use crate::truth::types::{
     Visibility,
 };
 
+/// Returns the live slot claims, their G2-gated relations, and the canonical
+/// refs of claims that an active policy suppression hides.
 pub(super) fn load(
     conn: &Connection,
     query: &TruthQuery,
     reference_epoch: i64,
     relevant_memory_ids: &[i64],
-) -> Result<(Vec<ClaimView>, Vec<RelationView>)> {
+) -> Result<(Vec<ClaimView>, Vec<RelationView>, HashSet<String>)> {
     if relevant_memory_ids.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
+        return Ok((Vec::new(), Vec::new(), HashSet::new()));
     }
     let projects = crate::project_alias::project_filter_values(conn, &query.project)?;
     let owner_filter = "((memories.owner_scope = 'repo'
@@ -84,6 +86,7 @@ pub(super) fn load(
         crate::project_alias::resolve_project_identity(conn, &query.project)?.canonical_path;
     let canonical_owners = super::canonical_owner_keys(conn, &rows)?;
     let mut claims = Vec::with_capacity(rows.len());
+    let mut policy_hidden = HashSet::new();
     for (row, policy_suppressed) in rows.into_iter().zip(policy_suppressed) {
         let mut claim = claim_view(row, &canonical_scope, &canonical_owners, &evidence);
         let admitted = visibility
@@ -96,6 +99,9 @@ pub(super) fn load(
         if !admitted || policy_suppressed {
             claim.lifecycle.visibility = Visibility::Suppressed;
         }
+        if policy_suppressed {
+            policy_hidden.insert(claim.canonical_ref.clone());
+        }
         claims.push(claim);
     }
     let admitted_ids = ids
@@ -107,7 +113,7 @@ pub(super) fn load(
         })
         .collect::<Vec<_>>();
     let relations = load_memory_relations(conn, &admitted_ids, true)?;
-    Ok((claims, relations))
+    Ok((claims, relations, policy_hidden))
 }
 
 /// One live slot row plus whether an active policy suppression hides it.
