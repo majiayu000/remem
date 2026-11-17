@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.7] - Unreleased
+
+### Fixed
+
+- SessionStart no longer drops a semantic slot's verified CurrentTruth winner from Core when an active policy suppression hides the slot's current-pointer row. Preselection used to keep only the pointer row of each semantic slot, so hiding a newer, lower-trust pointer also hid the older verified row that CurrentTruth selects. While a slot's pointer is suppressed, the slot's newest other visible row now stands in for it in SessionStart preselection, so CurrentTruth still loads the slot and the verified row stays in Core. The suppressed row stays hidden, and older rows of the slot stay out as before. The experimental MCP `context_bundle` tool gets the same fix (#1139, refs #933).
+
 ## [0.7.6] - Unreleased
 
 ### Fixed
