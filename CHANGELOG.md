@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.5] - Unreleased
+
+### Fixed
+
+- SessionStart no longer drops its whole Core section when an active policy suppression hides the memory that would win a CurrentTruth slot. The live CurrentTruth loader now treats memory, topic-key, entity and pattern suppressions as not visible before winner selection, so a visible rival in the same slot wins and the other Core claims still render. The experimental MCP `context_bundle` tool no longer returns a blocked bundle in this case. A suppressed memory keeps its replacement links, so it cannot bring back a row it replaced. Real winner-materialization failures still fail closed, and `remem doctor truth` is unchanged. Affected since 0.6.75 (#1130, refs #933).
+
 ## [0.7.4] - Unreleased
 
 ### Security
