@@ -377,7 +377,7 @@ fn prune_holds_model_state_pin_until_delete_commits() -> Result<()> {
         }
         prune_ready_tx.send(())?;
         prune_start_rx.recv()?;
-        let conn = Connection::open(prune_db_path)?;
+        let mut conn = Connection::open(prune_db_path)?;
         conn.busy_handler(Some(signal_prune_db_busy))?;
         prune_inactive_memory_embeddings(&conn, &target)
     });
