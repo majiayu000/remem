@@ -136,7 +136,7 @@ fn apply_codex_hooks_json(path: &Path, bin: &str) -> Result<()> {
 }
 
 fn build_codex_hooks(bin: &str) -> Value {
-    let mut hooks = build_hooks(bin, HookStrategy::Codex);
+    let mut hooks = build_hooks(bin, HookStrategy::Codex, false);
     convert_hook_timeouts_to_seconds(&mut hooks);
     hooks
 }
