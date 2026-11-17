@@ -25,7 +25,7 @@ overloaded to mean “what was this session for?”
 Make sessions and workstreams scannable inside Remem by:
 
 1. Storing optional structured `session_intent` and `session_topic`.
-2. Deriving a local `MMDD` date from **created** time in `Asia/Shanghai`.
+2. Deriving a local `MMDD` date from **created** time in the label timezone (`session_labels.timezone` / `REMEM_SESSION_LABEL_TIMEZONE`, default `local`).
 3. Rendering a stable label `{MMDD}｜{INTENT}｜{topic}` in CLI, API, and app.
 4. Abstaining when intent or topic cannot be determined.
 5. Keeping host conversation titles immutable from Remem.
@@ -99,7 +99,8 @@ untrusted model output.
 ### Date segment
 
 - Source: session or workstream **created** epoch.
-- Zone: `Asia/Shanghai`.
+- Zone: machine local by default; pin with `session_labels.timezone` or
+  `REMEM_SESSION_LABEL_TIMEZONE` (`local`, `UTC`, or a fixed offset such as `+08:00`).
 - Format: `MMDD`.
 - Never use `updated_at` / last activity for the label date.
 
@@ -194,7 +195,7 @@ workstream identity. Remem's structured fields remain authoritative.
 
 Sessions workspace shows a Label column using the shared label or explicit
 `Abstain` with the original fallback. Intent and created-date filters apply
-to the paginated session query; dates use Asia/Shanghai calendar days.
+to the paginated session query; dates use the browser's local calendar days.
 Sessions lacking a trusted canonical session row or a persisted summary stay
 readable but cannot yet receive an override; the UI explains this limitation.
 

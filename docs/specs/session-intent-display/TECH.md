@@ -27,7 +27,7 @@ Tracking:
 ## Design Principles
 
 1. **Additive schema.** No rewrite of raw archive rows.
-2. **Derived date.** `MMDD` is computed from created epoch + `Asia/Shanghai`.
+2. **Derived date.** `MMDD` is computed from created epoch + the label timezone (`session_labels.timezone` / `REMEM_SESSION_LABEL_TIMEZONE`, default `local`).
 3. **Fail closed on writes, abstain on model output.** Unknown stored values
    reject; untrusted summary fields become null.
 4. **No host mutation.** No adapter writes Codex/Claude conversation titles.
@@ -88,7 +88,8 @@ outputs:
 
 Rules:
 
-- Timezone fixed to `Asia/Shanghai` for v1.
+- Timezone defaults to machine local; `session_labels.timezone` or
+  `REMEM_SESSION_LABEL_TIMEZONE` pins `UTC` or a fixed offset. Resolved once per process.
 - INTENT segment uses English codes by default; Chinese labels only when
   explicitly requested for a whole response.
 - Full-width separator `｜` is required for parity with the operator tip.
@@ -210,7 +211,7 @@ Do not overwrite override-sourced values automatically.
 
 | Case | Expectation |
 |---|---|
-| Created epoch → Asia/Shanghai MMDD | Stable across process TZ |
+| Created epoch → MMDD in configured zone | Date boundary follows the zone; unit tests pin UTC+8 |
 | Intent+topic present | `display_label` formatted with `｜` |
 | Missing intent or topic | `display_label` null; fallback title used |
 | Invalid intent on override | Rejected |
@@ -247,7 +248,7 @@ Extend the existing session-activity list with shared label fields, the trusted
 Reuse exact raw identity resolution; do not infer host/session IDs. Filter by
 `session_intent` (including `abstain` for any incomplete display label) and inclusive created epoch
 `since_epoch` / exclusive `until_epoch`; the widget converts date inputs from
-Asia/Shanghai midnight. Bind these filters into continuation cursors.
+browser-local midnight. Bind these filters into continuation cursors.
 
 Add native authenticated API preview/apply endpoints for a bounded batch of
 canonical session/workstream IDs. Preview validates and redacts fields using

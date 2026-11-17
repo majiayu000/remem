@@ -168,12 +168,24 @@ test("label override bridge preserves reviewed nullable fields and requires loca
   }
 });
 
-test("session label filters use Shanghai midnight and survive embedded tool dispatch", async () => {
+test("session label filters use local midnight and survive embedded tool dispatch", async () => {
   const { dateEpoch } = require("./public/session-labels");
-  assert.equal(dateEpoch("2025-01-01"), 1735660800);
+  const previousTz = process.env.TZ;
+  try {
+    process.env.TZ = "Asia/Shanghai";
+    assert.equal(dateEpoch("2025-01-01"), 1735660800);
+    assert.equal(dateEpoch("2024-12-31", 1), 1735660800);
+    process.env.TZ = "America/New_York";
+    assert.equal(dateEpoch("2025-01-01"), 1735707600);
+    // 2025-03-09 is a 23-hour local day in New York.
+    assert.equal(dateEpoch("2025-03-09", 1) - dateEpoch("2025-03-09"), 82800);
+  } finally {
+    if (previousTz === undefined) delete process.env.TZ;
+    else process.env.TZ = previousTz;
+  }
   const calls = [];
   const backend = createSessionActivityBackend({ async request(route) { calls.push(route); return {}; } });
-  const filters = { session_intent: "fix", since_epoch: dateEpoch("2025-01-01"), until_epoch: dateEpoch("2025-01-02"), cursor: "opaque" };
+  const filters = { session_intent: "fix", since_epoch: 1735660800, until_epoch: 1735747200, cursor: "opaque" };
   await callTool(backend, "remem_activity_sessions", filters);
   const query = new URL(calls[0], "http://localhost").searchParams;
   assert.equal(query.get("session_intent"), "fix");

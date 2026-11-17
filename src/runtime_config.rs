@@ -11,6 +11,7 @@ mod model;
 mod pricing;
 mod promotion;
 mod rules;
+pub(crate) mod session_labels;
 mod user_auto_promote;
 use config_value::cli_value;
 pub(crate) use context::context_budget_limits;
@@ -272,6 +273,7 @@ fn ensure_config_defaults(doc: &mut DocumentMut, hosts: &[&str]) -> Result<()> {
     user_auto_promote::ensure_defaults(doc)?;
     context::ensure_defaults(doc)?;
     pricing::ensure_defaults(doc)?;
+    session_labels::ensure_defaults(doc)?;
 
     let memory_ai = top_table_mut(doc, "memory_ai")?;
     set_str_if_missing(memory_ai, "default_host", CODEX_HOST);

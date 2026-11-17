@@ -15,8 +15,10 @@ const SessionLabels = (() => {
     label.append(input);
     return label;
   }
-  function dateEpoch(value) {
-    return Date.parse(`${value}T00:00:00+08:00`) / 1000;
+  // Local midnight in the browser's zone; addDays keeps DST days at 23/25 hours.
+  function dateEpoch(value, addDays = 0) {
+    const [year, month, day] = value.split("-").map(Number);
+    return new Date(year, month - 1, day + addDays).getTime() / 1000;
   }
   function addFilters(params) {
     const intent = $("session-intent-filter").value;
@@ -25,7 +27,7 @@ const SessionLabels = (() => {
     if (from && through && from > through) throw new Error("Created from must be on or before Created through.");
     if (intent) params.set("session_intent", intent);
     if (from) params.set("since_epoch", String(dateEpoch(from)));
-    if (through) params.set("until_epoch", String(dateEpoch(through) + 86400));
+    if (through) params.set("until_epoch", String(dateEpoch(through, 1)));
   }
   function renderItems(target, sessions, compact, helpers) {
     const { state, sessionKey, projectName, shortSessionId, formatDate } = helpers;
