@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.5] - Unreleased
+
+### Fixed
+
+- `remem install --target claude` registers the `PreToolUse(Bash)` `rules eval` hook only when `rule_compilation.enabled` is true, which is not the default. With compilation off, the hook could only return "allow" but still started a remem process on every Bash call. `remem install --target claude --repair` removes it while compilation is off and adds it back once it is enabled; until then SessionStart and `remem doctor` report the hook as missing. Third-party `PreToolUse` hooks are kept.
+
 ## [0.7.4] - Unreleased
 
 ### Security
