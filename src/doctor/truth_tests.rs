@@ -790,3 +790,6 @@ fn subject_excludes_unrelated_user_claim_reference_issues() -> Result<()> {
     assert!(report.reference_issues.is_empty());
     Ok(())
 }
+
+#[path = "truth_scope_tests.rs"]
+mod scope;

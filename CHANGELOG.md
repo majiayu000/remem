@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.9] - Unreleased
+
+### Fixed
+
+- `remem doctor truth` now diagnoses the same memories the CurrentTruth projection admits. Its lifecycle, supersedes and reference checks used to filter by the raw `memories.project` and `topic_key`, which drifted from the projection after 0.6.75 (#1019). They now follow the project's active aliases, repo owner and target routing, the owner-NULL fallback and the non-global guard, so a rerouted memory is reported under its owner, an aliased project's rows are counted, and global rows stay out. `--subject` takes a memory topic key again: it selects the memory truths whose member claims carry that key, and a full `state:` subject key keeps working. Since 0.6.75 a topic key matched no memory truth, because every non-global memory has an explicit owner on a migrated store, while the lifecycle counts still matched it (#1136, refs #933).
+
 ## [0.7.8] - Unreleased
 
 ### Testing
