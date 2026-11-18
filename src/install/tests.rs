@@ -12,18 +12,19 @@ use super::InstallTarget;
 use crate::db::test_support::ScopedTestDataDir;
 
 struct ScopedHome {
-    _guard: std::sync::MutexGuard<'static, ()>,
+    _guard: crate::runtime_config::TestEnvGuard,
     previous_home: Option<std::ffi::OsString>,
     path: std::path::PathBuf,
 }
 
-static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 impl ScopedHome {
     fn new(label: &str) -> anyhow::Result<Self> {
-        let guard = HOME_LOCK
+        // `HOME` is process-wide, so every test that writes it must share one
+        // lock (#1142). The lock is reentrant on the owning thread, so a test
+        // that also holds `ScopedTestDataDir` does not deadlock.
+        let guard = crate::runtime_config::TEST_ENV_LOCK
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .context("acquire the shared test env lock")?;
         let path = std::env::temp_dir().join(format!(
             "remem-install-home-{label}-{}-{}",
             std::process::id(),

@@ -5,12 +5,17 @@ use super::super::invocation::ContextInvocation;
 use super::super::render::{generate_context_for_test, generate_context_output_for_test};
 
 struct ScopedClaudeHome {
+    _guard: crate::runtime_config::TestEnvGuard,
     previous_home: Option<std::ffi::OsString>,
     path: std::path::PathBuf,
 }
 
 impl ScopedClaudeHome {
     fn with_incomplete_hooks(label: &str) -> anyhow::Result<Self> {
+        // `HOME` is process-wide: take the shared test env lock that every
+        // other `HOME` writer takes (#1142). It is reentrant on this thread,
+        // so callers that already hold `ScopedTestDataDir` do not deadlock.
+        let guard = crate::runtime_config::TEST_ENV_LOCK.lock()?;
         let path = std::env::temp_dir().join(format!(
             "remem-claude-home-{label}-{}-{}",
             std::process::id(),
@@ -26,6 +31,7 @@ impl ScopedClaudeHome {
         let previous_home = std::env::var_os("HOME");
         std::env::set_var("HOME", &path);
         Ok(Self {
+            _guard: guard,
             previous_home,
             path,
         })
