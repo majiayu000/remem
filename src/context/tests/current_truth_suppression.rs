@@ -466,3 +466,165 @@ fn mcp_context_bundle_selects_visible_rival_over_suppressed_winner() {
         "suppressed text leaked: {wire}"
     );
 }
+
+/// Suppressing the slot's current pointer (the lower-trust rival) must not take
+/// the verified winner out of Core with it (#1139).
+fn assert_verified_winner_survives_pointer_suppression(rendered: &RenderedContext) {
+    let core = core_section(&rendered.output);
+    assert!(!rendered.has_load_errors, "{}", rendered.output);
+    assert!(core.contains(UNRELATED_TITLE), "core lost a slot:\n{core}");
+    assert!(
+        core.contains(WINNER_TITLE),
+        "verified winner left Core:\n{core}"
+    );
+    assert!(rendered.stats.core_ids.contains(&WINNER));
+    assert!(!rendered.stats.core_ids.contains(&RIVAL));
+    assert!(
+        !rendered.output.contains(RIVAL_TITLE)
+            && !rendered.output.contains("only visible claim left"),
+        "suppressed pointer leaked:\n{}",
+        rendered.output
+    );
+    let bundle = rendered.context_bundle.as_ref().expect("sealed bundle");
+    let wire = serde_json::to_string(bundle).expect("serialize sealed bundle");
+    assert!(wire.contains("memory:91"), "{wire}");
+    assert!(!wire.contains("memory:92"), "suppressed ref leaked: {wire}");
+}
+
+#[test]
+fn suppressing_the_slot_pointer_keeps_the_verified_winner_in_core() {
+    for (label, kind, id, value) in [
+        ("memory", "memory", Some(RIVAL), None),
+        ("topic", "topic_key", None, Some("rival-topic")),
+        ("pattern", "pattern", None, Some("Lower-Trust Rival")),
+    ] {
+        let _dir = ScopedTestDataDir::new(&format!("current-truth-suppressed-pointer-{label}"));
+        let conn = conn_with_schema();
+        seed_semantic_slot(&conn);
+        let baseline = render(&conn, None);
+        assert!(baseline.stats.core_ids.contains(&WINNER), "{label}");
+        assert!(!baseline.stats.core_ids.contains(&RIVAL), "{label}");
+
+        suppress(&conn, kind, id, value);
+        assert_verified_winner_survives_pointer_suppression(&render(&conn, None));
+    }
+}
+
+#[test]
+fn lower_trust_stand_in_still_hands_core_to_the_verified_winner() {
+    const STAND_IN: i64 = 94;
+    const STAND_IN_TITLE: &str = "Newer unverified stand-in";
+    let _dir = ScopedTestDataDir::new("current-truth-suppressed-pointer-stand-in");
+    let conn = conn_with_schema();
+    seed_semantic_slot(&conn);
+    insert_memory(
+        &conn,
+        STAND_IN,
+        PROJECT,
+        Some("stand-in-topic"),
+        "decision",
+        STAND_IN_TITLE,
+        "A newer unverified row in the same slot",
+        recent_epoch() - 3,
+    );
+    conn.execute(
+        "UPDATE memories
+         SET state_key_id = ?1, source_project = ?2, target_project = ?2,
+             owner_scope = 'repo', owner_key = ?2, context_class = 'startup_core'
+         WHERE id = ?3",
+        params![SEMANTIC_STATE_KEY_ID, PROJECT, STAND_IN],
+    )
+    .expect("move stand-in into the semantic slot");
+
+    // The stand-in seeds the slot; CurrentTruth still picks the verified row,
+    // and materialization pulls it in because the displaced stand-in is loaded.
+    suppress(&conn, "memory", Some(RIVAL), None);
+    let rendered = render(&conn, None);
+    assert_verified_winner_survives_pointer_suppression(&rendered);
+    assert!(!rendered.stats.core_ids.contains(&STAND_IN));
+    assert!(
+        !core_section(&rendered.output).contains(STAND_IN_TITLE),
+        "{}",
+        rendered.output
+    );
+}
+
+#[test]
+fn state_slot_filter_admits_one_stand_in_while_the_pointer_is_suppressed() {
+    const OLDER: i64 = 93;
+    let _dir = ScopedTestDataDir::new("current-truth-suppressed-pointer-filter");
+    let conn = conn_with_schema();
+    seed_semantic_slot(&conn);
+    insert_memory(
+        &conn,
+        OLDER,
+        PROJECT,
+        Some("older-topic"),
+        "decision",
+        "Older row in the same slot",
+        "Kept out while a newer visible row exists",
+        recent_epoch() - 20,
+    );
+    conn.execute(
+        "UPDATE memories SET state_key_id = ?1 WHERE id = ?2",
+        params![SEMANTIC_STATE_KEY_ID, OLDER],
+    )
+    .expect("move older row into the semantic slot");
+    let admitted = |conn: &Connection| -> Vec<i64> {
+        let mut conditions = Vec::new();
+        crate::context::filters::push_context_state_slot_filter("memories", &mut conditions);
+        conditions.push(crate::memory::suppression::memory_policy_filter_sql(
+            "memories",
+        ));
+        let sql = format!(
+            "SELECT id FROM memories WHERE {} ORDER BY id",
+            conditions.join(" AND ")
+        );
+        let mut stmt = conn.prepare(&sql).expect("prepare slot filter probe");
+        stmt.query_map([], |row| row.get(0))
+            .expect("query slot filter probe")
+            .collect::<Result<Vec<i64>, _>>()
+            .expect("collect slot filter probe")
+    };
+
+    // A visible pointer represents its slot alone.
+    assert_eq!(admitted(&conn), vec![UNRELATED, RIVAL]);
+    // A suppressed pointer hands the slot to its newest visible row only.
+    suppress(&conn, "memory", Some(RIVAL), None);
+    assert_eq!(admitted(&conn), vec![UNRELATED, WINNER]);
+    // The stand-in moves down the slot as more rows are hidden.
+    suppress(&conn, "memory", Some(WINNER), None);
+    assert_eq!(admitted(&conn), vec![UNRELATED, OLDER]);
+}
+
+#[test]
+fn mcp_context_bundle_keeps_verified_winner_when_slot_pointer_is_suppressed() {
+    let _dir = ScopedTestDataDir::new("current-truth-suppressed-pointer-bundle");
+    let conn = conn_with_schema();
+    seed_semantic_slot(&conn);
+    suppress(&conn, "memory", Some(RIVAL), None);
+
+    let bundle = compile_session_start_bundle(
+        &conn,
+        &bundle_request(),
+        "/tmp/remem-current-truth-suppression-bundle",
+        None,
+        true,
+    )
+    .expect("compile bundle");
+
+    assert_ne!(bundle.degraded_mode, DegradedMode::Blocked, "{bundle:#?}");
+    let current_truth = bundle
+        .current_truth
+        .iter()
+        .map(|item| item.stable_key.as_str())
+        .collect::<Vec<_>>();
+    assert!(current_truth.contains(&"memory:81"), "{current_truth:?}");
+    assert!(current_truth.contains(&"memory:91"), "{current_truth:?}");
+    let wire = serde_json::to_string(&bundle).expect("serialize bundle");
+    assert!(!wire.contains("memory:92"), "suppressed ref leaked: {wire}");
+    assert!(
+        !wire.contains(RIVAL_TITLE),
+        "suppressed text leaked: {wire}"
+    );
+}
