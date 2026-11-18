@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.8] - Unreleased
+
+### Testing
+
+- Unit tests that write `HOME` now all take the shared runtime-config test lock. The install tests' `ScopedHome` guard took its own lock, so a parallel `cargo test` run could switch `HOME` mid-test. `install::tests::repair_hooks_warns_for_desktop_mcp_drift` then read a different home than the one it had seeded, and the SessionStart hook-warning tests could lose their home the same way. The SessionStart tests' `ScopedClaudeHome` guard now takes the lock as well. Test-only; no runtime change (#1142).
+
 ## [0.7.7] - Unreleased
 
 ### Fixed
