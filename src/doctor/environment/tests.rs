@@ -27,6 +27,7 @@ fn probe_hooks_requires_remem_on_each_event() -> anyhow::Result<()> {
     let check = probe_hooks(HostProbe {
         name: "claude",
         hooks_path,
+        rules_eval: true,
         mcp_paths: vec![mcp_path],
     });
 
@@ -52,6 +53,7 @@ fn probe_hooks_accepts_codex_strategy() -> anyhow::Result<()> {
     let missing_mcp_check = probe_hooks(HostProbe {
         name: "codex",
         hooks_path: hooks_path.clone(),
+        rules_eval: true,
         mcp_paths: vec![dir.join("missing.toml")],
     });
     assert!(matches!(missing_mcp_check.status, Status::Ok));
@@ -64,6 +66,7 @@ fn probe_hooks_accepts_codex_strategy() -> anyhow::Result<()> {
     let mismatched_mcp_check = probe_hooks(HostProbe {
         name: "codex",
         hooks_path: hooks_path.clone(),
+        rules_eval: true,
         mcp_paths: vec![mismatched_mcp_path],
     });
     assert!(matches!(mismatched_mcp_check.status, Status::Fail));
@@ -74,6 +77,7 @@ fn probe_hooks_accepts_codex_strategy() -> anyhow::Result<()> {
     let check = probe_hooks(HostProbe {
         name: "codex",
         hooks_path,
+        rules_eval: true,
         mcp_paths: vec![mcp_path],
     });
 
@@ -117,6 +121,7 @@ fn probe_hooks_rejects_wrong_remem_subcommands_and_hosts() -> anyhow::Result<()>
         let check = probe_hooks(HostProbe {
             name: host,
             hooks_path,
+            rules_eval: true,
             mcp_paths: vec![mcp_path],
         });
 
@@ -151,6 +156,7 @@ fn probe_hooks_warns_on_codex_posttool_observe() -> anyhow::Result<()> {
     let check = probe_hooks(HostProbe {
         name: "codex",
         hooks_path,
+        rules_eval: true,
         mcp_paths: vec![mcp_path],
     });
 
@@ -180,6 +186,7 @@ note = "remem"
     let check = probe_mcp(HostProbe {
         name: "codex",
         hooks_path: dir.join("hooks.json"),
+        rules_eval: true,
         mcp_paths: vec![mcp_path],
     });
 
@@ -213,6 +220,7 @@ command = "/mcp/bin/remem"
     let paths = configured_remem_paths_for(vec![HostProbe {
         name: "codex",
         hooks_path,
+        rules_eval: true,
         mcp_paths: vec![mcp_path],
     }]);
 
@@ -233,6 +241,7 @@ fn configured_paths_read_claude_mcp_command() {
     let paths = configured_remem_paths_for(vec![HostProbe {
         name: "claude",
         hooks_path: dir.join("settings.json"),
+        rules_eval: true,
         mcp_paths: vec![mcp_path],
     }]);
 
@@ -256,6 +265,7 @@ fn active_hosts_keeps_all_present_hosts() {
     let claude = HostProbe {
         name: "claude",
         hooks_path: claude_dir.join("settings.json"),
+        rules_eval: true,
         mcp_paths: vec![claude_dir.join("claude.json")],
     };
     std::fs::write(&claude.mcp_paths[0], r#"{ "mcpServers": { "other": {} } }"#).unwrap();
@@ -264,6 +274,7 @@ fn active_hosts_keeps_all_present_hosts() {
     let codex = HostProbe {
         name: "codex",
         hooks_path: codex_dir.join("hooks.json"),
+        rules_eval: true,
         mcp_paths: vec![codex_dir.join("config.toml")],
     };
     std::fs::write(
@@ -313,11 +324,13 @@ command = "/tmp/remem"
         HostProbe {
             name: "claude",
             hooks_path: claude_dir.join("settings.json"),
+            rules_eval: true,
             mcp_paths: vec![claude_dir.join("claude.json")],
         },
         HostProbe {
             name: "codex",
             hooks_path: codex_dir.join("hooks.json"),
+            rules_eval: true,
             mcp_paths: vec![codex_dir.join("config.toml")],
         },
     ];
@@ -349,6 +362,7 @@ fn probe_mcp_accepts_claude_desktop_config_path() {
     let check = probe_mcp(HostProbe {
         name: "claude",
         hooks_path: dir.join("settings.json"),
+        rules_eval: true,
         mcp_paths: vec![
             dir.join("claude.json"),
             dir.join("claude_desktop_config.json"),
@@ -419,6 +433,7 @@ fn probe_hooks_accepts_sibling_remem_hook_for_slim_commands() -> anyhow::Result<
     let check = probe_hooks(HostProbe {
         name: "claude",
         hooks_path,
+        rules_eval: true,
         mcp_paths: vec![mcp_path],
     });
     assert!(
@@ -462,6 +477,7 @@ fn configured_paths_map_sibling_remem_hook_to_full_binary() {
     let paths = configured_remem_paths_for(vec![HostProbe {
         name: "claude",
         hooks_path,
+        rules_eval: true,
         mcp_paths: vec![mcp_path],
     }]);
 
@@ -492,6 +508,7 @@ fn configured_paths_map_slim_only_hooks_to_sibling_full_binary() {
     let paths = configured_remem_paths_for(vec![HostProbe {
         name: "codex",
         hooks_path,
+        rules_eval: false,
         mcp_paths: Vec::new(),
     }]);
 

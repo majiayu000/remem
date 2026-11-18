@@ -74,7 +74,13 @@ pub(in crate::install) fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-pub(in crate::install) fn build_hooks(bin: &str, strategy: HookStrategy) -> Value {
+/// `rules_eval` adds the Claude PreToolUse(Bash) `rules eval` hook; callers pass
+/// `rule_compilation.enabled` so a disabled feature costs nothing per Bash call.
+pub(in crate::install) fn build_hooks(
+    bin: &str,
+    strategy: HookStrategy,
+    rules_eval: bool,
+) -> Value {
     let mut hooks = serde_json::Map::new();
 
     let mut session_start = json!({
@@ -98,13 +104,15 @@ pub(in crate::install) fn build_hooks(bin: &str, strategy: HookStrategy) -> Valu
     }
 
     if matches!(strategy, HookStrategy::ClaudeCode) {
-        hooks.insert(
-            "PreToolUse".to_string(),
-            json!([{
-                "matcher": "Bash",
-                "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "rules eval"), "timeout": 5 }]
-            }]),
-        );
+        if rules_eval {
+            hooks.insert(
+                "PreToolUse".to_string(),
+                json!([{
+                    "matcher": "Bash",
+                    "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "rules eval"), "timeout": 5 }]
+                }]),
+            );
+        }
         hooks.insert(
             "PostToolUse".to_string(),
             json!([{
@@ -188,11 +196,12 @@ pub(in crate::install) fn apply_hooks_json(
     path: &Path,
     bin: &str,
     strategy: HookStrategy,
+    rules_eval: bool,
 ) -> Result<()> {
     let mut doc = read_json_file(&path.to_path_buf())?;
     remove_remem_hooks(&mut doc, bin);
 
-    let new_hooks = build_hooks(bin, strategy);
+    let new_hooks = build_hooks(bin, strategy, rules_eval);
     let obj = doc
         .as_object_mut()
         .with_context(|| format!("{} root is not an Object", path.display()))?;
@@ -214,6 +223,7 @@ pub(in crate::install) fn repair_hooks_json(
     path: &Path,
     bin: &str,
     strategy: HookStrategy,
+    rules_eval: bool,
 ) -> Result<crate::hook_integrity::HookIntegrityReport> {
     let mut doc = read_json_file(&path.to_path_buf())?;
     let host = match strategy {
@@ -221,7 +231,7 @@ pub(in crate::install) fn repair_hooks_json(
         HookStrategy::Codex => "codex",
     };
     crate::hook_integrity::remove_remem_hooks_for_host(&mut doc, host);
-    let new_hooks = build_hooks(bin, strategy);
+    let new_hooks = build_hooks(bin, strategy, rules_eval);
     let obj = doc
         .as_object_mut()
         .with_context(|| format!("{} root is not an Object", path.display()))?;
@@ -237,8 +247,13 @@ pub(in crate::install) fn repair_hooks_json(
         }
     }
     write_json_file(&path.to_path_buf(), &doc)?;
-    let report =
-        crate::hook_integrity::evaluate_hooks(&doc, host, path.to_path_buf(), Path::new(bin));
+    let report = crate::hook_integrity::evaluate_hooks(
+        &doc,
+        host,
+        path.to_path_buf(),
+        Path::new(bin),
+        rules_eval,
+    );
     if !report.is_healthy() {
         anyhow::bail!(
             "{} repair convergence failed: {}/{} registered; stale={:?}",

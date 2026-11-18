@@ -3,7 +3,9 @@ use rusqlite::Connection;
 
 use crate::memory;
 
-use super::filters::{push_excluded_type_filter, push_owner_included_filter};
+use super::filters::{
+    push_context_state_slot_filter, push_excluded_type_filter, push_owner_included_filter,
+};
 use super::query::{map_context_memory_row, ContextMemoryRow, MEMORY_OWNER_COLS};
 
 pub(super) fn query_owner_included_memory_rows(
@@ -28,9 +30,7 @@ pub(super) fn query_owner_included_memory_rows(
         "expires_at_epoch",
         false,
     ));
-    conditions.push(crate::memory::memory_state_key_current_filter_sql(
-        "memories",
-    ));
+    push_context_state_slot_filter("memories", &mut conditions);
     conditions.push(crate::memory::suppression::memory_policy_filter_sql(
         "memories",
     ));

@@ -62,6 +62,8 @@ fn configured_remem_paths_for(hosts: Vec<HostProbe>) -> Vec<PathBuf> {
 struct HostProbe {
     name: &'static str,
     hooks_path: PathBuf,
+    /// Whether the Claude `rules eval` hook is expected (rule compilation on).
+    rules_eval: bool,
     mcp_paths: Vec<PathBuf>,
 }
 
@@ -75,6 +77,7 @@ fn known_hosts() -> HostDiscovery {
     let mut probes = vec![HostProbe {
         name: "claude",
         hooks_path: home.join(".claude").join("settings.json"),
+        rules_eval: crate::runtime_config::rule_compilation_enabled(),
         mcp_paths: vec![
             home.join(".claude.json"),
             home.join(".claude").join("claude_desktop_config.json"),
@@ -85,6 +88,7 @@ fn known_hosts() -> HostDiscovery {
             probes.push(HostProbe {
                 name: "codex",
                 hooks_path: codex_home.join("hooks.json"),
+                rules_eval: false,
                 mcp_paths: vec![codex_home.join("config.toml")],
             });
             None
@@ -222,11 +226,17 @@ fn probe_hooks(probe: HostProbe) -> Check {
         }
     };
 
-    let events = expected_hook_events(probe.name);
+    let events = expected_hook_events(probe.name, probe.rules_eval);
     let expected_executable = expected_hook_executable(&doc, &probe);
-    let report = expected_executable
-        .as_ref()
-        .map(|executable| evaluate_hooks(&doc, probe.name, probe.hooks_path.clone(), executable));
+    let report = expected_executable.as_ref().map(|executable| {
+        evaluate_hooks(
+            &doc,
+            probe.name,
+            probe.hooks_path.clone(),
+            executable,
+            probe.rules_eval,
+        )
+    });
     let found = report.as_ref().map(|report| report.registered).unwrap_or(0);
     let deprecated_codex_observe =
         probe.name == "codex" && event_has_remem_subcommand_hook(&doc, "PostToolUse", "observe");

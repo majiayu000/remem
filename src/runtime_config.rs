@@ -23,6 +23,7 @@ pub(crate) use pricing::{
     family_pricing_overlay, global_pricing_override, validate_pricing_config, PricingRates,
 };
 pub use promotion::{summary_gate_mode, SummaryGateMode};
+pub(crate) use rules::rule_compilation_enabled;
 pub use rules::{rule_compilation_config, RuleCompilationConfig};
 pub use user_auto_promote::{
     user_context_auto_promote_config, AutoPromotePolicy, UserContextAutoPromoteConfig,

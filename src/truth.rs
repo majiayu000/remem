@@ -24,6 +24,7 @@ mod tests_direct_save_proof;
 mod types;
 mod visibility;
 
+pub(crate) use adapter::{diagnostic_memory_admission, AdmittedMemory};
 pub use adapter::{load_memory_claim_groups, load_user_claim_groups};
 pub use inventory::{build_memory_visibility_inventory, MemoryVisibilityInventory};
 pub use lifecycle::{
