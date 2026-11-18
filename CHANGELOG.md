@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.7.5] - Unreleased
+## [0.7.11] - Unreleased
 
 ### Security
 
@@ -9,7 +9,37 @@
 
 ### Changed
 
-- Some SQLite error messages change wording with the new SQLite. For example, a failed `remem import backup` now reports `SQL logic error` where 0.7.4 reported `SQL error or missing database`.
+- Some SQLite error messages change wording with the new SQLite. For example, a failed `remem import backup` now reports `SQL logic error` where earlier versions reported `SQL error or missing database`.
+
+## [0.7.9] - Unreleased
+
+### Fixed
+
+- `remem doctor truth` now diagnoses the same memories the CurrentTruth projection admits. Its lifecycle, supersedes and reference checks used to filter by the raw `memories.project` and `topic_key`, which drifted from the projection after 0.6.75 (#1019). They now follow the project's active aliases, repo owner and target routing, the owner-NULL fallback and the non-global guard, so a rerouted memory is reported under its owner, an aliased project's rows are counted, and global rows stay out. `--subject` takes a memory topic key again: it selects the memory truths whose member claims carry that key, and a full `state:` subject key keeps working. Since 0.6.75 a topic key matched no memory truth, because every non-global memory has an explicit owner on a migrated store, while the lifecycle counts still matched it (#1136, refs #933).
+
+## [0.7.8] - Unreleased
+
+### Testing
+
+- Unit tests that write `HOME` now all take the shared runtime-config test lock. The install tests' `ScopedHome` guard took its own lock, so a parallel `cargo test` run could switch `HOME` mid-test. `install::tests::repair_hooks_warns_for_desktop_mcp_drift` then read a different home than the one it had seeded, and the SessionStart hook-warning tests could lose their home the same way. The SessionStart tests' `ScopedClaudeHome` guard now takes the lock as well. Test-only; no runtime change (#1142).
+
+## [0.7.7] - Unreleased
+
+### Fixed
+
+- SessionStart no longer drops a semantic slot's verified CurrentTruth winner from Core when an active policy suppression hides the slot's current-pointer row. Preselection used to keep only the pointer row of each semantic slot, so hiding a newer, lower-trust pointer also hid the older verified row that CurrentTruth selects. While a slot's pointer is suppressed, the slot's newest other visible row now stands in for it in SessionStart preselection, so CurrentTruth still loads the slot and the verified row stays in Core. The suppressed row stays hidden, and older rows of the slot stay out as before. The experimental MCP `context_bundle` tool gets the same fix (#1139, refs #933).
+
+## [0.7.6] - Unreleased
+
+### Fixed
+
+- `remem install --target claude` registers the `PreToolUse(Bash)` `rules eval` hook only when `rule_compilation.enabled` is true, which is not the default. With compilation off, the hook could only return "allow" but still started a remem process on every Bash call. `remem install --target claude --repair` removes it while compilation is off and adds it back once it is enabled; until then SessionStart and `remem doctor` report the hook as missing. Third-party `PreToolUse` hooks are kept.
+
+## [0.7.5] - Unreleased
+
+### Fixed
+
+- SessionStart no longer drops its whole Core section when an active policy suppression hides the memory that would win a CurrentTruth slot. The live CurrentTruth loader now treats memory, topic-key, entity and pattern suppressions as not visible before winner selection, so a visible rival in the same slot wins and the other Core claims still render. The experimental MCP `context_bundle` tool no longer returns a blocked bundle in this case. A suppressed memory keeps its replacement links, so it cannot bring back a row it replaced, but it no longer turns its slot into an unresolved conflict, and its id no longer appears in the bundle audit when the slot abstains. Real winner-materialization failures still fail closed, and `remem doctor truth` is unchanged. Affected since 0.6.75 (#1130, refs #933).
 
 ## [0.7.4] - Unreleased
 
@@ -35,15 +65,15 @@
 
 - Reach a project's memories through the owner, target and legacy project indexes in hybrid prompt recall instead of decrypting every active memory per channel. On a 100k-memory store, `session-init` CPU drops from 0.6–0.96s to 0.12–0.22s with unchanged injected context.
 
-## [0.7.0] - Unreleased
+## [0.7.0] - 2026-11-03
 
 ### Breaking
 
-- Add `InstallHost::DeepSeekHarness`; downstream exhaustive matches must handle the new host. This source change is staged under the 0.7.0 minor boundary.
+- Add `InstallHost::DeepSeekHarness`; downstream exhaustive matches must handle the new host. This source change ships at the 0.7.0 minor boundary.
 
 ### Added
 
-- Add the optional DeepSeek Harness lifecycle adapter with cancellation-safe context preparation, recoverable capture failures, and retryable claimed prompts. The npm adapter and this source version remain unpublished.
+- Add the optional DeepSeek Harness lifecycle adapter with cancellation-safe context preparation, recoverable capture failures, and retryable claimed prompts. The adapter is published separately as `@remem-ai/dsh-remem@0.1.0` for DSH 0.2.1-rc.5 and Cordis 4.0.5.
 
 ### Fixed
 

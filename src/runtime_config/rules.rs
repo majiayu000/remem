@@ -16,6 +16,13 @@ pub fn rule_compilation_config() -> Result<RuleCompilationConfig> {
     rule_compilation_config_from_doc(&doc)
 }
 
+/// Whether rule compilation is on, e.g. to decide if the Claude `rules eval`
+/// hook is wanted. An unreadable or invalid config makes `rules eval` a no-op,
+/// so it counts as off here too.
+pub(crate) fn rule_compilation_enabled() -> bool {
+    rule_compilation_config().is_ok_and(|config| config.enabled)
+}
+
 pub(super) fn ensure_defaults(doc: &mut DocumentMut) -> Result<()> {
     let rules = super::top_table_mut(doc, "rule_compilation")?;
     super::set_bool_if_missing(rules, "enabled", DEFAULT_RULE_COMPILATION_ENABLED);

@@ -1,7 +1,7 @@
 //! Read-only adapter mapping existing canonical tables into the CurrentTruth
 //! read DTOs (GH933 Phase A). SELECT-only: no writes, no migrations.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
@@ -48,8 +48,36 @@ pub(crate) fn load_memory_claim_groups_for_context_at(
     query: &TruthQuery,
     reference_epoch: i64,
     relevant_memory_ids: &[i64],
-) -> Result<(Vec<ClaimView>, Vec<RelationView>)> {
+) -> Result<(Vec<ClaimView>, Vec<RelationView>, HashSet<String>)> {
     context::load(conn, query, reference_epoch, relevant_memory_ids)
+}
+
+/// One memory row that the diagnostic CurrentTruth projection admits.
+pub(crate) struct AdmittedMemory {
+    pub(crate) id: i64,
+    pub(crate) topic_key: Option<String>,
+    pub(crate) subject_key: String,
+}
+
+/// The project's alias set and the memory rows `project_current_truth`
+/// admits for `query`'s project and branch, each with its subject key.
+/// `doctor truth` scopes its lifecycle, supersedes and reference diagnostics
+/// to these rows so they cover the same memories as the projection (#1136).
+pub(crate) fn diagnostic_memory_admission(
+    conn: &Connection,
+    query: &TruthQuery,
+) -> Result<(Vec<String>, Vec<AdmittedMemory>)> {
+    let (_, projects, rows) = load_diagnostic_memory_rows(conn, query)?;
+    let canonical_owners = canonical_owner_keys(conn, &rows)?;
+    let admitted = rows
+        .iter()
+        .map(|row| AdmittedMemory {
+            id: row.id,
+            topic_key: row.topic_key.clone(),
+            subject_key: memory_subject_key(row, &canonical_owners),
+        })
+        .collect();
+    Ok((projects, admitted))
 }
 
 fn load_memory_claim_groups_diagnostic(
@@ -57,6 +85,33 @@ fn load_memory_claim_groups_diagnostic(
     query: &TruthQuery,
     reference_epoch: i64,
 ) -> Result<(Vec<ClaimView>, Vec<RelationView>)> {
+    let (canonical_scope, _, rows) = load_diagnostic_memory_rows(conn, query)?;
+    let mut claims = Vec::with_capacity(rows.len());
+    let ids = rows.iter().map(|row| row.id).collect::<Vec<_>>();
+    let visibility = super::visibility::classify_memories(conn, &ids, reference_epoch)?;
+    let canonical_owners = canonical_owner_keys(conn, &rows)?;
+    for row in rows {
+        let row_visibility = visibility
+            .get(&row.id)
+            .copied()
+            .context("missing memory visibility projection row")?;
+        let mut claim = memory_claim_view(conn, row, &canonical_scope, &canonical_owners)?;
+        if !row_visibility.current_context_eligible {
+            claim.lifecycle.visibility = Visibility::Suppressed;
+        }
+        claims.push(claim);
+    }
+    let relations = load_memory_relations(conn, &ids, false)?;
+    Ok((claims, relations))
+}
+
+/// Memory rows admitted for one project scope: the canonical project's alias
+/// set, repo owner and target routing, the owner-NULL fallback and the
+/// non-global guard, plus the branch filter.
+fn load_diagnostic_memory_rows(
+    conn: &Connection,
+    query: &TruthQuery,
+) -> Result<(String, Vec<String>, Vec<MemoryRow>)> {
     let (canonical_scope, projects) = diagnostic_project_scope(conn, &query.project)?;
     let projects_json = serde_json::to_string(&projects)?;
     let sql = "SELECT memories.id, memories.topic_key, memories.title, memories.content,
@@ -107,24 +162,7 @@ fn load_memory_claim_groups_diagnostic(
         .context("query memories for truth projection")?
         .collect::<std::result::Result<Vec<_>, _>>()
         .context("read memory truth rows")?;
-
-    let mut claims = Vec::with_capacity(rows.len());
-    let ids = rows.iter().map(|row| row.id).collect::<Vec<_>>();
-    let visibility = super::visibility::classify_memories(conn, &ids, reference_epoch)?;
-    let canonical_owners = canonical_owner_keys(conn, &rows)?;
-    for row in rows {
-        let row_visibility = visibility
-            .get(&row.id)
-            .copied()
-            .context("missing memory visibility projection row")?;
-        let mut claim = memory_claim_view(conn, row, &canonical_scope, &canonical_owners)?;
-        if !row_visibility.current_context_eligible {
-            claim.lifecycle.visibility = Visibility::Suppressed;
-        }
-        claims.push(claim);
-    }
-    let relations = load_memory_relations(conn, &ids, false)?;
-    Ok((claims, relations))
+    Ok((canonical_scope, projects, rows))
 }
 
 fn diagnostic_project_scope(conn: &Connection, requested: &str) -> Result<(String, Vec<String>)> {

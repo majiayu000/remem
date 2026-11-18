@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
@@ -10,14 +10,16 @@ use crate::truth::types::{
     Visibility,
 };
 
+/// Returns the live slot claims, their G2-gated relations, and the canonical
+/// refs of claims that an active policy suppression hides.
 pub(super) fn load(
     conn: &Connection,
     query: &TruthQuery,
     reference_epoch: i64,
     relevant_memory_ids: &[i64],
-) -> Result<(Vec<ClaimView>, Vec<RelationView>)> {
+) -> Result<(Vec<ClaimView>, Vec<RelationView>, HashSet<String>)> {
     if relevant_memory_ids.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
+        return Ok((Vec::new(), Vec::new(), HashSet::new()));
     }
     let projects = crate::project_alias::project_filter_values(conn, &query.project)?;
     let owner_filter = "((memories.owner_scope = 'repo'
@@ -27,6 +29,11 @@ pub(super) fn load(
           OR (memories.owner_scope IS NULL
               AND memories.project IN (SELECT value FROM json_each(?2))
               AND COALESCE(memories.scope, 'project') != 'global'))";
+    // The same current-snapshot policy predicate that hides a memory from
+    // search and SessionStart preselection. A suppressed row stays in its slot
+    // but cannot win it, so winner materialization never requests a memory
+    // its own policy filter would refuse.
+    let policy_filter = crate::memory::suppression::memory_policy_filter_sql("memories");
     let sql = format!(
         "WITH relevant AS (
              SELECT seed.memory_type, seed.topic_key, seed_state.state_key
@@ -42,7 +49,8 @@ pub(super) fn load(
                 memories.memory_type, memories.state_key_id,
                 COALESCE(memories.owner_scope, 'repo'),
                 COALESCE(memories.owner_key, memories.target_project, memories.project),
-                state_key.state_key, memories.owner_scope IS NOT NULL
+                state_key.state_key, memories.owner_scope IS NOT NULL,
+                NOT ({policy_filter})
          FROM memories
          LEFT JOIN memory_state_keys state_key ON state_key.id = memories.state_key_id
          WHERE {owner_filter}
@@ -62,13 +70,15 @@ pub(super) fn load(
     let mut stmt = conn
         .prepare(&sql)
         .context("prepare live CurrentTruth query")?;
-    let rows = stmt
+    let (rows, policy_suppressed): (Vec<_>, Vec<_>) = stmt
         .query_map(
             rusqlite::params![ids_json, projects_json, query.branch],
             map_row,
         )?
         .collect::<rusqlite::Result<Vec<_>>>()
-        .context("read live CurrentTruth rows")?;
+        .context("read live CurrentTruth rows")?
+        .into_iter()
+        .unzip();
     let ids = rows.iter().map(|row| row.id).collect::<Vec<_>>();
     let visibility = crate::truth::admit_many_for_current_context(conn, &ids, reference_epoch)?;
     let evidence = load_evidence(conn, &rows)?;
@@ -76,14 +86,21 @@ pub(super) fn load(
         crate::project_alias::resolve_project_identity(conn, &query.project)?.canonical_path;
     let canonical_owners = super::canonical_owner_keys(conn, &rows)?;
     let mut claims = Vec::with_capacity(rows.len());
-    for row in rows {
+    let mut policy_hidden = HashSet::new();
+    for (row, policy_suppressed) in rows.into_iter().zip(policy_suppressed) {
         let mut claim = claim_view(row, &canonical_scope, &canonical_owners, &evidence);
-        if !visibility
+        let admitted = visibility
             .get(&claim_id(&claim))
             .context("missing live CurrentTruth visibility row")?
-            .current_context_eligible
-        {
+            .current_context_eligible;
+        // Policy suppression changes visibility, not validity. Relations stay
+        // gated by G2 admission only, so a replacement recorded by a suppressed
+        // memory still retires the row it replaced.
+        if !admitted || policy_suppressed {
             claim.lifecycle.visibility = Visibility::Suppressed;
+        }
+        if policy_suppressed {
+            policy_hidden.insert(claim.canonical_ref.clone());
         }
         claims.push(claim);
     }
@@ -96,11 +113,12 @@ pub(super) fn load(
         })
         .collect::<Vec<_>>();
     let relations = load_memory_relations(conn, &admitted_ids, true)?;
-    Ok((claims, relations))
+    Ok((claims, relations, policy_hidden))
 }
 
-fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryRow> {
-    Ok(MemoryRow {
+/// One live slot row plus whether an active policy suppression hides it.
+fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(MemoryRow, bool)> {
+    let memory = MemoryRow {
         id: row.get(0)?,
         topic_key: row.get(1)?,
         title: row.get(2)?,
@@ -120,7 +138,8 @@ fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryRow> {
         owner_key: row.get(17)?,
         state_key: row.get(18)?,
         owner_explicit: row.get(19)?,
-    })
+    };
+    Ok((memory, row.get(20)?))
 }
 
 fn load_evidence(conn: &Connection, rows: &[MemoryRow]) -> Result<HashMap<i64, EvidenceView>> {

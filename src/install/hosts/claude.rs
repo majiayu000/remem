@@ -66,13 +66,23 @@ impl InstallHost for ClaudeHost {
             remove_remem_mcp(&mut doc, bin);
             write_json_file(&path, &doc)?;
         }
-        apply_hooks_json(&path, bin, HookStrategy::ClaudeCode)?;
+        apply_hooks_json(
+            &path,
+            bin,
+            HookStrategy::ClaudeCode,
+            crate::runtime_config::rule_compilation_enabled(),
+        )?;
         Ok(HookSupport::Installed)
     }
 
     fn repair_hooks(&self, bin: &str) -> Result<HookRepairReport> {
         let path = settings_path();
-        let integrity = repair_hooks_json(&path, bin, HookStrategy::ClaudeCode)?;
+        let integrity = repair_hooks_json(
+            &path,
+            bin,
+            HookStrategy::ClaudeCode,
+            crate::runtime_config::rule_compilation_enabled(),
+        )?;
         let mcp_warning =
             match crate::hook_integrity::read_first_claude_mcp_command(&claude_mcp_paths()) {
                 Ok(Some(command)) if command != bin => Some(format!(

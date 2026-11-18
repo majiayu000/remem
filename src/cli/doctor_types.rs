@@ -22,7 +22,8 @@ pub(in crate::cli) struct DoctorTruthArgs {
     /// Evaluate truth at this Unix epoch instead of the current time.
     #[arg(long)]
     pub(in crate::cli) as_of_epoch: Option<i64>,
-    /// Restrict to one exact memory topic key or user-claim key (`type:key` also works).
+    /// Restrict to one subject: a memory topic key, a full CurrentTruth subject key
+    /// (`state:...`), or a user-claim key (`type:key` also works).
     #[arg(long)]
     pub(in crate::cli) subject: Option<String>,
 }

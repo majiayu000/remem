@@ -12,18 +12,19 @@ use super::InstallTarget;
 use crate::db::test_support::ScopedTestDataDir;
 
 struct ScopedHome {
-    _guard: std::sync::MutexGuard<'static, ()>,
+    _guard: crate::runtime_config::TestEnvGuard,
     previous_home: Option<std::ffi::OsString>,
     path: std::path::PathBuf,
 }
 
-static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 impl ScopedHome {
     fn new(label: &str) -> anyhow::Result<Self> {
-        let guard = HOME_LOCK
+        // `HOME` is process-wide, so every test that writes it must share one
+        // lock (#1142). The lock is reentrant on the owning thread, so a test
+        // that also holds `ScopedTestDataDir` does not deadlock.
+        let guard = crate::runtime_config::TEST_ENV_LOCK
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .context("acquire the shared test env lock")?;
         let path = std::env::temp_dir().join(format!(
             "remem-install-home-{label}-{}-{}",
             std::process::id(),
@@ -210,8 +211,9 @@ fn repair_hooks_warns_for_desktop_mcp_drift() -> anyhow::Result<()> {
 
     let report = super::hosts::ClaudeHost.repair_hooks("/new/remem")?;
 
-    assert_eq!(report.registered, 6);
-    assert_eq!(report.expected, 6);
+    // Default config keeps rule compilation off, so `rules eval` is not installed.
+    assert_eq!(report.registered, 5);
+    assert_eq!(report.expected, 5);
     let Some(warning) = report.mcp_warning else {
         panic!("desktop MCP drift should produce a warning");
     };
@@ -483,7 +485,7 @@ fn ensure_runtime_store_ready_allows_empty_env_key_fresh() -> anyhow::Result<()>
 
 #[test]
 fn build_hooks_contains_expected_claude_commands() {
-    let hooks = build_hooks("/tmp/remem", HookStrategy::ClaudeCode);
+    let hooks = build_hooks("/tmp/remem", HookStrategy::ClaudeCode, true);
     assert_eq!(
         hooks["SessionStart"][0]["hooks"][0]["command"],
         "/tmp/remem context --host claude-code"
@@ -546,7 +548,7 @@ fn build_hooks_prefers_sibling_remem_hook_for_slim_commands() {
     let remem = remem.to_str().expect("utf8");
     let hook = hook.to_str().expect("utf8");
 
-    let hooks = build_hooks(remem, HookStrategy::ClaudeCode);
+    let hooks = build_hooks(remem, HookStrategy::ClaudeCode, true);
     assert_eq!(
         hooks["SessionStart"][0]["hooks"][0]["command"],
         format!("{hook} context --host claude-code")
@@ -569,7 +571,7 @@ fn build_hooks_prefers_sibling_remem_hook_for_slim_commands() {
 
 #[test]
 fn build_hooks_contains_expected_codex_commands() {
-    let hooks = build_hooks("/tmp/remem", HookStrategy::Codex);
+    let hooks = build_hooks("/tmp/remem", HookStrategy::Codex, false);
     assert_eq!(
         hooks["SessionStart"][0]["hooks"][0]["command"],
         "/tmp/remem context --host codex-cli"
@@ -590,7 +592,7 @@ fn build_hooks_contains_expected_codex_commands() {
 
 #[test]
 fn build_hooks_quotes_binary_paths_with_spaces() {
-    let hooks = build_hooks("/tmp/remem bin/remem", HookStrategy::Codex);
+    let hooks = build_hooks("/tmp/remem bin/remem", HookStrategy::Codex, false);
 
     assert_eq!(
         hooks["SessionStart"][0]["hooks"][0]["command"],
@@ -604,7 +606,7 @@ fn build_hooks_quotes_binary_paths_with_spaces() {
 
 #[test]
 fn build_hooks_quotes_binary_paths_with_single_quotes() {
-    let hooks = build_hooks("/tmp/remem'bin/remem", HookStrategy::ClaudeCode);
+    let hooks = build_hooks("/tmp/remem'bin/remem", HookStrategy::ClaudeCode, true);
 
     assert_eq!(
         hooks["PostToolUse"][0]["hooks"][0]["command"],
@@ -669,8 +671,8 @@ fn repair_hooks_json_preserves_third_party_and_is_idempotent() -> anyhow::Result
         }))?,
     )?;
 
-    let first = repair_hooks_json(&path, "/new/remem", HookStrategy::ClaudeCode)?;
-    let second = repair_hooks_json(&path, "/new/remem", HookStrategy::ClaudeCode)?;
+    let first = repair_hooks_json(&path, "/new/remem", HookStrategy::ClaudeCode, true)?;
+    let second = repair_hooks_json(&path, "/new/remem", HookStrategy::ClaudeCode, true)?;
     let repaired: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
 
     assert!(first.is_healthy());
@@ -708,7 +710,7 @@ fn repair_hooks_json_invalid_settings_fails_with_path_context() -> anyhow::Resul
     let path = temp_json_path("repair-invalid-claude-hooks");
     std::fs::write(&path, "{not valid json")?;
 
-    let err = repair_hooks_json(&path, "/new/remem", HookStrategy::ClaudeCode)
+    let err = repair_hooks_json(&path, "/new/remem", HookStrategy::ClaudeCode, true)
         .expect_err("invalid settings JSON must fail closed");
     let message = format!("{err:?}");
 
@@ -755,4 +757,31 @@ fn remove_remem_mcp_removes_named_and_command_matched_servers() {
     assert!(settings["mcpServers"].get("remem").is_none());
     assert!(settings["mcpServers"].get("shadow").is_none());
     assert_eq!(settings["mcpServers"]["keep"]["command"], "/usr/bin/other");
+}
+
+#[test]
+fn repair_hooks_json_toggles_rules_eval_with_rule_compilation() -> anyhow::Result<()> {
+    let path = temp_json_path("repair-claude-rules-eval-toggle");
+    let mut doc = json!({ "hooks": build_hooks("/new/remem", HookStrategy::ClaudeCode, true) });
+    doc["hooks"]["PreToolUse"].as_array_mut().unwrap().push(
+        json!({"matcher": "Bash", "hooks": [{"type": "command", "command": "/opt/guard check"}]}),
+    );
+    std::fs::write(&path, serde_json::to_string_pretty(&doc)?)?;
+
+    let disabled = repair_hooks_json(&path, "/new/remem", HookStrategy::ClaudeCode, false)?;
+    let repaired: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+    assert!(disabled.is_healthy());
+    assert_eq!((disabled.registered, disabled.expected), (5, 5));
+    assert_eq!(count_command_prefix(&repaired, "/new/remem"), 5);
+    let pre_tool = repaired["hooks"]["PreToolUse"].as_array().unwrap();
+    assert_eq!(pre_tool.len(), 1, "{repaired}");
+    assert_eq!(pre_tool[0]["hooks"][0]["command"], "/opt/guard check");
+
+    let enabled = repair_hooks_json(&path, "/new/remem", HookStrategy::ClaudeCode, true)?;
+    let repaired: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+    assert!(enabled.is_healthy());
+    assert_eq!((enabled.registered, enabled.expected), (6, 6));
+    assert_eq!(count_command_prefix(&repaired, "/new/remem"), 6);
+    let _ = std::fs::remove_file(path);
+    Ok(())
 }
