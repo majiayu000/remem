@@ -43,9 +43,10 @@ Bundle compilation and SessionStart audit behavior are governed by GH932.
 ### Released Doctor Consumer
 
 `remem doctor truth` is the first production consumer of the released v1 read
-model. `src/doctor/truth.rs` opens `open_db_read_only_current`, projects exact
-project plus repo-owner claims, and emits only counts and canonical references:
-it never includes claim text. The focused surface accepts project/cwd, branch,
+model. `src/doctor/truth.rs` opens `open_db_read_only_current`, projects the
+project's memory claims plus its repo-owner user claims, and emits only counts
+and canonical references: it never includes claim text. The focused surface
+accepts project/cwd, branch,
 as-of, and subject selectors, reports lifecycle mappings, explicit supersedes
 links, contradictions, abstentions, and non-current/dangling references, and
 asserts SELECT-only behavior in regression tests. Relationship summaries use
@@ -55,10 +56,20 @@ visibility, and warning reports exit 1 even in quiet mode. Lifecycle summaries
 exclude objects created after an explicit as-of epoch. Graph `supersedes`
 follows the graph contract's current-to-old direction (unlike the old-to-new
 `memory_edges` writer), and relation diagnostics include an edge whenever the
-projection admits either scoped endpoint, including cross-project edges. The
-same subject predicate scopes memory, candidate, user-claim, and relation
-lifecycle counts; observations have no selector-addressable subject identity
-and are omitted from subject-focused lifecycle summaries. Reference checks
+projection admits either scoped endpoint, including cross-project edges.
+Memory lifecycle, relation, supersedes and reference diagnostics cover exactly
+the memory rows the projection admits (the project's active alias set, repo
+owner and target routing, the owner-NULL fallback and the non-global guard), so
+a rerouted memory is reported under its owner and an aliased project's rows
+count once. A subject selector picks a memory truth whose subject key equals it
+(for example a full `state:` key) or whose member claims carry it as their
+topic key, and memory, relation and reference diagnostics then cover that
+truth's member claims. Candidate lifecycle counts use the alias set and, under
+a selector, the selector plus the member claims' topic keys; user-claim
+lifecycle counts use the same selector as the user-claim projection;
+observations use the alias set, have no selector-addressable subject identity
+and are omitted from subject-focused lifecycle summaries (#1136). Reference
+checks
 validate nullable `memory_edges` endpoints while preserving the intentional
 candidate-backed one-ended `derived_from` form; trusted graph `duplicates`
 remain ordinary two-ended support relations and never receive a historical

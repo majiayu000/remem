@@ -7,7 +7,9 @@ use crate::retrieval::search::common::{
 };
 use crate::retrieval::search::SearchWeights;
 
-use super::filters::{push_excluded_type_filter, push_owner_included_filter_indexed};
+use super::filters::{
+    push_context_state_slot_filter, push_excluded_type_filter, push_owner_included_filter_indexed,
+};
 
 mod query;
 mod rank;
@@ -425,9 +427,7 @@ fn push_context_memory_filters(
         &expires_col,
         false,
     ));
-    conditions.push(crate::memory::memory_state_key_current_filter_sql(
-        table_ref(alias),
-    ));
+    push_context_state_slot_filter(table_ref(alias), conditions);
     conditions.push(crate::memory::suppression::memory_policy_filter_sql(
         table_ref(alias),
     ));
