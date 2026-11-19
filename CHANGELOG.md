@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.12] - Unreleased
+
+### Changed
+
+- Upgrade rmcp, the MCP server library, from 0.15 to 3.10. remem still serves MCP over stdio with the same tools, input and output schemas, annotations and error payloads. The port follows rmcp's API renames (`Content` to `ContentBlock`, `ServerInfo` to `ServerConfig`, `CallToolResponse` for tool calls) and now checks itself that every output schema has an object root, which rmcp 2 and later stopped enforcing (#1137).
+
+### Security
+
+- Drop the `.cargo/audit.toml` ignores for RUSTSEC-2026-0189 and RUSTSEC-2026-0462. rmcp 3.10 is past both patched versions (1.4.0 and 3.9.0), so `cargo audit` no longer needs them. They never applied to remem, which compiles neither the Streamable HTTP server nor client.
+
 ## [0.7.11] - Unreleased
 
 ### Security
