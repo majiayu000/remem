@@ -10,7 +10,6 @@ mod tests;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context};
-use rmcp::handler::server::tool::schema_for_output;
 use rmcp::model::JsonObject;
 use rmcp::schemars::{self, JsonSchema};
 use serde::de::DeserializeOwned;
@@ -43,20 +42,20 @@ pub(super) enum OutputSchema {
 
 pub(super) fn build_schema(kind: OutputSchema) -> anyhow::Result<Arc<JsonObject>> {
     let schema = match kind {
-        OutputSchema::CurrentState => schema_for_output::<CurrentStateOutput>(),
-        OutputSchema::Search => schema_for_output::<SearchOutput>(),
-        OutputSchema::RecallUserContext => schema_for_output::<RecallUserContextOutput>(),
-        OutputSchema::ContextBundle => schema_for_output::<ContextBundleOutput>(),
-        OutputSchema::Timeline => schema_for_output::<TimelineOutput>(),
-        OutputSchema::GetObservations => schema_for_output::<ObservationDetailsOutput>(),
-        OutputSchema::LookupCommit => schema_for_output::<CommitLookupsOutput>(),
-        OutputSchema::CommitsForSession => schema_for_output::<SessionCommitsOutput>(),
-        OutputSchema::SaveMemory => schema_for_output::<SaveMemoryOutput>(),
-        OutputSchema::GovernMemory => schema_for_output::<GovernMemoryOutput>(),
-        OutputSchema::Workstreams => schema_for_output::<WorkstreamsOutput>(),
-        OutputSchema::UpdateWorkstream => schema_for_output::<UpdateWorkstreamOutput>(),
-        OutputSchema::SearchRaw => schema_for_output::<SearchRawOutput>(),
-        OutputSchema::ListRawSessions => schema_for_output::<RawSessionsOutput>(),
+        OutputSchema::CurrentState => super::published_schema::<CurrentStateOutput>(),
+        OutputSchema::Search => super::published_schema::<SearchOutput>(),
+        OutputSchema::RecallUserContext => super::published_schema::<RecallUserContextOutput>(),
+        OutputSchema::ContextBundle => super::published_schema::<ContextBundleOutput>(),
+        OutputSchema::Timeline => super::published_schema::<TimelineOutput>(),
+        OutputSchema::GetObservations => super::published_schema::<ObservationDetailsOutput>(),
+        OutputSchema::LookupCommit => super::published_schema::<CommitLookupsOutput>(),
+        OutputSchema::CommitsForSession => super::published_schema::<SessionCommitsOutput>(),
+        OutputSchema::SaveMemory => super::published_schema::<SaveMemoryOutput>(),
+        OutputSchema::GovernMemory => super::published_schema::<GovernMemoryOutput>(),
+        OutputSchema::Workstreams => super::published_schema::<WorkstreamsOutput>(),
+        OutputSchema::UpdateWorkstream => super::published_schema::<UpdateWorkstreamOutput>(),
+        OutputSchema::SearchRaw => super::published_schema::<SearchRawOutput>(),
+        OutputSchema::ListRawSessions => super::published_schema::<RawSessionsOutput>(),
     };
     // rmcp >= 2 no longer rejects non-object output schemas (SEP-2106); keep
     // remem's object-root contract explicit.

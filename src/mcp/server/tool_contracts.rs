@@ -5,10 +5,26 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use rmcp::handler::server::router::tool::{ToolRoute, ToolRouter};
-use rmcp::model::{CallToolResponse, CallToolResult, ToolAnnotations};
+use rmcp::model::{CallToolResponse, CallToolResult, JsonObject, ToolAnnotations};
+use rmcp::schemars::{generate::SchemaSettings, transform::AddNullable, JsonSchema};
 use serde_json::{json, Map, Value};
 
 use super::MemoryServer;
+
+pub(super) fn published_schema<T: JsonSchema>() -> Arc<JsonObject> {
+    // The published descriptors use the deserialize contract in both directions.
+    // Keep it independent of rmcp's default schema settings.
+    let mut settings = SchemaSettings::draft2020_12();
+    settings.transforms = vec![Box::new(AddNullable::default())];
+    let schema = settings.into_generator().into_root_schema_for::<T>();
+    let Value::Object(schema) = serde_json::to_value(schema).expect("serialize MCP schema") else {
+        panic!(
+            "MCP schema for {} must be an object",
+            std::any::type_name::<T>()
+        );
+    };
+    Arc::new(schema)
+}
 use schemas::{build_schema, validate_output, OutputSchema};
 
 #[derive(Clone, Copy, Debug)]
