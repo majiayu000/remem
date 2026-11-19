@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use rusqlite::backup::Backup;
-use rusqlite::{Connection, DatabaseName, OpenFlags};
+use rusqlite::{Connection, OpenFlags, MAIN_DB};
 use sha2::{Digest, Sha256};
 
 use crate::db::CipherKey;
@@ -28,7 +28,7 @@ pub(super) fn open_consistent_snapshot(source_path: &Path) -> Result<(Connection
             .context("copy WAL-visible backup snapshot")?;
     }
     let serialized = snapshot
-        .serialize(DatabaseName::Main)
+        .serialize(MAIN_DB)
         .context("serialize backup import snapshot")?;
     let sha256 = format!("{:x}", Sha256::digest(&*serialized));
     drop(serialized);

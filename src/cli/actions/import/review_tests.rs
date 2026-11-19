@@ -279,10 +279,11 @@ fn encrypted_backup_snapshot_tracks_wal_visible_state() -> Result<()> {
         "UPDATE memories SET content = 'version two', updated_at_epoch = 3 WHERE id = 1",
         [],
     )?;
-    let (second_snapshot, second_sha) = backup_snapshot::open_consistent_snapshot(&source_path)?;
+    let (mut second_snapshot, second_sha) =
+        backup_snapshot::open_consistent_snapshot(&source_path)?;
     assert_eq!(snapshot_content(&second_snapshot)?, "version two");
     assert_ne!(first_sha, second_sha);
-    let serialized = second_snapshot.serialize(rusqlite::DatabaseName::Main)?;
+    let serialized = second_snapshot.serialize(rusqlite::MAIN_DB)?;
     assert!(
         serialized.starts_with(b"SQLite format 3\0"),
         "the in-memory snapshot must stay plaintext"

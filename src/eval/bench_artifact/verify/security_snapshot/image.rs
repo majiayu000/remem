@@ -3,7 +3,7 @@ use std::ptr::{self, NonNull};
 
 use anyhow::{ensure, Context, Result};
 use rusqlite::serialize::OwnedData;
-use rusqlite::{ffi, Connection, DatabaseName};
+use rusqlite::{ffi, Connection, MAIN_DB};
 
 use super::super::VerifyState;
 
@@ -41,9 +41,9 @@ pub(super) fn validate_canonical(bytes: &[u8]) -> Result<()> {
         bytes.len() <= MAX_BYTES as usize,
         "security SQLite snapshot exceeds {MAX_BYTES} bytes"
     );
-    let connection = open_consumed(bytes, false)?;
+    let mut connection = open_consumed(bytes, false)?;
     connection.execute_batch("VACUUM")?;
-    let mut canonical = connection.serialize(DatabaseName::Main)?.to_vec();
+    let mut canonical = connection.serialize(MAIN_DB)?.to_vec();
     let mut consumed = bytes.to_vec();
     normalize_vacuum_header(&mut canonical)?;
     normalize_vacuum_header(&mut consumed)?;
@@ -81,7 +81,7 @@ fn open_consumed(bytes: &[u8], read_only: bool) -> Result<Connection> {
     };
     let mut connection = Connection::open_in_memory().context("open in-memory SQLite handle")?;
     connection
-        .deserialize(DatabaseName::Main, owned, read_only)
+        .deserialize(MAIN_DB, owned, read_only)
         .context("deserialize consumed SQLite snapshot")?;
     Ok(connection)
 }
@@ -129,7 +129,7 @@ mod tests {
     use super::*;
 
     fn image(vacuum: bool) -> Result<Vec<u8>> {
-        let connection = Connection::open_in_memory()?;
+        let mut connection = Connection::open_in_memory()?;
         connection.execute_batch(
             "CREATE TABLE evidence(value TEXT);\
              INSERT INTO evidence VALUES('private deleted payload');\
@@ -138,7 +138,7 @@ mod tests {
         if vacuum {
             connection.execute_batch("VACUUM")?;
         }
-        Ok(connection.serialize(DatabaseName::Main)?.to_vec())
+        Ok(connection.serialize(MAIN_DB)?.to_vec())
     }
 
     #[test]

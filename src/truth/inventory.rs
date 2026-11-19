@@ -46,9 +46,11 @@ fn build_memory_visibility_inventory_in_snapshot(
         .query_row(
             "SELECT COUNT(*), MAX(id), MAX(updated_at_epoch) FROM memories",
             [],
-            |row| Ok((row.get::<_, u64>(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get::<_, i64>(0)?, row.get(1)?, row.get(2)?)),
         )
         .context("bind memory visibility inventory snapshot")?;
+    let snapshot_memory_count = u64::try_from(snapshot_memory_count)
+        .context("memory visibility inventory count is negative")?;
     let mut statement = conn.prepare("SELECT id FROM memories ORDER BY id")?;
     let ids = statement
         .query_map([], |row| row.get::<_, i64>(0))?

@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.11] - Unreleased
+
+### Security
+
+- Upgrade rusqlite 0.32 to 0.42 so the bundled SQLCipher moves from 4.5.7 (SQLite 3.45.3) to 4.20.0 (SQLite 3.54.1). The new SQLite fully initializes a page read from a WAL frame smaller than the database page size (CVE-2026-119375, RUSTSEC-2026-0459 and RUSTSEC-2026-0502). In remem the old read path was reachable through `remem import backup --source`, which opens a user-supplied database together with its `-wal` file. rusqlite 0.41 is skipped on purpose: its sqlcipher-src 419.0.6 bundles SQLite 3.53.4 without the fix.
+- Record in `.cargo/audit.toml` why RUSTSEC-2026-0189 and RUSTSEC-2026-0462 do not apply: remem builds rmcp 0.15 with the stdio server transport only, and the affected Streamable HTTP server and client modules are not compiled.
+
+### Changed
+
+- Some SQLite error messages change wording with the new SQLite. For example, a failed `remem import backup` now reports `SQL logic error` where earlier versions reported `SQL error or missing database`.
+
 ## [0.7.10] - Unreleased
 
 ### Fixed
