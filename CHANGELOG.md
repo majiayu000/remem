@@ -11,6 +11,12 @@
 
 - Some SQLite error messages change wording with the new SQLite. For example, a failed `remem import backup` now reports `SQL logic error` where earlier versions reported `SQL error or missing database`.
 
+## [0.7.10] - Unreleased
+
+### Fixed
+
+- `remem import backup` now imports the encrypted copy that `remem admin backup` writes for an encrypted store, as long as the importing store holds the same key. Before, the import failed with `backup is not supported with encrypted databases`, so the backup round trip did not work on a default install, which is encrypted. The import still copies the source into an in-memory snapshot. It now keys that snapshot with the key that unlocked the source, which SQLCipher requires for the page copy. The snapshot is kept in memory unencrypted, as it already was for plaintext sources, and nothing new is written to disk. Plaintext backups keep working with or without a configured key, and a backup encrypted with a different key still fails (#1135).
+
 ## [0.7.9] - Unreleased
 
 ### Fixed

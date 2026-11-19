@@ -4,6 +4,25 @@ use sha2::{Digest, Sha256};
 
 fn create_review_source(path: &Path) -> Result<Connection> {
     let conn = Connection::open(path)?;
+    create_review_schema(&conn)?;
+    Ok(conn)
+}
+
+/// Raw (`v2:`) key as `remem encrypt` writes it, then the legacy passphrase form.
+const ENCRYPTED_SOURCE_KEYS: [&str; 2] = [
+    "v2:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
+    "legacy backup passphrase",
+];
+
+fn create_encrypted_review_source(path: &Path, key: &str) -> Result<Connection> {
+    let conn = Connection::open(path)?;
+    let key = crate::db::parse_cipher_key(key)?.expect("test cipher key");
+    crate::db::apply_cipher_key(&conn, &key)?;
+    create_review_schema(&conn)?;
+    Ok(conn)
+}
+
+fn create_review_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE memories (
             id INTEGER PRIMARY KEY,
@@ -24,7 +43,7 @@ fn create_review_source(path: &Path) -> Result<Connection> {
             acknowledged_at_epoch INTEGER
         );",
     )?;
-    Ok(conn)
+    Ok(())
 }
 
 #[test]
@@ -179,6 +198,113 @@ fn backup_import_deduplicates_legacy_repo_target_without_target_project() -> Res
         )?,
         1
     );
+
+    cleanup_temp_db_files(&source_path);
+    Ok(())
+}
+
+fn insert_review_memory(conn: &Connection, topic: &str, content: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO memories
+         (id, project, topic_key, title, content, memory_type,
+          created_at_epoch, updated_at_epoch)
+         VALUES (1, '/tmp/encrypted-import', ?1, 'Encrypted backup', ?2,
+                 'decision', 1, 2)",
+        rusqlite::params![topic, content],
+    )?;
+    Ok(())
+}
+
+fn snapshot_content(snapshot: &Connection) -> Result<String> {
+    Ok(
+        snapshot.query_row("SELECT content FROM memories WHERE id = 1", [], |row| {
+            row.get::<_, String>(0)
+        })?,
+    )
+}
+
+#[test]
+fn encrypted_admin_backup_imports_into_a_store_with_the_same_key() -> Result<()> {
+    for (index, key) in ENCRYPTED_SOURCE_KEYS.iter().enumerate() {
+        let _data_dir = ScopedTestDataDir::new(&format!("import-encrypted-backup-{index}"));
+        std::env::set_var("REMEM_CIPHER_KEY", key);
+        let store_path = unique_temp_db_path("runtime-import-encrypted-store");
+        let store = create_encrypted_review_source(&store_path, key)?;
+        insert_review_memory(
+            &store,
+            "encrypted-topic",
+            "restored from an encrypted backup",
+        )?;
+        drop(store);
+
+        // The production backup path writes an encrypted copy of an encrypted store.
+        let backup_path = unique_temp_db_path("runtime-import-encrypted-backup");
+        crate::cli::actions::admin::backup_db(&store_path, &backup_path)?;
+        let header = std::fs::read(&backup_path)?;
+        assert!(
+            !header.starts_with(b"SQLite format 3\0"),
+            "key {index}: admin backup of an encrypted store must stay encrypted"
+        );
+
+        let runtime = crate::db::open_db()?;
+        let stats = import_memories_into_runtime(&backup_path, &runtime)?;
+        assert_eq!(stats.memories_imported, 1, "key {index}");
+        let content: String = runtime.query_row(
+            "SELECT content FROM memories WHERE topic_key = 'encrypted-topic'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(content, "restored from an encrypted backup", "key {index}");
+
+        drop(runtime);
+        cleanup_temp_db_files(&store_path);
+        cleanup_temp_db_files(&backup_path);
+    }
+    Ok(())
+}
+
+#[test]
+fn encrypted_backup_snapshot_tracks_wal_visible_state() -> Result<()> {
+    let key = ENCRYPTED_SOURCE_KEYS[0];
+    let _data_dir = ScopedTestDataDir::new("import-encrypted-wal-snapshot");
+    std::env::set_var("REMEM_CIPHER_KEY", key);
+    let source_path = unique_temp_db_path("runtime-import-encrypted-wal");
+    let source = create_encrypted_review_source(&source_path, key)?;
+    source.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;")?;
+    insert_review_memory(&source, "encrypted-wal-topic", "version one")?;
+
+    let (first_snapshot, first_sha) = backup_snapshot::open_consistent_snapshot(&source_path)?;
+    assert_eq!(snapshot_content(&first_snapshot)?, "version one");
+    source.execute(
+        "UPDATE memories SET content = 'version two', updated_at_epoch = 3 WHERE id = 1",
+        [],
+    )?;
+    let (mut second_snapshot, second_sha) =
+        backup_snapshot::open_consistent_snapshot(&source_path)?;
+    assert_eq!(snapshot_content(&second_snapshot)?, "version two");
+    assert_ne!(first_sha, second_sha);
+    let serialized = second_snapshot.serialize(rusqlite::MAIN_DB)?;
+    assert!(
+        serialized.starts_with(b"SQLite format 3\0"),
+        "the in-memory snapshot must stay plaintext"
+    );
+
+    drop(source);
+    cleanup_temp_db_files(&source_path);
+    Ok(())
+}
+
+#[test]
+fn plaintext_backup_snapshot_ignores_a_configured_key() -> Result<()> {
+    let _data_dir = ScopedTestDataDir::new("import-plaintext-with-key");
+    std::env::set_var("REMEM_CIPHER_KEY", ENCRYPTED_SOURCE_KEYS[0]);
+    let source_path = unique_temp_db_path("runtime-import-plaintext-with-key");
+    let source = create_review_source(&source_path)?;
+    insert_review_memory(&source, "plaintext-topic", "plaintext source")?;
+    drop(source);
+
+    let (snapshot, _) = backup_snapshot::open_consistent_snapshot(&source_path)?;
+    assert_eq!(snapshot_content(&snapshot)?, "plaintext source");
 
     cleanup_temp_db_files(&source_path);
     Ok(())
