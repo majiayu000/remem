@@ -6,13 +6,13 @@
 注入项目记忆，记录用户提示、助手文本与工具结果，轮次结束排队自动提炼。
 记忆提取、来源治理、加密与检索都沿用 remem。
 
-快照更新和移除在 `step/start` 之后追加，符合 DSH 0.2.0-rc.2 公布的 session invariant（0.2.1-rc.5 不再发布该模块）；remem 准备或替换失败后，未提交的原始提示
+快照更新和移除在 `step/start` 之后追加，保持 DSH 步骤事件顺序；remem 准备或替换失败后，未提交的原始提示
 保留待显式重试。取消等待不终止已经开始的持久化捕获，后续 flush 仍会报告错误。
 插件仍加载时，`agent/error` 也会恢复后续请求准备失败涉及的未提交原始输入。
 卸载打断正在运行的 remem `agent/pre-step` 或 `agent/request` 回调时，恢复持续到
 该回调退出；保留原始身份、顺序和来源，不恢复合成记忆、已提交输入或主动取消的批次。
 
-已知宿主限制：DSH `0.2.1-rc.5`（与 `0.2.0-rc.2` 相同）在 `agent/pre-step` 前取走输入，在 `agent/request`
+已知宿主限制：DSH `0.2.2-rc.5`在 `agent/pre-step` 前取走输入，在 `agent/request`
 返回后、提交 `user/message` 前等待公共 `LlmAdapter.prepareCall`。若此时 remem 已卸载
 且调用失败，输入会丢失，重载插件再显式重试也无法恢复；从未加载插件时同样如此。
 若调用成功，宿主仍会提交一次；卸载期间提交的事件不会在重载时补录。
@@ -25,22 +25,19 @@ DSH 允许任意注册工具名，工具结果均按外部证据处理，保留�
 核心继续脱敏和持久化。提示和轮次总结的省略元数据保留在实际捕获文本内；
 身份字段（包括工具名）本身超限会返回可见错误。完整原始消息和工具结果仍在 DSH 历史中。
 
-`@remem-ai/dsh-remem@0.1.0` 已发布到 npm。验证目标：DSH `0.2.1-rc.5` 与 Cordis
-`4.0.5`。DSH peer 是精确版本：DSH 插件管理器在安装和 profile 启动时都会校验，
-其他 DSH 版本（包括 npm 上更新的 0.2.2 预发布）会被拒绝，升级 DSH 后插件也不再加载，
-请把 DSH 固定在 `0.2.1-rc.5`（支持新版本见 #1128）。DSH 主线 API 与该 npm 版本不同；
-本插件不宣称已验证主线兼容。
+`@remem-ai/dsh-remem@0.1.1` 已针对 DSH `0.2.2-rc.5` 与 Cordis `4.1.0` 验证。
+DSH 插件管理器在安装和 profile 启动时校验精确版本。仍使用 DSH `0.2.1-rc.5` 的用户可继续用插件 `0.1.0`。
 需要 Node.js 22.19+ 和 remem 0.7.0 或更高版本（首个包含 DSH 宿主适配的发布）。旧 remem 会在
 首次真实 CLI 请求返回可见错误。
 
 ## 从 npm 安装
 
 先安装 remem 0.7.0 或更高版本（例如 `npm install -g @remem-ai/remem`）和 DSH
-`0.2.1-rc.5`（`npm install -g @deepseek-ai/dsh@0.2.1-rc.5`）。`dsh plugin` 把参数
+`0.2.2-rc.5`（`npm install -g @deepseek-ai/dsh@0.2.2-rc.5`）。`dsh plugin` 把参数
 转发给 profile 目录中的 pnpm，PATH 上需要有 pnpm。
 
 ```bash
-dsh plugin --profile headless add @remem-ai/dsh-remem@0.1.0
+dsh plugin --profile headless add @remem-ai/dsh-remem@0.1.1
 ```
 
 随包的 `cordis.patch.yml` 默认从 PATH 启动 `remem`；remem 不在 PATH 上时，按下方
@@ -61,7 +58,7 @@ npm pack
 通过 DSH CLI 向已有 profile 安装生成的 bundle：
 
 ```bash
-dsh plugin --profile headless add /absolute/path/remem-ai-dsh-remem-0.1.0.tgz
+dsh plugin --profile headless add /absolute/path/remem-ai-dsh-remem-0.1.1.tgz
 ```
 
 `dsh.bundle` 指向随包发布的 `cordis.patch.yml`，CLI 将其注册为 profile layer。
@@ -76,6 +73,18 @@ dsh plugin --profile headless add /absolute/path/remem-ai-dsh-remem-0.1.0.tgz
     # profile: codex
 ```
 
+首次使用前先用该可执行文件执行一次 `remem encrypt`。插件和 remem 的 hook 命令都不会
+创建或迁移数据库，`remem install` 也没有 DSH 目标：
+
+```bash
+/absolute/path/remem/target/debug/remem encrypt
+```
+
+它在数据目录（默认 `~/.remem`，可用 `REMEM_DATA_DIR` 覆盖）生成密钥并建好加密库；
+对已加密的库重复执行只做校验。跳过这一步，提示、助手与工具捕获都会失败并在下次请求准备时
+报错，注入的快照也只是一段 `Context Load Errors`。替换 remem 二进制后，先在 DSH 之外
+运行一次 `remem status` 完成数据库迁移。
+
 确保会话有绝对 `cwd`；在 remem 内配置提炼使用的 executor/profile。插件继承
 remem 环境与配置，不下载二进制，不注册 MCP，不修改 DSH 的审批规则。
 `session/flush` 和插件卸载等待 remem 自己的待处理工作，不等待宿主剩余请求准备。
@@ -86,7 +95,7 @@ context 子进程。未设置 profile 时，使用 remem 现有的 codex profile
 
 自动捕获只覆盖插件加载期间提交的实时事件。用户来源 `user` 会被保存，插件注入
 来源 `remem` 不会被当成人类提示重复收录。历史 DSH 文件导入未实现。提炼
-图片和文件仅保存有界引用元数据，不读取附件字节；0.1.0 中这些元数据会被核心脱敏整体替换为 `[REDACTED]`，只剩附件类型（#1126）。用户提示捕获不执行
+图片和文件仅保存有界引用元数据，不读取附件字节；常规名称、类型和大小可读，疑似秘密的值仍按核心规则脱敏（#1126）。用户提示捕获不执行
 无法送达的即时召回；每轮首步仅在已提交历史的记忆快照变化时注入，取消
 请求准备不会消耗后续注入。变化或清空后的记忆会从后续模型请求中替换旧快照；原始事件日志与人类提示保留。CLI 准备阶段不写注入审计或使用计数；
 交付事实以 DSH 已提交的记忆快照为准。工具参数先解析 JSON，再由 remem 按键脱敏；
@@ -111,22 +120,28 @@ project memory at the first step of each turn, captures live human prompts,
 assistant text and completed tools, and queues remem's existing distillation at
 turn end. Retrieval, storage, redaction and governance stay in remem.
 
-`@remem-ai/dsh-remem@0.1.0` is published on npm. Tested APIs target
-DSH 0.2.1-rc.5 and Cordis 4.0.5. Its DSH peers are exact and the DSH plugin
-manager checks them at install and at profile startup, so any other DSH version,
-including the newer 0.2.2 prereleases on npm, rejects it, and upgrading DSH
-disables it. Keep DSH pinned at 0.2.1-rc.5 (newer DSH support: #1128). The
-current upstream source uses a different API. Use Node.js 22.19+ and remem 0.7.0 or later
-(`npm install -g @remem-ai/remem`), install DSH 0.2.1-rc.5
-(`npm install -g @deepseek-ai/dsh@0.2.1-rc.5`; `dsh plugin` forwards to pnpm,
+`@remem-ai/dsh-remem@0.1.1` targets DSH 0.2.2-rc.5 and Cordis 4.1.0. The
+plugin manager checks the exact DSH peer versions at installation and profile
+startup. Keep adapter 0.1.0 if you still use DSH 0.2.1-rc.5. Use Node.js 22.19+
+and remem 0.7.0 or later (`npm install -g @remem-ai/remem`). Install DSH
+(`npm install -g @deepseek-ai/dsh@0.2.2-rc.5`; `dsh plugin` forwards to pnpm,
 which must be on PATH), then run
-`dsh plugin --profile headless add @remem-ai/dsh-remem@0.1.0`. The bundled
+`dsh plugin --profile headless add @remem-ai/dsh-remem@0.1.1`. The bundled
 patch starts `remem` from PATH; override the `remem` entry with the executable's
 absolute path using the user patch above when needed. To test a local build,
 build remem from this repository, run `npm ci`, `npm test`, `npm pack`, then run
 `dsh plugin --profile headless add /absolute/path/to/the.tgz`. The bundle is
 registered as a profile layer. Configure memory AI in remem.
 Old binaries fail visibly on the first real DSH CLI request.
+
+Before the first session, run `remem encrypt` once with that executable. Neither
+the plugin nor remem's hook commands create or migrate the store, and
+`remem install` has no DSH target. The command writes the key and an encrypted
+database into the data directory (`~/.remem`, or `REMEM_DATA_DIR`) and only
+verifies a store that is already encrypted. Without it every prompt, assistant and tool
+capture fails at the next request preparation, and the injected snapshot is a
+`Context Load Errors` notice. After replacing the remem binary, run
+`remem status` once outside DSH to apply database migrations.
 
 Live sessions require an absolute project cwd. Capture runs in order and is
 awaited at session flush and plugin disposal; disposal drains remem-owned work,
@@ -141,13 +156,12 @@ to its own source and never recaptured as a human prompt. Capture covers live
 events committed while the plugin is loaded. Historical DSH transcript
 import, automatic MCP registration, and memory AI credentials are outside this
 adapter. Image/file capture retains bounded reference metadata without reading
-attachment bytes; in 0.1.0 core redaction masks that metadata as `[REDACTED]`,
-leaving only the attachment type (#1126). Prompt capture does not perform undeliverable recall. Snapshot
+attachment bytes. Ordinary names, media types and sizes remain readable;
+secret-looking values still pass through core redaction (#1126). Prompt capture does not perform undeliverable recall. Snapshot
 deduplication uses committed session history, so cancelled preparation can retry.
 Changed or removed memory supersedes obsolete snapshots in future requests while
 retaining the original event log and human prompts. Replacements run after
-`step/start`, as the session invariant published with DSH 0.2.0-rc.2 requires;
-DSH 0.2.1-rc.5 no longer ships that invariant module. Remem preparation or
+`step/start`, preserving the session event order. Remem preparation or
 replacement failures restore only uncommitted original inputs for explicit retry;
 while loaded, `agent/error` also recovers later request-preparation failures.
 Cancelling a capture checkpoint returns promptly while durable capture and any
@@ -157,7 +171,7 @@ recovery lasts until that callback exits, even after Cordis removes its listener
 It preserves original identities, order and sources, excluding synthetic memory,
 committed inputs and intentionally cancelled batches.
 
-Known host limitation: DSH 0.2.1-rc.5 (unchanged from 0.2.0-rc.2) claims input before `agent/pre-step`, then
+Known host limitation: DSH 0.2.2-rc.5 claims input before `agent/pre-step`, then
 awaits public `LlmAdapter.prepareCall` after `agent/request` returns and before
 committing `user/message`. If remem has unloaded and that call fails, the input is
 lost; reload plus explicit retry cannot recover it. The same loss occurs without
