@@ -9,12 +9,7 @@ pub(in crate::cli) enum ConfigAction {
     /// Create or update the config file with default sections.
     Init,
     /// Set one scalar config key, for example memory_ai.profiles.codex.model.
-    Set {
-        key: String,
-        /// Values may start with `-`, such as the offset `-05:00`.
-        #[arg(allow_hyphen_values = true)]
-        value: String,
-    },
+    Set { key: String, value: String },
     /// Explicitly migrate legacy Claude context_gate = "off" to "auto".
     MigrateClaudeGate {
         /// Print the planned migration without writing the config file.
