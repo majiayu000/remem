@@ -2,17 +2,4 @@
 # Every ignore must say why remem's build does not compile the affected code and what forces a
 # re-check. Remove an entry as soon as the dependency is upgraded past the patched version.
 [advisories]
-ignore = [
-    # RUSTSEC-2026-0189 (rmcp < 1.4.0): DNS rebinding in the Streamable HTTP *server* transport.
-    # remem enables only rmcp features ["server", "transport-io", "macros"] and serves MCP over
-    # stdio (`rmcp::transport::stdio()` in src/mcp/server/runtime.rs). The vulnerable module
-    # `rmcp::transport::streamable_http_server` is compiled only with the
-    # `transport-streamable-http-server-session` feature, which nothing in the graph enables.
-    # Re-check if any rmcp HTTP/SSE transport feature is enabled or rmcp is upgraded.
-    "RUSTSEC-2026-0189",
-    # RUSTSEC-2026-0462 (rmcp < 3.9.0): unbounded response-body buffering in the Streamable HTTP
-    # *clients* (`transport-streamable-http-client-reqwest` / `-unix-socket`). remem is an MCP
-    # server only; neither the `client` feature nor any `transport-streamable-http-client*`
-    # feature is enabled. Same re-check trigger as above.
-    "RUSTSEC-2026-0462",
-]
+ignore = []

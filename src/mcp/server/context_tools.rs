@@ -12,6 +12,7 @@ use crate::{db, memory};
 #[tool_router(router = tool_router_context, vis = "pub(super)")]
 impl MemoryServer {
     #[tool(
+        input_schema = super::tool_contracts::published_schema::<ContextBundleParams>(),
         description = "Experimental Context Bundle v1 compiler. Requires schema_version=1 and a non-blank task. Returns a policy-bounded, source-attributed ContextBundle with a complete selection/drop audit; project is explicit or derived from cwd, and role/risk/token budget have deterministic defaults. Historical as_of_epoch pins and include_superseded=true fail loudly until the canonical loader supports them. This reuses the production SessionStart canonical loader, performs no foreground LLM or network call, and returns canonical load failures as a blocked audited bundle. Its poisoning safety check may quarantine unsafe persisted rows, so callers must not treat it as side-effect-free. The JSON shape is versioned but remains experimental."
     )]
     pub(super) fn context_bundle(
@@ -86,6 +87,7 @@ impl MemoryServer {
     }
 
     #[tool(
+        input_schema = super::tool_contracts::published_schema::<UserRecallParams>(),
         description = "Assemble task-aware user context from safe claims, profile summary, repo memories, requested current-state keys, workstreams, and recent sessions. Its poisoning gate may quarantine an unsafe legacy or session summary. Requires a non-blank query and an explicit project or cwd scope. Returns a compact source-attributed JSON object with included items, dropped items, reason codes, and budget metadata. Use search for exhaustive memory matches and current_state for one exact stable key; this tool selects a bounded context bundle instead. Invalid or missing scope input and database failures return a tool error."
     )]
     pub(super) fn recall_user_context(
@@ -125,6 +127,7 @@ impl MemoryServer {
     }
 
     #[tool(
+        input_schema = super::tool_contracts::published_schema::<TimelineParams>(),
         description = "Read-only. Return a JSON array of observations before and after one center point; provide anchor or query, and anchor takes precedence when both are set. depth_before and depth_after default to 5, and project limits both anchor lookup and results. Use this for local chronological context around an observation; use timeline_report for an aggregated project report, search for curated memories, or current_state for a stable fact. Missing anchors/queries, no query match, or database failures return a tool error."
     )]
     pub(super) fn timeline(
@@ -222,6 +225,7 @@ impl MemoryServer {
     }
 
     #[tool(
+        input_schema = super::tool_contracts::published_schema::<GetObservationsParams>(),
         description = "Fetch full details for explicit IDs and record last-accessed metadata for returned memory or observation rows. Use after search, not for discovery; prompt-time anchors may also direct this exact lookup. Pass selected IDs and the exact source from the result. source defaults to 'memory'; source='memory' returns curated memory details and requires its access update to succeed, source='observation' returns current extracted observations and records its access update best-effort (a failed update is logged but details still return), and source='session_summary' returns exact safe session-summary rows without confusing their IDs with observation IDs. Unsupported sources, any missing requested ID, detail-read failures, or memory access-update failures return a tool error."
     )]
     pub(super) fn get_observations(

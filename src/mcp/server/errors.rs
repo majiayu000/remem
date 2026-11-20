@@ -1,4 +1,4 @@
-use rmcp::model::{Content, IntoContents};
+use rmcp::model::{ContentBlock, IntoContents};
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -115,8 +115,8 @@ impl std::fmt::Display for McpToolError {
 }
 
 impl IntoContents for McpToolError {
-    fn into_contents(self) -> Vec<Content> {
-        vec![Content::text(self.to_json_string())]
+    fn into_contents(self) -> Vec<ContentBlock> {
+        vec![ContentBlock::text(self.to_json_string())]
     }
 }
 
