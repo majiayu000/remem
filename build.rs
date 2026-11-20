@@ -8,7 +8,11 @@ const PRODUCTION_PATHSPEC_CONTRACT: &str = "eval/production-input-pathspec-v1.js
 fn main() {
     let (contract, paths) = production_pathspec();
     for path in &paths {
-        println!("cargo:rerun-if-changed={path}");
+        // Watching a missing path makes Cargo rerun this script on every build.
+        // The Git index watch covers tracked additions to the pathspec.
+        if Path::new(path).exists() {
+            println!("cargo:rerun-if-changed={path}");
+        }
     }
     emit_git_rerun_paths();
 
