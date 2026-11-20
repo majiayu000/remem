@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
+import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 const plugin = await import(process.env.REMEM_DSH_PLUGIN_MODULE ?? '../dist/index.js')
@@ -18,6 +19,7 @@ const imageReference = '[image attachment attachmentId=diagram-ref name=diagram.
 async function capture(executable, sessionId, contents) {
   const ctx = new Context()
   await ctx.plugin(SessionStore)
+  await ctx.plugin(SessionProjectionRegistry)
   await ctx.plugin(AgentRegistry)
   const fiber = await ctx.plugin(plugin, { executable })
   try {
@@ -25,7 +27,7 @@ async function capture(executable, sessionId, contents) {
     for (const content of contents) {
       session.append('user/message', createUserMessage({ content, source: { kind: 'user' } }), { surfaceOp: 'append' })
     }
-    await ctx.parallel('session/flush', session)
+    await ctx.sessions.flush(session)
   } finally { await fiber.dispose(); await ctx.fiber.dispose() }
 }
 
