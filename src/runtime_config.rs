@@ -13,7 +13,7 @@ mod promotion;
 mod rules;
 pub(crate) mod session_labels;
 mod user_auto_promote;
-use config_value::cli_value;
+use config_value::{cli_string_value, cli_value};
 pub(crate) use context::context_budget_limits;
 pub use model::{
     model_status, model_statuses, rollback_model_config, set_model, ModelChange, ModelPreset,
@@ -149,7 +149,11 @@ pub fn set_config_value(key: &str, raw_value: &str) -> Result<PathBuf> {
         current = child_table_mut(current, segment)?;
     }
     let leaf = segments[segments.len() - 1];
-    current[leaf] = cli_value(raw_value);
+    current[leaf] = if segments.join(".") == session_labels::SESSION_LABEL_TIMEZONE_KEY {
+        cli_string_value(raw_value)
+    } else {
+        cli_value(raw_value)
+    };
     write_config_doc(&path, &doc)?;
     Ok(path)
 }

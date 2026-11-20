@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.13] - Unreleased
+
+### Fixed
+
+- Keep compact timezone offsets such as `+0800` as strings when updating `session_labels.timezone`.
+- Record hook command failures in the local remem log so a missing terminal error can be diagnosed.
+
 ## [0.7.12] - Unreleased
 
 ### Changed
