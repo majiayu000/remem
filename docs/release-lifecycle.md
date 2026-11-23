@@ -151,9 +151,9 @@ After the tag workflow finishes:
 
 ```bash
 curl -fsSI https://github.com/majiayu000/remem/releases/download/vX.Y.Z/remem-releases.json
-npm view @remem-ai/remem version
+npm view @remem-ai/remem@X.Y.Z version
 cargo search remem-ai --limit 1
-curl -fsS "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.majiayu000/remem"
+curl -fsS "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.majiayu000%2Fremem/versions/X.Y.Z"
 ```
 
 Clean install smoke:
@@ -185,4 +185,12 @@ version.
 The MCP registry entry is published by the `publish-mcp-registry` release job
 from the repo-root `server.json` via GitHub OIDC (no long-lived token). The
 registry validates ownership through the `mcpName` field inside the published
-npm package, so the registry publish must always run after `publish-npm`.
+npm package, so the registry publish runs after `publish-npm` confirms the exact
+version on npm. The optional DSH adapter has an independent `publish-dsh` job.
+
+If a distribution job fails, rerun that job from the same tag's workflow run.
+A rerun uses the workflow version recorded in that run.
+Each npm and MCP job checks the exact version before writing. An existing
+version skips the publish step and is read back. Read errors other than HTTP
+404 fail the job. A DSH failure can be retried independently of the primary
+npm wrapper and MCP Registry entry.

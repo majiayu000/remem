@@ -285,6 +285,8 @@ jobs:
   publish-npm:
     needs: release
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: actions/setup-node@v6.0.0
@@ -295,24 +297,35 @@ jobs:
         run: python3 scripts/ci/check_plugin_version_sync.py --expected-version "${GITHUB_REF_NAME#v}"
       - name: Test npm wrapper
         run: node --test npm/remem/scripts/install.test.js
-      - name: Smoke packed npm wrapper
+      - name: Check exact wrapper version on npm
+        id: registry
+        run: |
+          set -euo pipefail
+          published="$(python3 scripts/ci/check_release_registry.py npm npm/remem/package.json)"
+          echo "published=$published" >> "$GITHUB_OUTPUT"
+      - name: Smoke the npm wrapper
         env:
+          PUBLISHED: ${{ steps.registry.outputs.published }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
-          pack_dir="$(mktemp -d)"
           install_prefix="$(mktemp -d)"
           unset REMEM_NPM_BINARY REMEM_NPM_SKIP_DOWNLOAD
 
-          npm pack ./npm/remem --pack-destination "$pack_dir"
-          tarball="$(find "$pack_dir" -maxdepth 1 -type f -name '*.tgz' -print -quit)"
-          if [ -z "$tarball" ]; then
-            echo "::error::npm pack did not produce a tarball"
-            exit 1
+          if [ "$PUBLISHED" = true ]; then
+            package="@remem-ai/remem@$version"
+          else
+            pack_dir="$(mktemp -d)"
+            npm pack ./npm/remem --pack-destination "$pack_dir"
+            package="$(find "$pack_dir" -maxdepth 1 -type f -name '*.tgz' -print -quit)"
+            if [ -z "$package" ]; then
+              echo "::error::npm pack did not produce a tarball"
+              exit 1
+            fi
           fi
 
-          npm install --global --prefix "$install_prefix" "$tarball"
+          npm install --global --prefix "$install_prefix" "$package"
           actual="$("$install_prefix/bin/remem" --version)"
           echo "installed remem --version: $actual"
           installed_version="$(printf '%s\n' "$actual" | awk 'NR == 1 { print $2 }')"
@@ -321,24 +334,42 @@ jobs:
             exit 1
           fi
       - name: Publish npm wrapper
+        if: steps.registry.outputs.published == 'false'
         working-directory: npm/remem
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public
-      - name: Publish DSH adapter (skip if this version already exists)
+      - name: Confirm wrapper version on npm
+        run: python3 scripts/ci/check_release_registry.py npm npm/remem/package.json --wait
+
+  publish-dsh:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-node@v6.0.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Check exact DSH adapter version on npm
+        id: registry
+        run: |
+          set -euo pipefail
+          published="$(python3 scripts/ci/check_release_registry.py npm plugins/dsh-remem/package.json)"
+          echo "published=$published" >> "$GITHUB_OUTPUT"
+      - name: Publish DSH adapter
+        if: steps.registry.outputs.published == 'false'
         working-directory: plugins/dsh-remem
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          name="$(node -p 'require("./package.json").name')"
-          version="$(node -p 'require("./package.json").version')"
-          if npm view "${name}@${version}" version >/dev/null 2>&1; then
-            echo "${name}@${version} already on npm; skipping"
-            exit 0
-          fi
           npm ci
           npm publish --access public
+      - name: Confirm adapter version on npm
+        run: python3 scripts/ci/check_release_registry.py npm plugins/dsh-remem/package.json --wait
 
   publish-mcp-registry:
     needs: publish-npm
@@ -350,7 +381,14 @@ jobs:
       - uses: actions/checkout@v6.0.2
       - name: Check version sync
         run: python3 scripts/ci/check_plugin_version_sync.py --expected-version "${GITHUB_REF_NAME#v}"
+      - name: Check exact MCP Registry version
+        id: registry
+        run: |
+          set -euo pipefail
+          published="$(python3 scripts/ci/check_release_registry.py mcp server.json)"
+          echo "published=$published" >> "$GITHUB_OUTPUT"
       - name: Install mcp-publisher
+        if: steps.registry.outputs.published == 'false'
         run: |
           set -euo pipefail
           arch="$(uname -m)"
@@ -360,7 +398,10 @@ jobs:
           esac
           curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_${arch}.tar.gz" | tar xz mcp-publisher
       - name: Publish to MCP registry
+        if: steps.registry.outputs.published == 'false'
         run: |
           set -euo pipefail
           ./mcp-publisher login github-oidc
           ./mcp-publisher publish
+      - name: Confirm server version on MCP Registry
+        run: python3 scripts/ci/check_release_registry.py mcp server.json --wait
