@@ -194,9 +194,3 @@ Each npm and MCP job checks the exact version before writing. An existing
 version skips the publish step and is read back. Read errors other than HTTP
 404 fail the job. A DSH failure can be retried independently of the primary
 npm wrapper and MCP Registry entry.
-
-As of 2026-11-17, [the npm wrapper at 0.7.0](https://www.npmjs.com/package/@remem-ai/remem/v/0.7.0)
-and [the DSH adapter at 0.1.0](https://www.npmjs.com/package/@remem-ai/dsh-remem/v/0.1.0)
-are public. The [MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.majiayu000%2Fremem/versions/latest)
-still lists the main wrapper at 0.6.104. In the [v0.7.0 release run](https://github.com/majiayu000/remem/actions/runs/41643466210),
-the DSH failure skipped publication to the MCP Registry.
