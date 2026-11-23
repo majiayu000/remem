@@ -1,5 +1,5 @@
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, Content};
+use rmcp::model::{CallToolResult, ContentBlock};
 use rmcp::ServiceExt;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, Lines};
@@ -24,7 +24,7 @@ fn contract_names_are_unique() {
 #[test]
 fn object_adapter_preserves_legacy_text_exactly() {
     let legacy = "{\n  \"id\": 7,\n  \"updated\": true\n}";
-    let result = CallToolResult::success(vec![Content::text(legacy)]);
+    let result = CallToolResult::success(vec![ContentBlock::text(legacy)]);
 
     let adapted = add_structured_content(
         "update_workstream",
@@ -50,7 +50,7 @@ fn object_adapter_preserves_legacy_text_exactly() {
 #[test]
 fn array_adapter_preserves_text_and_adds_named_envelope() {
     let legacy = "[]";
-    let result = CallToolResult::success(vec![Content::text(legacy)]);
+    let result = CallToolResult::success(vec![ContentBlock::text(legacy)]);
 
     let adapted = add_structured_content(
         "workstreams",
@@ -73,7 +73,7 @@ fn array_adapter_preserves_text_and_adds_named_envelope() {
 
 #[test]
 fn error_result_is_not_adapted() {
-    let original = CallToolResult::error(vec![Content::text("{\"error\":{}}")]);
+    let original = CallToolResult::error(vec![ContentBlock::text("{\"error\":{}}")]);
 
     let adapted = add_structured_content(
         "update_workstream",
@@ -89,8 +89,8 @@ fn error_result_is_not_adapted() {
 
 #[test]
 fn malformed_or_wrong_shape_success_fails_loudly() {
-    let malformed = CallToolResult::success(vec![Content::text("not json")]);
-    let wrong_shape = CallToolResult::success(vec![Content::text("[]")]);
+    let malformed = CallToolResult::success(vec![ContentBlock::text("not json")]);
+    let wrong_shape = CallToolResult::success(vec![ContentBlock::text("[]")]);
 
     let malformed_error = add_structured_content(
         "update_workstream",
@@ -183,7 +183,7 @@ fn adapter_rejects_values_that_drift_from_the_advertised_schema() {
     ];
 
     for (label, tool, shape, schema, value) in cases {
-        let result = CallToolResult::success(vec![Content::text(value.to_string())]);
+        let result = CallToolResult::success(vec![ContentBlock::text(value.to_string())]);
         let error = add_structured_content(tool, shape, schema, result)
             .expect_err(&format!("{label} should violate {tool}'s outputSchema"));
         assert!(error.message.contains("output contract"));
@@ -340,7 +340,7 @@ fn result_text(result: &CallToolResult) -> &str {
     result
         .content
         .first()
-        .and_then(|content| content.raw.as_text())
+        .and_then(|content| content.as_text())
         .map(|text| text.text.as_str())
         .expect("tool result should contain one text item")
 }

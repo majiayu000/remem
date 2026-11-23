@@ -150,7 +150,11 @@ async function run(executable: string, args: string[], input?: unknown, signal?:
       } else chunks.push(chunk)
     })
     child.stderr!.resume()
-    child.stdin?.on('error', error => { failure ??= error })
+    // A child may exit without reading its input (hooks disabled, early failure);
+    // its exit status then decides the result, not the broken pipe.
+    child.stdin?.on('error', error => {
+      if (!['EPIPE', 'EOF'].includes((error as NodeJS.ErrnoException).code ?? '')) failure ??= error
+    })
     child.on('error', () => {
       cleanup()
       reject(new Error('Cannot start remem; install @remem-ai/remem or set executable to its absolute path'))

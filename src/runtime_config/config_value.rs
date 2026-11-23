@@ -15,6 +15,11 @@ pub(crate) fn cli_value(raw: &str) -> Item {
     }
 }
 
+/// A CLI value for a key that only accepts strings, kept verbatim.
+pub(crate) fn cli_string_value(raw: &str) -> Item {
+    value(trim_outer_quotes(raw.trim()))
+}
+
 fn trim_outer_quotes(value: &str) -> &str {
     value
         .strip_prefix('"')
