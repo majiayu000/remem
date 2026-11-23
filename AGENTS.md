@@ -94,7 +94,10 @@ cargo check --no-default-features --bin remem-hook
 cargo clippy --all-targets -- -D warnings
 ```
 
-Use focused tests first for narrow fixes, then the broader suite when practical. Do not claim completion from earlier or unrelated output.
+Use focused tests first for narrow fixes, then the broader suite when practical.
+For MCP transport and contract changes, use the focused MCP check in
+[the contribution guide](CONTRIBUTING.md#local-checks).
+Do not claim completion from earlier or unrelated output.
 
 ## Documentation Rules
 
