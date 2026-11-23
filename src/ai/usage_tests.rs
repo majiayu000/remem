@@ -311,7 +311,8 @@ fn usage_attempt_stdin_failure_and_backpressure_keep_output_evidence() -> Result
 #[test]
 fn usage_attempt_outer_cancellation_records_observed_or_missing_once() -> Result<()> {
     let scope = crate::db::test_support::ScopedTestDataDir::new("usage-outer-cancel");
-    std::fs::create_dir_all(&scope.path)?;
+    // Complete lazy migrations before measuring cancellation of the fake CLI.
+    drop(crate::db::open_db()?);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;

@@ -19,6 +19,7 @@ pub(super) fn claude_hook_integrity_warning(invocation: &ContextInvocation) -> O
         &settings_path,
         &claude_mcp_paths,
         fallback_executable,
+        crate::runtime_config::rule_compilation_enabled(),
     )
 }
 
@@ -27,6 +28,7 @@ fn claude_hook_integrity_warning_from_paths(
     settings_path: &Path,
     claude_mcp_paths: &[PathBuf],
     fallback_executable: PathBuf,
+    rules_eval: bool,
 ) -> Option<String> {
     if invocation.host != HostKind::ClaudeCode || !is_claude_session_start_source(invocation) {
         return None;
@@ -41,6 +43,7 @@ fn claude_hook_integrity_warning_from_paths(
                         "claude",
                         settings_path.to_path_buf(),
                         format!("cannot parse Claude hooks: {error}"),
+                        rules_eval,
                     )
                     .warning_block(),
                 )
@@ -52,6 +55,7 @@ fn claude_hook_integrity_warning_from_paths(
                     "claude",
                     settings_path.to_path_buf(),
                     format!("cannot read Claude hooks: {error}"),
+                    rules_eval,
                 )
                 .warning_block(),
             )
@@ -73,6 +77,7 @@ fn claude_hook_integrity_warning_from_paths(
         "claude",
         settings_path.to_path_buf(),
         &expected_executable,
+        rules_eval,
     );
     (!report.is_healthy()).then(|| report.warning_block())
 }
@@ -162,6 +167,7 @@ mod tests {
             &settings_path,
             &mcp_paths,
             PathBuf::from("/tmp/remem"),
+            true,
         )
         .expect("incomplete Claude hooks should warn");
 
@@ -210,6 +216,7 @@ mod tests {
             &settings_path,
             &[dir.join("missing.json"), desktop_mcp],
             PathBuf::from("/hook/remem"),
+            true,
         ) else {
             panic!("desktop MCP path drift should warn");
         };

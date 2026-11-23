@@ -101,9 +101,18 @@ pub(crate) fn rotate_if_needed(
 }
 
 fn write_log(level: &str, component: &str, msg: &str) {
+    write_log_line(
+        level,
+        component,
+        msg,
+        should_mirror_to_stderr(level, component),
+    );
+}
+
+fn write_log_line(level: &str, component: &str, msg: &str, mirror_to_stderr: bool) {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
     let line = format!("[{}] [{}] [{}] {}", now, level, component, msg);
-    if should_mirror_to_stderr(level, component) {
+    if mirror_to_stderr {
         eprintln!("{}", line);
     }
     let Some(policy) = log_policy() else {
@@ -256,6 +265,12 @@ pub fn warn(component: &str, msg: &str) {
 
 pub fn error(component: &str, msg: &str) {
     write_log("ERROR", component, msg);
+}
+
+/// Records an error in the log file without mirroring it to stderr, for
+/// errors that already reach stderr through the process exit path.
+pub(crate) fn error_to_file(component: &str, msg: &str) {
+    write_log_line("ERROR", component, msg, false);
 }
 
 fn try_lock_until(file: &File, timeout: Duration) -> std::io::Result<bool> {

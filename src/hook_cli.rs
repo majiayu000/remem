@@ -192,46 +192,66 @@ pub(crate) async fn run_context(
     if remem_hooks_disabled() {
         return Ok(());
     }
-    match parse_explicit_hook_host(host.as_deref())? {
-        Some(crate::identity::InstallHost::Cursor) => context::generate_cursor_context_from_stdin(),
-        _ => context::generate_context_from_cli(cwd, session_id, color, host, debug, force, gate),
-    }
+    let result = match parse_explicit_hook_host(host.as_deref()) {
+        Ok(Some(crate::identity::InstallHost::Cursor)) => {
+            context::generate_cursor_context_from_stdin()
+        }
+        Ok(_) => {
+            context::generate_context_from_cli(cwd, session_id, color, host, debug, force, gate)
+        }
+        Err(error) => Err(error),
+    };
+    log_hook_failure("context", result)
 }
 
 pub(crate) async fn run_session_init(host: Option<String>) -> Result<()> {
     if remem_hooks_disabled() {
         return Ok(());
     }
-    if matches!(
-        parse_explicit_hook_host(host.as_deref())?,
-        Some(crate::identity::InstallHost::Cursor)
-    ) {
-        anyhow::bail!(
+    let result = match parse_explicit_hook_host(host.as_deref()) {
+        Ok(Some(crate::identity::InstallHost::Cursor)) => Err(anyhow::anyhow!(
             "session-init is not supported on --host cursor; \
              Cursor beforeSubmitPrompt is permit/block-only (GH-823 B-006)"
-        );
-    }
-    observe::session_init(host.as_deref()).await
+        )),
+        Ok(_) => observe::session_init(host.as_deref()).await,
+        Err(error) => Err(error),
+    };
+    log_hook_failure("session-init", result)
 }
 
 pub(crate) async fn run_observe(host: Option<String>) -> Result<()> {
     if remem_hooks_disabled() {
         return Ok(());
     }
-    match parse_explicit_hook_host(host.as_deref())? {
-        Some(crate::identity::InstallHost::Cursor) => observe::observe_cursor().await,
-        _ => observe::observe(host.as_deref()).await,
-    }
+    let result = match parse_explicit_hook_host(host.as_deref()) {
+        Ok(Some(crate::identity::InstallHost::Cursor)) => observe::observe_cursor().await,
+        Ok(_) => observe::observe(host.as_deref()).await,
+        Err(error) => Err(error),
+    };
+    log_hook_failure("observe", result)
 }
 
 pub(crate) async fn run_summarize(host: Option<String>, profile: Option<String>) -> Result<()> {
     if remem_hooks_disabled() {
         return Ok(());
     }
-    match parse_explicit_hook_host(host.as_deref())? {
-        Some(crate::identity::InstallHost::Cursor) => summarize::summarize_cursor().await,
-        _ => summarize::summarize(host.as_deref(), profile.as_deref()).await,
+    let result = match parse_explicit_hook_host(host.as_deref()) {
+        Ok(Some(crate::identity::InstallHost::Cursor)) => summarize::summarize_cursor().await,
+        Ok(_) => summarize::summarize(host.as_deref(), profile.as_deref()).await,
+        Err(error) => Err(error),
+    };
+    log_hook_failure("summarize", result)
+}
+
+/// Write a hook command's terminal error to `remem.log`; the process exit
+/// path still prints it to stderr. Hosts such as the DSH adapter discard hook
+/// stderr and send users to the log, where a bare non-zero exit left nothing
+/// to read.
+fn log_hook_failure(command: &str, result: Result<()>) -> Result<()> {
+    if let Err(error) = &result {
+        crate::log::error_to_file(command, &format!("hook command failed: {error:#}"));
     }
+    result
 }
 
 pub(crate) fn parse_explicit_hook_host(

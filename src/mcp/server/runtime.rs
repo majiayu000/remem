@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rmcp::model::{ServerCapabilities, ServerInfo};
+use rmcp::model::{ServerCapabilities, ServerConfig};
 use rmcp::{tool_handler, ServerHandler, ServiceExt};
 
 use super::MemoryServer;
@@ -22,14 +22,11 @@ Workstreams:
 - `workstreams(project, status?)` lists all statuses by default; pass a status to filter tasks.
 - `update_workstream(id, status?, next_action?, blockers?)` updates status, next action, or blockers."#;
 
-#[tool_handler]
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for MemoryServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            instructions: Some(SERVER_INSTRUCTIONS.into()),
-            capabilities: ServerCapabilities::builder().enable_tools().build(),
-            ..Default::default()
-        }
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+            .with_instructions(SERVER_INSTRUCTIONS)
     }
 }
 

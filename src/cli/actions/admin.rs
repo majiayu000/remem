@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Local};
-use rusqlite::{Connection, DatabaseName};
+use rusqlite::{Connection, MAIN_DB};
 use std::path::{Path, PathBuf};
 
 use crate::cli::types::AdminAction;
@@ -65,7 +65,7 @@ pub fn backup_db(src_path: &Path, dst_path: &Path) -> Result<()> {
         src = Connection::open(src_path)
             .with_context(|| format!("reopen unencrypted source db {}", src_path.display()))?;
     }
-    src.backup(DatabaseName::Main, dst_path, None)
+    src.backup(MAIN_DB, dst_path, None::<fn(rusqlite::backup::Progress)>)
         .with_context(|| format!("write backup to {}", dst_path.display()))?;
     Ok(())
 }

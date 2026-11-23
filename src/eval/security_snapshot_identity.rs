@@ -57,7 +57,6 @@ fn table_identity(connection: &Connection, table: &str) -> Result<String> {
         .with_context(|| format!("read complete snapshot table {table}"))?;
     let columns = statement
         .column_names()
-        .into_iter()
         .map(str::to_string)
         .collect::<Vec<_>>();
     let mut rows = statement.query([])?;

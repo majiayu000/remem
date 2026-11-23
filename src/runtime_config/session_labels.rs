@@ -3,6 +3,9 @@ use toml_edit::{DocumentMut, Item};
 
 pub(crate) const SESSION_LABEL_TIMEZONE_ENV: &str = "REMEM_SESSION_LABEL_TIMEZONE";
 pub(crate) const DEFAULT_SESSION_LABEL_TIMEZONE: &str = "local";
+/// Always stored as a string by `remem config set`: compact offsets such as
+/// `+0800` or `+08` would otherwise become integers the reader ignores.
+pub(super) const SESSION_LABEL_TIMEZONE_KEY: &str = "session_labels.timezone";
 
 /// Raw `session_labels.timezone` setting: env override first, then config,
 /// then `local`. Parsing happens in `memory::session_label`.
@@ -99,6 +102,44 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         assert_eq!(from_config?, "-05:00");
         assert_eq!(from_env?, "+09:00");
+        Ok(())
+    }
+
+    #[test]
+    fn config_set_keeps_compact_offsets_readable() -> Result<()> {
+        let _guard = super::super::TEST_ENV_LOCK
+            .lock()
+            .expect("env lock should acquire");
+        let path = std::env::temp_dir().join(format!(
+            "remem-session-label-tz-set-{}-{}.toml",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let old_config = std::env::var_os("REMEM_CONFIG");
+        let old_tz = std::env::var_os(SESSION_LABEL_TIMEZONE_ENV);
+        unsafe {
+            std::env::set_var("REMEM_CONFIG", &path);
+            std::env::remove_var(SESSION_LABEL_TIMEZONE_ENV);
+        }
+        let read_back = ["+0800", "+08", "-0530", "\"+09\""]
+            .into_iter()
+            .map(|raw| {
+                super::super::set_config_value(" session_labels . timezone ", raw)?;
+                session_label_timezone_setting()
+            })
+            .collect::<Result<Vec<_>>>();
+        unsafe {
+            match old_config {
+                Some(value) => std::env::set_var("REMEM_CONFIG", value),
+                None => std::env::remove_var("REMEM_CONFIG"),
+            }
+            match old_tz {
+                Some(value) => std::env::set_var(SESSION_LABEL_TIMEZONE_ENV, value),
+                None => std::env::remove_var(SESSION_LABEL_TIMEZONE_ENV),
+            }
+        }
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(read_back?, ["+0800", "+08", "-0530", "+09"]);
         Ok(())
     }
 }

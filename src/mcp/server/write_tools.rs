@@ -91,6 +91,7 @@ struct GovernMemoryMcpResponse {
 #[tool_router(router = tool_router_write, vis = "pub(super)")]
 impl MemoryServer {
     #[tool(
+        input_schema = super::tool_contracts::published_schema::<SaveMemoryParams>(),
         description = "Save a memory for future sessions. MUST be called after: \
         (1) architecture decisions — record what was chosen, why, and what was rejected, \
         (2) bug fixes with root cause — record symptom, root cause, fix, and prevention, \
@@ -208,6 +209,7 @@ impl MemoryServer {
     }
 
     #[tool(
+        input_schema = super::tool_contracts::published_schema::<GovernMemoryParams>(),
         description = "Auditably delete, reject, or mark curated memories stale. \
         Use dry_run=true first to preview affected IDs and their current versions. Non-dry-run \
         mutations require confirm_destructive=true, an explicit reason, and expected_versions \
@@ -291,6 +293,7 @@ impl MemoryServer {
     }
 
     #[tool(
+        input_schema = super::tool_contracts::published_schema::<TimelineReportParams>(),
         description = "Read-only. Generate an aggregated Markdown report for the required project with activity history, type distribution, and Token ROI analysis. full defaults to false for the compact report; full=true adds the detailed timeline and monthly breakdown. Use this for project-level reporting, not observation lookup; use timeline for chronological context around one observation. Database failures return a tool error."
     )]
     pub(super) fn timeline_report(

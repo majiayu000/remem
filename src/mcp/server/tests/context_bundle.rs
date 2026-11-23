@@ -185,3 +185,91 @@ fn context_bundle_rejects_incompatible_or_invalid_v1_requests() -> anyhow::Resul
     }
     Ok(())
 }
+
+#[test]
+fn policy_suppressed_slot_winner_yields_the_bundle_to_its_visible_rival() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("mcp-context-bundle-suppressed-winner");
+    let conn = crate::db::open_db()?;
+    let mut ids = Vec::new();
+    for (topic, title, body) in [
+        (
+            "release-winner",
+            "Suppressed verified release decision",
+            "Publish only from the signed release tag.",
+        ),
+        (
+            "release-rival",
+            "Visible release decision",
+            "Publish from the staged release branch.",
+        ),
+    ] {
+        let id = crate::memory::insert_memory(
+            &conn,
+            None,
+            "/repo",
+            Some(topic),
+            title,
+            body,
+            "decision",
+            None,
+        )?;
+        crate::truth::test_support::seed_current_memory_proof(&conn, id)?;
+        ids.push(id);
+    }
+    let (winner, rival) = (ids[0], ids[1]);
+    // One semantic-state slot whose rows keep different topic keys; the
+    // user-authored row outranks the rival until a policy suppression hides it.
+    conn.execute(
+        "INSERT INTO memory_state_keys
+         (owner_scope, owner_key, memory_type, state_key, current_memory_id,
+          created_at_epoch, updated_at_epoch)
+         SELECT owner_scope, owner_key, memory_type, 'semantic-release-slot', id,
+                updated_at_epoch, updated_at_epoch
+         FROM memories WHERE id = ?1",
+        [rival],
+    )?;
+    let slot = conn.last_insert_rowid();
+    conn.execute(
+        "UPDATE memories SET state_key_id = ?1 WHERE id IN (?2, ?3)",
+        rusqlite::params![slot, winner, rival],
+    )?;
+    conn.execute(
+        "UPDATE memories SET source_trust_class = 'user_prompt' WHERE id = ?1",
+        [winner],
+    )?;
+    crate::memory::suppression::create_suppression(
+        &conn,
+        &crate::memory::suppression::SuppressRequest {
+            target: crate::memory::suppression::parse_target(&format!("memory:{winner}"))?,
+            reason: Some("hide one wrong decision"),
+            actor: Some("test"),
+        },
+    )?;
+    drop(conn);
+
+    let server = MemoryServer::new()?;
+    let response = server
+        .context_bundle(Parameters(v1_params()))
+        .map_err(anyhow::Error::msg)?;
+    let bundle: Value = serde_json::from_str(&response)?;
+
+    assert_eq!(bundle["degraded_mode"], "full", "{bundle:#}");
+    let rival_key = format!("memory:{rival}");
+    assert!(
+        bundle["current_truth"]
+            .as_array()
+            .expect("current_truth items")
+            .iter()
+            .any(|item| item["stable_key"] == rival_key.as_str()),
+        "visible rival must own the slot: {bundle:#}"
+    );
+    assert!(
+        !response.contains(&format!("\"memory:{winner}\"")),
+        "suppressed ref leaked: {response}"
+    );
+    assert!(
+        !response.contains("Suppressed verified release decision"),
+        "suppressed text leaked: {response}"
+    );
+    Ok(())
+}

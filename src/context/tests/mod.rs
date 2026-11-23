@@ -6,6 +6,7 @@ mod bundle_candidates;
 mod codex_hook_stdout;
 mod context_audit_persistence;
 mod current_truth_activation;
+mod current_truth_suppression;
 mod cursor_hook;
 mod diagnostics;
 mod engine_convergence;

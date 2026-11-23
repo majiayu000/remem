@@ -12,6 +12,7 @@ use crate::memory::raw_query::{
 #[tool_router(router = tool_router_raw, vis = "pub(super)")]
 impl MemoryServer {
     #[tool(
+        input_schema = super::tool_contracts::published_schema::<SearchRawParams>(),
         description = "Search the raw archive (every user/assistant turn captured by the Stop hook). \
         Use this when `search` returns no curated match or you need to recall a literal phrase from past chats. \
         Returns the untreated conversation content — expect noise. \
@@ -92,6 +93,7 @@ impl MemoryServer {
     }
 
     #[tool(
+        input_schema = super::tool_contracts::published_schema::<ListRawSessionsParams>(),
         description = "List sessions with raw archive messages inside a time window, grouped by \
         (source_root, host, project, session_id) with a stable session_ref, content_hash, first/last \
         message epoch, message count, and optional role=user message samples. Unresolved or \

@@ -21,6 +21,7 @@ fn validate_workstream_status(tool: &'static str, status: &str) -> McpToolResult
 #[tool_router(router = tool_router_workstream, vis = "pub(super)")]
 impl MemoryServer {
     #[tool(
+        input_schema = super::tool_contracts::published_schema::<WorkStreamsParams>(),
         description = "Read-only. List existing high-level workstreams for a required project, optionally filtered by status=active, paused, completed, or abandoned. Returns a JSON array with each workstream's status, progress, next action, blockers, and timestamps. Use update_workstream to mutate an existing row; this tool does not create, update, or delete workstreams. A missing project or database failure returns a tool error."
     )]
     pub(super) fn workstreams(
@@ -68,6 +69,7 @@ impl MemoryServer {
     }
 
     #[tool(
+        input_schema = super::tool_contracts::published_schema::<UpdateWorkStreamParams>(),
         description = "Mutates one existing workstream by id. At least one of status, next_action, or blockers is required; omitted fields remain unchanged. status accepts only active, paused, completed, or abandoned. Returns a JSON object with id and updated, where updated=false means no row matched. Use workstreams to list/read rows first. This tool does not create or delete workstreams; an empty update, an unknown status, or a database failure returns a tool error."
     )]
     pub(super) fn update_workstream(

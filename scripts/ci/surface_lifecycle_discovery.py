@@ -687,7 +687,7 @@ def lifecycle_record(record_id: str, kind: str, entry: str, row_name: str, *, ca
         "compatibility": canonical["compatibility"] if canonical else f"Governed by canonical GH969 inventory row {row_name}.",
         "next_decision": canonical["next_decision"] if canonical else "fixture decision",
         "rollback": rollback,
-        "decision_due": "2026-11-30" if status in {"experimental", "deprecated", "spec-only", "staged"} else None,
+        "decision_due": "2027-03-31" if status in {"experimental", "deprecated", "spec-only", "staged"} else None,
         **recovery,
         **extra,
     }

@@ -12,7 +12,7 @@
 │                                                            │
 │  SessionStart ──────→ context       (inject memories)      │
 │  UserPromptSubmit ──→ session-init  (Claude Code / Codex)   │
-│  PreToolUse(Bash) ──→ rules eval    (Claude Code only)     │
+│  PreToolUse(Bash) ──→ rules eval    (Claude, if enabled)   │
 │  PostToolUse ───────→ observe       (Claude Code)           │
 │  Stop ──────────────→ summarize     (3-gate + worker)      │
 └──────────────┬──────────────────────┬──────────────────────┘
@@ -473,7 +473,10 @@ list|disable|enable|set-action` reads provenance or persists an override, then
 the worker rebuild makes the effective action/disabled state visible without a
 host restart.
 
-Claude Code installs a pre-execution Bash evaluator, so `warn` can be visible
+Claude Code installs a pre-execution Bash evaluator only while
+`rule_compilation.enabled` is true; hook integrity (SessionStart warning,
+doctor, `--repair`) expects it exactly in that state, so a disabled feature adds
+no per-Bash process spawn. With it installed, `warn` can be visible
 before execution and `block` can be honored only after explicit per-rule user
 opt-in. Claude `PostToolUse` remains capture-only. Codex has no supported
 pre-execution command hook, so command enforcement is reported as unsupported

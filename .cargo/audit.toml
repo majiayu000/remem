@@ -1,0 +1,5 @@
+# cargo-audit configuration, read automatically by `cargo audit` run from the repository root.
+# Every ignore must say why remem's build does not compile the affected code and what forces a
+# re-check. Remove an entry as soon as the dependency is upgraded past the patched version.
+[advisories]
+ignore = []

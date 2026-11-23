@@ -7,52 +7,13 @@ import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { Context } from '@deepseek-ai/cordis'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
-import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import LlmRuntime, { LlmAdapter, createUserMessage, createToolResultMessage, ToolCallId } from '@deepseek-ai/dsh-llm'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime, { defineContentToolFixture, defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool } from '@deepseek-ai/dsh-tools'
+import { harness } from './lifecycle-harness.mjs'
 const plugin = await import(process.env.REMEM_DSH_PLUGIN_MODULE ?? '../dist/index.js')
-
-class ScriptedModel extends LlmAdapter {
-  requests = []
-  toolName = 'fixture_probe'
-  arguments = '{}'
-  answer = 'Verified the DSH fixture result.'
-  async *stream(options) {
-    this.requests.push(options)
-    const id = ToolCallId('fixture-call')
-    const block = this.requests.length === 1
-      ? { type: 'tool-call', id, name: this.toolName, arguments: this.arguments }
-      : { type: 'text', text: this.answer }
-    yield { type: 'block-start', index: 0, blockType: block.type }
-    yield { type: 'block-end', index: 0, block }
-    yield { type: 'finish', reason: { kind: block.type === 'tool-call' ? 'tool-calls' : 'stop' } }
-  }
-}
-
-export async function harness(executable, toolName = 'fixture_probe') {
-  const ctx = new Context()
-  await ctx.plugin(LlmRuntime)
-  await ctx.plugin(SessionStore)
-  await ctx.plugin(SessionProjectionRegistry)
-  await ctx.plugin(SystemPrompt)
-  await ctx.plugin(ToolRuntime)
-  await ctx.plugin(AgentRegistry)
-  await ctx.plugin(AgentLoop, { agents: [] })
-  const model = new ScriptedModel()
-  model.toolName = toolName
-  ctx.llm.registerAdapter(['fixture'], model)
-  const toolArguments = []
-  ctx.tools.register(defineContentToolFixture({ name: toolName, description: 'Fixture probe',
-    parameters: {}, async execute(args) {
-      toolArguments.push(args)
-      return [{ type: 'text', text: 'fixture probe succeeded' }]
-    } }))
-  const fiber = await ctx.plugin(plugin, { executable })
-  return { ctx, model, fiber, toolArguments }
-}
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'dsh-remem-test-'))
@@ -85,7 +46,7 @@ test('real AgentLoop captures human/tool/assistant, injects once and flushes in 
   const { ctx, model, fiber } = await harness(f.executable)
   try {
     const handle = await runTurn(ctx)
-    await ctx.parallel('session/flush', handle.agent.session)
+    await ctx.sessions.flush(handle.agent.session)
     const calls = await f.calls()
     assert.equal(calls.filter(c => c.args[0] === 'context').length, 1)
     const capture = calls.filter(c => c.payload)
@@ -111,7 +72,7 @@ for (const oversized of [false, true]) test(`native source survives colliding to
   let handle
   try {
     handle = await runTurn(ctx, `source-collision-${oversized}`)
-    await ctx.parallel('session/flush', handle.agent.session)
+    await ctx.sessions.flush(handle.agent.session)
     const observed = (await f.calls()).filter(c => c.args[0] === 'observe').map(c => c.payload)
     assert.equal(observed.length, 2)
     assert(observed.every(p => p.tool_name === 'assistant/message'))
@@ -149,16 +110,16 @@ test('capture failure is reported once and later captures recover', async () => 
     const session = handle.agent.session
     const append = prompt => session.append('user/message', createUserMessage({ content: [{ type: 'text', text: prompt }], source: { kind: 'user' } }), { surfaceOp: 'append' })
     append('first capture')
-    await assert.rejects(ctx.parallel('session/flush', session), error =>
-      error instanceof AggregateError && error.errors.some(e => /failed \(exit 9/.test(e.message)))
+    await assert.rejects(ctx.sessions.flush(session), error =>
+      /failed \(exit 9/.test(error.message))
     assert(errors.some(message => /failed \(exit 9/.test(message)))
     await writeFile(f.executable, normal, { mode: 0o700 })
     append('recovered capture')
-    await ctx.parallel('session/flush', session)
+    await ctx.sessions.flush(session)
     assert((await f.calls()).some(call => call.payload?.prompt === 'recovered capture'))
     handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'healthy followup' }], source: { kind: 'user' } }))
     await handle.agent.whenIdle()
-    await ctx.parallel('session/flush', handle.agent.session)
+    await ctx.sessions.flush(handle.agent.session)
     await handle.dispose()
   } finally { await fiber.dispose().catch(() => {}); await ctx.fiber.dispose().catch(() => {}); await rm(f.root, { recursive: true, force: true }) }
 })
@@ -193,17 +154,16 @@ test('one checkpoint reports every queued async and synchronous capture failure'
       'remem session-init failed (exit 7, signal none); inspect the remem log',
       'remem summarize failed (exit 9, signal none); inspect the remem log',
     ].sort()
-    const failure = await ctx.parallel('session/flush', session).then(() => null, error => error)
+    const failure = await ctx.sessions.flush(session).then(() => null, error => error)
     assert.deepEqual(logged.toSorted(), expected, 'log each current cause, never repeat the first error')
     assert(failure instanceof AggregateError)
-    const batch = failure.errors[0]
-    assert(batch instanceof AggregateError)
+    const batch = failure
     assert.deepEqual(batch.errors.map(error => error.message).sort(), expected)
     assert(expected.every(message => batch.message.includes(message)), 'host-visible message must retain every cause')
-    await ctx.parallel('session/flush', session)
+    await ctx.sessions.flush(session)
     await writeFile(f.executable, normal, { mode: 0o700 })
     appendPrompt('healthy capture after reported batch')
-    await ctx.parallel('session/flush', session)
+    await ctx.sessions.flush(session)
     assert((await f.calls()).some(call => call.payload?.prompt === 'healthy capture after reported batch'))
     assert.equal(logged.length, 4)
   } finally {
@@ -270,12 +230,12 @@ test('real remem binary preserves DSH assistant and colliding tool provenance th
     assert.equal(handle.agent.session.deriveMessages().filter(m => m.source.kind === 'remem').length, 0)
     handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Retry the fixture probe.' }], source: { kind: 'user' } }))
     await handle.agent.whenIdle()
-    await ctx.parallel('session/flush', handle.agent.session)
+    await ctx.sessions.flush(handle.agent.session)
     assert.equal(model.requests.length, 2)
     assert.equal(handle.agent.session.deriveMessages().filter(m => m.source.kind === 'remem').length, 1)
     handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Continue with unchanged memory.' }], source: { kind: 'user' } }))
     await handle.agent.whenIdle()
-    await ctx.parallel('session/flush', handle.agent.session)
+    await ctx.sessions.flush(handle.agent.session)
     assert.equal(handle.agent.session.deriveMessages().filter(m => m.source.kind === 'remem').length, 1)
     const attachmentSession = ctx.sessions.create(SessionId('live-attachments'), { meta: { cwd: tmpdir() } })
     const image = { type: 'image', attachment: { attachmentId: 'live-image', name: 'probe.png', mediaType: 'image/png', bytes: 10, width: 1, height: 1 } }
@@ -283,7 +243,7 @@ test('real remem binary preserves DSH assistant and colliding tool provenance th
     for (const content of [[image, file], [{ type: 'text', text: 'mixed attachment prompt' }, image]]) {
       attachmentSession.append('user/message', createUserMessage({ content, source: { kind: 'user' } }), { surfaceOp: 'append' })
     }
-    await ctx.parallel('session/flush', attachmentSession)
+    await ctx.sessions.flush(attachmentSession)
     assert(model.requests[0].messages.some(message => message.source.kind === 'remem'))
     let executorEvidence = []
     for (let attempt = 0; attempt < 200; attempt++) {
@@ -366,8 +326,8 @@ test('a post-commit orphan tool result remains a visible flush error', async () 
     session.append('tool/result', { turn: 1, step: 1, message: createToolResultMessage({
       callId: ToolCallId('orphan-call'), content: [{ type: 'text', text: 'orphan evidence' }], isError: false,
     }) }, { surfaceOp: 'append' })
-    await assert.rejects(ctx.parallel('session/flush', session), error =>
-      error instanceof AggregateError && error.errors.some(e => /has no live call/.test(e.message)))
+    await assert.rejects(ctx.sessions.flush(session), error =>
+      /has no live call/.test(error.message))
   } finally { await Promise.resolve(fiber.dispose()).catch(() => {}); await ctx.fiber.dispose().catch(() => {}); await rm(f.root, { recursive: true, force: true }) }
 })
 
@@ -386,7 +346,7 @@ test('context injection preserves a downstream request-series declaration', asyn
   }, { prepend: true })
   try {
     const handle = await runTurn(ctx, 'request-series-fixture')
-    await ctx.parallel('session/flush', handle.agent.session)
+    await ctx.sessions.flush(handle.agent.session)
     assert.equal(observed?.startsRequestSeries, true)
     await handle.dispose()
   } finally { await fiber.dispose(); await ctx.fiber.dispose(); await rm(f.root, { recursive: true, force: true }) }
@@ -405,7 +365,7 @@ test('an empty downstream first-step decision completes without memory-only disp
   try {
     const handle = await runTurn(ctx, 'empty-admission-fixture')
     const session = handle.agent.session
-    await ctx.parallel('session/flush', session)
+    await ctx.sessions.flush(session)
     assert.equal(model.requests.length, 0)
     assert.equal((await f.calls()).filter(call => call.args[0] === 'context').length, 0)
     assert.equal(session.snapshotEvents().filter(event => event.type === 'user/message'
@@ -417,7 +377,7 @@ test('an empty downstream first-step decision completes without memory-only disp
     emptyFirstStep = false
     handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'admit this followup' }], source: { kind: 'user' } }))
     await handle.agent.whenIdle()
-    await ctx.parallel('session/flush', session)
+    await ctx.sessions.flush(session)
     assert.equal(model.requests.length, 2)
     assert.equal((await f.calls()).filter(call => call.args[0] === 'context').length, 1)
     assert.equal(session.deriveMessages().filter(message => message.source.kind === 'remem').length, 1)
@@ -436,7 +396,7 @@ test('turn-end reasons survive capture when no assistant answer was produced', a
       session.append('turn/start', { turn: index + 1 })
       session.append('turn/end', { turn: index + 1, reason })
     }
-    await ctx.parallel('session/flush', session)
+    await ctx.sessions.flush(session)
     const summaries = (await f.calls()).filter(c => c.args[0] === 'summarize')
     assert.deepEqual(summaries.map(c => c.payload.reason), reasons)
     assert(summaries.every(c => c.payload.last_assistant_message === undefined))
@@ -455,7 +415,7 @@ test('attachment-only and mixed human prompts retain bounded references without 
     for (const content of [[image, file], [{ type: 'text', text: 'mixed prompt' }, image]]) {
       session.append('user/message', createUserMessage({ content, source: { kind: 'user' } }), { surfaceOp: 'append' })
     }
-    await ctx.parallel('session/flush', session)
+    await ctx.sessions.flush(session)
     const prompts = (await f.calls()).filter(c => c.args[0] === 'session-init').map(c => c.payload.prompt)
     assert(prompts[0].includes('[image attachment'))
     assert(prompts[0].includes('[file attachment'))
@@ -498,7 +458,7 @@ test('cancelled preparation retries; only committed unchanged snapshots suppress
       handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'after reload' }], source: { kind: 'user' } }))
       await handle.agent.whenIdle()
       assert.equal(handle.agent.session.deriveMessages().filter(m => m.source.kind === 'remem').length, 1)
-      await ctx.parallel('session/flush', handle.agent.session)
+      await ctx.sessions.flush(handle.agent.session)
       const contexts = (await f.calls()).filter(c => c.args[0] === 'context')
       assert.equal(contexts.length, 4)
       assert(contexts.every(c => c.args.at(-1) === 'off'))
@@ -514,7 +474,7 @@ test('structured JSON arguments reach key redaction instead of an opaque string'
   model.arguments = JSON.stringify({ a: 1, password: 'fixture-secret' })
   try {
     const handle = await runTurn(ctx, 'structured-arguments')
-    await ctx.parallel('session/flush', handle.agent.session)
+    await ctx.sessions.flush(handle.agent.session)
     const call = (await f.calls()).find(c => c.payload?.tool_name === 'fixture_probe')
     assert.deepEqual(call.payload.tool_input.arguments, { a: 1, password: 'fixture-secret' })
     await handle.dispose()
@@ -529,7 +489,7 @@ test('real AgentLoop captures empty tool arguments as an object and completes th
   ctx.logger.error = message => errors.push(message)
   try {
     const handle = await runTurn(ctx, 'empty-arguments')
-    await ctx.parallel('session/flush', handle.agent.session)
+    await ctx.sessions.flush(handle.agent.session)
     assert.deepEqual(toolArguments, [{}])
     assert.equal(model.requests.length, 2)
     const calls = await f.calls()
@@ -557,8 +517,8 @@ test('invalid JSON arguments fail visibly without copying argument text', async 
     session.append('tool/result', { turn: 1, step: 1, message: createToolResultMessage({
       callId, content: [{ type: 'text', text: 'ordinary result' }], isError: false,
     }) }, { surfaceOp: 'append' })
-    await assert.rejects(ctx.parallel('session/flush', session), error =>
-      error instanceof AggregateError && error.errors.some(e => e.message === 'remem: DSH tool arguments are invalid JSON; capture rejected'))
+    await assert.rejects(ctx.sessions.flush(session), error =>
+      error.message === 'remem: DSH tool arguments are invalid JSON; capture rejected')
     assert(!(await readFile(f.log, 'utf8')).includes('fixture-secret'))
     assert(!(await f.calls()).some(c => c.args[0] === 'observe'))
   } finally { await fiber.dispose().catch(() => {}); await ctx.fiber.dispose().catch(() => {}); await rm(f.root, { recursive: true, force: true }) }
@@ -673,7 +633,7 @@ test('failed context restores the original claimed batch with provenance for one
     await writeFile(f.executable, normal, { mode: 0o700 })
     handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'retry now' }], source: { kind: 'user' } }))
     await handle.agent.whenIdle()
-    await ctx.parallel('session/flush', handle.agent.session)
+    await ctx.sessions.flush(handle.agent.session)
     const messages = handle.agent.session.deriveMessages()
     for (const expected of [steering, original]) {
       const committed = messages.filter(message => message.id === expected.id)
@@ -737,14 +697,14 @@ test('changed and removed snapshots supersede only remem history across real tur
     assert(session.snapshotEvents().filter(e => e.type === 'turn/end').every(e => e.data.reason.kind === 'completed' || e.data.reason.kind === 'aborted'))
     assert.deepEqual(session.snapshotEvents()[oldEvent.seq], oldEvent)
     assert(session.deriveMessages().some(m => m.id === human.id))
-    await ctx.parallel('session/flush', session)
+    await ctx.sessions.flush(session)
     await handle.dispose()
   } finally { await fiber.dispose(); await ctx.fiber.dispose(); await rm(f.root, { recursive: true, force: true }) }
 })
 
 for (const memory of ['updated memory', '']) {
   for (const fault of ['replacement', 'admission', 'request', 'prepared-call', 'cancel-before-request', 'cancel-after-request', 'model']) {
-    test(`${memory ? 'changed' : 'removed'} snapshot ${fault} preserves official invariant and retry semantics`, async () => {
+    test(`${memory ? 'changed' : 'removed'} snapshot ${fault} keeps step ordering and retry semantics`, async () => {
       const f = await fixture()
       const normal = await readFile(f.executable, 'utf8')
       const { ctx, fiber, model } = await harness(f.executable)
@@ -752,7 +712,7 @@ for (const memory of ['updated memory', '']) {
       try {
         handle = await runTurn(ctx, `snapshot-${fault}-${memory ? 'changed' : 'removed'}`)
         const session = handle.agent.session
-        await ctx.parallel('session/flush', session)
+        await ctx.sessions.flush(session)
         const old = session.snapshotEvents().find(e => e.type === 'user/message' && e.data.source.kind === 'remem')
         await writeFile(f.executable, normal.replace("process.stdout.write('fixture project memory')",
           `process.stdout.write(${JSON.stringify(memory)})`), { mode: 0o700 })
@@ -787,7 +747,7 @@ for (const memory of ['updated memory', '']) {
         handle.agent.inject(steering)
         handle.agent.followup(original)
         await handle.agent.whenIdle()
-        await ctx.parallel('session/flush', session)
+        await ctx.sessions.flush(session)
         const cancelled = fault.startsWith('cancel-')
         const end = session.snapshotEvents().findLast(e => e.type === 'turn/end')
         assert.equal(end.data.reason.kind, cancelled ? 'aborted' : 'error')
@@ -803,7 +763,7 @@ for (const memory of ['updated memory', '']) {
         stopFault = undefined
         handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'explicit retry' }], source: { kind: 'user' } }))
         await handle.agent.whenIdle()
-        await ctx.parallel('session/flush', session)
+        await ctx.sessions.flush(session)
         assert.equal(session.snapshotEvents().findLast(e => e.type === 'turn/end').data.reason.kind, 'completed')
         assert.deepEqual(model.requests.at(-1).messages.filter(m => m.source.kind === 'remem')
           .map(m => m.content.map(b => b.text).join('')), memory ? [memory] : [])
@@ -852,13 +812,13 @@ for (const failCapture of [false, true]) test(`cancelling a capture checkpoint r
     assert.equal(handle.agent.inbox.hasPending, false)
     assert.equal(handle.agent.session.snapshotEvents().findLast(e => e.type === 'turn/end').data.reason.kind, 'aborted')
     if (failCapture) {
-      await assert.rejects(ctx.parallel('session/flush', handle.agent.session), error => {
-        const batch = error instanceof AggregateError && error.errors[0]
+      await assert.rejects(ctx.sessions.flush(handle.agent.session), error => {
+        const batch = error
         return batch instanceof AggregateError && batch.errors.length === 3
           && [7, 8, 9].every(code => batch.errors.some(cause => cause.message.includes(`exit ${code}`)))
       })
     }
-    await ctx.parallel('session/flush', handle.agent.session)
+    await ctx.sessions.flush(handle.agent.session)
     assert.equal((await f.calls()).at(-1).args[0], 'summarize')
   } finally {
     await writeFile(release, 'release')
@@ -881,7 +841,7 @@ for (const fault of ['unload', 'downstream-error', 'partial-commit', 'cancel']) 
     try {
       handle = await runTurn(ctx, `unload-request-${fault}`)
       const session = handle.agent.session
-      await ctx.parallel('session/flush', session)
+      await ctx.sessions.flush(session)
       const steering = createUserMessage({ content: [{ type: 'text', text: 'Keep the original steering.' }], source: { kind: 'user' } })
       const original = createUserMessage({ content: [{ type: 'text', text: 'Keep the original followup.' }], source: { kind: 'user' } })
       stop = ctx.on('agent/request', async (_, next) => {
@@ -910,7 +870,7 @@ for (const fault of ['unload', 'downstream-error', 'partial-commit', 'cancel']) 
       reinstalled = await ctx.plugin(plugin, { executable: f.executable })
       handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Explicit retry after reload.' }], source: { kind: 'user' } }))
       await handle.agent.whenIdle()
-      await ctx.parallel('session/flush', session)
+      await ctx.sessions.flush(session)
       assert.equal(session.snapshotEvents().findLast(e => e.type === 'turn/end').data.reason.kind, 'completed')
       for (const input of [steering, original]) {
         const expected = fault === 'cancel' ? 0 : 1
@@ -968,7 +928,7 @@ for (const kind of largeToolCases) test(`tool envelope stays within serialized s
   let handle
   try {
     handle = await runTurn(ctx, `bounded-${kind}`)
-    await ctx.parallel('session/flush', handle.agent.session)
+    await ctx.sessions.flush(handle.agent.session)
     assert.equal(model.requests.length, 2)
     assert.equal(handle.agent.session.snapshotEvents().findLast(e => e.type === 'turn/end').data.reason.kind, 'completed')
     const call = (await f.calls()).find(c => c.payload?.tool_name === 'bounded_probe')
@@ -1006,7 +966,7 @@ test('real remem captures bounded large tools through core redaction and summary
       let handle
       try {
         handle = await runTurn(ctx, `live-bounded-${kind}`)
-        await ctx.parallel('session/flush', handle.agent.session)
+        await ctx.sessions.flush(handle.agent.session)
         assert.equal(model.requests.length, 2)
         assert.equal(handle.agent.session.snapshotEvents().findLast(e => e.type === 'turn/end').data.reason.kind, 'completed')
         const rows = JSON.parse(execFileSync('/usr/bin/python3', ['-c', `import json,sqlite3,sys
@@ -1035,7 +995,7 @@ c=sqlite3.connect(sys.argv[1]); print(json.dumps(c.execute("SELECT e.event_type,
         agentOptions: { provider: 'fixture', model: 'fixture' } })
       handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: message }], source: { kind: 'user' } }))
       await handle.agent.whenIdle()
-      await ctx.parallel('session/flush', handle.agent.session)
+      await ctx.sessions.flush(handle.agent.session)
       assert.equal(model.requests.length, 2)
       assert.equal(handle.agent.session.snapshotEvents().findLast(e => e.type === 'turn/end').data.reason.kind, 'completed')
       const rows = JSON.parse(execFileSync('/usr/bin/python3', ['-c', `import json,sqlite3,sys
@@ -1076,7 +1036,7 @@ for (const kind of ['multiline-escaped', 'single-line']) test(`large messages pr
       agentOptions: { provider: 'fixture', model: 'fixture' } })
     handle.agent.followup(createUserMessage({ content: [{ type: 'text', text: body }], source: { kind: 'user' } }))
     await handle.agent.whenIdle()
-    await ctx.parallel('session/flush', handle.agent.session)
+    await ctx.sessions.flush(handle.agent.session)
     assert.equal(model.requests.length, 2)
     assert.equal(handle.agent.session.snapshotEvents().findLast(e => e.type === 'turn/end').data.reason.kind, 'completed')
     const calls = (await f.calls()).filter(c => c.payload)
@@ -1109,7 +1069,7 @@ test('large turn-end metadata is bounded and its omission remains in captured te
     session.append('turn/end', { turn: 1, reason: { kind: 'error', error: {
       message: 'Failure detail.\n' + '证据"\\\n'.repeat(250000), code: 'UNKNOWN',
     } } })
-    await ctx.parallel('session/flush', session)
+    await ctx.sessions.flush(session)
     const summary = (await f.calls()).find(c => c.args[0] === 'summarize').payload
     assert(Buffer.byteLength(JSON.stringify(summary)) <= 1024 * 1024)
     assert.equal(summary.reason.kind, 'error')
@@ -1128,14 +1088,14 @@ test('message envelopes preserve an exact JSON-byte fit and project one byte ove
       content: [{ type: 'text', text: prompt }], source: { kind: 'user' },
     }), { surfaceOp: 'append' })
     append('probe')
-    await ctx.parallel('session/flush', session)
+    await ctx.sessions.flush(session)
     const sample = (await f.calls()).find(c => c.args[0] === 'session-init').payload
     const overhead = Buffer.byteLength(JSON.stringify({ ...sample, prompt: '' }))
     const escaped = '证😀"\\\t'.repeat(40000)
     const prompt = escaped + 'x'.repeat(1024 * 1024 - overhead - Buffer.byteLength(JSON.stringify(escaped)) + 2)
     append(prompt)
     append(prompt + 'x')
-    await ctx.parallel('session/flush', session)
+    await ctx.sessions.flush(session)
     const captures = (await f.calls()).filter(c => c.args[0] === 'session-init')
     assert.equal(Buffer.byteLength(JSON.stringify(captures[1].payload)), 1024 * 1024)
     assert.equal(captures[1].payload.prompt, prompt)
@@ -1159,8 +1119,8 @@ test('oversized tool identity fails visibly without renaming the tool', async ()
     session.append('tool/result', { turn: 1, step: 1, message: createToolResultMessage({
       callId: ToolCallId('large-name'), content: [{ type: 'text', text: 'external evidence' }], isError: false,
     }) }, { surfaceOp: 'append' })
-    await assert.rejects(ctx.parallel('session/flush', session), error => error instanceof AggregateError
-      && error.errors.some(e => e.message === 'remem: tool observation identity exceeds the stdin budget'))
+    await assert.rejects(ctx.sessions.flush(session), error =>
+      error.message === 'remem: tool observation identity exceeds the stdin budget')
     assert.deepEqual(errors, ['remem: tool observation identity exceeds the stdin budget'])
     assert(!(await f.calls()).some(c => c.args[0] === 'observe'))
   } finally { await fiber.dispose(); await ctx.fiber.dispose(); await rm(f.root, { recursive: true, force: true }) }
