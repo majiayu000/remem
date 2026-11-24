@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.14] - Unreleased
+
+### Removed
+
+- Retire the experimental routed MCP `search` projection (#934). `search` no longer declares `task_intent`, `role`, `risk`, `token_budget` or `include_superseded`, and its response no longer carries a `retrieval_plan` block. #934 was closed as not planned: an exploratory probe gave the same recall@5 (0.525) for every arm, and keyword intent resolution lowered P@5 from 0.492 to 0.184. The v0.7.0 identities of the five parameters and of the `search` tool schema are recorded in the GH969 `retired_surfaces` ledger, together with the REST `GET`/`HEAD /api/v1/search` identities, whose fingerprint changed only because the lifecycle tool indexes serde types by name (the REST wire contract is unchanged). `search` still ignores keys it does not declare, so a caller that keeps sending these fields gets ordinary search. The planner, `remem context-plan`, Context Bundle and SessionStart planning, and the published Rust exports are unchanged.
+
 ## [0.7.13] - Unreleased
 
 ### Fixed

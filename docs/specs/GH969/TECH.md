@@ -23,7 +23,7 @@ host evidence
   -> governed candidates + source/evidence/trust metadata
   -> review or bounded auto-promotion
   -> curated memories / relations
-        ├-> retrieval service -> ordinary or explicitly routed MCP search
+        ├-> retrieval service -> ordinary MCP search
         │                      (no CurrentTruth or Context Bundle audit)
         └-> context loaders
               ├-> default `bundle` render mode

@@ -9,7 +9,8 @@ and `context-plan` debug surface. PR #1006 (`d458bfeb`) subsequently unified
 Context Bundle on `RetrievalPlan` and added explicit SessionStart planning/DB
 execution. PR #1020 (`10b2d38d`, implementation commit `477ca5db`) later added
 the optional routed MCP `search` projection onto existing production loaders.
-GitHub issue #934 is open and parked. Landed slices stay landed; the original
+That projection was retired on 2026-11-24 (see below). GitHub issue #934 is
+closed as not planned. Landed slices stay landed; the original
 acceptance still lacks the complete plan-controlled per-channel executor and
 full execution-evidence propagation, per-intent goldens, static-vs-router
 ablation/default decision, and a closure audit. Remaining work can stay parked
@@ -48,19 +49,41 @@ A deterministic, auditable Retrieval Router that compiles a
 - `remem context-plan --task ... --json` debug command printing resolved
   intent, enabled/disabled channels, filters, budgets, policy version,
   and reason codes — never memory contents;
-- MCP `search` accepts optional task-aware routing fields (`task_intent`,
-  `role`, `risk`, `token_budget`, `include_superseded`). When present, it
-  compiles the same `RetrievalPlan`, applies the plan to production search
-  weights / graph expansion / rerank participation / raw-fallback abstention,
-  and returns a compact plan audit (`plan_hash`, reason codes, selected and
-  disabled channels) alongside the legacy compact search envelope;
+- (retired 2026-11-24) MCP `search` used to accept optional task-aware
+  routing fields and return a compact `retrieval_plan` audit; see the
+  retirement section below;
 - explicit `SessionStart` routing is reserved for host lifecycle callers and
   Context Bundle compilation; keyword fallback never infers it from ordinary
   task text;
 - stable plan hash (canonical-JSON SHA-256, same convention as #932).
 
-Plan compilation adds no LLM or network call. Routed MCP search preserves the
-existing search path's optional embedding and rerank provider behavior.
+Plan compilation adds no LLM or network call.
+
+## Retirement of the routed MCP search projection (2026-11-24)
+
+Issue #934 was closed as not planned on 2026-11-24 with option (b) of the
+2026-11-17 status check: retire the routed MCP `search` projection through the
+GH969 retirement ledger and keep the planner and `context-plan`. The
+exploratory 2026-11-17 probe found the same `evidence_recall@5` (0.525) for
+every arm, and keyword intent resolution lowered P@5 from 0.492 to 0.184.
+
+- Removed: the MCP `search` input fields `task_intent`, `role`, `risk`,
+  `token_budget` and `include_superseded`, and the `retrieval_plan` block in
+  the `search` response. Their v0.7.0 published identities, plus the v0.7.0
+  `search` tool identity whose schema changed, are appended to
+  `retired_surfaces` in `docs/specs/GH969/surface-manifest.json`.
+- Fingerprint-only entries: the REST `GET`/`HEAD /api/v1/search` v0.7.0
+  identities are also in the ledger. The REST request and response did not
+  change; the lifecycle REST fingerprint indexes serde declarations by type
+  name, and the MCP and REST `SearchParams` share that name, so editing the
+  MCP struct changes the REST identity. The new identities are `staged`.
+- Kept: `RetrievalPlan`, the planner, `remem context-plan`, Context Bundle
+  and SessionStart planning, and the published Rust exports (including
+  `memory::service::SearchRoutingPolicy`), which follow their own lifecycle
+  rows.
+- Compatibility: `search` still ignores input keys it does not declare, so a
+  caller that keeps sending the removed fields gets ordinary search and no
+  `retrieval_plan`. No stored data or migration is involved.
 
 ## Boundaries
 

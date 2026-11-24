@@ -411,7 +411,7 @@ def lifecycle_self_test() -> int:
             'struct ToolContract; const CONTRACTS: [ToolContract; 1] = [json_object("search", "Search", true, false, true, true, Schema::Search)\n];\n', encoding="utf-8"
         )
         (root / "src/mcp/types.rs").write_text(
-            "struct SearchParams { pub query: Option<String>, pub task_intent: Option<String> }\n",
+            "struct SearchParams { pub query: Option<String>, pub limit: Option<i64> }\n",
             encoding="utf-8",
         )
         (root / "src/api/server.rs").write_text(

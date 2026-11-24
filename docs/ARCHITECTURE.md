@@ -120,7 +120,7 @@ Implemented surfaces outside that chain keep one explicit lifecycle:
 
 ```text
 experimental: explicit MCP/Rust/CLI caller only
-  context_bundle API, retrieval-router/context-plan, routed search parameters,
+  context_bundle API, retrieval-router/context-plan,
   entity-BFS eval arm, coding/public and cross-host harnesses
 
 recovery-only: residual historical state -> bounded worker/admin replay

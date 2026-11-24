@@ -570,7 +570,6 @@ ROW_STATUS = {
     "doctor-truth": "production",
     "retrieval-router-plan": "experimental",
     "rust-retrieval-router": "experimental",
-    "routed-search-parameters": "experimental",
     "graph-edges": "production",
     "entity-bfs": "experimental",
     "local-onnx": "production",
@@ -596,7 +595,6 @@ ROW_DETAILS: dict[str, tuple[str, list[str], str, list[str], list[str], str]] = 
     "doctor-truth": ("src/doctor/truth.rs and src/truth", ["remem doctor truth operators"], "explicit read-only diagnostic", ["docs/specs/GH933/TECH.md"], ["cargo test doctor::truth"], "Restore the previous report format."),
     "retrieval-router-plan": ("src/retrieval_router and src/cli", ["explicit context-plan callers"], "opt-in plan compiler", ["docs/specs/GH934/PRODUCT.md"], ["cargo test retrieval_router"], "Remove context-plan; retain ordinary retrieval."),
     "rust-retrieval-router": ("src/retrieval_router", ["explicit Rust retrieval_router callers"], "opt-in; not a default executor", ["docs/specs/GH934/TECH.md"], ["cargo test retrieval_router"], "Remove exports; retain ordinary retrieval."),
-    "routed-search-parameters": ("src/mcp/server/search_routing.rs and src/retrieval_router", ["search callers supplying routing parameters"], "opt-in; legacy search has a production entry", ["docs/specs/GH934/PRODUCT.md"], ["cargo test mcp::server::tests::search"], "Ignore/remove routing parameters."),
     "graph-edges": ("src/retrieval/graph and src/memory/graph_contract.rs", ["weighted production retrieval"], "default graph weight is non-zero", [], ["cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json"], "Set graph weight to zero."),
     "entity-bfs": ("src/retrieval/entity and src/eval/graph_decision.rs", ["explicit graph-decision evaluation"], "opt-in informational arm", [], ["cargo run -- eval-graph-decision --help"], "Remove the diagnostic arm."),
     "local-onnx": ("src/retrieval/embedding and Cargo feature local-onnx", ["default builds with verified local artifacts"], "default Cargo feature", ["docs/specs/local-semantic-embedding/PRODUCT.md"], ["cargo test retrieval::embedding"], "Select another provider or disable the feature."),
@@ -637,8 +635,7 @@ def lifecycle_row(kind: str, entry: str) -> str:
     if kind == "mcp_tool":
         return "mcp-context-bundle" if entry == "context_bundle" else "mcp-production"
     if kind == "mcp_parameter":
-        routed = {"task_intent", "role", "risk", "token_budget", "include_superseded"}
-        return "routed-search-parameters" if entry.rsplit(".", 1)[-1] in routed else "mcp-production"
+        return "mcp-production"
     if kind == "rest_route":
         return "rest-api"
     if kind == "default_feature":

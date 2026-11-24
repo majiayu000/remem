@@ -3,7 +3,6 @@ use rmcp::{tool, tool_router};
 
 use super::super::types::{CurrentStateParams, RawSearchHit, SearchParams, SearchResult};
 use super::errors::{self, McpToolError, McpToolResult};
-use super::search_routing::{compile_search_retrieval_plan, RoutedSearchPlan};
 use super::MemoryServer;
 use crate::memory::service;
 
@@ -43,7 +42,7 @@ impl MemoryServer {
 
     #[tool(
         input_schema = super::tool_contracts::published_schema::<SearchParams>(),
-        description = "Read-only. Search or list curated memories: query is optional for standard search, while project/type/branch and visibility flags filter results. Optional task_intent/role/risk/token_budget/include_superseded compiles a GH-934 RetrievalPlan, applies its search/rerank/fallback policy, and returns retrieval_plan audit metadata. Returns a compact JSON object with results, source='memory', pagination, and next_step for get_observations(ids, source); limit defaults to 20 and offset to 0. Use current_state when an exact stable state_key is known, timeline for chronological observation context, and search_raw for literal chat recall. explain and multi_hop each require a non-blank query, and explain cannot be combined with multi_hop=true. Invalid combinations or curated-search database failures return a tool error; an automatic raw-archive fallback failure preserves the curated results and adds raw_hits_error to the successful response."
+        description = "Read-only. Search or list curated memories: query is optional for standard search, while project/type/branch and visibility flags filter results. Returns a compact JSON object with results, source='memory', pagination, and next_step for get_observations(ids, source); limit defaults to 20 and offset to 0. Use current_state when an exact stable state_key is known, timeline for chronological observation context, and search_raw for literal chat recall. explain and multi_hop each require a non-blank query, and explain cannot be combined with multi_hop=true. Invalid combinations or curated-search database failures return a tool error; an automatic raw-archive fallback failure preserves the curated results and adds raw_hits_error to the successful response."
     )]
     pub(super) fn search(
         &self,
@@ -51,7 +50,7 @@ impl MemoryServer {
     ) -> McpToolResult<String> {
         const TOOL: &str = "search";
         let start = std::time::Instant::now();
-        let mut requested_multi_hop = params.multi_hop.unwrap_or(false);
+        let requested_multi_hop = params.multi_hop.unwrap_or(false);
         let requested_explain = params.explain.unwrap_or(false);
         if requested_multi_hop
             && params
@@ -81,31 +80,10 @@ impl MemoryServer {
                 "explain is not supported with multi_hop search yet; set multi_hop=false or explain=false",
             ));
         }
-        let mut routed = compile_search_retrieval_plan(TOOL, &params)?;
-        if let Some(route) = routed.as_mut() {
-            if requested_explain && route.policy.use_multi_hop {
-                route.policy.use_multi_hop = false;
-                route
-                    .applied_effects
-                    .push("graph_expansion_not_applied_explain_requested".to_string());
-            } else if params.multi_hop == Some(false) && route.policy.use_multi_hop {
-                route.policy.use_multi_hop = false;
-                route
-                    .applied_effects
-                    .push("graph_expansion_not_applied_multi_hop_explicit_false".to_string());
-            } else if params.multi_hop.is_none() && route.policy.use_multi_hop {
-                requested_multi_hop = true;
-                route
-                    .applied_effects
-                    .push("graph_expansion_enabled_multi_hop".to_string());
-            }
-        }
-        let routing_policy = routed.as_ref().map(|route| &route.policy);
-        let retrieval_plan_report = routed.as_ref().map(RoutedSearchPlan::report);
         crate::log::info(
             "mcp",
             &format!(
-                "search called query={:?} project={:?} type={:?} branch={:?} multi_hop={} limit={} offset={} routed={}",
+                "search called query={:?} project={:?} type={:?} branch={:?} multi_hop={} limit={} offset={}",
                 params.query,
                 params.project,
                 params.r#type,
@@ -113,7 +91,6 @@ impl MemoryServer {
                 requested_multi_hop,
                 params.limit.unwrap_or(20),
                 params.offset.unwrap_or(0),
-                retrieval_plan_report.is_some(),
             ),
         );
         self.with_conn(TOOL, |conn| {
@@ -133,12 +110,7 @@ impl MemoryServer {
                 multi_hop: requested_multi_hop,
                 explain: requested_explain,
             };
-            let detailed =
-                service::search_memories_with_explain_details_with_routing(
-                    conn,
-                    &req,
-                    routing_policy,
-                )
+            let detailed = service::search_memories_with_explain_details(conn, &req)
                 .map_err(|e| {
                     crate::log::warn("mcp", &format!("search failed: {}", e));
                     McpToolError::db_query(TOOL, e)
@@ -303,9 +275,6 @@ impl MemoryServer {
             if let Some(explain_details) = detailed.explain_details {
                 response["explain"] = errors::to_json_value(TOOL, &explain_details)?;
             }
-            if let Some(report) = retrieval_plan_report.as_ref() {
-                response["retrieval_plan"] = errors::to_json_value(TOOL, report)?;
-            }
             errors::to_json_pretty(TOOL, &response)
         })
     }
@@ -348,11 +317,6 @@ mod tests {
             branch: None,
             multi_hop: Some(false),
             explain,
-            task_intent: None,
-            role: None,
-            risk: None,
-            token_budget: None,
-            include_superseded: None,
         }
     }
 
