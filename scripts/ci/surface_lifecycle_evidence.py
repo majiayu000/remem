@@ -20,12 +20,6 @@ EXPERIMENTAL_CALLER_SYMBOLS = {
     "rust-context-bundle": ("crate::context_bundle",),
     "retrieval-router-plan": ("crate::retrieval_router",),
     "rust-retrieval-router": ("crate::retrieval_router",),
-    "routed-search-parameters": (
-        "compile_search_retrieval_plan",
-        "params.task_intent",
-        "params.token_budget",
-        "params.include_superseded",
-    ),
     "entity-bfs": ("retrieval::entity", "entity_graph"),
     "coding-public-benchmarks": ("coding_bench",),
 }

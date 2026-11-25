@@ -8,8 +8,10 @@ Partial implementation. The modules below describe the landed planner and
 bounded MCP search projection. They are not the complete plan-controlled
 per-channel executor, execution-evidence propagation, per-intent goldens,
 static-vs-router ablation/default decision, or closure audit required by the
-original #934 acceptance. GitHub issue #934 is open and parked; remaining
-work needs a later implementation slice plus fresh verification.
+original #934 acceptance. GitHub issue #934 was closed as not planned on
+2026-11-24, and the MCP search projection described under "MCP search wiring"
+was retired the same day; that section is kept as history. See
+`PRODUCT.md` for the retirement record.
 
 ## Module Layout
 
@@ -91,7 +93,11 @@ widen scope, lower trust, or bypass abstention.
 deterministic. The command never opens the database and never prints
 memory contents.
 
-## MCP search wiring
+## MCP search wiring (retired 2026-11-24)
+
+Removed from `src/mcp/server/search_routing.rs` and the `search` tool; the
+retired identities are in the GH969 `retired_surfaces` ledger. Historical
+description:
 
 The first production consumer is MCP `search`. Legacy requests omit the routing
 fields and keep the static search policy. A routed request must provide a

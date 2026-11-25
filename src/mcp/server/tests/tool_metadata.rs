@@ -280,6 +280,36 @@ fn public_tool_metadata_matches_the_contract_matrix() -> anyhow::Result<()> {
 }
 
 #[test]
+fn search_schema_does_not_advertise_retired_routing_projection() -> anyhow::Result<()> {
+    // GH934 routed search was retired through the GH969 ledger; the planner
+    // stays available through `remem context-plan`.
+    let server = MemoryServer::new()?;
+    let wire = serde_json::to_value(registered_tool(&server, "search"))?;
+    let input = wire["inputSchema"]["properties"]
+        .as_object()
+        .expect("search input schema should expose object properties");
+    for retired in [
+        "task_intent",
+        "role",
+        "risk",
+        "token_budget",
+        "include_superseded",
+    ] {
+        assert!(
+            !input.contains_key(retired),
+            "search input schema still advertises retired `{retired}`"
+        );
+    }
+    let output = wire["outputSchema"]["properties"]
+        .as_object()
+        .expect("search output schema should expose object properties");
+    assert!(!output.contains_key("retrieval_plan"));
+    let description = wire["description"].as_str().unwrap_or_default();
+    assert!(!description.contains("RetrievalPlan"));
+    Ok(())
+}
+
+#[test]
 fn save_memory_input_schema_does_not_advertise_human_acknowledgement() -> anyhow::Result<()> {
     let server = MemoryServer::new()?;
     let wire = serde_json::to_value(registered_tool(&server, "save_memory"))?;
@@ -645,11 +675,6 @@ fn search_rejects_multi_hop_without_non_blank_query() -> anyhow::Result<()> {
                 branch: None,
                 multi_hop: Some(true),
                 explain: None,
-                task_intent: None,
-                role: None,
-                risk: None,
-                token_budget: None,
-                include_superseded: None,
             }))
             .expect_err("multi-hop should require a query");
         let json = assert_mcp_error(err, McpErrorCode::InvalidRequest, "search", false);
