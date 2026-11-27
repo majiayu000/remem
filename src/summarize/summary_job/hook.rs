@@ -16,6 +16,12 @@ use super::spill::{
 };
 use super::worker_launch::{spawn_worker_once_if_idle, WorkerSpawnDecision};
 
+#[derive(PartialEq, Eq)]
+pub(super) enum SummaryEnqueue {
+    Queued,
+    Spilled,
+}
+
 pub async fn summarize(host: Option<&str>, profile: Option<&str>) -> Result<()> {
     let Some(input) = read_stdin_with_timeout(SUMMARIZE_STDIN_TIMEOUT_MS)? else {
         return Ok(());
@@ -92,7 +98,7 @@ pub(super) async fn summarize_input(
             return Err(error);
         }
     };
-    time_result(&mut timings, "enqueue_summary_payload", || {
+    let enqueue = time_result(&mut timings, "enqueue_summary_payload", || {
         enqueue_summary_payload_with_git_evidence(
             &conn,
             input,
@@ -102,6 +108,12 @@ pub(super) async fn summarize_input(
             Some(&git_evidence),
         )
     })?;
+    if enqueue == SummaryEnqueue::Spilled {
+        // Same-session replay may skip the Stop event only after a successful live capture.
+        push_elapsed(&mut timings, "hook_total", total_start);
+        log_summary_hook_timing("capture_spilled", &host, &timings);
+        return Ok(());
+    }
     let current_identity =
         SummaryPayloadIdentity::from_hook(&host, &hook, &cwd, &db::project_from_cwd(&cwd));
     if let Err(error) = time_result(&mut timings, "spill_replay", || {
@@ -126,6 +138,7 @@ pub(super) async fn summarize_input(
                 SummaryPayloadOrigin::Replay,
                 Some(&record.git_evidence),
             )
+            .map(|_| ())
         })
     }) {
         crate::log::error(
@@ -168,7 +181,7 @@ pub(super) fn enqueue_summary_payload(
     profile: Option<&str>,
     origin: SummaryPayloadOrigin,
 ) -> Result<()> {
-    enqueue_summary_payload_with_git_evidence(conn, input, host, profile, origin, None)
+    enqueue_summary_payload_with_git_evidence(conn, input, host, profile, origin, None).map(|_| ())
 }
 
 pub(super) fn enqueue_summary_payload_with_git_evidence(
@@ -178,10 +191,10 @@ pub(super) fn enqueue_summary_payload_with_git_evidence(
     profile: Option<&str>,
     origin: SummaryPayloadOrigin,
     provided_git_evidence: Option<&[crate::git_util::GitCommitEvidence]>,
-) -> Result<()> {
+) -> Result<SummaryEnqueue> {
     let hook: SummarizeInput = serde_json::from_str(input)?;
     let Some(session_id) = &hook.session_id else {
-        return Ok(());
+        return Ok(SummaryEnqueue::Queued);
     };
     let cwd = effective_cwd(&hook)?;
     let project = db::project_from_cwd(&cwd);
@@ -234,33 +247,37 @@ pub(super) fn enqueue_summary_payload_with_git_evidence(
         git_evidence,
         current_branch.as_deref(),
     ) {
-        let error_text = error.to_string();
         if origin.is_replay() {
             crate::log::error(
                 "summarize",
                 &format!(
-                    "replayed capture ledger record failed; replay layer will preserve summary hook payload and skip follow-up jobs: {error_text}"
+                    "replayed capture ledger record failed; replay layer will preserve summary hook payload and skip follow-up jobs: {error:#}"
                 ),
             );
-        } else {
-            let path = spill_summary_hook_payload_with_git_evidence(
-                input,
-                Some(&host),
-                profile,
-                Some(&cwd),
-                git_evidence,
-                &error,
-            )?;
-            crate::log::error(
-                "summarize",
-                &format!(
-                    "capture ledger record failed; spilled summary hook payload to {} and skipped follow-up jobs: {}",
-                    path.display(),
-                    error_text
-                ),
-            );
+            return Err(error);
         }
-        anyhow::bail!(error_text);
+        let path = spill_summary_hook_payload_with_git_evidence(
+            input,
+            Some(&host),
+            profile,
+            Some(&cwd),
+            git_evidence,
+            &error,
+        )
+        .with_context(|| {
+            format!("preserve Stop payload after capture ledger failure: {error:#}")
+        })?;
+        crate::log::error(
+            "summarize",
+            &format!(
+                "capture ledger record failed; spilled summary hook payload to {} and skipped follow-up jobs: {error:#}",
+                path.display()
+            ),
+        );
+        if host == "codex-cli" {
+            return Ok(SummaryEnqueue::Spilled);
+        }
+        return Err(error);
     }
     super::side_effects::run_stop_hook_side_effects(
         conn,
@@ -272,7 +289,7 @@ pub(super) fn enqueue_summary_payload_with_git_evidence(
         current_branch.as_deref(),
         false,
     )?;
-    Ok(())
+    Ok(SummaryEnqueue::Queued)
 }
 
 fn summary_git_evidence(
