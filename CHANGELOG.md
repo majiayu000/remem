@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.15] - Unreleased
+
+### Fixed
+
+- Keep Codex Stop successful after remem saves a failed capture for replay, and log the complete capture error (#1150).
+
 ## [0.7.14] - Unreleased
 
 ### Removed
