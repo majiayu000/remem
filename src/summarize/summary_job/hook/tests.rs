@@ -246,6 +246,99 @@ async fn summarize_hook_spills_when_capture_ledger_fails() -> anyhow::Result<()>
 }
 
 #[tokio::test]
+async fn codex_stop_accepts_spilled_capture_and_replays_it_once() -> anyhow::Result<()> {
+    let test_dir = ScopedTestDataDir::new("codex-stop-capture-spill");
+    let conn = db::open_db()?;
+    conn.execute_batch(
+        "CREATE TRIGGER fail_codex_message BEFORE INSERT ON captured_events
+         WHEN NEW.session_id = 'sess-codex-spilled' AND NEW.event_type = 'message'
+         BEGIN SELECT RAISE(FAIL, 'forced capture failure'); END;",
+    )?;
+    let now = chrono::Utc::now().timestamp();
+    let owner = db::current_worker_owner("daemon", std::process::id(), now * 1_000);
+    db::upsert_worker_heartbeat(&conn, &owner, i64::from(std::process::id()), now, now)?;
+
+    let transcript = test_dir.path.join("rollout.jsonl");
+    let message = serde_json::json!({
+        "timestamp": "2026-11-26T10:43:01Z",
+        "type": "response_item",
+        "payload": {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Captured after replay."}]
+        }
+    });
+    std::fs::write(&transcript, format!("{message}\n"))?;
+    let input = serde_json::json!({
+        "session_id": "sess-codex-spilled",
+        "cwd": test_dir.path,
+        "transcript_path": transcript
+    })
+    .to_string();
+    let count_stops = || {
+        conn.query_row(
+            "SELECT COUNT(*) FROM captured_events
+             WHERE session_id = 'sess-codex-spilled' AND event_type = 'session_stop'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+    };
+    summarize_input(&input, Some("codex-cli"), None).await?;
+    assert_eq!(count_stops()?, 0);
+    let spill_path = super::super::spill::summary_spill_path();
+    let spill = std::fs::read_to_string(&spill_path)?;
+    assert_eq!(spill.lines().count(), 1);
+    assert!(spill.contains("sess-codex-spilled"));
+
+    let later_stop = serde_json::json!({
+        "session_id": "sess-codex-later-stop",
+        "cwd": test_dir.path
+    })
+    .to_string();
+    summarize_input(&later_stop, Some("codex-cli"), None).await?;
+    assert_eq!(count_stops()?, 0);
+    assert_eq!(std::fs::read_to_string(&spill_path)?.lines().count(), 1);
+
+    conn.execute_batch("DROP TRIGGER fail_codex_message;")?;
+    summarize_input(&later_stop, Some("codex-cli"), None).await?;
+    assert_eq!(count_stops()?, 1);
+    assert!(!spill_path.exists());
+    summarize_input(&later_stop, Some("codex-cli"), None).await?;
+    assert_eq!(count_stops()?, 1);
+    let captured: String = conn.query_row(
+        "SELECT content_text FROM captured_events
+         WHERE session_id = 'sess-codex-spilled' AND event_type = 'message'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(captured, "Captured after replay.");
+    Ok(())
+}
+
+#[tokio::test]
+async fn codex_stop_fails_when_capture_and_spill_both_fail() -> anyhow::Result<()> {
+    let test_dir = ScopedTestDataDir::new("codex-stop-spill-failure");
+    db::open_db()?.execute_batch(
+        "CREATE TRIGGER fail_codex_stop BEFORE INSERT ON captured_events
+         WHEN NEW.event_type = 'session_stop'
+         BEGIN SELECT RAISE(FAIL, 'forced capture failure'); END;",
+    )?;
+    std::fs::create_dir(super::super::spill::summary_spill_path())?;
+    let input = serde_json::json!({
+        "session_id": "sess-codex-spill-failure",
+        "cwd": test_dir.path
+    })
+    .to_string();
+    let error = summarize_input(&input, Some("codex-cli"), None)
+        .await
+        .expect_err("the payload was neither captured nor spilled");
+    let error = format!("{error:#}");
+    assert!(error.contains("forced capture failure"), "{error}");
+    assert!(error.contains("open spill queue"), "{error}");
+    Ok(())
+}
+
+#[tokio::test]
 async fn summarize_hook_spills_when_transcript_snapshot_fails() -> anyhow::Result<()> {
     let test_dir = ScopedTestDataDir::new("summary-hook-transcript-snapshot-failure");
     drop(db::open_db()?);

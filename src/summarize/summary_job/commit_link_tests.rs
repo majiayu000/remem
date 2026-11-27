@@ -74,6 +74,7 @@ fn replayed_stop_spill_uses_spilled_commit_evidence_when_head_moves() -> Result<
             super::replay::SummaryPayloadOrigin::Replay,
             Some(&record.git_evidence),
         )
+        .map(|_| ())
     })?;
     assert_eq!(replayed, 1);
     let stored_sha: String = conn.query_row(
